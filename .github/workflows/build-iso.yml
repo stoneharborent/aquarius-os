@@ -4,31 +4,39 @@
 # ==============================================================================
 # Plain English: this workflow makes the .iso file you burn onto a USB stick to
 # install AquariusOS on a blank computer. You start it by hand from the Actions
-# tab; it never runs on its own.
+# tab; it never runs on its own. Budget about an hour.
 #
-# Why this exists as a separate workflow:
-#   The older "Build AquariusOS disk images" workflow used a tool called
-#   bootc-image-builder to make ISOs. That tool currently cannot make ISOs from
-#   Bazzite-based images — a known upstream bug:
-#   https://github.com/osbuild/bootc-image-builder/issues/1188
-#   Bazzite itself does not use that tool for ISOs either. It uses Titanoboa
-#   (https://github.com/ublue-os/titanoboa), which turns a container image into
-#   a "live" ISO. We do the same thing here.
+# It happens in two stages, and that is the important thing to understand:
 #
-# ⚠️ KNOWN LIMITATION — read before you run this ⚠️
-#   Titanoboa requires the container image to carry a small config file at
-#   /usr/lib/bootc-image-builder/iso.yaml (this is the "container-native ISO
-#   contract"). Bazzite does NOT put that file in ghcr.io/ublue-os/bazzite:stable
-#   — it adds it in a separate "installer payload" layer it builds just before
-#   making its ISOs (see ublue-os/bazzite → installer/). Because AquariusOS is
-#   built FROM bazzite:stable, our published image does not have that file yet
-#   either, so this workflow is expected to stop with:
-#       ERROR: Missing /usr/lib/bootc-image-builder/iso.yaml file
-#   Fixing it means adding an AquariusOS live-installer layer that mirrors
-#   Bazzite's installer/ directory (iso.yaml + dracut-live + livesys-scripts +
-#   the payload image). That is tracked as follow-up work, not done here.
-#   Everything below is already correct and will work once the image satisfies
-#   the contract — or right now, if you point `image-ref` at an image that does.
+#   Stage 1 — build the "payload" image from the installer/ folder.
+#             This is a live desktop with the Fedora installer on it, with a copy
+#             of AquariusOS tucked inside so installing works offline.
+#   Stage 2 — hand that payload to Titanoboa, which squashes it into an .iso.
+#
+# Why two stages: Titanoboa refuses to build an ISO unless the image contains
+# /usr/lib/bootc-image-builder/iso.yaml (the "container-native ISO contract").
+# Bazzite does not put that file in bazzite:stable — it adds it in exactly this
+# kind of separate installer layer, built right before its own ISOs. AquariusOS
+# is built FROM bazzite:stable, so we had the same hole. installer/ fills it.
+# See installer/README.md for the full explanation.
+#
+# Why not bootc-image-builder: that tool currently cannot make ISOs from
+# Bazzite-based images at all — https://github.com/osbuild/bootc-image-builder/issues/1188
+#
+# Structure copied from ublue-os/bazzite .github/workflows/build_iso.yml
+# (Apache-2.0), read at commit 0fb3abacb1135fbb50cbb575a18f53fea683ab0f
+# (2026-08-23).
+#
+# ---- A note on which Titanoboa we use --------------------------------------
+# Bazzite's workflow points at a fork, Zeglius/titanoboa@revamp-pr, rather than
+# upstream. We checked, on 2026-08-23, whether that matters: the fork's
+# action.yml, main.sh, build_iso.sh and Containerfile are byte-for-byte identical
+# to upstream ublue-os/titanoboa main @ 5c457c3d0518bd17e754be0fd98a60d29d26abb4,
+# which is the commit we already pin. So the payload machinery below depends on
+# no fork-only behaviour, and we stay on the upstream pin — same code, but a
+# pinned commit in the ublue-os org rather than a moving branch in a personal
+# fork. If Bazzite's ISOs ever start depending on something only the fork has,
+# re-run that comparison before copying more of their workflow.
 # ==============================================================================
 
 name: Build AquariusOS ISO (Titanoboa)
@@ -83,9 +91,14 @@ jobs:
           sudo mount --bind /mnt/podman-storage/storage /var/lib/containers/storage
           sudo systemctl start podman.service || true
 
-      # Titanoboa runs podman as root, so the image has to be logged in and
-      # pulled as root too — a normal `podman pull` would land in the wrong
-      # place and Titanoboa would not find it.
+      # We need the installer/ folder from this repo to build the payload.
+      - name: Checkout Repo
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Everything below runs podman as root, so the login has to be as root too
+      # — a normal `podman login` would write credentials somewhere root cannot
+      # see. The AquariusOS package is public, so this is belt-and-braces in case
+      # it is ever made private.
       - name: Log in to the GitHub container registry
         env:
           REGISTRY_USER: ${{ github.actor }}
@@ -110,25 +123,45 @@ jobs:
           echo "iso-basename=${ISO_BASENAME}" >> "$GITHUB_OUTPUT"
           echo "iso-dest=${GITHUB_WORKSPACE}/output/${ISO_BASENAME}" >> "$GITHUB_OUTPUT"
 
-      - name: Pull the AquariusOS image
+      # ---- Stage 1 -----------------------------------------------------------
+      # Build the live installer image from installer/. This is the step that was
+      # missing before, and the reason ISO builds used to die with
+      # "Missing /usr/lib/bootc-image-builder/iso.yaml".
+      #
+      # --cap-add sys_admin is required: installer/build.sh runs podman inside the
+      # build to embed a copy of AquariusOS into the live image.
+      # BASE_IMAGE and INSTALL_IMAGE_PAYLOAD are the same for us. Bazzite only
+      # splits them because its handheld ISOs boot a desktop but install the deck
+      # image.
+      - name: Build the installer payload image
         env:
           IMAGE_REF: ${{ steps.names.outputs.image-ref }}
         run: |
           set -euxo pipefail
-          sudo env TMPDIR=/mnt/podman-storage/tmp podman pull "${IMAGE_REF}"
+          sudo env TMPDIR=/mnt/podman-storage/tmp podman build \
+            --cap-add sys_admin \
+            --security-opt label=disable \
+            --build-arg BASE_IMAGE="${IMAGE_REF}" \
+            --build-arg INSTALL_IMAGE_PAYLOAD="${IMAGE_REF}" \
+            -t localhost/payload:latest \
+            installer/
 
       - name: Show disk space
         if: always()
-        run: sudo df -h
+        run: |
+          sudo df -h
+          sudo du -sh /mnt/podman-storage.img || true
 
-      # The actual ISO build. Pinned to a specific commit of the Titanoboa
-      # action (like every other action in this repo) so a change upstream can
-      # never silently change what we build.
+      # ---- Stage 2 -----------------------------------------------------------
+      # The actual ISO build, from the payload image we just made (NOT from the
+      # published AquariusOS image directly). Pinned to a specific commit of the
+      # Titanoboa action (like every other action in this repo) so a change
+      # upstream can never silently change what we build.
       - name: Build the ISO
         id: build
         uses: ublue-os/titanoboa@5c457c3d0518bd17e754be0fd98a60d29d26abb4 # main @ 2026-05-19
         with:
-          image-ref: ${{ steps.names.outputs.image-ref }}
+          image-ref: localhost/payload:latest
           iso-dest: ${{ steps.names.outputs.iso-dest }}
 
       # Collect the ISO and a checksum in one folder inside the workspace, so
@@ -157,27 +190,35 @@ jobs:
           compression-level: 0
           overwrite: true
 
-      # If the run went red, print the most likely reason in plain English
+      # If the run went red, print the most likely reasons in plain English
       # instead of leaving a wall of shell output as the last word.
       - name: What probably went wrong
         if: failure()
         run: |
           cat <<'EOF'
           ------------------------------------------------------------------
-          This ISO build failed. The most likely cause:
+          This ISO build failed. Find the first red step above — that tells
+          you which of these it is.
 
-            "ERROR: Missing /usr/lib/bootc-image-builder/iso.yaml file"
+          "Build the installer payload image" failed
+            Something in installer/ broke. Common causes:
+              * A package name changed upstream, so a `dnf install` in
+                installer/build.sh or one of the two hook scripts failed.
+              * The AquariusOS image could not be downloaded. Check that
+                ghcr.io/stoneharborent/aquarius-os is still PUBLIC, and that
+                the "Build AquariusOS" workflow has succeeded at least once.
+              * Ran out of disk. Check the "Show disk space" step.
 
-          Titanoboa needs that small config file inside the AquariusOS image.
-          Bazzite does not include it in bazzite:stable — it adds it in a
-          separate installer layer just before building its own ISOs. Since
-          AquariusOS is built FROM bazzite:stable, our image does not have it
-          yet.
+          "Build the ISO" failed
+            Titanoboa could not turn the payload into a disc image. If you see
+              "Missing /usr/lib/bootc-image-builder/iso.yaml"
+            then the payload build silently skipped its last steps — that file
+            is copied in at the very end of installer/build.sh.
 
-          The fix is to add an AquariusOS live-installer layer modelled on
-          ublue-os/bazzite -> installer/ (iso.yaml, dracut-live, livesys-scripts
-          and the payload image), then build the ISO from that layer instead.
+          "Collect the ISO..." failed
+            The ISO was built but landed somewhere unexpected. Check the
+            "Build the ISO" step output for the path it reported.
 
-          Scroll up to the "Build the ISO" step to confirm the real error.
+          Background on how this all fits together: installer/README.md
           ------------------------------------------------------------------
           EOF

@@ -299,11 +299,16 @@ own workflow, and it only runs when you ask.
 Artifacts are kept for 7 days, then GitHub deletes them. Download it when you need it; you
 can always run the workflow again.
 
-> **⚠️ Expect this one to fail for now.** The ISO tool needs a small config file baked into
-> the OS image, and Bazzite doesn't put it in the base we build on. Until AquariusOS adds its
-> own live-installer layer, this workflow stops with
-> `Missing /usr/lib/bootc-image-builder/iso.yaml`. That's a known gap, not something you did
-> wrong — the failed run prints an explanation at the bottom. See the Known gaps table below.
+**What it's actually doing** (useful when you're staring at a progress bar for an hour): the
+run has two halves. First it builds an *installer image* out of the `installer/` folder — a
+small live desktop with the Fedora installer on it, with a copy of AquariusOS tucked inside
+so installing works even with the network unplugged. Then it squashes that into the `.iso`.
+
+If it fails, the last step prints a plain-English guide to which half broke and what the
+usual causes are. Deeper background lives in `installer/README.md`.
+
+> **Heads up:** the ISO pipeline is new and has not yet been booted on a real PC. If the
+> stick doesn't boot, that's worth reporting rather than assuming you did it wrong.
 
 ### 7b. Write the ISO to a USB stick
 
@@ -367,7 +372,9 @@ updates even on days you don't touch anything.
 | No creator apps (Resolve, OBS, Krita, Blender…) | Phase 2. Commented-out stubs are in `build_files/build.sh` so the shape is visible. |
 | Signing key | You create it in Step 4 — it can't be created for you, it's yours. |
 | S3 hosting for ISO downloads | Not set up. ISOs come out as GitHub artifacts instead, which is fine until there's a public download page. |
-| The installer ISO doesn't build yet | Open. Two separate upstream problems. (1) bootc-image-builder can't make ISOs from Bazzite-based images at all — [known bug #1188](https://github.com/osbuild/bootc-image-builder/issues/1188) — so `anaconda-iso` was removed from the disk-image workflow. (2) Its replacement, Titanoboa, needs `/usr/lib/bootc-image-builder/iso.yaml` inside the image, and Bazzite only adds that in a separate installer layer it builds for its own ISOs. AquariusOS needs an equivalent live-installer layer (modelled on [ublue-os/bazzite `installer/`](https://github.com/ublue-os/bazzite/tree/main/installer)) before Step 7 goes green. |
+| ISO built, but never tested on real hardware | Open. The pieces are all in place (Step 7), but nobody has yet booted the resulting USB stick on an actual PC. Until someone does, treat the first ISO as unproven. |
+| Live session still looks like Bazzite | Cosmetic, Phase 3. The installer USB shows plain Bazzite KDE with an AquariusOS terminal greeting — we didn't carry over Bazzite's wallpaper, panel layout or login popups. See `installer/README.md`. |
+| Updates aren't signature-checked after install | Open. Bazzite tells a freshly installed machine to verify image signatures on every update. AquariusOS can't yet, because it doesn't ship a signing policy for `ghcr.io/stoneharborent` — so that check is switched off. Noted in `installer/titanoboa_hook_postrootfs.sh`; turn it on the day the policy exists. |
 | Artifacthub listing | Optional, ignored. See `artifacthub-repo.yml`. |
 
 ---
