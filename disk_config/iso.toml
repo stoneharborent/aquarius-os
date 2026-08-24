@@ -1,3 +1,19 @@
+# ⚠️ CURRENTLY UNUSED — kept on purpose, nothing reads this file today.
+#
+# This file only means something to bootc-image-builder, and bootc-image-builder
+# cannot build ISOs from Bazzite-based images right now. That's a known bug
+# upstream: https://github.com/osbuild/bootc-image-builder/issues/1188
+# (it fails while resolving packages, because it can't read the terra repo's GPG
+# keys through file:// paths).
+#
+# So "anaconda-iso" was removed from .github/workflows/build-disk.yml, and
+# AquariusOS installer ISOs are now built by the separate
+# "Build AquariusOS ISO (Titanoboa)" workflow (.github/workflows/build-iso.yml),
+# which does not read this file at all.
+#
+# Leave this file here. If issue 1188 is fixed, adding "anaconda-iso" back to
+# the build-disk.yml matrix makes it live again with no other changes.
+# ------------------------------------------------------------------------------
 # AquariusOS installer ISO configuration (KDE desktop — matches our Bazzite base).
 #
 # This is the file the ISO build uses. It was created from iso-kde.toml, which is

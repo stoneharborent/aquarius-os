@@ -148,9 +148,10 @@ GitHub disables automated workflows on a freshly pushed repo until you say yes.
 1. On your repo page, click the **Actions** tab (top row: Code, Issues, Pull requests, Actions…).
 2. You'll see a message about workflows existing in this repository. Click the green button —
    it says something like **"I understand my workflows, go ahead and enable them"**.
-3. You should now see two workflows listed in the left sidebar:
+3. You should now see three workflows listed in the left sidebar:
    - **Build AquariusOS image** — the main one; builds the OS
-   - **Build AquariusOS disk images** — makes the installer ISO; you run this manually later
+   - **Build AquariusOS ISO (Titanoboa)** — makes the USB installer; you run this manually later
+   - **Build AquariusOS disk images** — makes a virtual-machine disk for testing; also manual
 
 ---
 
@@ -276,30 +277,58 @@ ways to actually run it:
 
 ## Step 7 — Building an installer ISO (when you're ready to test on real hardware)
 
-An ISO is the file you write to a USB stick to install an OS on a blank machine. There's a
-second workflow for it, and it only runs when you ask.
+An ISO is the file you write to a USB stick to install an OS on a blank machine. It has its
+own workflow, and it only runs when you ask.
 
 **Prerequisite:** Step 5 must have succeeded at least once, and the package should be public
 (Step 6). The ISO builder downloads your published image — it can't build from nothing.
 
-1. Repo → **Actions** tab → **Build AquariusOS disk images** in the left sidebar.
-2. Click **Run workflow**. You'll get two options:
-   - **Upload to S3** — leave as `false`. (That's for hosting downloads on cloud storage;
-     we don't have a bucket and don't need one yet.)
-   - **platform** — choose **amd64**. That's normal PCs, gaming desktops and handhelds.
-     `arm64` is a different kind of chip and is not our target (Roadmap Phase 6).
-3. Click the green **Run workflow**. This one is slow — plan on an hour.
-4. When it's green, open the finished run and scroll to the bottom. Under **Artifacts**
-   there's a downloadable `.zip` containing:
-   - an **`install.iso`** — the USB installer
-   - a **`.qcow2`** — a virtual machine disk, for testing in a VM
+### 7a. Run the ISO workflow
+
+1. Repo → **Actions** tab → **Build AquariusOS ISO (Titanoboa)** in the left sidebar.
+2. Click the **Run workflow** button on the right.
+3. There's one option, **Container image to turn into an ISO**. Leave it exactly as it is
+   (`ghcr.io/stoneharborent/aquarius-os:latest`) — that's your published OS.
+4. Click the green **Run workflow**. This one is slow — plan on an hour. You can close the
+   tab; it keeps running on GitHub's machines.
+5. When it finishes, click into the run and scroll to the bottom. Under **Artifacts** there's
+   a downloadable `.zip` containing:
+   - the **`.iso`** — the USB installer
+   - a **`-CHECKSUM`** text file — proof the download didn't get corrupted (safe to ignore)
+
+Artifacts are kept for 7 days, then GitHub deletes them. Download it when you need it; you
+can always run the workflow again.
+
+> **⚠️ Expect this one to fail for now.** The ISO tool needs a small config file baked into
+> the OS image, and Bazzite doesn't put it in the base we build on. Until AquariusOS adds its
+> own live-installer layer, this workflow stops with
+> `Missing /usr/lib/bootc-image-builder/iso.yaml`. That's a known gap, not something you did
+> wrong — the failed run prints an explanation at the bottom. See the Known gaps table below.
+
+### 7b. Write the ISO to a USB stick
+
+Unzip the artifact first, so you have the plain `.iso` file. Then either:
+
+- **Fedora Media Writer** (recommended, free — https://fedoraproject.org/tools/): install it,
+  open it, choose **Select .iso file**, pick your ISO, pick the USB drive, click **Write**.
+- **balenaEtcher** (free, also fine — https://etcher.balena.io): drag the ISO in, pick the
+  USB drive, click **Flash**.
+
+Either one **erases the USB stick completely**. Use a stick you don't care about, 8 GB or
+larger, and double-check you picked the USB drive and not an external hard disk.
+
+Then boot the target PC from that USB stick (usually F12 or Del at power-on) and follow the
+installer.
+
+### What about the other workflow?
+
+**Build AquariusOS disk images** now only makes a `.qcow2` — a virtual-machine disk, useful
+for testing in a VM, not for USB sticks. Run it the same way (Actions → Run workflow →
+leave **Upload to S3** as `false`, choose **amd64** for platform).
 
 > **Heads up on testing:** your Mac is Apple Silicon, so it can only *emulate* an x86 PC,
 > which is painfully slow and not a fair test. Real testing means a spare x86 PC or handheld,
 > or a cheap cloud VM. Don't judge AquariusOS by how it runs under emulation on the Mac.
-
-**To write the ISO to a USB stick:** use https://etcher.balena.io (free, Mac app, drag the
-ISO in, pick the USB drive, click Flash). Note this **erases the USB stick** completely.
 
 **More depth on ISOs and custom images:** https://docs.bazzite.gg/Advanced/creating_custom_image/
 
@@ -338,6 +367,7 @@ updates even on days you don't touch anything.
 | No creator apps (Resolve, OBS, Krita, Blender…) | Phase 2. Commented-out stubs are in `build_files/build.sh` so the shape is visible. |
 | Signing key | You create it in Step 4 — it can't be created for you, it's yours. |
 | S3 hosting for ISO downloads | Not set up. ISOs come out as GitHub artifacts instead, which is fine until there's a public download page. |
+| The installer ISO doesn't build yet | Open. Two separate upstream problems. (1) bootc-image-builder can't make ISOs from Bazzite-based images at all — [known bug #1188](https://github.com/osbuild/bootc-image-builder/issues/1188) — so `anaconda-iso` was removed from the disk-image workflow. (2) Its replacement, Titanoboa, needs `/usr/lib/bootc-image-builder/iso.yaml` inside the image, and Bazzite only adds that in a separate installer layer it builds for its own ISOs. AquariusOS needs an equivalent live-installer layer (modelled on [ublue-os/bazzite `installer/`](https://github.com/ublue-os/bazzite/tree/main/installer)) before Step 7 goes green. |
 | Artifacthub listing | Optional, ignored. See `artifacthub-repo.yml`. |
 
 ---

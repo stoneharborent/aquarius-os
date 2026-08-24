@@ -1,6 +1,10 @@
 ---
-# Builds installable AquariusOS disk images (a bootable .iso and a .qcow2 VM disk)
-# from the already-published container image. Run it by hand from the Actions tab.
+# Builds a .qcow2 virtual-machine disk of AquariusOS from the already-published
+# container image. Run it by hand from the Actions tab.
+#
+# Note: this workflow used to build the installer .iso too. It no longer does —
+# see the matrix comment below. ISOs now come from the separate
+# "Build AquariusOS ISO (Titanoboa)" workflow (.github/workflows/build-iso.yml).
 name: Build AquariusOS disk images
 
 on:
@@ -43,7 +47,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        disk-type: ["qcow2", "anaconda-iso"]
+        # "anaconda-iso" was removed on purpose. bootc-image-builder cannot
+        # currently build ISOs from Bazzite-based images — a known upstream bug
+        # (https://github.com/osbuild/bootc-image-builder/issues/1188: it fails
+        # while resolving packages because it can't read the terra repo's GPG
+        # keys). Only qcow2 works, so only qcow2 is built here. Installer ISOs
+        # come from the "Build AquariusOS ISO (Titanoboa)" workflow instead.
+        # To try ISOs here again once the bug is fixed, add "anaconda-iso" back
+        # to this list — the config-file line further down already knows how to
+        # pick disk_config/iso.toml for it.
+        disk-type: ["qcow2"]
     permissions:
       contents: read
       packages: read
