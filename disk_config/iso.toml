@@ -4,14 +4,14 @@
 # the upstream template's KDE variant. Both the Justfile (`just build-iso`) and
 # .github/workflows/build-disk.yml look for THIS filename (iso.toml).
 #
-# ⚠️ TODO (Royce): replace CHANGEME-github-username below with your real GitHub
+# ⚠️ TODO (Royce): replace  below with your real GitHub
 # username BEFORE building an ISO. The line tells the installer which published
 # image to install onto the machine. If it's wrong, the ISO installs the wrong OS.
 
 [customizations.installer.kickstart]
 contents = """
 %post
-bootc switch --mutate-in-place --transport registry ghcr.io/CHANGEME-github-username/aquarius-os:latest
+bootc switch --mutate-in-place --transport registry ghcr.io//aquarius-os:latest
 %end
 """
 
