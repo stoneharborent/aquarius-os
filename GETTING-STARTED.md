@@ -24,7 +24,11 @@ That's it. That's the vocabulary.
 
 ## Step 0 — Fill in your GitHub username (2 minutes)
 
-Three files have a placeholder that must become your real GitHub username — the part of your
+> **Already done in this repo.** These files are set to `stoneharborent`. You only need this
+> step if you are starting from a fresh copy of the template, where the files still contain
+> the `CHANGEME-github-username` placeholder. Skip to Step 1 otherwise.
+
+Four files have a placeholder that must become your real GitHub username — the part of your
 profile URL after `github.com/`. If your profile is `github.com/royceadkins`, your username is
 `royceadkins`.
 
@@ -37,23 +41,40 @@ cd ~/Library/Mobile\ Documents/com~apple~CloudDocs/Workflow/Branches/Apps/Aquari
 # ⬇️ Change YOUR-USERNAME on this line only
 MYNAME="YOUR-USERNAME"
 
-sed -i '' "s/CHANGEME-github-username/${MYNAME}/g" \
-  aquarius-os.env \
-  disk_config/iso.toml \
-  disk_config/iso-kde.toml \
-  disk_config/iso-gnome.toml
-
-grep -rn "${MYNAME}" aquarius-os.env disk_config/
+# Safety check: refuses to run if the line above wasn't edited. Without this, an empty
+# MYNAME silently DELETES the placeholder and you get "ghcr.io//aquarius-os" — an
+# address with no owner in it, which builds fine but installs the wrong thing.
+if [ -z "${MYNAME}" ] || [ "${MYNAME}" = "YOUR-USERNAME" ]; then
+  echo "STOP: edit the MYNAME line first. Nothing was changed."
+else
+  sed -i '' "s/CHANGEME-github-username/${MYNAME}/g" \
+    aquarius-os.env \
+    disk_config/iso.toml \
+    disk_config/iso-kde.toml \
+    disk_config/iso-gnome.toml
+  echo "Done. Now verify below."
+fi
 ```
 
-The last command prints the lines it changed. You should see your username in four files and
-**no remaining `CHANGEME`**. To double-check:
+Now verify. Paste this **exactly** — it checks for the finished result, not just the absence
+of the placeholder:
 
 ```bash
-grep -rn "CHANGEME" . --exclude-dir=.git
+grep -rn "ghcr.io/${MYNAME}/aquarius-os" disk_config/ && \
+grep -n "REPO_ORGANIZATION" aquarius-os.env
 ```
 
-That should print nothing at all.
+You should see your username in all three `disk_config` files plus `aquarius-os.env`.
+
+Finally, confirm nothing was left empty or unreplaced:
+
+```bash
+grep -rn "CHANGEME\|ghcr.io//" . --exclude-dir=.git
+```
+
+That should print nothing at all. If it prints a line containing `ghcr.io//` (two slashes,
+no name between them), the substitution ran with an empty username — re-check the `MYNAME`
+line and run the block again.
 
 ---
 
