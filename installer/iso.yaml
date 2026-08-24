@@ -14,6 +14,15 @@
 # the booting kernel finds the disc it came from. If you change one, change both
 # or the USB stick will not boot.
 #
+# A note on the label, so nobody "fixes" it later: the ISO tool prints
+#   -volid "AquariusOS-Live" does not comply to ISO 9660 / ECMA 119 rules
+# because the 1988 standard only allows A-Z, 0-9 and underscore. That warning is
+# expected and harmless — it carries on and writes the disc, every modern tool
+# and bootloader reads mixed case and hyphens fine, and Bazzite's own
+# "Bazzite-Live" label is non-compliant in exactly the same way. Left as-is
+# deliberately. If you ever do change it, change it in ALL THREE places in this
+# file (the label, and the CDLABEL= in each boot line) or the stick won't boot.
+#
 # Adapted from ublue-os/bazzite installer/iso.yaml (Apache-2.0),
 # read at commit 0fb3abacb1135fbb50cbb575a18f53fea683ab0f (2026-08-23).
 # Structure is identical to Bazzite's; only the names have changed.

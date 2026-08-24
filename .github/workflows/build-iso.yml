@@ -108,6 +108,8 @@ jobs:
           echo "${REGISTRY_TOKEN}" \
             | sudo podman login ghcr.io -u "${REGISTRY_USER}" --password-stdin
 
+      # Also creates the folder the finished ISO will land in. That `mkdir` is
+      # load-bearing — see the long comment on the "Build the ISO" step.
       - name: Work out the image and ISO file names
         id: names
         env:
@@ -119,9 +121,15 @@ jobs:
           # Turn "ghcr.io/owner/aquarius-os:latest" into "aquarius-os-latest".
           NAME_PART="${IMAGE_REF##*/}"
           ISO_BASENAME="${NAME_PART/:/-}-live-amd64.iso"
+          # One folder holds the finished ISO and its checksum, and is what gets
+          # uploaded. Deliberately in RUNNER_TEMP and NOT in the workspace —
+          # again, see the "Build the ISO" step.
+          UPLOAD_DIR="${RUNNER_TEMP}/upload"
+          mkdir -p "${UPLOAD_DIR}"
           echo "image-ref=${IMAGE_REF}" >> "$GITHUB_OUTPUT"
           echo "iso-basename=${ISO_BASENAME}" >> "$GITHUB_OUTPUT"
-          echo "iso-dest=${GITHUB_WORKSPACE}/output/${ISO_BASENAME}" >> "$GITHUB_OUTPUT"
+          echo "upload-dir=${UPLOAD_DIR}" >> "$GITHUB_OUTPUT"
+          echo "iso-dest=${UPLOAD_DIR}/${ISO_BASENAME}" >> "$GITHUB_OUTPUT"
 
       # ---- Stage 1 -----------------------------------------------------------
       # Build the live installer image from installer/. This is the step that was
@@ -157,6 +165,31 @@ jobs:
       # published AquariusOS image directly). Pinned to a specific commit of the
       # Titanoboa action (like every other action in this repo) so a change
       # upstream can never silently change what we build.
+      #
+      # ⚠️ Two sharp edges in how this action handles `iso-dest`. Both bit us on
+      # run 32693412902, where the ISO built perfectly and then the hand-off
+      # failed. Do not "tidy up" the path below without reading this.
+      #
+      # The action does, in effect:
+      #     cd "$GITHUB_ACTION_PATH"
+      #     dest="$(realpath --relative-base="$GITHUB_WORKSPACE" "$iso_dest")"
+      #     dest="$(realpath -m "$dest")"
+      #     mkdir -p "$(dirname "$dest")"; mv "$built_iso" "$dest"
+      #
+      #  1. That first `realpath` has no -m, so it requires the PARENT FOLDER of
+      #     iso-dest to already exist. It doesn't create it. If it's missing you
+      #     get "No such file or directory" and an empty dest — after an hour of
+      #     successful ISO building. The "Work out the ... names" step above
+      #     creates it for exactly this reason.
+      #  2. `--relative-base` turns any path INSIDE the workspace into a relative
+      #     one, and the next line re-resolves that against the current folder —
+      #     which the action changed to its own install directory. So a workspace
+      #     path quietly relocates the ISO into _actions/ublue-os/titanoboa/...
+      #     A path OUTSIDE the workspace passes through untouched. That is why
+      #     iso-dest points at RUNNER_TEMP and not at the repo folder.
+      #
+      # Because the path survives intact, the ISO lands directly in the upload
+      # folder and no further moving is needed.
       - name: Build the ISO
         id: build
         uses: ublue-os/titanoboa@5c457c3d0518bd17e754be0fd98a60d29d26abb4 # main @ 2026-05-19
@@ -164,27 +197,31 @@ jobs:
           image-ref: localhost/payload:latest
           iso-dest: ${{ steps.names.outputs.iso-dest }}
 
-      # Collect the ISO and a checksum in one folder inside the workspace, so
-      # the upload step has a single predictable place to grab from.
-      - name: Collect the ISO and add a checksum file
-        id: package
+      # The ISO is already sitting in the upload folder, so all that's left is a
+      # checksum next to it — a short fingerprint you can use later to prove the
+      # download didn't get corrupted. The `if` is a seatbelt: if a future
+      # version of the action ever puts the file somewhere else, we move it back
+      # instead of failing.
+      - name: Add a checksum file next to the ISO
         env:
           ISO_PATH: ${{ steps.build.outputs.iso-dest }}
+          UPLOAD_DIR: ${{ steps.names.outputs.upload-dir }}
         run: |
           set -euxo pipefail
-          UPLOAD_DIR="${GITHUB_WORKSPACE}/upload"
           ISO_NAME="$(basename "${ISO_PATH}")"
-          mkdir -p "${UPLOAD_DIR}"
-          mv "${ISO_PATH}" "${UPLOAD_DIR}/"
+          if [[ "${ISO_PATH}" != "${UPLOAD_DIR}/${ISO_NAME}" ]]; then
+            echo "Note: the ISO came back from ${ISO_PATH}, moving it into place."
+            mv "${ISO_PATH}" "${UPLOAD_DIR}/"
+          fi
           cd "${UPLOAD_DIR}"
           sha256sum "${ISO_NAME}" | tee "${ISO_NAME}-CHECKSUM"
-          echo "upload-dir=${UPLOAD_DIR}" >> "$GITHUB_OUTPUT"
+          ls -lh "${UPLOAD_DIR}"
 
       - name: Upload the ISO to Job Artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.names.outputs.iso-basename }}
-          path: ${{ steps.package.outputs.upload-dir }}
+          path: ${{ steps.names.outputs.upload-dir }}
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
@@ -215,7 +252,12 @@ jobs:
             then the payload build silently skipped its last steps — that file
             is copied in at the very end of installer/build.sh.
 
-          "Collect the ISO..." failed
+            If instead you see the ISO finish writing and THEN a realpath error
+            mentioning a missing directory: something changed the iso-dest path.
+            Read the long comment on the "Build the ISO" step — that path has to
+            live outside the workspace and its folder has to exist first.
+
+          "Add a checksum file..." failed
             The ISO was built but landed somewhere unexpected. Check the
             "Build the ISO" step output for the path it reported.
 
