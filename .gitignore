@@ -1,0 +1,10 @@
+cosign.key
+_build_*
+output
+_build-*/**
+*_chunkah_*
+*_rpm-ostree_*
+
+# macOS / iCloud noise (this repo lives in an iCloud-synced folder)
+.DS_Store
+.iCloud*

@@ -1,0 +1,13 @@
+# OPTIONAL — ignore this file for now.
+#
+# It only matters if we later want AquariusOS listed publicly on
+# https://artifacthub.io (a directory of custom container images). Nothing in the
+# build reads it, and leaving it untouched breaks nothing.
+#
+# TODO (Phase 3, only if we want a public listing): sign up at artifacthub.io,
+# add the repository there, and paste the Repository ID it gives you below.
+
+repositoryID: my-custom-id-here # Fill in with your own credentials
+owners: # (optional, used to claim repository ownership)
+  - name: Royce Adkins
+    email: my_email@email.com

@@ -1,0 +1,31 @@
+# AquariusOS installer ISO configuration (KDE desktop — matches our Bazzite base).
+#
+# This is the file the ISO build uses. It was created from iso-kde.toml, which is
+# the upstream template's KDE variant. Both the Justfile (`just build-iso`) and
+# .github/workflows/build-disk.yml look for THIS filename (iso.toml).
+#
+# ⚠️ TODO (Royce): replace CHANGEME-github-username below with your real GitHub
+# username BEFORE building an ISO. The line tells the installer which published
+# image to install onto the machine. If it's wrong, the ISO installs the wrong OS.
+
+[customizations.installer.kickstart]
+contents = """
+%post
+bootc switch --mutate-in-place --transport registry ghcr.io/CHANGEME-github-username/aquarius-os:latest
+%end
+"""
+
+[customizations.installer.modules]
+enable = [
+  "org.fedoraproject.Anaconda.Modules.Storage",
+  "org.fedoraproject.Anaconda.Modules.Runtime",
+  "org.fedoraproject.Anaconda.Modules.Network",
+  "org.fedoraproject.Anaconda.Modules.Security",
+  "org.fedoraproject.Anaconda.Modules.Services",
+  "org.fedoraproject.Anaconda.Modules.Users",
+  "org.fedoraproject.Anaconda.Modules.Timezone"
+]
+
+disable = [
+  "org.fedoraproject.Anaconda.Modules.Subscription",
+]
