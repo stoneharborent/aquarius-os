@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+"""aq-ingest launcher.
+
+Installed to /usr/bin/aq-ingest in the AquariusOS image, with the aq_ingest package
+installed alongside the normal Python libraries. When run straight out of this repo it
+finds the package sitting next to it.
+"""
+
+import os
+import sys
+
+if sys.version_info < (3, 11):
+    sys.stderr.write(
+        "aq-ingest needs Python 3.11 or newer (it reads its settings file with tomllib, "
+        "which older versions do not have).\n"
+        f"This one is Python {sys.version.split()[0]} at {sys.executable}.\n"
+        "AquariusOS ships a new enough Python; on another computer, run aq-ingest with a "
+        "newer one, for example: python3.11 -m aq_ingest --help\n"
+    )
+    raise SystemExit(2)
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if os.path.isdir(os.path.join(_HERE, "aq_ingest")) and _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
+from aq_ingest.cli import main  # noqa: E402  (path and version checked above)
+
+if __name__ == "__main__":
+    sys.exit(main())

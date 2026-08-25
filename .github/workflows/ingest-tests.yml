@@ -1,0 +1,74 @@
+---
+# Tests for the aq-ingest "Editor-Ready Ingest" helper (os-image/ingest/).
+#
+# This is completely separate from the image-build workflows: it does not build a
+# container, it just installs ffmpeg + libheif on a plain Ubuntu runner and runs the
+# Python test suite. Every fixture is synthesized with ffmpeg, so no media is committed.
+name: aq-ingest tests
+
+on:
+  pull_request:
+    paths:
+      - 'ingest/**'
+      - '.github/workflows/ingest-tests.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'ingest/**'
+      - '.github/workflows/ingest-tests.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Decision table + fixture matrix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ffmpeg and libheif tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libheif-examples
+
+      - name: Show tool versions
+        run: |
+          ffmpeg -version | head -1
+          ffprobe -version | head -1
+          heif-enc --version || true
+          heif-convert --version || true
+          python3 --version
+
+      - name: Check the tool starts and prints its help
+        working-directory: ingest
+        run: |
+          ./aq-ingest --version
+          ./aq-ingest --help > /dev/null
+
+      - name: Run the test suite
+        working-directory: ingest
+        run: python3 -m unittest discover -s tests -t . -v
+
+      - name: Fail if the HEIC tests were skipped
+        working-directory: ingest
+        run: |
+          # heif-enc and heif-convert are installed above, so on CI these must actually
+          # run. A skip here means the packages moved and the coverage silently vanished.
+          for tool in heif-enc heif-convert; do
+            if ! command -v "$tool" > /dev/null; then
+              echo "$tool is missing on the runner — the HEIC tests would be skipped."
+              exit 1
+            fi
+          done
