@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  AquariusOS default wallpaper — "The Pour"
+  Direction: Flow State. Design source of truth: branding/tokens.md
+
+  This is the SOURCE file. The PNGs that actually ship with the OS are rendered
+  from this file — see branding/README.md for the one command that does it.
+  Edit this file, re-render, commit both. Never hand-edit the PNGs.
+
+  Authored at 1920x1080. preserveAspectRatio="xMidYMid slice" means it crops
+  gracefully to 16:10 and other shapes instead of letterboxing, because every
+  ribbon runs past the edge of the frame on purpose.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080"
+     viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <!-- Base: a faint indigo glow off the top-right corner, falling into void. -->
+    <radialGradient id="sky" gradientUnits="userSpaceOnUse"
+                    cx="1497.6" cy="-108" r="2688"
+                    gradientTransform="translate(1497.6,-108) scale(1,0.401786) translate(-1497.6,108)">
+      <stop offset="0"    stop-color="#0B0E22"/>
+      <stop offset="0.55" stop-color="#06070C"/>
+      <stop offset="1"    stop-color="#06070C"/>
+    </radialGradient>
+
+    <!-- Ribbon 1 — the main pour. Starlight over nebula. -->
+    <linearGradient id="r1" gradientUnits="objectBoundingBox" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0"    stop-color="#8AB4FF" stop-opacity="0"/>
+      <stop offset="0.25" stop-color="#5B4BE0" stop-opacity="0.42"/>
+      <stop offset="0.55" stop-color="#8AB4FF" stop-opacity="0.5"/>
+      <stop offset="0.80" stop-color="#8AB4FF" stop-opacity="0.14"/>
+      <stop offset="1"    stop-color="#8AB4FF" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Ribbon 2 — the thin "ancient" gold thread. Rare by design. -->
+    <linearGradient id="r2" gradientUnits="objectBoundingBox" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0"    stop-color="#E6DDB8" stop-opacity="0"/>
+      <stop offset="0.45" stop-color="#E6DDB8" stop-opacity="0.2"/>
+      <stop offset="0.85" stop-color="#E6DDB8" stop-opacity="0"/>
+      <stop offset="1"    stop-color="#E6DDB8" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Ribbon 3 — a deep nebula undertow, low and quiet. -->
+    <linearGradient id="r3" gradientUnits="objectBoundingBox" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0"    stop-color="#5B4BE0" stop-opacity="0"/>
+      <stop offset="0.15" stop-color="#5B4BE0" stop-opacity="0"/>
+      <stop offset="0.50" stop-color="#5B4BE0" stop-opacity="0.16"/>
+      <stop offset="1"    stop-color="#5B4BE0" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Blur amounts are stdDeviation in these 1920x1080 units, so they scale
+         with the render resolution automatically. -->
+    <filter id="b1" x="-50%" y="-50%" width="200%" height="200%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="23.6"/>
+    </filter>
+    <filter id="b2" x="-50%" y="-50%" width="200%" height="200%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="13.8"/>
+    </filter>
+    <filter id="b3" x="-50%" y="-50%" width="200%" height="200%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="26"/>
+    </filter>
+  </defs>
+
+  <rect x="0" y="0" width="1920" height="1080" fill="url(#sky)"/>
+
+  <!-- Every ribbon is drawn wider than the canvas so the rotation never shows a
+       cut end. Rotation is about the centre of the frame. -->
+  <g transform="rotate(-13 960 540)">
+    <rect x="-560" y="237.6" width="3040" height="313.2" fill="url(#r1)" filter="url(#b1)"/>
+  </g>
+  <g transform="rotate(-13 960 540)">
+    <rect x="-560" y="432" width="3040" height="64.8" fill="url(#r2)" filter="url(#b2)"/>
+  </g>
+  <g transform="rotate(-11 960 540)">
+    <rect x="-560" y="604.8" width="3040" height="183.6" fill="url(#r3)" filter="url(#b3)"/>
+  </g>
+
+  <!-- The mark, bottom right, barely there. Kept ~100 units clear of the right
+       edge so a 16:10 crop (which shaves ~96 units off each side) never cuts it. -->
+  <g transform="translate(1688 892) scale(1.5)" opacity="0.4" fill="none"
+     stroke="#EDEFF7" stroke-width="5" stroke-linecap="round">
+    <path d="M14 54 30 12q1.4-3.6 4 0L50 54"/>
+    <path d="M20 40q6-6 12 0t12 0"/>
+  </g>
+</svg>
