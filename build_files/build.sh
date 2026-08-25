@@ -33,6 +33,53 @@ cp -avf "/ctx/system_files"/. /
 dnf5 install -y htop
 
 # ==============================================================================
+# THE AQUARIUSOS LOOK — fonts
+# ==============================================================================
+# The design uses three typefaces. All three are free and open-source, so all
+# three can legally ship inside the OS.
+#
+#   Inter           — everything you read in the interface: menus, buttons,
+#                     dialogs, labels.
+#   JetBrains Mono  — code and the terminal.
+#   Sora            — headlines and display text.
+#
+# Two of them are already packaged by Fedora, so we just ask for them by name.
+# A useful side effect: both of those packages also tell the system "when
+# something asks for a plain sans-serif font, give it Inter" and "when something
+# asks for a monospace font, give it JetBrains Mono". That is exactly the
+# behaviour we want, so we get the default fonts for free.
+#
+# Deliberately NOT installed:
+#   rsms-inter-vf-fonts     the variable-font build of Inter. Its font family is
+#                           registered as "Inter Variable", not "Inter", so apps
+#                           asking for "Inter" would not find it. Confusing for
+#                           no gain.
+#   jetbrains-mono-fonts-all  drags in the "NL" (no-ligatures) variant too. We
+#                           only want the normal one.
+# ------------------------------------------------------------------------------
+
+dnf5 install -y rsms-inter-fonts jetbrains-mono-fonts
+
+# Sora is not packaged by Fedora — by anyone, in fact — so the font file itself
+# is committed into this repo and copied in by the system_files step above:
+#   /usr/share/fonts/sora-fonts/Sora[wght].ttf
+#   /usr/share/licenses/sora-fonts/OFL.txt   (the licence must ship with it)
+# Where it came from and how to update it: ../branding/README.md.
+#
+# Now the important bit. Linux keeps an index of every installed font, and that
+# index is only rebuilt automatically when a font arrives as an installed
+# PACKAGE. Sora arrives as a plain copied file, so nothing rebuilds the index
+# and the font would be invisible to every app. This command rebuilds it by hand.
+#
+# It must run AFTER both the system_files copy and the dnf5 line above, so it
+# catches all three fonts in one pass.
+#
+#   --system-only  write the index into /usr/… (part of the image) and not into
+#                  a user's home folder, which on this kind of OS lives in a
+#                  place that gets thrown away at build time.
+fc-cache --system-only --force --verbose
+
+# ==============================================================================
 # PHASE 2 — The Creator Layer  (NOT ACTIVE YET — stubs only)
 # ==============================================================================
 # Everything below is commented out on purpose. It is the shape of what comes
