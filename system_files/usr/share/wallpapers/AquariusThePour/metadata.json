@@ -1,0 +1,13 @@
+{
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "Stone Harbor Entertainment"
+            }
+        ],
+        "Id": "AquariusThePour",
+        "License": "CC-BY-SA-4.0",
+        "Name": "The Pour"
+    },
+    "X-KDE-PlasmaImageWallpaper-AccentColor": "#8AB4FF"
+}
