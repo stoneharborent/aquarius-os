@@ -78,7 +78,28 @@ driver. It is slow, and that is fine: it only has to draw an installer. The mach
 you end up with runs the proper NVIDIA drivers.
 
 Both blocks are copied from Bazzite, which hits exactly the same problem on its own
-NVIDIA ISOs.
+NVIDIA ISOs — but the second one needed a fix before it worked for us.
+
+### The terra-mesa trap (read before touching that block)
+
+Bazzite does not use Fedora's Mesa. It uses **Valve's patched Mesa** from a repo
+called `terra-mesa`, and then switches that repo **off** in the image it ships. Our
+ISO build starts from that shipped image, so a plain `dnf reinstall
+mesa-vulkan-drivers` can only see Fedora's Mesa — a different version — and dies
+with *"Installed packages ... are not available in repositories in the same
+version ... cannot reinstall"*. That is what killed the first NVIDIA ISO attempt
+(run 32822911806, 2026-08-25).
+
+Worse, the `|| dnf install` fallback we inherited from Bazzite hides it: the
+package is already installed, so that command succeeds while doing nothing at all,
+and the missing file stays missing.
+
+The fix is `--enable-repo=terra-mesa` on the reinstall — switching the repo back on
+for that one command, exactly as Bazzite's own image build does whenever it needs
+Valve's Mesa. **Do not remove that flag.** If this ever fails again, the check now
+prints what Mesa is installed, whether the driver library survived, and whether the
+repo is visible at all, so you don't have to burn another hour of build time
+guessing.
 
 ## Credit
 

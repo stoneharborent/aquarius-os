@@ -279,8 +279,10 @@ qrencode -o "$SECUREBOOT_DOC_URL_QR" "$SECUREBOOT_DOC_URL"
 # what make that fallback actually work.
 #
 # Lifted from ublue-os/bazzite installer/titanoboa_hook_postrootfs.sh
-# (Apache-2.0), same commit as the rest of this file. Unchanged apart from these
-# comments — Bazzite hits the identical problem on its own NVIDIA ISOs.
+# (Apache-2.0), same commit as the rest of this file — Bazzite hits the identical
+# problem on its own NVIDIA ISOs. We have since had to fix their version of the
+# Mesa reinstall, which does not work from a derived image; the long comment on
+# that block explains exactly why.
 
 # GTK apps refuse to open under the default renderer on NVIDIA. Force the GL one.
 if [[ $imageref == *-nvidia* ]]; then
@@ -289,18 +291,63 @@ if [[ $imageref == *-nvidia* ]]; then
     echo "GSK_RENDERER=gl" >>/etc/skel/.config/environment.d/99-nvidia-fix.conf
 fi
 
-# Re-enable nouveau. The NVIDIA image deliberately blocks it; the live session
-# needs it back, along with its Vulkan driver files. If those files aren't there
-# afterwards we fail loudly rather than ship an ISO that boots to a black screen.
+# ---- Re-enable nouveau -------------------------------------------------------
+# The NVIDIA image deliberately deletes one small file — the nouveau "ICD", the
+# note that tells Vulkan the open-source NVIDIA driver exists — so that games use
+# NVIDIA's real driver instead. The live session needs that file back, because in
+# here the real driver is the one that doesn't work.
+#
+# Getting it back means reinstalling the package that owns it, so rpm writes the
+# deleted file out again. That is the whole trick.
+#
+# ⚠️ THE `--enable-repo=terra-mesa` BELOW IS LOAD-BEARING. Do not delete it.
+# Bazzite does not use Fedora's Mesa; it uses Valve's patched build from a repo
+# called "terra-mesa", and then switches that repo OFF in the shipped image.
+# So a plain `dnf reinstall mesa-vulkan-drivers` inside this build can only see
+# Fedora's Mesa, which is a different version, and dies with:
+#
+#     Installed packages for argument 'mesa-vulkan-drivers' are not available
+#     in repositories in the same version ... cannot reinstall.
+#
+# (Run 32822911806, 2026-08-25. The `|| dnf install` fallback we inherited from
+# Bazzite does NOT save it — the package is already installed, so that command
+# succeeds while changing nothing, and the ICD stays missing.) Switching the repo
+# back on for just this one command is exactly what Bazzite's own image build
+# does whenever it needs Valve's Mesa.
+#
+# The `upgrade` fallback covers the day terra-mesa has moved to a newer build
+# than the one in the image: there is then nothing to "reinstall", but upgrading
+# rewrites the same files, which is all we actually need.
+#
+# nvidia-gpu-firmware is the easy one — it comes from Fedora's own repos and
+# reinstalls without any of this.
 if [[ $imageref == *-nvidia* ]]; then
-    for pkg in nvidia-gpu-firmware mesa-vulkan-drivers; do
-        dnf -yq reinstall --allowerasing $pkg ||
-            dnf -yq install --allowerasing $pkg
-    done
+    dnf -yq reinstall --allowerasing nvidia-gpu-firmware ||
+        dnf -yq install --allowerasing nvidia-gpu-firmware
+
+    # Note the trailing `|| :` — if BOTH of these fail we deliberately keep going
+    # rather than letting `set -e` kill the script here. dnf's own error still
+    # gets printed, and one step further down is the check that knows how to say
+    # what went wrong in plain English. One failure point, not two.
+    if ! dnf -yq reinstall --enable-repo=terra-mesa --allowerasing mesa-vulkan-drivers; then
+        dnf -yq upgrade --enable-repo=terra-mesa --allowerasing mesa-vulkan-drivers || :
+    fi
+
+    # Did it actually come back? If not, stop. An ISO that boots to a black
+    # screen is worse than no ISO, and this check is the only thing standing
+    # between us and one. Never "fix" a failure here by deleting this check.
     (
         shopt -u nullglob
         ls /usr/share/vulkan/icd.d/nouveau_icd.*.json >/dev/null
     ) || {
+        # Print what we can see, so the next person doesn't have to spend an
+        # hour re-running the build just to find out what state things were in.
+        echo >&2 "--- what mesa is actually installed ---"
+        rpm -q mesa-vulkan-drivers >&2 || :
+        echo >&2 "--- does the driver library itself exist? ---"
+        ls -l /usr/lib64/libvulkan_nouveau.so >&2 || :
+        echo >&2 "--- is the terra-mesa repo present? ---"
+        dnf repo list --all 2>/dev/null | grep -i terra >&2 || :
         echo >&2 "::error::No nouveau vulkan icds found at /usr/share/vulkan/icd.d/nouveau_icd.*.json"
         exit 1
     }
