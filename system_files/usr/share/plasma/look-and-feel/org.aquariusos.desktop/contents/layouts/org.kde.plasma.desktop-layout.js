@@ -1,0 +1,179 @@
+// =============================================================================
+// AquariusOS desktop layout
+// =============================================================================
+// This script builds the AquariusOS desktop: a slim bar across the top, a
+// floating dock at the bottom, and desktop icons stacked down the right-hand
+// edge. macOS-shaped, on purpose.
+//
+// WHEN IT RUNS
+//   Once, the first time a user logs in — and only if that user has no desktop
+//   layout saved yet. KDE checks for an existing layout before running this, so
+//   it can never rearrange a desktop somebody has already set up, and an OS
+//   update will never move their panels around.
+//
+//   That also means: to see a change to this file, you need a FRESH user
+//   account (or a fresh install). Logging out and back in is not enough.
+//
+// WHERE THE FILENAME COMES FROM
+//   KDE looks for a file at exactly this path and name inside a global theme.
+//   It is not configurable. Renaming it means no layout at all.
+//
+// A NOTE ON `gridUnit`
+//   Panel sizes are written as multiples of `gridUnit` rather than as pixel
+//   counts. gridUnit is the height of one line of the interface font, so panels
+//   scale correctly on a 4K display and on a small laptop without us hardcoding
+//   anything. Sizes are rounded to an even number because KDE's own panel
+//   settings only offer even heights.
+//
+// Design source: ../../../../../../../branding/tokens.md
+// =============================================================================
+
+var unit = gridUnit;
+
+// -----------------------------------------------------------------------------
+// 1. THE TOP BAR
+// -----------------------------------------------------------------------------
+// Full width, deliberately thin, and translucent so the wallpaper shows through
+// as a dark wash. Reading left to right: the AquariusOS launcher, the current
+// app's menus, a stretch of empty space, then the system tray and the clock
+// pushed to the far right.
+// -----------------------------------------------------------------------------
+var topBar = new Panel;
+topBar.location = "top";
+topBar.alignment = "left";
+topBar.lengthMode = "fill";     // spans the whole width of the screen
+topBar.floating = false;        // sits flush against the top edge
+topBar.hiding = "none";         // always visible, like a Mac menu bar
+topBar.opacity = "translucent";
+topBar.height = 2 * Math.ceil(unit * 1.6 / 2);
+
+// The launcher, wearing the AquariusOS mark. That icon is installed by this
+// image at /usr/share/icons/hicolor/scalable/apps/aquarius-logo.svg — the name
+// below is the filename without its extension.
+var launcher = topBar.addWidget("org.kde.plasma.kickoff");
+launcher.currentConfigGroup = ["General"];
+launcher.writeConfig("icon", "aquarius-logo");
+launcher.reloadConfig();
+
+// The current application's menus (File, Edit, View…), shown in the bar instead
+// of inside the window. This is the piece that makes the top bar feel like a
+// Mac menu bar rather than a Windows taskbar.
+topBar.addWidget("org.kde.plasma.appmenu");
+
+// A spring. It expands to fill whatever room is left, which is what shoves the
+// tray and clock over to the right-hand end.
+var topSpacer = topBar.addWidget("org.kde.plasma.panelspacer");
+topSpacer.currentConfigGroup = ["General"];
+topSpacer.writeConfig("expanding", true);
+topSpacer.reloadConfig();
+
+topBar.addWidget("org.kde.plasma.systemtray");
+topBar.addWidget("org.kde.plasma.digitalclock");
+
+// -----------------------------------------------------------------------------
+// 2. THE DOCK
+// -----------------------------------------------------------------------------
+// A floating, centred strip of app icons along the bottom. The three settings
+// that make it read as a dock rather than a taskbar are:
+//   floating   = true    — it hovers with a gap around it instead of touching
+//                          the screen edge
+//   alignment  = "center"— it sits in the middle rather than starting at a corner
+//   lengthMode = "fit"   — it shrinks to exactly the width of its icons instead
+//                          of stretching across the screen
+// -----------------------------------------------------------------------------
+var dock = new Panel;
+dock.location = "bottom";
+dock.alignment = "center";
+dock.lengthMode = "fit";
+dock.floating = true;
+dock.opacity = "translucent";
+// "dodgewindows": the dock slides out of the way when a window would cover it,
+// and comes back when the window moves. Change to "none" for always-on-top, or
+// "autohide" for hide-until-you-touch-the-edge.
+dock.hiding = "dodgewindows";
+dock.height = 2 * Math.ceil(unit * 3 / 2);
+
+// An icons-only task manager: pinned apps and running apps as a single row of
+// icons, no text labels.
+var tasks = dock.addWidget("org.kde.plasma.icontasks");
+tasks.currentConfigGroup = ["General"];
+
+// The apps pinned in the dock out of the box.
+//
+//   "preferred://browser"  whatever the user's default browser is, so this is
+//                          still right if they install a different one.
+//   "applications:NAME"    a specific app, named by its launcher file. If one of
+//                          these apps is not installed, its slot is simply not
+//                          shown — a wrong name here cannot break anything.
+//
+// To find the right name for an app, look in /usr/share/applications/ on a
+// running AquariusOS machine and use the filename.
+tasks.writeConfig("launchers", [
+    "preferred://browser",
+    "applications:steam.desktop",
+    "applications:org.kde.dolphin.desktop",
+    "applications:org.kde.konsole.desktop",
+    "applications:systemsettings.desktop"
+]);
+// Show windows from every virtual desktop, not just the current one — matches
+// how a Mac dock behaves.
+tasks.writeConfig("showOnlyCurrentDesktop", false);
+tasks.writeConfig("showOnlyCurrentActivity", false);
+tasks.reloadConfig();
+
+// -----------------------------------------------------------------------------
+// 3. THE DESKTOP ITSELF
+// -----------------------------------------------------------------------------
+// The wallpaper, and the arrangement of drive and file icons on the desktop.
+//
+// The two lines that produce the macOS-style right-hand icon column are
+// `arrangement` and `alignment`. Both are real, supported settings — this is not
+// a trick:
+//   arrangement = 1  fill a column downwards, then start a new column
+//   alignment   = 1  lay the columns out starting from the RIGHT edge
+// Together: icons stack down from the top-right corner, then move leftwards.
+// -----------------------------------------------------------------------------
+var allDesktops = desktopsForActivity(currentActivity());
+
+for (var i = 0; i < allDesktops.length; i++) {
+    var desktop = allDesktops[i];
+
+    // The wallpaper. Setting it here as well as in the global theme's `defaults`
+    // file is belt-and-braces: `defaults` covers a brand-new user, this covers
+    // the desktop being rebuilt for any other reason.
+    desktop.wallpaperPlugin = "org.kde.image";
+    desktop.currentConfigGroup = ["Wallpaper", "org.kde.image", "General"];
+    desktop.writeConfig("Image", "file:///usr/share/wallpapers/AquariusThePour/");
+    // 2 = scale the picture up until it fills the screen, cropping the overflow.
+    // The artwork runs off the edge of the frame by design, so cropping is safe.
+    desktop.writeConfig("FillMode", 2);
+
+    // Desktop icons.
+    desktop.currentConfigGroup = ["General"];
+    desktop.writeConfig("arrangement", 1);    // 0 = rows, 1 = columns
+    desktop.writeConfig("alignment", 1);      // 0 = from the left, 1 = from the right
+    desktop.writeConfig("sortMode", 1);       // 1 = by name
+    desktop.writeConfig("sortDirsFirst", true);
+    desktop.writeConfig("iconSize", 2);       // 2 = 48px
+    desktop.writeConfig("labelWidth", 1);     // 1 = medium-width label
+
+    desktop.reloadConfig();
+}
+
+// =============================================================================
+// TODO — what is deliberately NOT here yet
+// =============================================================================
+// The genuine macOS top bar also carries the focused window's TITLE and its
+// close / minimise / maximise BUTTONS, on the left of the bar.
+//
+// KDE Plasma 6 does not ship widgets for either of those. The only options are
+// third-party add-ons, and the good one for the window buttons is written in C++
+// and would need a compiler stage added to this repo's build. That is a real
+// piece of work with real maintenance attached, so it is not being smuggled into
+// a first pass.
+//
+// The top bar is therefore honestly "launcher + app menus + tray + clock"
+// today. When we do want the full treatment, the candidates are:
+//   - antroids/application-title-bar  (written in QML — could simply be copied
+//     into /usr/share/plasma/plasmoids/ by this image, no compiler needed)
+//   - IF-tiger/applet-window-buttons6 (written in C++ — needs a build stage)
