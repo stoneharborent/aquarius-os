@@ -88,8 +88,8 @@ built on, and why that specific one, is written up in
 | `Containerfile` | The recipe. Says "start from Bazzite, then run our build script." Used for both images — which Bazzite to start from is a knob it accepts. | Rarely |
 | `build_files/build.sh` | **The main file you edit.** Installs packages and makes changes on top of Bazzite. Applies to both images. This is where the creator apps will go in Phase 2. | Often |
 | `aquarius-os.env` | Settings: both image names, both base images, description, GitHub username. One place, used everywhere. | Once, at setup |
-| `system_files/` | Anything here gets copied into the OS's filesystem. `system_files/usr/…` becomes `/usr/…` in the running OS. Empty for now. | Phase 3 |
-| `branding/` | Staging area for wallpaper, logo, boot splash. Currently a README explaining the plan — no assets yet. | Phase 3 |
+| `system_files/` | Anything here gets copied into the OS's filesystem. `system_files/usr/…` becomes `/usr/…` in the running OS. Holds the desktop look: colour scheme, wallpaper, fonts, layout. | Sometimes |
+| `branding/` | **The design.** Colours, fonts, logo and wallpaper artwork, with `tokens.md` as the single source of truth. Read [`branding/README.md`](./branding/README.md) before changing how anything looks. | To change the look |
 | `disk_config/` | Settings for turning the OS image into an installable `.iso` / VM disk. `iso.toml` is the one that's used. | Once, at setup |
 | `.github/workflows/build.yml` | The build robot's instructions: build **both** OS images and publish them. Runs on every push + nightly. | No |
 | `.github/workflows/build-iso.yml` | The second robot: turns one published OS image into a USB installer `.iso`. You run this by hand and pick which image. | No |
@@ -109,6 +109,9 @@ Planning docs live one level up: `../ROADMAP.md` is the master plan (phases, dec
 This is a **v0.1 scaffold**. It has not been built or booted yet.
 
 What's set up:
+- **The AquariusOS look** — dark "Flow State" colour scheme, Inter / JetBrains Mono /
+  Sora typefaces, the "The Pour" wallpaper, and a macOS-shaped desktop (slim top bar,
+  floating dock, desktop icons down the right edge). See "The look" below.
 - Base image: **Bazzite stable, KDE desktop** (`ghcr.io/ublue-os/bazzite:stable`)
 - Image name: **`aquarius-os`** → publishes to `ghcr.io/<your-github-username>/aquarius-os`
 - Second image: **`aquarius-os-nvidia`**, same recipe on `ghcr.io/ublue-os/bazzite-nvidia-open:stable`,
@@ -117,10 +120,40 @@ What's set up:
 - Phase 2 creator apps: **commented-out stubs only** in `build_files/build.sh` — visible, not active
 
 What is *not* done yet (all tracked in `../ROADMAP.md`):
-- Nothing has been pushed to GitHub, so nothing has ever been built
 - Image signing (cosign) is **not** configured — see GETTING-STARTED, this one matters
-- The OS still identifies itself as Bazzite, not AquariusOS (Phase 3 — see `branding/README.md`)
-- No ISO has been built yet
+- The OS still identifies itself as Bazzite, not AquariusOS (a separate job — see
+  `docs/os-release-branding-research.md`)
+- The top bar has no window title or close/minimise/maximise buttons yet — KDE ships no
+  widget for either. Explained in the layout script's own comments.
+- Nothing has been booted on real hardware yet
+
+---
+
+## The look
+
+AquariusOS has its own visual identity, and it is all defined in one place.
+
+**[`branding/tokens.md`](./branding/tokens.md) is the source of truth** — every colour,
+font, size and animation speed, written down in plain language. Nothing in this project
+should use a colour that isn't in that file. The design itself is decided in the Claude
+Design project "AquariusOS Core Identity", direction "Flow State".
+
+What a user actually sees after installing:
+
+| | |
+|---|---|
+| **Colours** | Near-black backgrounds (`#06070C`), a bright blue accent called *starlight* (`#8AB4FF`) on every button, link and selection. |
+| **Fonts** | **Inter** for everything you read in the interface, **JetBrains Mono** for code and the terminal, **Sora** for headlines. |
+| **Wallpaper** | "The Pour" — blurred ribbons of blue and violet pouring diagonally across near-black. |
+| **Desktop** | A thin bar across the top (launcher, the app's menus, tray, clock) and a floating dock at the bottom. Desktop icons stack down the right-hand edge. Deliberately Mac-shaped. |
+
+**Everything is a default, never a rule.** If somebody changes their wallpaper or picks a
+different colour scheme, their choice is stored in their own home folder and wins — and no
+future AquariusOS update will ever stamp over it.
+
+**To change any of it**, read [`branding/README.md`](./branding/README.md) first. It walks
+through changing a colour, changing the wallpaper, and where each piece of the design
+actually lands inside the OS.
 
 ---
 
@@ -147,6 +180,10 @@ We started from [ublue-os/image-template](https://github.com/ublue-os/image-temp
 8. **Two images from one recipe.** The template builds a single image. `Containerfile` now
    takes its base image as a build argument, `build.yml` runs as a two-entry matrix, and
    `aquarius-os.env` holds both names. The AMD/Intel image is built exactly as before.
+9. **A whole visual identity.** `branding/` holds the design; `system_files/` holds the
+   copies of it that reach the OS — a KDE colour scheme, a wallpaper package, three
+   typefaces, and a "global theme" that sets the desktop layout. `build.sh` gained two font
+   packages and a font-index rebuild. All of it applies to both images.
 
 Nothing was removed. All upstream workflows, the `Justfile`, and the build machinery are intact.
 
