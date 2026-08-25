@@ -19,13 +19,13 @@ to put it on GitHub.
    (the recipe)               (the free build robot)            (the OS)
 
    Containerfile        ──►   reads the recipe            ──►   ghcr.io/<you>/aquarius-os
-   build_files/build.sh       downloads Bazzite                 (a bootable OS image)
-   system_files/              runs our build script                      │
-   aquarius-os.env            packages up the result                     ▼
-                                                                 an .iso you can
-        ▲                                                        burn to a USB stick
-        │                                                        and install on a PC
-   you edit a file
+   build_files/build.sh       downloads Bazzite                 ghcr.io/<you>/aquarius-os-nvidia
+   system_files/              runs our build script             (bootable OS images)
+   aquarius-os.env            packages up the result                     │
+                              …twice: once for AMD/Intel,               ▼
+        ▲                     once for NVIDIA                    an .iso you can
+        │                                                        burn to a USB stick
+   you edit a file                                               and install on a PC
    and `git push`
 ```
 
@@ -51,21 +51,52 @@ exactly what you want when non-technical creators are your audience.
 
 ---
 
+## Which image do I pick?
+
+There are **two AquariusOS images**. They are the same operating system — same apps, same
+settings, same everything — built on two different graphics-driver foundations. You pick
+based on one thing: **what graphics card is in the machine.**
+
+| Your graphics card | Pick | Full address |
+|---|---|---|
+| **NVIDIA** — any RTX card (including the RTX 5090), or a GTX 16-series | `aquarius-os-nvidia` | `ghcr.io/stoneharborent/aquarius-os-nvidia:latest` |
+| **AMD or Intel** — including laptop/handheld built-in graphics | `aquarius-os` | `ghcr.io/stoneharborent/aquarius-os:latest` |
+
+If you're not sure, it's AMD or Intel — NVIDIA cards are a deliberate purchase and you'd know.
+
+**Why they can't be one image:** NVIDIA graphics need NVIDIA's own driver baked into the OS,
+and that driver can't be present on machines that don't have the card. So the split happens
+one level down, in Bazzite, and we inherit it. Nothing about AquariusOS itself differs.
+
+**You are not stuck with your choice.** Switching between them later is one command and a
+reboot — see "Switching between the two images" in [GETTING-STARTED.md](./GETTING-STARTED.md).
+Worth knowing if you ever swap the graphics card in a machine.
+
+Both are built by the same GitHub Actions run, from the same recipe, at the same time. There
+is no "the NVIDIA one is behind" — they ship together. Which Bazzite image the NVIDIA one is
+built on, and why that specific one, is written up in
+[`docs/nvidia-variant-research.md`](./docs/nvidia-variant-research.md).
+
+---
+
 ## Repo map
 
 | Path | What it is | Do you touch it? |
 |---|---|---|
 | `README.md` | This file. | — |
 | `GETTING-STARTED.md` | **Click-by-click setup for putting this on GitHub.** Start here. | Read it |
-| `Containerfile` | The recipe. Says "start from Bazzite, then run our build script." | Rarely |
-| `build_files/build.sh` | **The main file you edit.** Installs packages and makes changes on top of Bazzite. This is where the creator apps will go in Phase 2. | Often |
-| `aquarius-os.env` | Settings: the image name (`aquarius-os`), description, GitHub username. One place, used everywhere. | Once, at setup |
+| `Containerfile` | The recipe. Says "start from Bazzite, then run our build script." Used for both images — which Bazzite to start from is a knob it accepts. | Rarely |
+| `build_files/build.sh` | **The main file you edit.** Installs packages and makes changes on top of Bazzite. Applies to both images. This is where the creator apps will go in Phase 2. | Often |
+| `aquarius-os.env` | Settings: both image names, both base images, description, GitHub username. One place, used everywhere. | Once, at setup |
 | `system_files/` | Anything here gets copied into the OS's filesystem. `system_files/usr/…` becomes `/usr/…` in the running OS. Empty for now. | Phase 3 |
 | `branding/` | Staging area for wallpaper, logo, boot splash. Currently a README explaining the plan — no assets yet. | Phase 3 |
 | `disk_config/` | Settings for turning the OS image into an installable `.iso` / VM disk. `iso.toml` is the one that's used. | Once, at setup |
-| `.github/workflows/build.yml` | The build robot's instructions: build the OS and publish it. Runs on every push + nightly. | No |
-| `.github/workflows/build-disk.yml` | The second robot: turns the published OS into a bootable `.iso`. You run this one by hand. | No |
+| `.github/workflows/build.yml` | The build robot's instructions: build **both** OS images and publish them. Runs on every push + nightly. | No |
+| `.github/workflows/build-iso.yml` | The second robot: turns one published OS image into a USB installer `.iso`. You run this by hand and pick which image. | No |
+| `.github/workflows/build-disk.yml` | Makes a virtual-machine disk for testing. By hand, AMD/Intel image only. | No |
+| `installer/` | The live USB installer environment the ISO robot builds. Works for either image. | Rarely |
 | `Justfile` | A collection of shortcut commands used by the build robot (and usable on a Linux machine). | No |
+| `docs/nvidia-variant-research.md` | Why the NVIDIA image is built on `bazzite-nvidia-open` and not `bazzite-nvidia`. | Reference |
 | `docs/UPSTREAM-TEMPLATE-README.md` | The original README from the upstream template we copied, kept for reference. Written for experts. | Reference |
 | `LICENSE` | Apache 2.0, inherited from the upstream template. | No |
 
@@ -80,6 +111,8 @@ This is a **v0.1 scaffold**. It has not been built or booted yet.
 What's set up:
 - Base image: **Bazzite stable, KDE desktop** (`ghcr.io/ublue-os/bazzite:stable`)
 - Image name: **`aquarius-os`** → publishes to `ghcr.io/<your-github-username>/aquarius-os`
+- Second image: **`aquarius-os-nvidia`**, same recipe on `ghcr.io/ublue-os/bazzite-nvidia-open:stable`,
+  built by the same run — see "Which image do I pick?" above
 - Build layer: installs exactly one package (`htop`) as proof the layer works
 - Phase 2 creator apps: **commented-out stubs only** in `build_files/build.sh` — visible, not active
 
@@ -111,6 +144,9 @@ We started from [ublue-os/image-template](https://github.com/ublue-os/image-temp
 6. **Added `branding/`** (placeholder README) and this `README.md` + `GETTING-STARTED.md`.
    The template's original README moved to `docs/UPSTREAM-TEMPLATE-README.md`.
 7. `.gitignore` — added macOS/iCloud junk files (this repo lives in an iCloud folder).
+8. **Two images from one recipe.** The template builds a single image. `Containerfile` now
+   takes its base image as a build argument, `build.yml` runs as a two-entry matrix, and
+   `aquarius-os.env` holds both names. The AMD/Intel image is built exactly as before.
 
 Nothing was removed. All upstream workflows, the `Justfile`, and the build machinery are intact.
 

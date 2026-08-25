@@ -13,7 +13,7 @@
 # (2026-08-23).
 #
 # What we dropped from Bazzite's version, and why:
-#   - NVIDIA and Steam Deck special-casing — AquariusOS ships neither variant.
+#   - Steam Deck special-casing — AquariusOS has no handheld variant yet (Phase 4).
 #   - Flatpak install steps — AquariusOS preloads no Flatpaks yet (Phase 2).
 #   - Conky, custom wallpaper, KDE panel pins, the GNOME branch, the login-time
 #     popup script and the bootloader-restore tool — cosmetic Bazzite branding,
@@ -266,6 +266,45 @@ qrencode -o "$SECUREBOOT_DOC_URL_QR" "$SECUREBOOT_DOC_URL"
         fi
     done
 )
+
+# ------------------------------------------------------------------------------
+# NVIDIA machines: make the live session able to draw a picture
+# ------------------------------------------------------------------------------
+# Only runs when building the ISO for aquarius-os-nvidia. Background: the
+# preinitramfs hook swapped AquariusOS's kernel for a plain signed Fedora one so
+# Secure Boot machines will boot the USB stick — and NVIDIA's real drivers are
+# built against the kernel we just removed, so they are not usable in the live
+# session. The installed system gets them properly; the temporary installer
+# desktop falls back to the open-source nouveau driver, and these two blocks are
+# what make that fallback actually work.
+#
+# Lifted from ublue-os/bazzite installer/titanoboa_hook_postrootfs.sh
+# (Apache-2.0), same commit as the rest of this file. Unchanged apart from these
+# comments — Bazzite hits the identical problem on its own NVIDIA ISOs.
+
+# GTK apps refuse to open under the default renderer on NVIDIA. Force the GL one.
+if [[ $imageref == *-nvidia* ]]; then
+    mkdir -p /etc/environment.d /etc/skel/.config/environment.d
+    echo "GSK_RENDERER=gl" >>/etc/environment.d/99-nvidia-fix.conf
+    echo "GSK_RENDERER=gl" >>/etc/skel/.config/environment.d/99-nvidia-fix.conf
+fi
+
+# Re-enable nouveau. The NVIDIA image deliberately blocks it; the live session
+# needs it back, along with its Vulkan driver files. If those files aren't there
+# afterwards we fail loudly rather than ship an ISO that boots to a black screen.
+if [[ $imageref == *-nvidia* ]]; then
+    for pkg in nvidia-gpu-firmware mesa-vulkan-drivers; do
+        dnf -yq reinstall --allowerasing $pkg ||
+            dnf -yq install --allowerasing $pkg
+    done
+    (
+        shopt -u nullglob
+        ls /usr/share/vulkan/icd.d/nouveau_icd.*.json >/dev/null
+    ) || {
+        echo >&2 "::error::No nouveau vulkan icds found at /usr/share/vulkan/icd.d/nouveau_icd.*.json"
+        exit 1
+    }
+fi
 
 # Don't start Steam at login
 rm -vf /etc/skel/.config/autostart/steam*.desktop

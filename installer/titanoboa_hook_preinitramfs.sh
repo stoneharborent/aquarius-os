@@ -12,7 +12,10 @@
 # Adapted from ublue-os/bazzite installer/titanoboa_hook_preinitramfs.sh
 # (Apache-2.0), read at commit 0fb3abacb1135fbb50cbb575a18f53fea683ab0f
 # (2026-08-23). Only change: the NVIDIA firmware line no longer inspects the
-# image name (AquariusOS has no NVIDIA variant), it just tries and moves on.
+# image name — we install the firmware for both AquariusOS variants and move on
+# if it isn't available. (Bazzite looks the name up because its script has no
+# other way to know which image it's building; ours is told directly, and the
+# real NVIDIA-only work happens in the postrootfs hook.)
 # ==============================================================================
 
 set -exo pipefail

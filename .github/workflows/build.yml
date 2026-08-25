@@ -1,7 +1,18 @@
 ---
-# Builds the AquariusOS container image and publishes it to GitHub Container
-# Registry as ghcr.io/<your-github-username>/aquarius-os.
-# The image name comes from aquarius-os.env via the Justfile — not hardcoded here.
+# Builds the AquariusOS container images and publishes them to GitHub Container
+# Registry.
+#
+# It builds TWO images from the same recipe, side by side, every run:
+#
+#   aquarius-os          for AMD and Intel graphics  (the default AquariusOS)
+#   aquarius-os-nvidia   for NVIDIA graphics cards
+#
+# That is what the "matrix" below is: one job definition, run once per variant.
+# If one goes red the other still finishes (fail-fast is off), so a problem with
+# the NVIDIA build can never stop the normal image from shipping.
+#
+# Neither image name nor base image is hardcoded here — both come from
+# aquarius-os.env, which the Justfile reads. One place, used everywhere.
 name: Build AquariusOS image
 on:
   pull_request:
@@ -25,8 +36,16 @@ concurrency:
 
 jobs:
   build_push:
-    name: Build and push image
+    name: Build and push image (${{ matrix.variant }})
     runs-on: ubuntu-24.04
+
+    strategy:
+      # Don't let one variant failing cancel the other one mid-build.
+      fail-fast: false
+      matrix:
+        # "base" and "nvidia" are the two names the Justfile understands
+        # (`just variant-image-name` / `just variant-base-image`).
+        variant: [base, nvidia]
 
     permissions:
       contents: read
@@ -49,12 +68,25 @@ jobs:
         run: |
           just check
 
+      # Both of the next two steps read aquarius-os.env, picking the value for
+      # whichever variant this matrix job is: what to call the image we publish,
+      # and which Bazzite image to build it on top of.
       - name: Image Name
         id: image-name
         run: |
-          IMAGE_NAME=$(just image_name)
+          IMAGE_NAME=$(just variant-image-name ${{ matrix.variant }})
 
           echo "IMAGE_NAME=${IMAGE_NAME}" >> $GITHUB_ENV
+
+      # Deliberately NOT called BASE_IMAGE. A real environment variable beats
+      # aquarius-os.env inside `just`, so exporting BASE_IMAGE here would quietly
+      # rewrite the file's own value for every later step.
+      - name: Base Image
+        id: base-image
+        run: |
+          VARIANT_BASE_IMAGE=$(just variant-base-image ${{ matrix.variant }})
+
+          echo "VARIANT_BASE_IMAGE=${VARIANT_BASE_IMAGE}" >> $GITHUB_ENV
 
       - name: Default Tag
         id: gen-default-tag
@@ -75,7 +107,8 @@ jobs:
         run: |
           just build \
             ${IMAGE_NAME} \
-            ${DEFAULT_TAG}
+            ${DEFAULT_TAG} \
+            ${VARIANT_BASE_IMAGE}
 
       # This is optional, this provides smaller delta updates
       - name: Rechunk with rpm-ostree

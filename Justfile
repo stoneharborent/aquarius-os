@@ -2,6 +2,10 @@ set dotenv-filename := "aquarius-os.env"
 set dotenv-load
 
 export image_name := env_var("IMAGE_NAME")
+export base_image := env_var("BASE_IMAGE")
+export nvidia_image_name := env_var("NVIDIA_IMAGE_NAME")
+export nvidia_base_image := env_var("NVIDIA_BASE_IMAGE")
+export repo_name := env_var("REPO_NAME")
 export repo_organization := env_var("REPO_ORGANIZATION")
 export image_desc := env_var("IMAGE_DESC")
 export image_keywords := env_var("IMAGE_KEYWORDS")
@@ -80,11 +84,14 @@ sudoif command *args:
 # Arguments:
 #   $target_image - The tag you want to apply to the image (default: $image_name).
 #   $tag - The tag for the image (default: $default_tag).
+#   $img_base - The image to build ON TOP OF (default: $base_image, i.e. the
+#               AMD/Intel Bazzite). Pass $nvidia_base_image to build the NVIDIA
+#               version. See aquarius-os.env.
 #
 # The script constructs the version string using the tag and the current date.
 # If the git working directory is clean, it also includes the short SHA of the current HEAD.
 #
-# just build $target_image $tag
+# just build $target_image $tag $img_base
 #
 # Example usage:
 #   just build myimage mytag
@@ -93,19 +100,30 @@ sudoif command *args:
 #
 
 # Build the image using the specified parameters
-build $target_image=image_name $tag=default_tag:
+build $target_image=image_name $tag=default_tag $img_base=base_image:
     #!/usr/bin/env bash
 
     set -euox pipefail
 
     BUILD_ARGS=()
+    # Which Bazzite we start from. The Containerfile has the same default, so
+    # this only ever *confirms* it for the normal image — and switches it for the
+    # NVIDIA one.
+    BUILD_ARGS+=("--build-arg" "BASE_IMAGE=${img_base}")
+
     LABELS=()
+    # Note: the repo URLs below use {{ repo_name }}, NOT the image name. Both
+    # AquariusOS images are built from this one repo, so both link back to it.
+    # (They must also not use IMAGE_NAME: the GitHub build sets IMAGE_NAME as a
+    # real environment variable per matrix job, and a real environment variable
+    # beats aquarius-os.env — so IMAGE_NAME reads "aquarius-os-nvidia" inside the
+    # NVIDIA job and would point these links at a repo that doesn't exist.)
     if [[ -z "$(git status -s)" ]]; then
         GIT_SHA=$(git rev-parse --short HEAD)
-        LABELS+=("--label" "io.artifacthub.package.readme-url=https://raw.githubusercontent.com/{{ repo_organization }}/{{ image_name }}/${GIT_SHA}/README.md")
-        LABELS+=("--label" "org.opencontainers.image.documentation=https://raw.githubusercontent.com/{{ repo_organization }}/{{ image_name }}/${GIT_SHA}/README.md")
-        LABELS+=("--label" "org.opencontainers.image.source=https://github.com/{{ repo_organization }}/{{ image_name }}/blob/${GIT_SHA}/Containerfile")
-        LABELS+=("--label" "org.opencontainers.image.url=https://github.com/{{ repo_organization }}/{{ image_name }}/tree/${GIT_SHA}")
+        LABELS+=("--label" "io.artifacthub.package.readme-url=https://raw.githubusercontent.com/{{ repo_organization }}/{{ repo_name }}/${GIT_SHA}/README.md")
+        LABELS+=("--label" "org.opencontainers.image.documentation=https://raw.githubusercontent.com/{{ repo_organization }}/{{ repo_name }}/${GIT_SHA}/README.md")
+        LABELS+=("--label" "org.opencontainers.image.source=https://github.com/{{ repo_organization }}/{{ repo_name }}/blob/${GIT_SHA}/Containerfile")
+        LABELS+=("--label" "org.opencontainers.image.url=https://github.com/{{ repo_organization }}/{{ repo_name }}/tree/${GIT_SHA}")
         LABELS+=("--label" "org.opencontainers.image.version={{ default_tag }}.$(date +%Y%m%d)-${GIT_SHA}")
     fi
 
@@ -118,7 +136,7 @@ build $target_image=image_name $tag=default_tag:
     LABELS+=("--label" "io.artifacthub.package.prerelease=false")
     LABELS+=("--label" "org.opencontainers.image.created=$(date -u +%Y\-%m\-%d\T%H\:%M\:%S\Z)")
     LABELS+=("--label" "org.opencontainers.image.description={{ image_desc }}")
-    LABELS+=("--label" "org.opencontainers.image.title={{ image_name }}")
+    LABELS+=("--label" "org.opencontainers.image.title=${target_image}")
     LABELS+=("--label" "org.opencontainers.image.vendor={{ repo_organization }}")
 
     # This actually builds the image!
@@ -241,6 +259,42 @@ image_name $target_image=image_name:
     set -eoux pipefail
 
     echo "${image_name}"
+
+# Which of the two AquariusOS images a variant means.
+#
+# "base"   -> aquarius-os         (AMD / Intel graphics)
+# "nvidia" -> aquarius-os-nvidia  (NVIDIA graphics)
+#
+# The GitHub Actions build asks these two recipes instead of hardcoding names, so
+# aquarius-os.env stays the one place image names live.
+[group('Utility')]
+variant-image-name variant="base":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if [[ "{{ variant }}" == "base" ]]; then
+        echo "${IMAGE_NAME}"
+    elif [[ "{{ variant }}" == "nvidia" ]]; then
+        echo "${NVIDIA_IMAGE_NAME}"
+    else
+        echo "Unknown variant '{{ variant }}' — expected 'base' or 'nvidia'." >&2
+        exit 1
+    fi
+
+# Which Bazzite image a variant is built on top of.
+[group('Utility')]
+variant-base-image variant="base":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if [[ "{{ variant }}" == "base" ]]; then
+        echo "${BASE_IMAGE}"
+    elif [[ "{{ variant }}" == "nvidia" ]]; then
+        echo "${NVIDIA_BASE_IMAGE}"
+    else
+        echo "Unknown variant '{{ variant }}' — expected 'base' or 'nvidia'." >&2
+        exit 1
+    fi
 
 # Command: _rootful_load_image
 # Description: This script checks if the current user is root or running under sudo. If not, it attempts to resolve the image tag using podman inspect.

@@ -6,6 +6,10 @@
 # install AquariusOS on a blank computer. You start it by hand from the Actions
 # tab; it never runs on its own. Budget about an hour.
 #
+# It asks you ONE question: which AquariusOS? "base" is the normal one, for AMD
+# and Intel graphics. "nvidia" is the one for machines with an NVIDIA graphics
+# card. It builds one ISO per run, not both — pick the one you need.
+#
 # It happens in two stages, and that is the important thing to understand:
 #
 #   Stage 1 — build the "payload" image from the installer/ folder.
@@ -44,10 +48,18 @@ name: Build AquariusOS ISO (Titanoboa)
 on:
   workflow_dispatch:
     inputs:
+      variant:
+        description: "Which AquariusOS? NVIDIA graphics card -> nvidia. AMD or Intel -> base."
+        required: true
+        default: base
+        type: choice
+        options:
+          - base
+          - nvidia
       image-ref:
-        description: "Container image to turn into an ISO"
+        description: "Advanced: a specific image instead. Leave BLANK to use the choice above."
         required: false
-        default: "ghcr.io/stoneharborent/aquarius-os:latest"
+        default: ""
         type: string
 
 permissions: {}
@@ -114,8 +126,26 @@ jobs:
         id: names
         env:
           IMAGE_REF: ${{ inputs.image-ref }}
+          VARIANT: ${{ inputs.variant }}
+          OWNER: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
+          # If nobody typed a specific image, work it out from the variant they
+          # picked. These two names must match IMAGE_NAME and NVIDIA_IMAGE_NAME
+          # in aquarius-os.env — `just` isn't installed on this runner, so this
+          # is the one other place they appear. Change both together.
+          if [[ -z "${IMAGE_REF}" ]]; then
+            case "${VARIANT}" in
+              base)   IMAGE_NAME="aquarius-os" ;;
+              nvidia) IMAGE_NAME="aquarius-os-nvidia" ;;
+              *)
+                echo "::error::Unknown variant '${VARIANT}' — expected 'base' or 'nvidia'."
+                exit 1
+                ;;
+            esac
+            IMAGE_REF="ghcr.io/${OWNER}/${IMAGE_NAME}:latest"
+          fi
+          echo "Building an ISO from: ${IMAGE_REF}"
           # Lowercase it — registries reject capital letters in image names.
           IMAGE_REF="${IMAGE_REF,,}"
           # Turn "ghcr.io/owner/aquarius-os:latest" into "aquarius-os-latest".
@@ -231,7 +261,10 @@ jobs:
       # instead of leaving a wall of shell output as the last word.
       - name: What probably went wrong
         if: failure()
+        env:
+          IMAGE_REF: ${{ steps.names.outputs.image-ref }}
         run: |
+          echo "The image this run was trying to turn into an ISO: ${IMAGE_REF:-(not worked out yet)}"
           cat <<'EOF'
           ------------------------------------------------------------------
           This ISO build failed. Find the first red step above — that tells
@@ -241,9 +274,11 @@ jobs:
             Something in installer/ broke. Common causes:
               * A package name changed upstream, so a `dnf install` in
                 installer/build.sh or one of the two hook scripts failed.
-              * The AquariusOS image could not be downloaded. Check that
-                ghcr.io/stoneharborent/aquarius-os is still PUBLIC, and that
-                the "Build AquariusOS" workflow has succeeded at least once.
+              * The AquariusOS image could not be downloaded. Check that the
+                image named just above this box is still PUBLIC on GHCR, and
+                that the "Build AquariusOS image" workflow has succeeded at
+                least once for that variant. (The NVIDIA image is a separate
+                package and needs making public separately.)
               * Ran out of disk. Check the "Show disk space" step.
 
           "Build the ISO" failed

@@ -228,12 +228,21 @@ If the push in step 4d didn't start a build, start one by hand:
    **Run workflow** button.
 3. Wait ~10 seconds and refresh. A new run appears at the top with a **yellow dot** (running).
 
-Click into the run, then click the **Build and push image** job to watch the live log.
+Click into the run. You'll see **two jobs**, not one:
+
+- **Build and push image (base)** — the AMD/Intel AquariusOS
+- **Build and push image (nvidia)** — the NVIDIA one
+
+They run at the same time and are independent. Click either to watch its live log.
 
 **What you're looking at:** each line is one step. The big one is "Build Image" — that's
 GitHub downloading Bazzite (several GB) and running our build script on top of it. The
 "Rechunk" step afterwards is repackaging and is normally the slowest part. This is why we
 don't build on your Mac.
+
+**If one job is green and the other is red**, that's deliberate — they're set up so a problem
+with one can't stop the other from shipping. Read the red one's log; the green one's output
+is fine and already published.
 
 **When it finishes:**
 - ✅ **Green checkmark** — it worked. The OS exists. Go to Step 6.
@@ -250,18 +259,24 @@ A first build taking 30–60 minutes is normal. Later builds are faster.
 ## Step 6 — Where the OS actually lives
 
 Your built OS is published to **GitHub Container Registry (GHCR)** — GitHub's storage for
-container images. Its address is:
+container images. Every run produces **two** packages, because there are two AquariusOS
+images (see "Which image do I pick?" just below):
 
 ```
-ghcr.io/YOUR-USERNAME/aquarius-os:latest
+ghcr.io/YOUR-USERNAME/aquarius-os:latest          ← AMD / Intel graphics
+ghcr.io/YOUR-USERNAME/aquarius-os-nvidia:latest   ← NVIDIA graphics
 ```
 
-To see it: go to your **GitHub profile page** (not the repo) → the **Packages** tab →
-`aquarius-os`. You'll see the tags and the publish date.
+To see them: go to your **GitHub profile page** (not the repo) → the **Packages** tab. You'll
+see both listed, with tags and publish dates.
 
-**Make it public** (do this once, or nobody can install it):
+**Make each one public** (do this once per package, or nobody can install it):
 On the package page → **Package settings** (right side) → scroll to **Danger Zone** →
 **Change package visibility** → **Public**.
+
+> ⚠️ These are two separate packages. Making `aquarius-os` public does **not** make
+> `aquarius-os-nvidia` public. Do it twice. The first time the NVIDIA image is built, a new
+> package appears in that list and starts out private, same as the first one did.
 
 This is not yet a thing you can burn to a USB stick — it's the OS in "container" form. Two
 ways to actually run it:
@@ -272,6 +287,60 @@ ways to actually run it:
   ```
   Then reboot. (And if you hate it: `sudo bootc rollback`, reboot, you're back.)
 - **On a fresh machine**, you need an installer ISO — that's Step 7.
+
+---
+
+## Step 6.5 — Which image do I pick?
+
+Two AquariusOS images exist. Same operating system, same apps, same settings — the only
+difference is which graphics driver is built in. Pick by **what graphics card is in the
+machine**:
+
+| Graphics card in the machine | Use this image |
+|---|---|
+| **NVIDIA** — any RTX card (RTX 5090 included), or GTX 16-series | `aquarius-os-nvidia` |
+| **AMD or Intel** — including the built-in graphics in most laptops and handhelds | `aquarius-os` |
+
+Not sure? It's AMD or Intel. An NVIDIA card is something you buy on purpose.
+
+**Why there have to be two.** NVIDIA cards need NVIDIA's own driver built into the operating
+system, and that driver can't be present on machines without the card. Bazzite splits its
+images for exactly this reason, and we inherit the split. Nothing that we add is different
+between them.
+
+Picking wrong isn't dangerous — an NVIDIA machine running the AMD/Intel image usually boots
+to a low-resolution desktop with no game performance, rather than exploding. Fix it by
+switching, below.
+
+### Switching between the two images
+
+If you installed the wrong one, or you swapped the graphics card in a machine, you don't
+reinstall. On the AquariusOS machine itself (not your Mac), open a terminal and run **one**
+of these:
+
+```bash
+# Moving TO an NVIDIA card:
+sudo bootc switch ghcr.io/YOUR-USERNAME/aquarius-os-nvidia:latest
+
+# Moving BACK to AMD / Intel:
+sudo bootc switch ghcr.io/YOUR-USERNAME/aquarius-os:latest
+```
+
+Then reboot. It downloads the other image, and on the next start-up you're on it.
+
+**If `bootc` isn't found**, the machine is on an older toolset — use this instead, which does
+the same job:
+
+```bash
+sudo rpm-ostree rebase ostree-unverified-registry:ghcr.io/YOUR-USERNAME/aquarius-os-nvidia:latest
+```
+
+**Changed your mind after rebooting?** `sudo bootc rollback`, then reboot. You're back on the
+previous one. That's the whole point of an atomic OS — the old version is still sitting
+there, and it's also in the boot menu if the new one won't start at all.
+
+**One thing to know:** a switch downloads a full OS image, so expect several GB and a few
+minutes on a normal connection. Nothing in your home folder, files, or settings is touched.
 
 ---
 
@@ -287,10 +356,16 @@ own workflow, and it only runs when you ask.
 
 1. Repo → **Actions** tab → **Build AquariusOS ISO (Titanoboa)** in the left sidebar.
 2. Click the **Run workflow** button on the right.
-3. There's one option, **Container image to turn into an ISO**. Leave it exactly as it is
-   (`ghcr.io/stoneharborent/aquarius-os:latest`) — that's your published OS.
+3. There are two boxes:
+   - **Which AquariusOS?** — pick `nvidia` if the PC you're installing on has an NVIDIA
+     graphics card, `base` if it has AMD or Intel. (See Step 6.5.) This is the only one you
+     normally touch.
+   - **Advanced: a specific image instead** — **leave this blank.** It's an escape hatch for
+     building an ISO of an older dated tag, and the choice above is ignored if you type in it.
 4. Click the green **Run workflow**. This one is slow — plan on an hour. You can close the
    tab; it keeps running on GitHub's machines.
+
+   One run makes **one** ISO. Need both? Run it twice.
 5. When it finishes, click into the run and scroll to the bottom. Under **Artifacts** there's
    a downloadable `.zip` containing:
    - the **`.iso`** — the USB installer
@@ -330,6 +405,10 @@ installer.
 **Build AquariusOS disk images** now only makes a `.qcow2` — a virtual-machine disk, useful
 for testing in a VM, not for USB sticks. Run it the same way (Actions → Run workflow →
 leave **Upload to S3** as `false`, choose **amd64** for platform).
+
+It always uses the AMD/Intel image, and there's no variant option on it on purpose: a virtual
+machine has no real NVIDIA card to talk to, so an NVIDIA VM disk would prove nothing. The
+NVIDIA image gets tested on the actual PC, via a USB stick.
 
 > **Heads up on testing:** your Mac is Apple Silicon, so it can only *emulate* an x86 PC,
 > which is painfully slow and not a fair test. Real testing means a spare x86 PC or handheld,
@@ -373,6 +452,7 @@ updates even on days you don't touch anything.
 | Signing key | You create it in Step 4 — it can't be created for you, it's yours. |
 | S3 hosting for ISO downloads | Not set up. ISOs come out as GitHub artifacts instead, which is fine until there's a public download page. |
 | ISO built, but never tested on real hardware | Open. The pieces are all in place (Step 7), but nobody has yet booted the resulting USB stick on an actual PC. Until someone does, treat the first ISO as unproven. |
+| The NVIDIA image has never been built or booted | Open, and newer than everything else here. `aquarius-os-nvidia` is wired up end to end (build, publish, sign, ISO) but the first green run and the first boot on the RTX PC are both still to come. Assume nothing about it until then. |
 | Live session still looks like Bazzite | Cosmetic, Phase 3. The installer USB shows plain Bazzite KDE with an AquariusOS terminal greeting — we didn't carry over Bazzite's wallpaper, panel layout or login popups. See `installer/README.md`. |
 | Updates aren't signature-checked after install | Open. Bazzite tells a freshly installed machine to verify image signatures on every update. AquariusOS can't yet, because it doesn't ship a signing policy for `ghcr.io/stoneharborent` — so that check is switched off. Noted in `installer/titanoboa_hook_postrootfs.sh`; turn it on the day the policy exists. |
 | Artifacthub listing | Optional, ignored. See `artifacthub-repo.yml`. |
