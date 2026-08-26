@@ -66,15 +66,35 @@ FROM ${BASE_IMAGE}
 
 # RUN rm /opt && mkdir /opt
 
+### WHICH IMAGE AM I?
+## One recipe builds two images (aquarius-os and aquarius-os-nvidia), and the
+## build script needs to record its own name inside the OS — the file at
+## /usr/share/ublue-os/image-info.json says which image is installed, and it has
+## to be right or update tooling points at the wrong download.
+##
+## So the name is a knob too, exactly like BASE_IMAGE above. The Justfile fills
+## these in for each of the two builds; the defaults below mean a plain
+## `podman build .` with no arguments still works and still produces the normal
+## AquariusOS image.
+##
+## These two ARGs must live HERE, below the FROM, so the RUN line can see them.
+## (BASE_IMAGE is the opposite case — it is needed BY a FROM, so it has to sit
+## above the first one. Same file, opposite rule, for the same reason.)
+ARG IMAGE_NAME=aquarius-os
+ARG IMAGE_VENDOR=stoneharborent
+
 ### MODIFICATIONS
 ## make modifications desired in your image and install packages by modifying the build.sh script
 ## the following RUN directive does all the things required to run "build.sh" as recommended.
+##
+## The two NAME=value words in front of /ctx/build.sh hand those knobs to the
+## build script as ordinary variables it can read.
 
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     --mount=type=tmpfs,dst=/tmp \
-    /ctx/build.sh
+    IMAGE_NAME="${IMAGE_NAME}" IMAGE_VENDOR="${IMAGE_VENDOR}" /ctx/build.sh
 
 ### LINTING
 ## Verify final image and contents are correct.

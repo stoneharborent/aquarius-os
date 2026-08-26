@@ -114,12 +114,28 @@ fc-cache --system-only --force --verbose
 # TODO (Phase 2) — "Creator Mode" first-boot choice (Gamer / Creator / Both).
 #   Needs a first-boot app or systemd unit shipped via system_files/.
 #
-# TODO (Phase 3) — OS identity ("AquariusOS" in About This System, boot splash).
-#   The upstream template does NOT provide a supported mechanism for rewriting
-#   /usr/lib/os-release, and hand-editing it can break bootc/rpm-ostree updates.
-#   Do not improvise this. Research the ublue-supported approach first and
-#   record the decision in ../ROADMAP.md before writing any code here.
-#   See branding/README.md.
+# (OS identity — "AquariusOS" in About This System — is DONE. It moved out of
+#  this TODO list and into the real step at the bottom of this file.)
+
+# ==============================================================================
+# AQUARIUSOS IDENTITY — make the OS call itself AquariusOS
+# ==============================================================================
+# Everything above this point installs things. This last step renames things:
+# it rewrites the small file that holds the name of the operating system, so
+# KDE's "About This System", the login screen and `neofetch` all say
+# "AquariusOS" instead of "Bazzite".
+#
+# It is deliberately the LAST step, so that nothing installed afterwards can
+# overwrite the name we just set. If you add new steps to this file, add them
+# ABOVE this line.
+#
+# The details, and the list of things we purposely leave saying "Bazzite" and
+# why, are all commented inside the script itself:
+#   build_files/image-info.sh
+# Background research: docs/os-release-branding-research.md
+# ------------------------------------------------------------------------------
+
+/ctx/image-info.sh
 
 # ==============================================================================
 # Examples kept from the upstream template, for reference

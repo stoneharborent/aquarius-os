@@ -110,6 +110,13 @@ build $target_image=image_name $tag=default_tag $img_base=base_image:
     # this only ever *confirms* it for the normal image — and switches it for the
     # NVIDIA one.
     BUILD_ARGS+=("--build-arg" "BASE_IMAGE=${img_base}")
+    # Which of our two images this is, and who publishes it. The build script
+    # writes these into the OS so the finished system knows its own name and
+    # where its updates come from. `target_image` is the first argument to this
+    # recipe, so it is already "aquarius-os" or "aquarius-os-nvidia" — exactly
+    # the right value, with nothing extra to keep in sync.
+    BUILD_ARGS+=("--build-arg" "IMAGE_NAME=${target_image}")
+    BUILD_ARGS+=("--build-arg" "IMAGE_VENDOR={{ repo_organization }}")
 
     LABELS=()
     # Note: the repo URLs below use {{ repo_name }}, NOT the image name. Both
