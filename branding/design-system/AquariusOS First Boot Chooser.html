@@ -1,0 +1,68 @@
+<!-- @dsCard group="UI Kit" viewport="1280x800" name="First-boot chooser" subtitle="Gamer / Creator / Both · initial setup, touch-friendly" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AquariusOS · First-boot chooser</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+*{box-sizing:border-box;margin:0}
+html,body{height:100%}
+body{width:1280px;height:800px;background:var(--void);font-family:var(--font-body);color:var(--text-1);overflow:hidden;position:relative}
+a{color:var(--starlight)}a:hover{color:var(--starlight-hover)}
+.ribbon{position:absolute;pointer-events:none}
+.choices{display:flex;gap:24px;justify-content:center}
+.choice{width:300px;min-height:340px;background:rgba(16,18,28,.82);border:1px solid var(--border-2);border-radius:var(--radius-xl);padding:32px 28px;display:flex;flex-direction:column;align-items:flex-start;gap:16px;text-align:left;cursor:pointer;backdrop-filter:var(--blur-panel);transition:border-color var(--dur-med) var(--ease-out),transform var(--dur-med) var(--ease-out),box-shadow var(--dur-med) var(--ease-out)}
+.choice:hover{border-color:rgba(138,180,255,.5);transform:translateY(-4px);box-shadow:var(--shadow-card)}
+.choice.selected{border-color:var(--starlight);box-shadow:var(--glow-accent),var(--shadow-card)}
+.choice .ico{width:64px;height:64px;border-radius:var(--radius-lg);background:var(--surface-3);display:flex;align-items:center;justify-content:center;color:var(--starlight)}
+.choice h2{font:600 24px/1.25 var(--font-display)}
+.choice p{font:400 15px/1.6 var(--font-body);color:var(--text-2);text-wrap:pretty}
+.choice .sets{margin-top:auto;font:500 11px/1.7 var(--font-mono);color:var(--text-3);letter-spacing:.04em}
+.check{position:absolute;top:16px;right:16px;width:26px;height:26px;border-radius:50%;background:var(--starlight);color:var(--on-accent);display:flex;align-items:center;justify-content:center}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--border-2)}
+.dot.on{background:var(--starlight)}
+.btn{height:52px;padding:0 36px;border-radius:var(--radius-md);border:none;font:600 16px var(--font-body);cursor:pointer;display:inline-flex;align-items:center;gap:10px}
+</style>
+</head>
+<body data-screen-label="First-boot chooser">
+<div class="ribbon" style="left:-10%;top:12%;width:120%;height:120px;background:linear-gradient(90deg,transparent 10%,rgba(91,75,224,.20) 50%,transparent 90%);filter:blur(48px);transform:rotate(-9deg)"></div>
+<div class="ribbon" style="left:-10%;top:58%;width:120%;height:90px;background:linear-gradient(90deg,transparent 15%,rgba(138,180,255,.14) 55%,transparent);filter:blur(42px);transform:rotate(-12deg)"></div>
+<div class="ribbon" style="left:-10%;top:76%;width:120%;height:36px;background:linear-gradient(90deg,transparent 30%,rgba(230,221,184,.10) 60%,transparent 92%);filter:blur(22px);transform:rotate(-11deg)"></div>
+<main style="position:relative;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:44px;padding:56px 64px">
+<header style="display:flex;flex-direction:column;align-items:center;gap:14px;text-align:center">
+<img src="assets/logo.svg" width="44" height="44" alt="AquariusOS">
+<h1 style="font:700 44px/1.06 var(--font-display);letter-spacing:var(--ls-display)">What will you do with this machine?</h1>
+<p style="font:400 16px/1.6 var(--font-body);color:var(--text-2);max-width:560px">Pick one and AquariusOS sets everything up for you — apps, drivers, the works. No wrong answers, and nothing is locked out.</p>
+</header>
+<div class="choices">
+<div class="choice" role="button" tabindex="0">
+<div class="ico"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9h4M8 7v4"></path><circle cx="16.5" cy="8.5" r="0.9" fill="currentColor" stroke="none"></circle><circle cx="18.5" cy="11" r="0.9" fill="currentColor" stroke="none"></circle><path d="M17.3 5H6.7a4.7 4.7 0 0 0-4.6 4L1.3 14a3 3 0 0 0 5.2 2.4L8.6 14h6.8l2.1 2.4A3 3 0 0 0 22.7 14l-.8-5a4.7 4.7 0 0 0-4.6-4z"></path></svg></div>
+<h2>Gamer</h2>
+<p>Jump straight into your library. Steam, game launchers, and controller support are ready the moment you land on the desktop.</p>
+<div class="sets">SETS UP · Steam · Lutris · GPU drivers · Gamescope</div>
+</div>
+<div class="choice" role="button" tabindex="0">
+<div class="ico"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"></path><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"></path><path d="M2 2l7.586 7.586"></path><circle cx="11" cy="11" r="2"></circle></svg></div>
+<h2>Creator</h2>
+<p>Make things from day one. Video, audio, art, and streaming tools are installed and tuned for your hardware.</p>
+<div class="sets">SETS UP · OBS · Blender · Kdenlive · Krita · Audio stack</div>
+</div>
+<div class="choice selected" role="button" tabindex="0" style="position:relative">
+<span class="check"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"></path></svg></span>
+<div class="ico" style="background:rgba(138,180,255,.14)"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="12" r="6.5"></circle><circle cx="15" cy="12" r="6.5"></circle></svg></div>
+<h2>Both</h2>
+<p>Play hard, make harder. Everything from the other two, on one machine — the way most of us actually live.</p>
+<div class="sets">SETS UP · Everything above · shared media folders</div>
+</div>
+</div>
+<footer style="display:flex;flex-direction:column;align-items:center;gap:20px">
+<button class="btn" style="background:var(--starlight);color:var(--on-accent)" onmouseover="this.style.background='var(--starlight-hover)'" onmouseout="this.style.background='var(--starlight)'">Continue<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></button>
+<div style="font:400 13.5px/1.55 var(--font-body);color:var(--text-3)">You can change this anytime in <b style="color:var(--text-2);font-weight:500">Settings → Profiles</b>.</div>
+<div style="display:flex;gap:8px;align-items:center"><span class="dot on"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+</footer>
+<div style="position:absolute;left:24px;bottom:18px;font:400 11px var(--font-mono);color:var(--text-3)">first-boot · step 1 of 4</div>
+<div style="position:absolute;right:24px;bottom:18px;font:400 11px var(--font-mono);color:var(--text-3)">aquarius-stable 42.1</div>
+</main>
+</body>
+</html>

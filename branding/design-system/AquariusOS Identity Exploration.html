@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="design_doc_mode" content="canvas">
+<title>AquariusOS Identity Exploration</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&family=Sora:wght@300;400;600;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0}
+body{font-family:Inter,sans-serif}
+a{color:#7FA8FF}a:hover{color:#B8D0FF}
+.board{position:absolute;width:920px;border-radius:16px;overflow:hidden;padding:36px}
+.badge{position:absolute;top:16px;right:16px;font:600 12px/1 'JetBrains Mono',monospace;padding:5px 9px;border-radius:6px;background:rgba(255,255,255,.08);color:#fff;letter-spacing:.05em;z-index:5}
+.dirname{font-size:34px;letter-spacing:-.01em}
+.mood{margin-top:8px;font-size:14px;opacity:.55;max-width:560px;line-height:1.5}
+.lbl{font:500 11px/1 'JetBrains Mono',monospace;letter-spacing:.14em;text-transform:uppercase;opacity:.45;margin:34px 0 14px}
+.pal{display:flex;gap:10px}
+.sw{flex:1;height:110px;border-radius:10px;display:flex;flex-direction:column;justify-content:flex-end;padding:10px;border:1px solid rgba(255,255,255,.07)}
+.sw b{font-size:11px;font-weight:600}.sw span{font:400 10px 'JetBrains Mono',monospace;opacity:.65}
+.typebig{line-height:1.08;letter-spacing:-.02em}
+.typebody{font:400 13.5px/1.65 Inter,sans-serif;opacity:.72;margin-top:14px;max-width:520px}
+.typemono{font:400 12px/1.6 'JetBrains Mono',monospace;margin-top:14px;padding:10px 12px;border-radius:8px;background:rgba(255,255,255,.05);display:inline-block}
+.logorow{display:flex;align-items:center;gap:28px}
+.trayrow{display:flex;align-items:center;gap:14px;margin-top:18px}
+.trayrow small{font:400 10px 'JetBrains Mono',monospace;opacity:.5}
+.wall{height:320px;border-radius:12px;position:relative;overflow:hidden;border:1px solid rgba(255,255,255,.07)}
+.login{width:400px;height:250px;border-radius:12px;position:relative;overflow:hidden;border:1px solid rgba(255,255,255,.08)}
+.loginui{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding-top:40px}
+.avatar{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font:600 15px Inter}
+.pwd{width:180px;height:26px;border-radius:7px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);display:flex;align-items:center;padding:0 9px;font-size:9px;letter-spacing:.3em;opacity:.8}
+.loginbtn{width:180px;height:26px;border-radius:7px;font:600 10.5px Inter;display:flex;align-items:center;justify-content:center}
+.clock{position:absolute;top:18px;left:0;right:0;text-align:center}
+.clock b{font-size:26px;font-weight:300;letter-spacing:.02em}.clock div{font-size:9px;opacity:.55;margin-top:2px}
+</style></head><body>
+
+<!-- 1a · DEEP WATER -->
+<section class="board" id="1a" style="left:40px;top:40px;height:1560px;background:linear-gradient(175deg,#07131B 0%,#050B10 45%,#04080C 100%);color:#EAF4F2">
+<div class="badge">1a</div>
+<div class="dirname" style="font-family:Outfit;font-weight:600">Deep Water</div>
+<p class="mood">Abyssal calm. Light behaves like bioluminescence — rare, soft, alive. Premium and quiet; the OS as a still ocean that glows where you touch it.</p>
+<div class="lbl">Palette</div>
+<div class="pal">
+<div class="sw" style="background:#050B10"><b>Background</b><span>#050B10</span></div>
+<div class="sw" style="background:#0B161E"><b>Surface</b><span>#0B161E</span></div>
+<div class="sw" style="background:#1E6E8C"><b>Hero · Deep Current</b><span>#1E6E8C</span></div>
+<div class="sw" style="background:#35E0A1"><b style="color:#04180F">Aurora Green</b><span style="color:#04180F">#35E0A1</span></div>
+<div class="sw" style="background:#9FD6CF"><b style="color:#04110D">Sea Glass</b><span style="color:#04110D">#9FD6CF</span></div>
+<div class="sw" style="background:#050B10;border-color:rgba(255,255,255,.12)"><b>Text #EAF4F2</b><span style="color:#7E969B">Muted #7E969B</span></div>
+</div>
+<div class="lbl">Type · Outfit + Inter · JetBrains Mono</div>
+<div class="typebig" style="font:300 44px Outfit">Play and <span style="color:#2FE6C4">create</span><br>on one machine.</div>
+<p class="typebody">AquariusOS keeps the noise on the seafloor. Your library, your timeline, your terminal — surfaced only when you reach for them. Everything else stays dark, still, and out of the way.</p>
+<div class="typemono" style="color:#2FE6C4">$ ujust update && reboot <span style="color:#7E969B"># aquarius-stable 42.1</span></div>
+<div class="lbl">Glyph · water poured in a circle</div>
+<div class="logorow">
+<svg width="88" height="88" viewBox="0 0 64 64" fill="none"><circle cx="32" cy="32" r="27" stroke="#2FE6C4" stroke-width="3.5"/><path d="M16 27q5.4-7 10.8 0t10.8 0 10.4 0M16 39q5.4-7 10.8 0t10.8 0 10.4 0" stroke="#2FE6C4" stroke-width="3.5" stroke-linecap="round"/></svg>
+<div style="font:500 34px Outfit;letter-spacing:.01em">aquarius<span style="color:#2FE6C4;font-weight:300">OS</span></div>
+</div>
+<div class="trayrow">
+<svg width="16" height="16" viewBox="0 0 64 64" fill="none"><circle cx="32" cy="32" r="26" stroke="#EAF4F2" stroke-width="6"/><path d="M17 27q5-6.5 10 0t10 0 10 0M17 39q5-6.5 10 0t10 0 10 0" stroke="#EAF4F2" stroke-width="6" stroke-linecap="round"/></svg>
+<svg width="24" height="24" viewBox="0 0 64 64" fill="none"><circle cx="32" cy="32" r="26" stroke="#EAF4F2" stroke-width="5"/><path d="M17 27q5-6.5 10 0t10 0 10 0M17 39q5-6.5 10 0t10 0 10 0" stroke="#EAF4F2" stroke-width="5" stroke-linecap="round"/></svg>
+<svg width="32" height="32" viewBox="0 0 64 64" fill="none"><circle cx="32" cy="32" r="27" stroke="#EAF4F2" stroke-width="4"/><path d="M16 27q5.4-7 10.8 0t10.8 0 10.4 0M16 39q5.4-7 10.8 0t10.8 0 10.4 0" stroke="#EAF4F2" stroke-width="4" stroke-linecap="round"/></svg>
+<small>16 / 24 / 32 px · monochrome tray & boot splash</small>
+</div>
+<div class="lbl">Wallpaper concept</div>
+<div class="wall" style="background:radial-gradient(120% 90% at 70% 110%,#0E3A3A 0%,#07202B 34%,#050B10 70%),#050B10">
+<div style="position:absolute;left:62%;top:66%;width:340px;height:340px;transform:translate(-50%,-50%);background:radial-gradient(circle,rgba(47,230,196,.28) 0%,rgba(47,230,196,.06) 45%,transparent 70%);filter:blur(6px)"></div>
+<div style="position:absolute;left:26%;top:28%;width:180px;height:180px;background:radial-gradient(circle,rgba(30,110,140,.25),transparent 70%);filter:blur(10px)"></div>
+<svg style="position:absolute;left:56%;top:52%" width="110" height="110" viewBox="0 0 64 64" fill="none" opacity=".9"><circle cx="32" cy="32" r="27" stroke="#2FE6C4" stroke-width="2"/><path d="M16 27q5.4-7 10.8 0t10.8 0 10.4 0M16 39q5.4-7 10.8 0t10.8 0 10.4 0" stroke="#2FE6C4" stroke-width="2" stroke-linecap="round"/></svg>
+</div>
+<div class="lbl">Login</div>
+<div class="login" style="background:radial-gradient(130% 100% at 70% 115%,#0E3A3A 0%,#07202B 38%,#050B10 75%),#050B10">
+<div class="clock"><b style="font-family:Outfit">21:47</b><div>Tuesday, August 25</div></div>
+<div class="loginui">
+<div class="avatar" style="background:#123A38;color:#2FE6C4">R</div>
+<div style="font:500 12px Inter">Royce</div>
+<div class="pwd">••••••••</div>
+<div class="loginbtn" style="background:#2FE6C4;color:#04110D">Unlock</div>
+</div>
+</div>
+</section>
+
+<!-- 1b · CONSTELLATION -->
+<section class="board" id="1b" style="left:1010px;top:40px;height:1560px;background:#070509;color:#F1EDF7">
+<div class="badge">1b</div>
+<div class="dirname" style="font-family:'Space Grotesk';font-weight:500">Constellation</div>
+<p class="mood">Near-black sky, thin line-work, points of light. Precise and celestial — the water-bearer drawn the way astronomers draw it: dots, vectors, restraint.</p>
+<div class="lbl">Palette</div>
+<div class="pal">
+<div class="sw" style="background:#070509"><b>Background</b><span>#070509</span></div>
+<div class="sw" style="background:#141019"><b>Surface</b><span>#141019</span></div>
+<div class="sw" style="background:#D678E8"><b style="color:#1D0B22">Hero · Orchid</b><span style="color:#1D0B22">#D678E8</span></div>
+<div class="sw" style="background:#A878EC"><b>Amethyst</b><span>#A878EC</span></div>
+<div class="sw" style="background:#2FE6C4"><b style="color:#1D0B22">Biolume</b><span style="color:#1D0B22">#2FE6C4</span></div>
+<div class="sw" style="background:#070509;border-color:rgba(255,255,255,.12)"><b>Text #F1EDF7</b><span style="color:#9A8FA6">Muted #9A8FA6</span></div>
+</div>
+<div class="lbl">Type · Space Grotesk + Inter · JetBrains Mono</div>
+<div class="typebig" style="font:500 44px 'Space Grotesk'">Play and <span style="color:#D678E8">create</span><br>on one machine.</div>
+<p class="typebody">Every workspace is a fixed point. AquariusOS maps your games, your edits, and your sessions like stars on a chart — small, exact, always where you left them.</p>
+<div class="typemono" style="color:#D678E8">$ ujust update && reboot <span style="color:#9A8FA6"># aquarius-stable 42.1</span></div>
+<div class="lbl">Glyph · the Aquarius asterism as an A</div>
+<div class="logorow">
+<svg width="88" height="88" viewBox="0 0 64 64" fill="none"><path d="M32 8 14 54M32 8 50 54M21 36h22" stroke="#D678E8" stroke-width="2"/><circle cx="32" cy="8" r="3.4" fill="#D678E8"/><circle cx="14" cy="54" r="3.4" fill="#D678E8"/><circle cx="50" cy="54" r="3.4" fill="#D678E8"/><circle cx="21" cy="36" r="2.6" fill="#D678E8"/><circle cx="43" cy="36" r="2.6" fill="#D678E8"/><circle cx="53" cy="16" r="1.8" fill="#2FE6C4"/></svg>
+<div style="font:500 34px 'Space Grotesk';letter-spacing:.02em">AQUARIUS<span style="color:#D678E8;font-weight:300">OS</span></div>
+</div>
+<div class="trayrow">
+<svg width="16" height="16" viewBox="0 0 64 64" fill="none"><path d="M32 8 14 54M32 8 50 54M21 36h22" stroke="#F1EDF7" stroke-width="5"/><circle cx="32" cy="8" r="5.5" fill="#F1EDF7"/><circle cx="14" cy="54" r="5.5" fill="#F1EDF7"/><circle cx="50" cy="54" r="5.5" fill="#F1EDF7"/></svg>
+<svg width="24" height="24" viewBox="0 0 64 64" fill="none"><path d="M32 8 14 54M32 8 50 54M21 36h22" stroke="#F1EDF7" stroke-width="3.5"/><circle cx="32" cy="8" r="4.5" fill="#F1EDF7"/><circle cx="14" cy="54" r="4.5" fill="#F1EDF7"/><circle cx="50" cy="54" r="4.5" fill="#F1EDF7"/><circle cx="21" cy="36" r="3" fill="#F1EDF7"/><circle cx="43" cy="36" r="3" fill="#F1EDF7"/></svg>
+<svg width="32" height="32" viewBox="0 0 64 64" fill="none"><path d="M32 8 14 54M32 8 50 54M21 36h22" stroke="#F1EDF7" stroke-width="2.5"/><circle cx="32" cy="8" r="4" fill="#F1EDF7"/><circle cx="14" cy="54" r="4" fill="#F1EDF7"/><circle cx="50" cy="54" r="4" fill="#F1EDF7"/><circle cx="21" cy="36" r="3" fill="#F1EDF7"/><circle cx="43" cy="36" r="3" fill="#F1EDF7"/></svg>
+<small>16 / 24 / 32 px · monochrome tray & boot splash</small>
+</div>
+<div class="lbl">Wallpaper concept</div>
+<div class="wall" style="background:radial-gradient(90% 70% at 25% 20%,#160F1E 0%,#070509 60%)">
+<div style="position:absolute;inset:0;background-image:radial-gradient(1px 1px at 12% 30%,#F1EDF7 50%,transparent 51%),radial-gradient(1px 1px at 28% 68%,#9A8FA6 50%,transparent 51%),radial-gradient(1.5px 1.5px at 44% 22%,#F1EDF7 50%,transparent 51%),radial-gradient(1px 1px at 58% 50%,#9A8FA6 50%,transparent 51%),radial-gradient(1px 1px at 70% 15%,#F1EDF7 50%,transparent 51%),radial-gradient(1.5px 1.5px at 82% 62%,#2FE6C4 50%,transparent 51%),radial-gradient(1px 1px at 90% 35%,#9A8FA6 50%,transparent 51%),radial-gradient(1px 1px at 8% 80%,#9A8FA6 50%,transparent 51%),radial-gradient(1px 1px at 36% 88%,#F1EDF7 50%,transparent 51%),radial-gradient(1px 1px at 64% 82%,#9A8FA6 50%,transparent 51%)"></div>
+<svg style="position:absolute;right:70px;top:48px" width="230" height="225" viewBox="0 0 64 64" fill="none" opacity=".85"><path d="M32 8 14 54M32 8 50 54M21 36h22" stroke="#D678E8" stroke-width=".8"/><circle cx="32" cy="8" r="1.6" fill="#D678E8"/><circle cx="14" cy="54" r="1.6" fill="#D678E8"/><circle cx="50" cy="54" r="1.6" fill="#D678E8"/><circle cx="21" cy="36" r="1.2" fill="#D678E8"/><circle cx="43" cy="36" r="1.2" fill="#D678E8"/></svg>
+</div>
+<div class="lbl">Login</div>
+<div class="login" style="background:radial-gradient(90% 80% at 30% 10%,#160F1E 0%,#070509 65%)">
+<div style="position:absolute;inset:0;background-image:radial-gradient(1px 1px at 15% 25%,#F1EDF7 50%,transparent 51%),radial-gradient(1px 1px at 75% 20%,#9A8FA6 50%,transparent 51%),radial-gradient(1px 1px at 55% 70%,#9A8FA6 50%,transparent 51%),radial-gradient(1.5px 1.5px at 88% 55%,#2FE6C4 50%,transparent 51%),radial-gradient(1px 1px at 30% 85%,#9A8FA6 50%,transparent 51%)"></div>
+<div class="clock"><b style="font-family:'Space Grotesk'">21:47</b><div>Tuesday, August 25</div></div>
+<div class="loginui">
+<div class="avatar" style="background:#241536;color:#D678E8">R</div>
+<div style="font:500 12px Inter">Royce</div>
+<div class="pwd">••••••••</div>
+<div class="loginbtn" style="background:#D678E8;color:#1D0B22">Unlock</div>
+</div>
+</div>
+</section>
+
+<!-- 1c · FLOW STATE -->
+<section class="board" id="1c" style="left:1980px;top:40px;height:1560px;background:linear-gradient(160deg,#0B0E1A 0%,#06070C 60%);color:#EDEFF7">
+<div class="badge">1c</div>
+<div class="dirname" style="font-family:Sora;font-weight:700">Flow State</div>
+<p class="mood">Aurora over black. Color moves in ribbons — the energy of a game session or a render finishing. Gamer-forward, alive, never pastel.</p>
+<div class="lbl">Palette</div>
+<div class="pal">
+<div class="sw" style="background:#06070C"><b>Background</b><span>#06070C</span></div>
+<div class="sw" style="background:#10121C"><b>Surface</b><span>#10121C</span></div>
+<div class="sw" style="background:#8AB4FF"><b style="color:#080B14">Hero · Starlight</b><span style="color:#080B14">#8AB4FF</span></div>
+<div class="sw" style="background:#5B4BE0"><b style="color:#EDEFF7">Nebula</b><span style="color:#EDEFF7">#5B4BE0</span></div>
+<div class="sw" style="background:#E6DDB8"><b style="color:#04110D">Ancient Light</b><span style="color:#04110D">#E6DDB8</span></div>
+<div class="sw" style="background:#06070C;border-color:rgba(255,255,255,.12)"><b>Text #EDEFF7</b><span style="color:#8A90A6">Muted #8A90A6</span></div>
+</div>
+<div class="lbl">Type · Sora + Inter · JetBrains Mono</div>
+<div class="typebig" style="font:700 44px Sora">Play and <span style="background:linear-gradient(90deg,#8AB4FF,#5B4BE0);-webkit-background-clip:text;background-clip:text;color:transparent">create</span><br>on one machine.</div>
+<p class="typebody">Frame rates and frame edits, same rig. AquariusOS switches from couch to cut-room in one keystroke, and the interface carries the charge with it.</p>
+<div class="typemono" style="color:#8AB4FF">$ ujust update && reboot <span style="color:#8A90A6"># aquarius-stable 42.1</span></div>
+<div class="lbl">Glyph · a ribbon pouring into an A</div>
+<div class="logorow">
+<svg width="88" height="88" viewBox="0 0 64 64" fill="none"><path d="M14 54 30 12q1.4-3.6 4 0L50 54" stroke="url(#g1)" stroke-width="5" stroke-linecap="round"/><path d="M20 40q6-6 12 0t12 0" stroke="url(#g2)" stroke-width="5" stroke-linecap="round"/><defs><linearGradient id="g1" x1="14" y1="54" x2="50" y2="12"><stop stop-color="#8AB4FF"/><stop offset="1" stop-color="#5B4BE0"/></linearGradient><linearGradient id="g2" x1="20" y1="40" x2="44" y2="40"><stop stop-color="#E6DDB8"/><stop offset="1" stop-color="#8AB4FF"/></linearGradient></defs></svg>
+<div style="font:700 34px Sora;letter-spacing:-.01em">Aquarius<span style="background:linear-gradient(90deg,#8AB4FF,#5B4BE0);-webkit-background-clip:text;background-clip:text;color:transparent">OS</span></div>
+</div>
+<div class="trayrow">
+<svg width="16" height="16" viewBox="0 0 64 64" fill="none"><path d="M14 54 30 12q1.4-3.6 4 0L50 54" stroke="#EDEFF7" stroke-width="7" stroke-linecap="round"/><path d="M20 40q6-6 12 0t12 0" stroke="#EDEFF7" stroke-width="7" stroke-linecap="round"/></svg>
+<svg width="24" height="24" viewBox="0 0 64 64" fill="none"><path d="M14 54 30 12q1.4-3.6 4 0L50 54" stroke="#EDEFF7" stroke-width="5.5" stroke-linecap="round"/><path d="M20 40q6-6 12 0t12 0" stroke="#EDEFF7" stroke-width="5.5" stroke-linecap="round"/></svg>
+<svg width="32" height="32" viewBox="0 0 64 64" fill="none"><path d="M14 54 30 12q1.4-3.6 4 0L50 54" stroke="#EDEFF7" stroke-width="4.5" stroke-linecap="round"/><path d="M20 40q6-6 12 0t12 0" stroke="#EDEFF7" stroke-width="4.5" stroke-linecap="round"/></svg>
+<small>16 / 24 / 32 px · monochrome tray & boot splash</small>
+</div>
+<div class="lbl">Wallpaper concept</div>
+<div class="wall" style="background:#06070C">
+<div style="position:absolute;left:-10%;top:30%;width:130%;height:140px;background:linear-gradient(90deg,transparent,rgba(91,75,224,.5) 30%,rgba(138,180,255,.45) 60%,transparent);filter:blur(28px);transform:rotate(-9deg)"></div>
+<div style="position:absolute;left:-10%;top:52%;width:130%;height:90px;background:linear-gradient(90deg,transparent,rgba(230,221,184,.32) 40%,rgba(91,75,224,.3) 75%,transparent);filter:blur(24px);transform:rotate(-6deg)"></div>
+<div style="position:absolute;left:-10%;top:16%;width:130%;height:50px;background:linear-gradient(90deg,transparent,rgba(138,180,255,.22) 55%,transparent);filter:blur(18px);transform:rotate(-11deg)"></div>
+</div>
+<div class="lbl">Login</div>
+<div class="login" style="background:#06070C">
+<div style="position:absolute;left:-15%;top:44%;width:140%;height:80px;background:linear-gradient(90deg,transparent,rgba(91,75,224,.45) 35%,rgba(138,180,255,.4) 65%,transparent);filter:blur(22px);transform:rotate(-8deg)"></div>
+<div style="position:absolute;left:-15%;top:64%;width:140%;height:50px;background:linear-gradient(90deg,transparent,rgba(230,221,184,.28) 50%,transparent);filter:blur(18px);transform:rotate(-5deg)"></div>
+<div class="clock"><b style="font-family:Sora;font-weight:300">21:47</b><div>Tuesday, August 25</div></div>
+<div class="loginui">
+<div class="avatar" style="background:#181D33;color:#8AB4FF">R</div>
+<div style="font:500 12px Inter">Royce</div>
+<div class="pwd">••••••••</div>
+<div class="loginbtn" style="background:#8AB4FF;color:#080B14">Unlock</div>
+</div>
+</div>
+</section>
+
+<!-- 1d · ACCENT COMPARISON -->
+<section class="board" id="1d" style="left:1010px;top:1660px;width:920px;height:460px;background:#08090D;color:#E9EDF2">
+<div class="badge">1d</div>
+<div class="dirname" style="font-family:Inter;font-weight:600;font-size:24px">Hero accents on a system card</div>
+<p class="mood">Same near-black UI card, three accents — judge them as a KDE Plasma accent: buttons, selection, focus, toggle.</p>
+<div style="display:flex;gap:18px;margin-top:26px">
+<div style="flex:1;border-radius:14px;background:#0C0E12;border:1px solid rgba(255,255,255,.08);padding:18px">
+<div style="font:500 10px 'JetBrains Mono';letter-spacing:.12em;color:#7E969B;text-transform:uppercase">Biolume #2FE6C4</div>
+<div style="margin-top:14px;display:flex;gap:8px"><span style="height:30px;border-radius:8px;padding:0 14px;display:inline-flex;align-items:center;font:600 12px Inter;background:#2FE6C4;color:#04110D">Install</span><span style="height:30px;border-radius:8px;padding:0 14px;display:inline-flex;align-items:center;font:500 12px Inter;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12)">Details</span></div>
+<div style="margin-top:12px;border-radius:8px;overflow:hidden;border:1px solid rgba(255,255,255,.07);font-size:12px"><div style="padding:8px 10px;color:#9AA7AB">Display</div><div style="padding:8px 10px;background:rgba(47,230,196,.16);color:#BFF5E9;border-left:2px solid #2FE6C4">Accent color</div><div style="padding:8px 10px;color:#9AA7AB">Power</div></div>
+<div style="margin-top:12px;display:flex;align-items:center;gap:10px"><span style="width:36px;height:20px;border-radius:10px;background:#2FE6C4;position:relative;display:inline-block"><i style="position:absolute;top:2.5px;right:3px;width:15px;height:15px;border-radius:50%;background:#04110D"></i></span><span style="font-size:12px;color:#9AA7AB">Night light</span></div>
+<div style="margin-top:12px;height:5px;border-radius:3px;background:rgba(255,255,255,.08)"><div style="width:64%;height:100%;border-radius:3px;background:#2FE6C4"></div></div>
+</div>
+<div style="flex:1;border-radius:14px;background:#0C0E12;border:1px solid rgba(255,255,255,.08);padding:18px">
+<div style="font:500 10px 'JetBrains Mono';letter-spacing:.12em;color:#8A90A6;text-transform:uppercase">Starlight #8AB4FF</div>
+<div style="margin-top:14px;display:flex;gap:8px"><span style="height:30px;border-radius:8px;padding:0 14px;display:inline-flex;align-items:center;font:600 12px Inter;background:#8AB4FF;color:#080B14">Install</span><span style="height:30px;border-radius:8px;padding:0 14px;display:inline-flex;align-items:center;font:500 12px Inter;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12)">Details</span></div>
+<div style="margin-top:12px;border-radius:8px;overflow:hidden;border:1px solid rgba(255,255,255,.07);font-size:12px"><div style="padding:8px 10px;color:#9AA3B8">Display</div><div style="padding:8px 10px;background:rgba(138,180,255,.16);color:#CBDCFF;border-left:2px solid #8AB4FF">Accent color</div><div style="padding:8px 10px;color:#9AA3B8">Power</div></div>
+<div style="margin-top:12px;display:flex;align-items:center;gap:10px"><span style="width:36px;height:20px;border-radius:10px;background:#8AB4FF;position:relative;display:inline-block"><i style="position:absolute;top:2.5px;right:3px;width:15px;height:15px;border-radius:50%;background:#080B14"></i></span><span style="font-size:12px;color:#9AA3B8">Night light</span></div>
+<div style="margin-top:12px;height:5px;border-radius:3px;background:rgba(255,255,255,.08)"><div style="width:64%;height:100%;border-radius:3px;background:#8AB4FF"></div></div>
+</div>
+<div style="flex:1;border-radius:14px;background:#0C0E12;border:1px solid rgba(255,255,255,.08);padding:18px">
+<div style="font:500 10px 'JetBrains Mono';letter-spacing:.12em;color:#9A8FA6;text-transform:uppercase">Orchid #D678E8</div>
+<div style="margin-top:14px;display:flex;gap:8px"><span style="height:30px;border-radius:8px;padding:0 14px;display:inline-flex;align-items:center;font:600 12px Inter;background:#D678E8;color:#1D0B22">Install</span><span style="height:30px;border-radius:8px;padding:0 14px;display:inline-flex;align-items:center;font:500 12px Inter;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12)">Details</span></div>
+<div style="margin-top:12px;border-radius:8px;overflow:hidden;border:1px solid rgba(255,255,255,.07);font-size:12px"><div style="padding:8px 10px;color:#A59BB0">Display</div><div style="padding:8px 10px;background:rgba(214,120,232,.16);color:#F0C9F5;border-left:2px solid #D678E8">Accent color</div><div style="padding:8px 10px;color:#A59BB0">Power</div></div>
+<div style="margin-top:12px;display:flex;align-items:center;gap:10px"><span style="width:36px;height:20px;border-radius:10px;background:#D678E8;position:relative;display:inline-block"><i style="position:absolute;top:2.5px;right:3px;width:15px;height:15px;border-radius:50%;background:#1D0B22"></i></span><span style="font-size:12px;color:#A59BB0">Night light</span></div>
+<div style="margin-top:12px;height:5px;border-radius:3px;background:rgba(255,255,255,.08)"><div style="width:64%;height:100%;border-radius:3px;background:#D678E8"></div></div>
+</div>
+</div>
+</section>
+
+</body></html>

@@ -1,0 +1,79 @@
+<!-- @dsCard group="Modes" viewport="1280x800" name="Handheld mode" subtitle="Touch-first home · same layout drives touch and controller input" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AquariusOS · Handheld mode</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+*{box-sizing:border-box;margin:0}
+html,body{height:100%}
+body{width:1280px;height:800px;background:radial-gradient(140% 100% at 78% -10%,#0B0E22 0%,var(--void) 55%);font-family:var(--font-body);color:var(--text-1);overflow:hidden;position:relative}
+a{color:var(--starlight)}a:hover{color:var(--starlight-hover)}
+.ribbon{position:absolute;pointer-events:none}
+.grid{display:grid;grid-template-columns:repeat(6,110px);gap:40px 56px;justify-content:center}
+.app{display:flex;flex-direction:column;align-items:center;gap:10px;cursor:pointer}
+.app .tile{width:84px;height:84px;border-radius:20px;background:var(--surface-2);border:1px solid var(--border-2);display:flex;align-items:center;justify-content:center;font:600 26px var(--font-display);color:#C9DBFF;box-shadow:var(--shadow-card);transition:transform var(--dur-fast) var(--ease-out)}
+.app:hover .tile{transform:scale(1.06)}
+.app.focus .tile{border:2px solid var(--starlight);box-shadow:var(--glow-accent),var(--shadow-card)}
+.app span{font:500 13px var(--font-body);color:var(--text-1);text-shadow:0 1px 8px rgba(6,7,12,.8)}
+.dock-ico{width:64px;height:64px;border-radius:16px;background:var(--surface-2);border:1px solid var(--border-2);display:flex;align-items:center;justify-content:center;font:600 20px var(--font-display);color:#C9DBFF}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--border-2)}
+.dot.on{background:var(--text-1)}
+.glyph{width:22px;height:22px;border-radius:50%;background:var(--surface-3);border:1px solid var(--border-2);display:flex;align-items:center;justify-content:center;font:600 10.5px var(--font-body);color:var(--text-1)}
+.hint{display:flex;align-items:center;gap:7px;font:500 12px var(--font-body);color:var(--text-2)}
+</style>
+</head>
+<body data-screen-label="Handheld mode home">
+<div class="ribbon" style="left:-10%;top:14%;width:120%;height:130px;background:linear-gradient(90deg,transparent 10%,rgba(91,75,224,.22) 45%,rgba(138,180,255,.16) 70%,transparent);filter:blur(52px);transform:rotate(-10deg)"></div>
+<div class="ribbon" style="left:-10%;top:60%;width:120%;height:80px;background:linear-gradient(90deg,transparent 20%,rgba(138,180,255,.12) 55%,transparent 90%);filter:blur(40px);transform:rotate(-12deg)"></div>
+<header style="position:absolute;left:0;right:0;top:0;height:32px;display:flex;align-items:center;padding:0 20px;font:500 13px var(--font-body);color:var(--text-1);z-index:2">
+<span>21:47 · Tue Aug 25</span>
+<span style="flex:1"></span>
+<span style="display:flex;align-items:center;gap:12px;font:500 11px var(--font-mono);color:var(--text-2)">
+<svg width="13" height="9" viewBox="0 0 24 14" fill="none"><rect x="1" y="1" width="22" height="12" rx="4" stroke="#EDEFF7" stroke-width="1.8"></rect><path d="M6.5 5v4M4.5 7h4" stroke="#EDEFF7" stroke-width="1.4" stroke-linecap="round"></path><circle cx="17" cy="6" r="1.1" fill="#EDEFF7"></circle><circle cx="19.5" cy="8.5" r="1.1" fill="#EDEFF7"></circle></svg>
+<svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M1.5 4.5a9.5 9.5 0 0 1 13 0M4 7.2a6 6 0 0 1 8 0M6.5 9.8a2.6 2.6 0 0 1 3 0" stroke="#EDEFF7" stroke-width="1.5" stroke-linecap="round"></path><circle cx="8" cy="11" r="1" fill="#EDEFF7"></circle></svg>
+100%
+<svg width="22" height="11" viewBox="0 0 22 11" fill="none"><rect x="0.75" y="0.75" width="18" height="9.5" rx="2.5" stroke="#EDEFF7" stroke-width="1.2"></rect><rect x="2.4" y="2.4" width="14.7" height="6.2" rx="1.4" fill="#55D6A5"></rect><path d="M20.6 3.6v3.8a2 2 0 0 0 0-3.8z" fill="#EDEFF7"></path></svg>
+</span>
+</header>
+<main style="position:relative;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:40px;padding:56px 40px 150px">
+<div style="height:44px;min-width:340px;border-radius:22px;background:rgba(16,18,28,.7);border:1px solid var(--border-1);backdrop-filter:var(--blur-panel);display:flex;align-items:center;justify-content:center;gap:10px;font:400 14px var(--font-body);color:var(--text-2)">
+<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path></svg>
+Search apps, files, and games
+</div>
+<div class="grid">
+<div class="app focus"><span class="tile" style="background:rgba(138,180,255,.16)">St</span><span>Steam</span></div>
+<div class="app"><span class="tile">OB</span><span>OBS Studio</span></div>
+<div class="app"><span class="tile">Kr</span><span>Krita</span></div>
+<div class="app"><span class="tile">Kd</span><span>Kdenlive</span></div>
+<div class="app"><span class="tile">Bl</span><span>Blender</span></div>
+<div class="app"><span class="tile">Ds</span><span>Discord</span></div>
+<div class="app"><span class="tile">We</span><span>Web</span></div>
+<div class="app"><span class="tile">Mu</span><span>Music</span></div>
+<div class="app"><span class="tile">Ph</span><span>Photos</span></div>
+<div class="app"><span class="tile">Co</span><span>Console</span></div>
+<div class="app"><span class="tile">Fi</span><span>Files</span></div>
+<div class="app"><span class="tile">Se</span><span>Settings</span></div>
+</div>
+</main>
+<div style="position:absolute;left:50%;bottom:146px;transform:translateX(-50%);display:flex;gap:10px;align-items:center;z-index:2"><span class="dot on"></span><span class="dot"></span><span class="dot"></span></div>
+<div style="position:absolute;left:50%;bottom:40px;transform:translateX(-50%);display:flex;align-items:center;gap:14px;padding:12px 18px;border-radius:24px;background:rgba(6,7,12,.72);backdrop-filter:var(--blur-panel);border:1px solid var(--border-1);box-shadow:var(--shadow-card);z-index:2">
+<span class="dock-ico" style="background:rgba(138,180,255,.16);border-color:rgba(138,180,255,.35)"><svg width="28" height="28" viewBox="0 0 64 64" fill="none"><path d="M14 54 30 12q1.4-3.6 4 0L50 54" stroke="#C9DBFF" stroke-width="6" stroke-linecap="round"></path><path d="M20 40q6-6 12 0t12 0" stroke="#C9DBFF" stroke-width="6" stroke-linecap="round"></path></svg></span>
+<span style="width:1px;height:40px;background:var(--border-2)"></span>
+<span class="dock-ico">St</span>
+<span class="dock-ico">Fi</span>
+<span class="dock-ico">We</span>
+<span class="dock-ico">Mu</span>
+<span class="dock-ico">Se</span>
+</div>
+<footer style="position:absolute;left:0;right:0;bottom:0;height:30px;display:flex;align-items:center;gap:24px;padding:0 24px;z-index:2">
+<span style="font:400 11px var(--font-mono);color:var(--text-3)">handheld mode · touch + controller</span>
+<span style="flex:1"></span>
+<span class="hint"><span class="glyph" style="color:#55D6A5;border-color:rgba(85,214,165,.4)">A</span>Open</span>
+<span class="hint"><span class="glyph" style="color:#FF7A85;border-color:rgba(255,122,133,.4)">B</span>Back</span>
+<span class="hint"><span class="glyph" style="color:#E6C069;border-color:rgba(230,192,105,.4)">Y</span>Search</span>
+<span class="hint"><span class="glyph">☰</span>Quick settings</span>
+</footer>
+</body>
+</html>

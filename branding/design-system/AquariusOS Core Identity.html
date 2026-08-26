@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>AquariusOS Core Identity</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+*{box-sizing:border-box;margin:0}
+body{background:#212227;font-family:var(--font-body);color:var(--text-1);padding:48px;display:flex;justify-content:center}
+a{color:var(--starlight)}a:hover{color:var(--starlight-hover)}
+.sheet{width:1180px;background:var(--void);border-radius:20px;padding:56px 64px;box-shadow:var(--shadow-pop)}
+.lbl{font:500 11px/1 var(--font-mono);letter-spacing:var(--ls-caps);text-transform:uppercase;color:var(--text-2);margin:52px 0 18px}
+.lbl:first-of-type{margin-top:44px}
+.hex{font:400 10.5px var(--font-mono)}
+.pal{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
+.sw{border-radius:var(--radius-lg);height:104px;display:flex;flex-direction:column;justify-content:flex-end;gap:2px;padding:12px;border:1px solid var(--border-1)}
+.sw b{font-size:11.5px;font-weight:600}
+.trow{display:grid;grid-template-columns:150px 1fr 210px;gap:24px;align-items:baseline;padding:12px 0;border-bottom:1px solid var(--border-1)}
+.trow .meta{font:400 10.5px var(--font-mono);color:var(--text-2)}
+.stack{border-radius:var(--radius-xl);padding:24px;flex:1}
+.layer{border-radius:var(--radius-lg);padding:16px 18px}
+.layer b{font-size:12.5px;font-weight:600}
+.layer span{display:block;margin-top:2px}
+.tag{position:absolute;left:12px;bottom:10px;font:500 10px var(--font-mono);color:rgba(237,239,247,.78);background:rgba(6,7,12,.6);padding:4px 8px;border-radius:6px;letter-spacing:.06em;z-index:3}
+.frame{border-radius:var(--radius-lg);border:1px solid var(--border-1);overflow:hidden;position:relative;height:154px;background:#000}
+.step{margin-top:9px;font:500 10px var(--font-mono);letter-spacing:.08em;color:var(--text-2);text-transform:uppercase}
+.step b{color:var(--text-1);font-weight:600;display:block;margin-bottom:2px;letter-spacing:.04em}
+.ribbon{position:absolute;pointer-events:none}
+</style></head><body>
+<main class="sheet">
+
+<header style="display:flex;justify-content:space-between;align-items:flex-start">
+<div>
+<div style="font:700 40px/1.05 var(--font-display);letter-spacing:-.02em">AquariusOS <span style="background:var(--grad-play);-webkit-background-clip:text;background-clip:text;color:transparent">Core Identity</span></div>
+<p style="margin-top:10px;color:var(--text-2);font-size:14px;max-width:520px;line-height:1.55">Direction: Flow State · aurora energy over near-black, carried by the Starlight palette. Play and Create on one machine.</p>
+</div>
+<div style="font:500 11px var(--font-mono);color:var(--text-2);text-align:right;line-height:1.8">v1.0 · Aug 2026<br>dark-first · OLED-safe</div>
+</header>
+
+<div class="lbl">Logo · color, mono, wordmark</div>
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px">
+<div style="border-radius:var(--radius-xl);border:1px solid var(--border-1);background:var(--surface-1);padding:26px;display:flex;flex-direction:column;align-items:center;gap:14px">
+<img src="assets/logo.svg" width="84" height="84" alt="AquariusOS glyph, color">
+<span class="hex" style="color:var(--text-2)">color glyph · assets/logo.svg</span>
+</div>
+<div style="border-radius:var(--radius-xl);border:1px solid var(--border-1);background:var(--surface-1);padding:26px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px">
+<div style="display:flex;align-items:center;gap:18px;color:var(--text-1)">
+<svg width="16" height="16" viewBox="0 0 64 64" fill="none"><path d="M14 54 30 12q1.4-3.6 4 0L50 54" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><path d="M20 40q6-6 12 0t12 0" stroke="currentColor" stroke-width="7" stroke-linecap="round"/></svg>
+<svg width="24" height="24" viewBox="0 0 64 64" fill="none"><path d="M14 54 30 12q1.4-3.6 4 0L50 54" stroke="currentColor" stroke-width="5.5" stroke-linecap="round"/><path d="M20 40q6-6 12 0t12 0" stroke="currentColor" stroke-width="5.5" stroke-linecap="round"/></svg>
+<svg width="32" height="32" viewBox="0 0 64 64" fill="none"><path d="M14 54 30 12q1.4-3.6 4 0L50 54" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"/><path d="M20 40q6-6 12 0t12 0" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"/></svg>
+<svg width="48" height="48" viewBox="0 0 64 64" fill="none"><path d="M14 54 30 12q1.4-3.6 4 0L50 54" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><path d="M20 40q6-6 12 0t12 0" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></svg>
+</div>
+<span class="hex" style="color:var(--text-2)">mono 16–48px · tray, boot, terminal · assets/logo-mono.svg</span>
+</div>
+<div style="border-radius:var(--radius-xl);border:1px solid var(--border-1);background:var(--surface-1);padding:26px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px">
+<div style="display:flex;align-items:center;gap:12px">
+<img src="assets/logo.svg" width="34" height="34" alt="">
+<span style="font:700 28px var(--font-display);letter-spacing:-.01em">Aquarius<span style="background:var(--grad-play);-webkit-background-clip:text;background-clip:text;color:transparent">OS</span></span>
+</div>
+<span class="hex" style="color:var(--text-2)">wordmark · Sora 700 · glyph = cap height ×1.2</span>
+</div>
+</div>
+
+<div class="lbl">Palette · brand</div>
+<div class="pal">
+<div class="sw" style="background:var(--oled);border-color:var(--border-2)"><b>OLED Black</b><span class="hex" style="color:var(--text-2)">#000000</span></div>
+<div class="sw" style="background:#06070C"><b>Void</b><span class="hex" style="color:var(--text-2)">#06070C</span></div>
+<div class="sw" style="background:#10121C"><b>Surface 1</b><span class="hex" style="color:var(--text-2)">#10121C</span></div>
+<div class="sw" style="background:#161A29"><b>Surface 2</b><span class="hex" style="color:var(--text-2)">#161A29</span></div>
+<div class="sw" style="background:#1D2236"><b>Surface 3</b><span class="hex" style="color:var(--text-2)">#1D2236</span></div>
+<div class="sw" style="background:var(--void);border-color:var(--border-2)"><b>Text #EDEFF7</b><span class="hex" style="color:#8A90A6">Muted #8A90A6 · Faint #565C72</span></div>
+<div class="sw" style="background:#8AB4FF"><b style="color:#080B14">Starlight · hero</b><span class="hex" style="color:#080B14">#8AB4FF · KDE accent</span></div>
+<div class="sw" style="background:#A8C6FF"><b style="color:#080B14">Starlight Hover</b><span class="hex" style="color:#080B14">#A8C6FF</span></div>
+<div class="sw" style="background:#5B4BE0"><b>Nebula</b><span class="hex" style="color:#EDEFF7">#5B4BE0 · gradients, depth</span></div>
+<div class="sw" style="background:#E6DDB8"><b style="color:#080B14">Ancient Light</b><span class="hex" style="color:#080B14">#E6DDB8 · rare highlight</span></div>
+<div class="sw" style="background:linear-gradient(90deg,#8AB4FF,#5B4BE0)"><b style="color:#080B14">Play Gradient</b><span class="hex" style="color:#080B14">Starlight → Nebula</span></div>
+<div class="sw" style="background:var(--void);border-color:var(--border-2)"><b>Semantic</b><span class="hex"><i style="font-style:normal;color:#55D6A5">#55D6A5</i> · <i style="font-style:normal;color:#E6C069">#E6C069</i> · <i style="font-style:normal;color:#FF7A85">#FF7A85</i></span></div>
+</div>
+
+<div class="lbl">Typography · Sora / Inter / JetBrains Mono</div>
+<div>
+<div class="trow"><span class="meta">Hero · 64/1.02</span><span style="font:700 64px/1.02 var(--font-display);letter-spacing:-.02em">Play &amp; create</span><span class="meta">Sora 700 · −0.02em</span></div>
+<div class="trow"><span class="meta">Display · 48</span><span style="font:700 48px/1.06 var(--font-display);letter-spacing:-.02em">One machine</span><span class="meta">Sora 700</span></div>
+<div class="trow"><span class="meta">Title · 34</span><span style="font:600 34px/1.12 var(--font-display)">Session restored</span><span class="meta">Sora 600</span></div>
+<div class="trow"><span class="meta">Heading · 24</span><span style="font:600 24px/1.25 var(--font-display)">Display &amp; brightness</span><span class="meta">Sora 600</span></div>
+<div class="trow"><span class="meta">Body · 15/1.6</span><span style="font:400 15px/1.6 var(--font-body);max-width:560px;display:block">Your library, your timeline, your terminal — surfaced when you reach for them, dark and still when you don't.</span><span class="meta">Inter 400 · UI text 13.5</span></div>
+<div class="trow" style="border-bottom:none"><span class="meta">Mono · 12.5</span><span style="font:400 12.5px/1.65 var(--font-mono);color:var(--starlight)">$ ujust update &amp;&amp; reboot <span style="color:var(--text-2)"># aquarius-stable 42.1</span></span><span class="meta">JetBrains Mono · labels use 11px caps +0.14em</span></div>
+</div>
+
+<div class="lbl">Surface stacks · dark and derived light</div>
+<div style="display:flex;gap:14px">
+<div class="stack" style="background:#000;border:1px solid var(--border-2)">
+<div style="font-size:12px;color:#8A90A6;margin-bottom:14px;font-family:var(--font-mono)">dark / OLED · #000000 base</div>
+<div class="layer" style="background:#06070C;border:1px solid rgba(237,239,247,.08)"><b style="color:#EDEFF7">Void — app background</b><span class="hex" style="color:#8A90A6">#06070C</span>
+<div class="layer" style="background:#10121C;margin-top:12px;border:1px solid rgba(237,239,247,.08)"><b style="color:#EDEFF7">Surface 1 — cards, panels</b><span class="hex" style="color:#8A90A6">#10121C</span>
+<div class="layer" style="background:#161A29;margin-top:12px;border:1px solid rgba(237,239,247,.08)"><b style="color:#EDEFF7">Surface 2 — raised, popovers</b><span class="hex" style="color:#8A90A6">#161A29</span>
+<div style="margin-top:12px;display:flex;gap:8px;align-items:center"><span style="height:30px;border-radius:9px;padding:0 14px;display:inline-flex;align-items:center;font:600 12px var(--font-body);background:#8AB4FF;color:#080B14">Primary</span><span style="height:30px;border-radius:9px;padding:0 12px;display:inline-flex;align-items:center;font:400 12px var(--font-body);background:rgba(138,180,255,.16);color:#C9DBFF;border:1px solid rgba(138,180,255,.35)">Selection</span></div>
+</div></div></div>
+</div>
+<div class="stack" data-theme="light" style="background:#EEF0F7">
+<div style="font-size:12px;color:#565C72;margin-bottom:14px;font-family:var(--font-mono)">light · derived, same tokens</div>
+<div class="layer" style="background:#F7F8FC;border:1px solid rgba(20,23,38,.10)"><b style="color:#141726">Surface 1 — cards, panels</b><span class="hex" style="color:#565C72">#F7F8FC on #EEF0F7</span>
+<div class="layer" style="background:#FFFFFF;margin-top:12px;border:1px solid rgba(20,23,38,.10)"><b style="color:#141726">Surface 2 — raised, popovers</b><span class="hex" style="color:#565C72">#FFFFFF</span>
+<div style="margin-top:12px;display:flex;gap:8px;align-items:center"><span style="height:30px;border-radius:9px;padding:0 14px;display:inline-flex;align-items:center;font:600 12px var(--font-body);background:#3D63D6;color:#fff">Primary</span><span style="height:30px;border-radius:9px;padding:0 12px;display:inline-flex;align-items:center;font:400 12px var(--font-body);background:rgba(61,99,214,.14);color:#2545AD;border:1px solid rgba(61,99,214,.3)">Selection</span></div>
+<div class="hex" style="margin-top:12px;color:#565C72">accent deepens: #8AB4FF → #3D63D6 · text #141726</div>
+</div></div>
+</div>
+</div>
+
+
+<div class="lbl">Wallpapers · The Pour (default) + mood variants</div>
+<div style="border-radius:var(--radius-xl);border:1px solid var(--border-1);position:relative;overflow:hidden;height:480px;background:radial-gradient(140% 100% at 78% -10%,#0B0E22 0%,#06070C 55%)">
+
+<div class="ribbon" style="left:-10%;top:22%;width:120%;height:165px;background:linear-gradient(90deg,transparent,rgba(91,75,224,.42) 25%,rgba(138,180,255,.5) 55%,rgba(138,180,255,.14) 80%,transparent);filter:blur(31px);transform:rotate(-13deg)"></div>
+<div class="ribbon" style="left:-10%;top:40%;width:120%;height:35px;background:linear-gradient(90deg,transparent,rgba(230,221,184,.2) 45%,transparent 85%);filter:blur(18px);transform:rotate(-13deg)"></div>
+<div class="ribbon" style="left:-10%;top:56%;width:120%;height:99px;background:linear-gradient(90deg,transparent 15%,rgba(91,75,224,.16) 50%,transparent);filter:blur(33px);transform:rotate(-11deg)"></div>
+<svg style="position:absolute;right:24px;bottom:20px;opacity:.4" width="38" height="38" viewBox="0 0 64 64" fill="none"><path d="M14 54 30 12q1.4-3.6 4 0L50 54" stroke="#EDEFF7" stroke-width="4.5" stroke-linecap="round"></path><path d="M20 40q6-6 12 0t12 0" stroke="#EDEFF7" stroke-width="4.5" stroke-linecap="round"></path></svg>
+<span class="tag">Default · The Pour · 16:9, scales to 16:10</span>
+</div>
+<div style="display:flex;gap:14px;margin-top:14px">
+<div style="flex:1;border-radius:var(--radius-xl);border:1px solid var(--border-1);position:relative;overflow:hidden;height:290px;background:radial-gradient(100% 60% at 50% 118%,#0A0B1A 0%,#040508 60%),#040508">
+<div class="ribbon" style="left:-8%;top:72%;width:116%;height:30px;background:linear-gradient(90deg,transparent,rgba(91,75,224,.3) 40%,rgba(138,180,255,.18) 65%,transparent);filter:blur(14px);transform:rotate(-3deg)"></div>
+<div class="ribbon" style="left:14%;top:78%;width:180px;height:54px;background:radial-gradient(closest-side,rgba(230,221,184,.08),transparent);filter:blur(10px)"></div>
+<span class="tag">Create · Still Water · calm, OLED near-black</span>
+</div>
+<div style="flex:1;border-radius:var(--radius-xl);border:1px solid var(--border-1);position:relative;overflow:hidden;height:290px;background:#06070C">
+<div class="ribbon" style="left:-12%;top:10%;width:124%;height:100px;background:linear-gradient(90deg,transparent,rgba(138,180,255,.55) 40%,rgba(91,75,224,.42) 70%,transparent);filter:blur(22px);transform:rotate(-17deg)"></div>
+<div class="ribbon" style="left:-12%;top:16%;width:124%;height:12px;background:linear-gradient(90deg,transparent,rgba(201,219,255,.5) 50%,transparent);filter:blur(6px);transform:rotate(-17deg)"></div>
+<div class="ribbon" style="left:-12%;top:46%;width:124%;height:60px;background:linear-gradient(90deg,transparent 10%,rgba(91,75,224,.4) 55%,transparent);filter:blur(18px);transform:rotate(11deg)"></div>
+<div class="ribbon" style="left:-12%;top:52%;width:124%;height:9px;background:linear-gradient(90deg,transparent 20%,rgba(230,221,184,.4) 60%,transparent);filter:blur(4px);transform:rotate(11deg)"></div>
+<div class="ribbon" style="left:-12%;top:64%;width:124%;height:110px;background:linear-gradient(90deg,transparent,rgba(91,75,224,.45) 35%,rgba(138,180,255,.3) 70%,transparent);filter:blur(24px);transform:rotate(-14deg)"></div>
+<span class="tag">Play · Overdrive · energetic, session-start</span>
+</div>
+</div>
+
+<div class="lbl">Boot to desktop · one journey</div>
+<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:14px">
+<div>
+<div class="frame" style="padding:12px;font:400 9px/1.5 var(--font-mono);color:#8A90A6">
+<div style="display:flex;align-items:center;gap:6px;color:#EDEFF7;font-size:9.5px"><svg width="11" height="11" viewBox="0 0 64 64" fill="none"><path d="M14 54 30 12q1.4-3.6 4 0L50 54" stroke="currentColor" stroke-width="7" stroke-linecap="round"></path><path d="M20 40q6-6 12 0t12 0" stroke="currentColor" stroke-width="7" stroke-linecap="round"></path></svg>AquariusOS Boot Manager</div>
+<div style="margin-top:9px;border:1px solid rgba(237,239,247,.12);border-radius:5px;overflow:hidden">
+<div style="padding:5px 8px;background:rgba(138,180,255,.16);color:#C9DBFF;border-left:2px solid #8AB4FF">AquariusOS 42.1</div>
+<div style="padding:5px 8px">AquariusOS 42.0 (rollback)</div>
+<div style="padding:5px 8px">UEFI firmware settings</div>
+</div>
+<div style="margin-top:8px;color:#565C72">↑/↓ select · ⏎ boot · e edit</div>
+</div>
+<div class="step"><b>01 · GRUB</b>mono on black · selection bar is the only color</div>
+</div>
+<div>
+<div class="frame" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px">
+<svg width="40" height="40" viewBox="0 0 64 64" fill="none" style="filter:drop-shadow(0 0 10px rgba(138,180,255,.55))"><path d="M14 54 30 12q1.4-3.6 4 0L50 54" stroke="#8AB4FF" stroke-width="4.5" stroke-linecap="round"></path><path d="M20 40q6-6 12 0t12 0" stroke="#8AB4FF" stroke-width="4.5" stroke-linecap="round" opacity=".35"></path></svg>
+<div style="display:flex;gap:6px"><span style="width:4px;height:4px;border-radius:50%;background:#8AB4FF"></span><span style="width:4px;height:4px;border-radius:50%;background:rgba(237,239,247,.22)"></span><span style="width:4px;height:4px;border-radius:50%;background:rgba(237,239,247,.22)"></span></div>
+</div>
+<div class="step"><b>02 · Plymouth</b>keyframe · pour stroke draws in, glow breathes</div>
+</div>
+<div>
+<div class="frame" style="background:radial-gradient(140% 100% at 78% -10%,#0B0E22 0%,#06070C 55%)">
+
+<div class="ribbon" style="left:-10%;top:22%;width:120%;height:48px;background:linear-gradient(90deg,transparent,rgba(91,75,224,.42) 25%,rgba(138,180,255,.5) 55%,rgba(138,180,255,.14) 80%,transparent);filter:blur(9px);transform:rotate(-13deg)"></div>
+<div class="ribbon" style="left:-10%;top:40%;width:120%;height:10px;background:linear-gradient(90deg,transparent,rgba(230,221,184,.2) 45%,transparent 85%);filter:blur(5px);transform:rotate(-13deg)"></div>
+<div class="ribbon" style="left:-10%;top:56%;width:120%;height:29px;background:linear-gradient(90deg,transparent 15%,rgba(91,75,224,.16) 50%,transparent);filter:blur(10px);transform:rotate(-11deg)"></div>
+<div style="position:absolute;top:12px;left:0;right:0;text-align:center;color:#EDEFF7"><div style="font:300 16px var(--font-display)">21:47</div><div style="font-size:7px;color:#8A90A6;margin-top:1px">Tuesday, August 25</div></div>
+<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding-top:30px">
+<div style="width:24px;height:24px;border-radius:50%;background:#1D2236;color:#8AB4FF;display:flex;align-items:center;justify-content:center;font:600 10px var(--font-body)">R</div>
+<div style="font:500 8.5px var(--font-body);color:#EDEFF7">Royce</div>
+<div style="width:88px;height:15px;border-radius:4px;background:rgba(237,239,247,.08);border:1px solid rgba(237,239,247,.14);display:flex;align-items:center;padding:0 6px;font-size:6px;letter-spacing:.25em;color:#EDEFF7">••••••</div>
+<div style="width:88px;height:15px;border-radius:4px;background:#8AB4FF;color:#080B14;display:flex;align-items:center;justify-content:center;font:600 7px var(--font-body)">Unlock</div>
+</div>
+<div style="position:absolute;left:8px;bottom:6px;font:400 6.5px var(--font-mono);color:#565C72">Plasma (Wayland)</div>
+</div>
+<div class="step"><b>03 · SDDM login</b>The Pour dimmed · clock, user, one accent button</div>
+</div>
+<div>
+<div class="frame" style="background:radial-gradient(140% 100% at 78% -10%,#0B0E22 0%,#06070C 55%)">
+<div class="ribbon" style="left:-10%;top:22%;width:120%;height:30px;background:linear-gradient(90deg,transparent,rgba(91,75,224,.3) 40%,rgba(138,180,255,.24) 65%,transparent);filter:blur(9px);transform:rotate(-12deg)"></div>
+<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px">
+<div style="font:600 8px var(--font-display);color:#EDEFF7">What will you do with this machine?</div>
+<div style="display:flex;gap:4px">
+<div style="width:36px;height:48px;border-radius:5px;background:rgba(16,18,28,.85);border:1px solid rgba(237,239,247,.14);padding:4px;display:flex;flex-direction:column;gap:2px"><span style="width:10px;height:10px;border-radius:3px;background:#1D2236"></span><span style="font:600 6px var(--font-body);color:#EDEFF7">Gamer</span><span style="font:400 4.5px/1.4 var(--font-body);color:#8A90A6">Steam ready</span></div>
+<div style="width:36px;height:48px;border-radius:5px;background:rgba(16,18,28,.85);border:1px solid rgba(237,239,247,.14);padding:4px;display:flex;flex-direction:column;gap:2px"><span style="width:10px;height:10px;border-radius:3px;background:#1D2236"></span><span style="font:600 6px var(--font-body);color:#EDEFF7">Creator</span><span style="font:400 4.5px/1.4 var(--font-body);color:#8A90A6">OBS, Krita</span></div>
+<div style="position:relative;width:36px;height:48px;border-radius:5px;background:rgba(16,18,28,.9);border:1px solid #8AB4FF;box-shadow:0 0 10px rgba(138,180,255,.25);padding:4px;display:flex;flex-direction:column;gap:2px"><span style="position:absolute;top:3px;right:3px;width:6px;height:6px;border-radius:50%;background:#8AB4FF"></span><span style="width:10px;height:10px;border-radius:3px;background:rgba(138,180,255,.14)"></span><span style="font:600 6px var(--font-body);color:#EDEFF7">Both</span><span style="font:400 4.5px/1.4 var(--font-body);color:#8A90A6">All of it</span></div>
+</div>
+<div style="width:52px;height:12px;border-radius:3px;background:#8AB4FF;color:#080B14;display:flex;align-items:center;justify-content:center;font:600 6px var(--font-body)">Continue</div>
+</div>
+<div style="position:absolute;left:8px;bottom:6px;font:400 6.5px var(--font-mono);color:#565C72">first-boot · 1 of 4</div>
+</div>
+<div class="step"><b>04 · First boot</b>Gamer / Creator / Both chooser · <a href="AquariusOS First Boot Chooser.html">full screen</a></div>
+</div>
+<div>
+<div class="frame" style="background:radial-gradient(140% 100% at 78% -10%,#0B0E22 0%,#06070C 55%)">
+
+<div class="ribbon" style="left:-10%;top:22%;width:120%;height:48px;background:linear-gradient(90deg,transparent,rgba(91,75,224,.42) 25%,rgba(138,180,255,.5) 55%,rgba(138,180,255,.14) 80%,transparent);filter:blur(9px);transform:rotate(-13deg)"></div>
+<div class="ribbon" style="left:-10%;top:40%;width:120%;height:10px;background:linear-gradient(90deg,transparent,rgba(230,221,184,.2) 45%,transparent 85%);filter:blur(5px);transform:rotate(-13deg)"></div>
+<div class="ribbon" style="left:-10%;top:56%;width:120%;height:29px;background:linear-gradient(90deg,transparent 15%,rgba(91,75,224,.16) 50%,transparent);filter:blur(10px);transform:rotate(-11deg)"></div>
+<div style="position:absolute;left:0;right:0;top:0;height:12px;background:rgba(6,7,12,.8);border-bottom:1px solid rgba(237,239,247,.08);display:flex;align-items:center;gap:4px;padding:0 5px">
+<svg width="7" height="7" viewBox="0 0 64 64" fill="none"><path d="M14 54 30 12q1.4-3.6 4 0L50 54" stroke="#C9DBFF" stroke-width="7" stroke-linecap="round"></path><path d="M20 40q6-6 12 0t12 0" stroke="#C9DBFF" stroke-width="7" stroke-linecap="round"></path></svg>
+<span style="flex:1"></span><span style="font:500 5.5px var(--font-mono);color:#8A90A6">21:47</span>
+</div>
+<div style="position:absolute;right:6px;top:18px;display:flex;flex-direction:column;gap:5px;align-items:center">
+<span style="width:10px;height:8px;border-radius:2px;background:rgba(237,239,247,.14);border:1px solid rgba(237,239,247,.2)"></span>
+<span style="width:10px;height:8px;border-radius:2px;background:rgba(237,239,247,.14);border:1px solid rgba(237,239,247,.2)"></span>
+</div>
+<div style="position:absolute;left:50%;bottom:4px;transform:translateX(-50%);display:flex;gap:3px;padding:3px 5px;border-radius:5px;background:rgba(6,7,12,.8);border:1px solid rgba(237,239,247,.1)">
+<span style="width:8px;height:8px;border-radius:2px;background:rgba(138,180,255,.3)"></span><span style="width:8px;height:8px;border-radius:2px;background:rgba(237,239,247,.14)"></span><span style="width:8px;height:8px;border-radius:2px;background:rgba(237,239,247,.14)"></span><span style="width:8px;height:8px;border-radius:2px;background:rgba(237,239,247,.14)"></span>
+</div>
+</div>
+<div class="step"><b>05 · Desktop</b>top bar · centered dock · drives on right, expanded below</div>
+</div>
+</div>
+
+<div style="margin-top:14px;border-radius:var(--radius-xl);border:1px solid var(--border-1);position:relative;overflow:hidden;height:560px;background:radial-gradient(140% 100% at 78% -10%,#0B0E22 0%,#06070C 55%)">
+
+<div class="ribbon" style="left:-10%;top:22%;width:120%;height:158px;background:linear-gradient(90deg,transparent,rgba(91,75,224,.42) 25%,rgba(138,180,255,.5) 55%,rgba(138,180,255,.14) 80%,transparent);filter:blur(29px);transform:rotate(-13deg)"></div>
+<div class="ribbon" style="left:-10%;top:40%;width:120%;height:34px;background:linear-gradient(90deg,transparent,rgba(230,221,184,.2) 45%,transparent 85%);filter:blur(17px);transform:rotate(-13deg)"></div>
+<div class="ribbon" style="left:-10%;top:56%;width:120%;height:95px;background:linear-gradient(90deg,transparent 15%,rgba(91,75,224,.16) 50%,transparent);filter:blur(32px);transform:rotate(-11deg)"></div>
+<div style="position:absolute;left:50%;margin-left:-150px;bottom:76px;width:300px;background:rgba(16,18,28,.94);border:1px solid var(--border-2);border-radius:14px;padding:14px;backdrop-filter:blur(18px);box-shadow:var(--shadow-pop);z-index:2">
+<div style="display:flex;align-items:center;gap:10px">
+<div style="width:30px;height:30px;border-radius:50%;background:#1D2236;color:#8AB4FF;display:flex;align-items:center;justify-content:center;font:600 12px var(--font-body)">R</div>
+<div><div style="font:600 12px var(--font-body);color:#EDEFF7">Royce</div><div style="font:400 9.5px var(--font-mono);color:#8A90A6">aquarius-stable 42.1</div></div>
+</div>
+<div style="margin-top:12px;height:30px;border-radius:8px;background:rgba(237,239,247,.06);border:1px solid var(--border-1);display:flex;align-items:center;padding:0 10px;font:400 11px var(--font-body);color:#565C72">Search apps and files</div>
+<div style="margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:4px">
+<div style="display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:8px;background:rgba(138,180,255,.14)"><span style="width:20px;height:20px;border-radius:6px;background:#1D2236;color:#C9DBFF;display:flex;align-items:center;justify-content:center;font:600 9px var(--font-body)">St</span><span style="font:500 11px var(--font-body);color:#EDEFF7">Steam</span></div>
+<div style="display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:8px"><span style="width:20px;height:20px;border-radius:6px;background:#1D2236;color:#C9DBFF;display:flex;align-items:center;justify-content:center;font:600 9px var(--font-body)">Kd</span><span style="font:400 11px var(--font-body);color:#EDEFF7">Kdenlive</span></div>
+<div style="display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:8px"><span style="width:20px;height:20px;border-radius:6px;background:#1D2236;color:#C9DBFF;display:flex;align-items:center;justify-content:center;font:600 9px var(--font-body)">OB</span><span style="font:400 11px var(--font-body);color:#EDEFF7">OBS Studio</span></div>
+<div style="display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:8px"><span style="width:20px;height:20px;border-radius:6px;background:#1D2236;color:#C9DBFF;display:flex;align-items:center;justify-content:center;font:600 9px var(--font-body)">Kr</span><span style="font:400 11px var(--font-body);color:#EDEFF7">Krita</span></div>
+<div style="display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:8px"><span style="width:20px;height:20px;border-radius:6px;background:#1D2236;color:#C9DBFF;display:flex;align-items:center;justify-content:center;font:600 9px var(--font-body)">Co</span><span style="font:400 11px var(--font-body);color:#EDEFF7">Console</span></div>
+<div style="display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:8px"><span style="width:20px;height:20px;border-radius:6px;background:#1D2236;color:#C9DBFF;display:flex;align-items:center;justify-content:center;font:600 9px var(--font-body)">Se</span><span style="font:400 11px var(--font-body);color:#EDEFF7">Settings</span></div>
+</div>
+<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border-1);display:flex;justify-content:space-between;font:500 10px var(--font-mono);color:#8A90A6"><span>Sleep</span><span>Restart</span><span>Shut Down</span></div>
+</div>
+<div style="position:absolute;left:0;right:0;top:0;height:28px;background:rgba(6,7,12,.78);backdrop-filter:blur(18px);border-bottom:1px solid var(--border-1);display:flex;align-items:center;gap:14px;padding:0 12px;z-index:2">
+<svg width="14" height="14" viewBox="0 0 64 64" fill="none"><path d="M14 54 30 12q1.4-3.6 4 0L50 54" stroke="#C9DBFF" stroke-width="6" stroke-linecap="round"></path><path d="M20 40q6-6 12 0t12 0" stroke="#C9DBFF" stroke-width="6" stroke-linecap="round"></path></svg>
+<span style="font:600 11px var(--font-body);color:#EDEFF7">Files</span>
+<span style="font:400 11px var(--font-body);color:#8A90A6">File</span>
+<span style="font:400 11px var(--font-body);color:#8A90A6">Edit</span>
+<span style="font:400 11px var(--font-body);color:#8A90A6">View</span>
+<span style="font:400 11px var(--font-body);color:#8A90A6">Go</span>
+<span style="flex:1"></span>
+<span style="font:500 10px var(--font-mono);color:#8A90A6">EN</span>
+<span style="font:500 10px var(--font-mono);color:#8A90A6">100%</span>
+<span style="font:500 11px var(--font-body);color:#EDEFF7">21:47 <span style="font-weight:400;color:#8A90A6">Aug 25</span></span>
+</div>
+<div style="position:absolute;right:16px;top:44px;display:flex;flex-direction:column;gap:14px;align-items:center;z-index:1">
+<div style="display:flex;flex-direction:column;align-items:center;gap:4px;width:74px"><span style="width:38px;height:30px;border-radius:8px;background:rgba(16,18,28,.85);border:1px solid var(--border-2);display:flex;align-items:center;justify-content:center"><svg width="18" height="12" viewBox="0 0 24 14" fill="none"><rect x="1" y="1" width="22" height="12" rx="3" stroke="#C9DBFF" stroke-width="1.6"></rect><circle cx="18.5" cy="7" r="1.4" fill="#8AB4FF"></circle></svg></span><span style="font:500 9px var(--font-body);color:#EDEFF7;background:rgba(6,7,12,.55);padding:1px 6px;border-radius:4px">Games SSD</span></div>
+<div style="display:flex;flex-direction:column;align-items:center;gap:4px;width:74px"><span style="width:38px;height:30px;border-radius:8px;background:rgba(16,18,28,.85);border:1px solid var(--border-2);display:flex;align-items:center;justify-content:center"><svg width="18" height="14" viewBox="0 0 24 18" fill="none"><path d="M2 5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5z" stroke="#C9DBFF" stroke-width="1.6"></path></svg></span><span style="font:500 9px var(--font-body);color:#EDEFF7;background:rgba(6,7,12,.55);padding:1px 6px;border-radius:4px">Home</span></div>
+<div style="display:flex;flex-direction:column;align-items:center;gap:4px;width:74px"><span style="width:38px;height:30px;border-radius:8px;background:rgba(16,18,28,.85);border:1px solid var(--border-2);display:flex;align-items:center;justify-content:center"><svg width="18" height="14" viewBox="0 0 24 18" fill="none"><path d="M2 5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5z" stroke="#C9DBFF" stroke-width="1.6"></path></svg></span><span style="font:500 9px var(--font-body);color:#EDEFF7;background:rgba(6,7,12,.55);padding:1px 6px;border-radius:4px">Projects</span></div>
+<div style="display:flex;flex-direction:column;align-items:center;gap:4px;width:74px"><span style="width:38px;height:30px;border-radius:8px;background:rgba(16,18,28,.85);border:1px solid var(--border-2);display:flex;align-items:center;justify-content:center"><svg width="14" height="16" viewBox="0 0 16 20" fill="none"><path d="M2 3a2 2 0 0 1 2-2h6l4 4v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V3z" stroke="#C9DBFF" stroke-width="1.6"></path><path d="M10 1v4h4" stroke="#C9DBFF" stroke-width="1.6"></path></svg></span><span style="font:500 9px var(--font-body);color:#EDEFF7;background:rgba(6,7,12,.55);padding:1px 6px;border-radius:4px">clip_final.mp4</span></div>
+</div>
+<div style="position:absolute;left:50%;bottom:12px;transform:translateX(-50%);display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:14px;background:rgba(6,7,12,.78);backdrop-filter:blur(18px);border:1px solid var(--border-1);box-shadow:var(--shadow-card);z-index:2">
+<span style="width:34px;height:34px;border-radius:9px;background:rgba(138,180,255,.16);border:1px solid rgba(138,180,255,.35);display:flex;align-items:center;justify-content:center"><svg width="17" height="17" viewBox="0 0 64 64" fill="none"><path d="M14 54 30 12q1.4-3.6 4 0L50 54" stroke="#C9DBFF" stroke-width="6" stroke-linecap="round"></path><path d="M20 40q6-6 12 0t12 0" stroke="#C9DBFF" stroke-width="6" stroke-linecap="round"></path></svg></span>
+<span style="width:1px;height:22px;background:var(--border-2)"></span>
+<span style="position:relative;width:34px;height:34px;border-radius:9px;background:rgba(237,239,247,.06);border:1px solid var(--border-1);display:flex;align-items:center;justify-content:center;font:600 11px var(--font-body);color:#EDEFF7">St<i style="position:absolute;bottom:-6px;left:50%;margin-left:-1.5px;width:3px;height:3px;border-radius:50%;background:#8AB4FF"></i></span>
+<span style="position:relative;width:34px;height:34px;border-radius:9px;background:rgba(237,239,247,.06);border:1px solid var(--border-1);display:flex;align-items:center;justify-content:center;font:600 11px var(--font-body);color:#EDEFF7">Kd<i style="position:absolute;bottom:-6px;left:50%;margin-left:-1.5px;width:3px;height:3px;border-radius:50%;background:#8AB4FF"></i></span>
+<span style="width:34px;height:34px;border-radius:9px;background:rgba(237,239,247,.06);border:1px solid var(--border-1);display:flex;align-items:center;justify-content:center;font:600 11px var(--font-body);color:#EDEFF7">OB</span>
+<span style="width:34px;height:34px;border-radius:9px;background:rgba(237,239,247,.06);border:1px solid var(--border-1);display:flex;align-items:center;justify-content:center;font:600 11px var(--font-body);color:#EDEFF7">Co</span>
+<span style="width:34px;height:34px;border-radius:9px;background:rgba(237,239,247,.06);border:1px solid var(--border-1);display:flex;align-items:center;justify-content:center;font:600 11px var(--font-body);color:#EDEFF7">Se</span>
+<span style="width:1px;height:22px;background:var(--border-2)"></span>
+<span style="width:34px;height:34px;border-radius:9px;background:rgba(237,239,247,.06);border:1px dashed var(--border-2);display:flex;align-items:center;justify-content:center;font:400 15px var(--font-body);color:#565C72">+</span>
+</div>
+<span class="tag" style="left:14px;bottom:auto;top:40px">Desktop · top bar · centered dock · drives on right</span>
+</div>
+
+</main>
+</body></html>

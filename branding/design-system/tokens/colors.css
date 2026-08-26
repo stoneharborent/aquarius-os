@@ -1,0 +1,52 @@
+:root{
+/* base — dark first */
+--oled:#000000;
+--void:#06070C;
+--surface-1:#10121C;
+--surface-2:#161A29;
+--surface-3:#1D2236;
+--border-1:rgba(237,239,247,.08);
+--border-2:rgba(237,239,247,.14);
+/* brand */
+--starlight:#8AB4FF;   /* hero accent */
+--starlight-hover:#A8C6FF;
+--starlight-press:#6E9BF2;
+--nebula:#5B4BE0;      /* support · depth, gradients */
+--ancient:#E6DDB8;     /* support · rare highlight, achievements */
+--on-accent:#080B14;
+/* text */
+--text-1:#EDEFF7;
+--text-2:#8A90A6;
+--text-3:#565C72;
+/* semantic */
+--success:#55D6A5;
+--warning:#E6C069;
+--danger:#FF7A85;
+/* aliases */
+--accent:var(--starlight);
+--bg-app:var(--void);
+--surface-card:var(--surface-1);
+--surface-raised:var(--surface-2);
+--text-body:var(--text-1);
+--text-muted:var(--text-2);
+--grad-play:linear-gradient(90deg,#8AB4FF,#5B4BE0); /* @kind color */
+--selection:rgba(138,180,255,.16);
+}
+[data-theme="light"]{
+--void:#EEF0F7;
+--surface-1:#F7F8FC;
+--surface-2:#FFFFFF;
+--surface-3:#FFFFFF;
+--border-1:rgba(20,23,38,.10);
+--border-2:rgba(20,23,38,.16);
+--starlight:#3D63D6;
+--starlight-hover:#2E52C4;
+--starlight-press:#2545AD;
+--nebula:#4A3BC9;
+--ancient:#8A7B3D;
+--on-accent:#FFFFFF;
+--text-1:#141726;
+--text-2:#565C72;
+--text-3:#8A90A6;
+--selection:rgba(61,99,214,.14);
+}

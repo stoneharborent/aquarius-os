@@ -1,0 +1,199 @@
+{
+  "plugins": [
+    "react",
+    "import"
+  ],
+  "rules": {
+    "react/forbid-elements": [
+      "warn",
+      {
+        "forbid": []
+      }
+    ],
+    "no-restricted-imports": [
+      "warn",
+      {
+        "patterns": []
+      }
+    ],
+    "no-restricted-syntax": [
+      "warn",
+      {
+        "selector": "Literal[value=/#[0-9a-fA-F]{3,8}\\b/]",
+        "message": "Raw hex color — use a design-system color token via var()."
+      },
+      {
+        "selector": "Literal[value=/\\b\\d+px\\b/]",
+        "message": "Raw px value — use a design-system spacing token via var()."
+      },
+      {
+        "selector": "Literal[value=/font-family\\s*:\\s*(?!['\\\"]?(?:Sora|Inter|JetBrains Mono))/i]",
+        "message": "Font not provided by the design system. Available: Sora, Inter, JetBrains Mono."
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": [
+        "**/index.js"
+      ],
+      "rules": {
+        "no-restricted-imports": "off"
+      }
+    }
+  ],
+  "x-omelette": {
+    "components": {},
+    "tokens": [
+      "--accent",
+      "--ancient",
+      "--bg-app",
+      "--blur-panel",
+      "--border-1",
+      "--border-2",
+      "--control-h",
+      "--control-h-sm",
+      "--danger",
+      "--dur-fast",
+      "--dur-med",
+      "--ease-out",
+      "--font-body",
+      "--font-display",
+      "--font-mono",
+      "--fs-body",
+      "--fs-caption",
+      "--fs-display",
+      "--fs-heading",
+      "--fs-hero",
+      "--fs-mono",
+      "--fs-small",
+      "--fs-subhead",
+      "--fs-title",
+      "--glow-accent",
+      "--grad-play",
+      "--lh-body",
+      "--lh-caption",
+      "--lh-display",
+      "--lh-heading",
+      "--lh-hero",
+      "--lh-mono",
+      "--lh-small",
+      "--lh-subhead",
+      "--lh-title",
+      "--ls-caps",
+      "--ls-display",
+      "--nebula",
+      "--oled",
+      "--on-accent",
+      "--radius-lg",
+      "--radius-md",
+      "--radius-sm",
+      "--radius-xl",
+      "--selection",
+      "--shadow-card",
+      "--shadow-pop",
+      "--sp-1",
+      "--sp-2",
+      "--sp-3",
+      "--sp-4",
+      "--sp-5",
+      "--sp-6",
+      "--sp-7",
+      "--sp-8",
+      "--starlight",
+      "--starlight-hover",
+      "--starlight-press",
+      "--success",
+      "--surface-1",
+      "--surface-2",
+      "--surface-3",
+      "--surface-card",
+      "--surface-raised",
+      "--text-1",
+      "--text-2",
+      "--text-3",
+      "--text-body",
+      "--text-muted",
+      "--void",
+      "--warning"
+    ],
+    "tokenKinds": {
+      "--oled": "color",
+      "--void": "color",
+      "--surface-1": "color",
+      "--surface-2": "color",
+      "--surface-3": "color",
+      "--border-1": "color",
+      "--border-2": "color",
+      "--starlight": "color",
+      "--starlight-hover": "color",
+      "--starlight-press": "color",
+      "--nebula": "color",
+      "--ancient": "color",
+      "--on-accent": "color",
+      "--text-1": "font",
+      "--text-2": "font",
+      "--text-3": "font",
+      "--success": "color",
+      "--warning": "color",
+      "--danger": "color",
+      "--accent": "color",
+      "--bg-app": "color",
+      "--surface-card": "color",
+      "--surface-raised": "color",
+      "--text-body": "font",
+      "--text-muted": "font",
+      "--grad-play": "color",
+      "--selection": "color",
+      "--font-display": "font",
+      "--font-body": "font",
+      "--font-mono": "font",
+      "--fs-hero": "spacing",
+      "--lh-hero": "font",
+      "--fs-display": "spacing",
+      "--lh-display": "font",
+      "--fs-title": "spacing",
+      "--lh-title": "font",
+      "--fs-heading": "spacing",
+      "--lh-heading": "font",
+      "--fs-subhead": "spacing",
+      "--lh-subhead": "font",
+      "--fs-body": "spacing",
+      "--lh-body": "font",
+      "--fs-small": "spacing",
+      "--lh-small": "font",
+      "--fs-caption": "spacing",
+      "--lh-caption": "font",
+      "--fs-mono": "spacing",
+      "--lh-mono": "font",
+      "--ls-display": "font",
+      "--ls-caps": "font",
+      "--sp-1": "spacing",
+      "--sp-2": "spacing",
+      "--sp-3": "spacing",
+      "--sp-4": "spacing",
+      "--sp-5": "spacing",
+      "--sp-6": "spacing",
+      "--sp-7": "spacing",
+      "--sp-8": "spacing",
+      "--radius-sm": "radius",
+      "--radius-md": "radius",
+      "--radius-lg": "radius",
+      "--radius-xl": "radius",
+      "--control-h": "spacing",
+      "--control-h-sm": "spacing",
+      "--shadow-card": "shadow",
+      "--shadow-pop": "shadow",
+      "--glow-accent": "shadow",
+      "--blur-panel": "other",
+      "--ease-out": "other",
+      "--dur-fast": "other",
+      "--dur-med": "other"
+    },
+    "fontFamilies": [
+      "Inter",
+      "JetBrains Mono",
+      "Sora"
+    ]
+  }
+}

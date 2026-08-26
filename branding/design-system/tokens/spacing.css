@@ -1,0 +1,9 @@
+:root{
+--sp-1:4px;--sp-2:8px;--sp-3:12px;--sp-4:16px;--sp-5:24px;--sp-6:32px;--sp-7:48px;--sp-8:64px;
+--radius-sm:7px;   /* inputs, toggles */
+--radius-md:9px;   /* buttons */
+--radius-lg:12px;  /* cards */
+--radius-xl:16px;  /* panels, windows */
+--control-h:36px; /* @kind spacing */
+--control-h-sm:28px; /* @kind spacing */
+}
