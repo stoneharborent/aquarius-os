@@ -1,0 +1,75 @@
+# ==============================================================================
+# AquariusOS — the Super key opens the Overview
+# ==============================================================================
+# ⚠️ READ THIS BEFORE CHANGING ANYTHING. This file is not like the other
+# AquariusOS settings files, and the difference matters.
+#
+# WHAT IT DOES
+#   Two lines of real content, at the bottom:
+#     1. tapping the Super key (⌘ position) on its own opens KDE's Overview
+#     2. Super therefore stops opening the app launcher, which is what it does
+#        out of the box — but Alt+F1 still opens the launcher, so nothing is lost
+#
+# WHY IT IS IN /etc/skel INSTEAD OF /usr/share/aquarius/xdg/
+#   Every other AquariusOS default lives in /usr/share/aquarius/xdg/ and is read
+#   by KDE straight out of the OS, so a single file serves every user forever.
+#   Keyboard shortcuts cannot work that way. The program that owns shortcuts
+#   (kglobalacceld) deliberately opens its settings file in KConfig's
+#   "SimpleConfig" mode, which means "read ONE file, in the user's own home
+#   folder, and ignore every system-wide folder." A copy of this file placed in
+#   /usr/share/aquarius/xdg/ or in /etc/xdg/ would be read by nobody.
+#     Source: kglobalacceld/src/globalshortcutsregistry.cpp (Plasma/6.7), line
+#     281 — KConfig::SimpleConfig.
+#     KDE bug 456958 tracks this and is still open:
+#     https://bugs.kde.org/show_bug.cgi?id=456958
+#
+#   /etc/skel is Linux's standard answer to exactly this problem. It is a folder
+#   of starter files: when a NEW user account is created, everything in /etc/skel
+#   is copied once into that person's home folder. After the copy it is theirs —
+#   changing a shortcut in System Settings just edits their copy, and no OS
+#   update ever touches it again. That makes this a default in the honest sense,
+#   the same way the desktop layout script is: it sets a starting point once and
+#   then gets out of the way permanently.
+#
+#   The trade-off, and it is a real one: like the layout script, this only
+#   reaches BRAND-NEW accounts. An account that already exists keeps whatever it
+#   already had. Testing needs a fresh user or a fresh install.
+#
+# HOW TO READ THE TWO LINES BELOW
+#   The format is three items separated by commas:
+#       ActionName=<keys in use now>,<the app's own default>,<human-readable name>
+#   Multiple key combinations for one action are separated by a TAB, written as
+#   \t. The word "none" means "no keys at all".
+#     Source: kglobalacceld/src/component.cpp (Plasma/6.7) —
+#     Component::loadSettings and Component::keysFromString.
+#
+#   The middle item is not decoration. It is how the system knows what the app
+#   originally wanted, so it can tell "the user chose this" apart from "the app
+#   changed its mind in an update". Both middle values below are copied exactly
+#   from the source code that registers them, so they are correct and must stay
+#   correct if you edit this file.
+#
+# IF SOMETHING HERE IS WRONG
+#   The failure is quiet and harmless. A line that does not parse into exactly
+#   three comma-separated pieces is skipped, and the shortcut falls back to
+#   normal KDE behaviour. A typo here cannot break a login.
+#
+# Full write-up: ../../../../docs/gnome-flow-behavior-layer.md
+# ==============================================================================
+
+# --- KWin: give Super to the Overview ------------------------------------------
+# Overview keeps its normal Meta+W and gains a bare Meta as well.
+# KWin's own default is Meta+W alone.
+#   Source: kwin/src/plugins/overview/overvieweffect.cpp (Plasma/6.7) —
+#   KGlobalAccel::setGlobalShortcut(overviewAction, QKeySequence(Qt::META | Qt::Key_W))
+[kwin]
+Overview=Meta+W\tMeta,Meta+W,Toggle Overview
+
+# --- Plasma: take Super away from the app launcher -----------------------------
+# Without this line two things would both want the Super key and the result
+# would be a coin toss. Plasma's default is Meta AND Alt+F1; we keep Alt+F1 and
+# drop Meta, so the launcher is still one keystroke away for anyone who wants it.
+#   Source: plasma-workspace/shell/shellcorona.cpp (Plasma/6.7), lines 189–194 —
+#   setGlobalShortcut(activateLauncherAction, {Qt::Key_Meta, Qt::AltModifier | Qt::Key_F1})
+[plasmashell]
+activate application launcher=Alt+F1,Meta\tAlt+F1,Activate Application Launcher

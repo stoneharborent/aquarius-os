@@ -1,0 +1,127 @@
+# ==============================================================================
+# AquariusOS — system-wide KWin defaults
+# ==============================================================================
+# WHAT THIS FILE IS
+#   Factory settings for KWin — the part of KDE that draws every window, runs
+#   the Overview, and owns the virtual desktops. Like its neighbour `kdeglobals`
+#   in this same folder, everything here is a DEFAULT and never a forced value:
+#   the moment a user changes any of it in System Settings, their choice is
+#   written to their own ~/.config/kwinrc, which sits ABOVE this file in KDE's
+#   search order and wins from then on, permanently.
+#
+#   The full explanation of that search order — and the warning about the tiny
+#   zz-aquarius.sh script that makes this folder count for anything at all — is
+#   at the top of `kdeglobals`, right next to this file. Read that one first if
+#   any of this is new.
+#
+# WHY KWIN READS THIS FILE AT ALL
+#   KWin opens its settings with KSharedConfig::openConfig("kwinrc") and no
+#   extra flags. "No extra flags" is KConfig's normal mode: walk every folder
+#   listed in XDG_CONFIG_DIRS, top to bottom, first answer wins. That is the
+#   exact same mode kdeglobals is read in, so a kwinrc parked in our folder is
+#   picked up the exact same way.
+#     Source: kwin/src/main.cpp, Plasma/6.7 branch, line 84 —
+#     https://invent.kde.org/plasma/kwin/-/blob/Plasma/6.7/src/main.cpp
+#
+# WHY IT STILL WORKS ON A WAYLAND LOGIN
+#   Worth spelling out, because the ordering is not obvious. When you pick
+#   "Plasma (Wayland)" at the login screen, the program that actually starts is
+#   `startplasma-wayland`, and it does these things in this order:
+#     1. runEnvironmentScripts()  — runs our zz-aquarius.sh, which is what puts
+#                                   /usr/share/aquarius/xdg into XDG_CONFIG_DIRS
+#     2. setupPlasmaEnvironment() — adds the user's own kdedefaults folder above ours
+#     3. syncDBusEnvironment()    — hands that finished environment to systemd
+#     4. startPlasmaSession()     — only NOW is kwin_wayland started
+#   So KWin is launched with our folder already in its search path and reads
+#   this file on its very first pass. Nothing has to be reloaded or restarted.
+#     Source: plasma-workspace/startkde/startplasma-wayland.cpp (Plasma/6.7),
+#     main() lines 66, 72, 87.
+#
+# WHAT THIS FILE SHIPS
+#   The behaviour half of the "GNOME flow on KDE" work: a hot corner that opens
+#   the Overview, and a strip of four workspaces for it to show. The full
+#   plain-English write-up — including the one piece that could NOT be done from
+#   this file, and why — is in:
+#     ../../../../../docs/gnome-flow-behavior-layer.md
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# WORKSPACES — four of them, in a single row
+# ------------------------------------------------------------------------------
+# GNOME lays its workspaces out as one horizontal strip. KDE's virtual desktops
+# are arranged on a grid, so "one row" is how you say "a strip" here. Four is
+# the number: enough to think in, few enough to hold in your head.
+#
+# This also decides what the touchpad does. KWin only switches desktops sideways
+# if the grid is more than one column wide, and only up-and-down if it is more
+# than one row tall. Number=4 with Rows=1 gives a grid 4 wide and 1 tall, so a
+# three-finger swipe left or right moves between workspaces and a three-finger
+# swipe up or down correctly does nothing. That is exactly the GNOME feel.
+#   Source: kwin/src/virtualdesktops.cpp (Plasma/6.7) — `grid().width() > 1`
+#   and `grid().height() > 1` guards around the swipe handlers, lines 795–823.
+#
+# KWin's own defaults are Number=1 and Rows=2, so both lines below are doing
+# real work.
+#   Source: kwin/src/virtualdesktops.cpp (Plasma/6.7),
+#   VirtualDesktopManager::load() — readEntry("Number", 1), readEntry("Rows", 2).
+#
+# Not set here on purpose: Name_1…Name_4 and Id_1…Id_4. Leaving the names out
+# gets the translated "Desktop 1…4" for free in every language, and leaving the
+# IDs out lets KWin mint fresh ones per machine, which is what it wants.
+[Desktops]
+Number=4
+Rows=1
+
+# ------------------------------------------------------------------------------
+# HOT CORNER — throw the mouse into the top-left corner to open the Overview
+# ------------------------------------------------------------------------------
+# GNOME's other famous entrance, and one of the two ways into the Overview on
+# AquariusOS (the other is the Super key — see the note at the bottom of this
+# file).
+#
+# BorderActivate is a list of screen edges, written as numbers. The numbers are
+# positions on a clock face starting at the top and going clockwise:
+#
+#     0 = top          4 = bottom
+#     1 = top-right    5 = bottom-left
+#     2 = right        6 = left
+#     3 = bottom-right 7 = TOP-LEFT   ← the one we want
+#
+#   Source: the ElectricBorder list in kwin/src/effect/globals.h (Plasma/6.7),
+#   lines 75–86. The order of that list IS the numbering — the first name is 0.
+#
+# HONESTY NOTE: 7 is already KWin's own out-of-the-box default for this setting
+# in Plasma 6.7, so on today's Bazzite this line changes nothing. It is written
+# down anyway for two reasons: it states our intent in a place a person can read
+# it, and it pins the behaviour if a future Plasma or a future Bazzite ever
+# changes its mind. This is the cheap kind of insurance.
+#   Source: the <default>ElectricTopLeft</default> on the BorderActivate entry in
+#   kwin/src/plugins/overview/overviewconfig.kcfg (Plasma/6.7).
+[Effect-overview]
+BorderActivate=7
+
+# ------------------------------------------------------------------------------
+# Deliberately NOT set here
+# ------------------------------------------------------------------------------
+# [ModifierOnlyShortcuts] — the old way to make the Super key on its own do
+#   something. On Plasma 5 you wrote a line like
+#       Meta=org.kde.kglobalaccel,/component/kwin,...,invokeShortcut,Overview
+#   in this section, and KWin obeyed it. That whole feature was DELETED in
+#   Plasma 6.1. The source files that implemented it (modifier_only_shortcuts.cpp
+#   and .h) exist in KWin's Plasma/5.27 branch and are simply gone from Plasma/6.7
+#   — nothing anywhere in modern KWin reads this section. Writing it here would
+#   look like it worked and quietly do nothing, which is worse than not writing
+#   it, so it is not written.
+#
+#   Where that setting lives now, and why it cannot live in this folder either,
+#   is explained in full — with the exact replacement text — in
+#   ../../../../../docs/gnome-flow-behavior-layer.md.
+#
+# Touchpad gestures — not configurable at all. KWin hard-codes which swipe does
+#   what; there is no setting, no config file and no System Settings page for it
+#   in Plasma 6.7. What the gestures actually do is written up in the doc above
+#   so the welcome screen can teach them correctly.
+#
+# Screen-edge actions for the other seven corners and edges — left alone. The
+#   top-left corner is the only one we claim; everything else stays however
+#   Plasma and Bazzite left it.

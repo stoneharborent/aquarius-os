@@ -80,6 +80,27 @@ dnf5 install -y rsms-inter-fonts jetbrains-mono-fonts
 fc-cache --system-only --force --verbose
 
 # ==============================================================================
+# THE AQUARIUSOS FLOW — the full-screen app grid
+# ==============================================================================
+# The top bar's launcher is the "Application Dashboard" — click the AquariusOS
+# logo and a full-screen, searchable grid of every app appears. That widget is
+# not part of KDE's core; it lives in a package called `kdeplasma-addons`, which
+# also carries a pile of other small Plasma widgets.
+#
+# Fedora's KDE images almost certainly ship this already, so this line will
+# usually be a no-op that costs a second of build time. It is here as insurance:
+# the desktop layout script names the widget explicitly, and a layout that names
+# a widget the machine does not have gives a brand-new user a broken-looking gap
+# in their top bar. One dnf line is a cheap price for that never happening.
+#
+#   The widget's real name is org.kde.plasma.kickerdash. Which package provides
+#   it: https://invent.kde.org/plasma/kdeplasma-addons/-/tree/master/applets/kickerdash
+#   Why the launcher changed at all: docs/gnome-flow-behavior-layer.md
+# ------------------------------------------------------------------------------
+
+dnf5 install -y kdeplasma-addons
+
+# ==============================================================================
 # PHASE 2 — The Creator Layer  (NOT ACTIVE YET — stubs only)
 # ==============================================================================
 # Everything below is commented out on purpose. It is the shape of what comes

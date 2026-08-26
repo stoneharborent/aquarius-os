@@ -34,9 +34,9 @@ var unit = gridUnit;
 // 1. THE TOP BAR
 // -----------------------------------------------------------------------------
 // Full width, deliberately thin, and translucent so the wallpaper shows through
-// as a dark wash. Reading left to right: the AquariusOS launcher, the current
-// app's menus, a stretch of empty space, then the system tray and the clock
-// pushed to the far right.
+// as a dark wash. Reading left to right: the AquariusOS logo, the current app's
+// menus, a stretch of empty space, then the system tray and the clock pushed to
+// the far right.
 // -----------------------------------------------------------------------------
 var topBar = new Panel;
 topBar.location = "top";
@@ -50,7 +50,30 @@ topBar.height = 2 * Math.ceil(unit * 1.6 / 2);
 // The launcher, wearing the AquariusOS mark. That icon is installed by this
 // image at /usr/share/icons/hicolor/scalable/apps/aquarius-logo.svg — the name
 // below is the filename without its extension.
-var launcher = topBar.addWidget("org.kde.plasma.kickoff");
+//
+// WHICH LAUNCHER, AND WHY THIS ONE
+//   "kickerdash" is KDE's Application Dashboard: click it and a full-screen
+//   grid of every app takes over the display, with a search box that is live
+//   the moment you start typing. GNOME's app grid and macOS Launchpad are the
+//   same idea, so this one choice serves both the GNOME flow we are building
+//   and the Mac shape of the rest of this bar.
+//
+//   It replaces "org.kde.plasma.kickoff", the start-menu-style popup KDE uses
+//   by default. Kickoff is a small floating panel of categories; the dashboard
+//   is the whole screen. Nothing else about this widget changes — same icon,
+//   same position, same click.
+//
+//   Users who prefer the popup can right-click the bar, choose "Show
+//   Alternatives", and pick Application Menu or Application Launcher. We are
+//   setting a starting point, not taking anything away.
+//
+// A NOTE ON THE NAME
+//   Confusingly, the dashboard's files are not its own — the widget is a thin
+//   wrapper that borrows all of its code from "org.kde.plasma.kicker" and just
+//   asks to be drawn full-screen. That is why it is spelled "kickerdash" and
+//   not "kickoffdash". It ships in the `kdeplasma-addons` package, which
+//   build.sh asks for by name so this line can never point at nothing.
+var launcher = topBar.addWidget("org.kde.plasma.kickerdash");
 launcher.currentConfigGroup = ["General"];
 launcher.writeConfig("icon", "aquarius-logo");
 launcher.reloadConfig();
