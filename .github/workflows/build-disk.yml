@@ -36,8 +36,23 @@ env:
   DEFAULT_TAG: "latest"
   BIB_IMAGE: "quay.io/centos-bootc/bootc-image-builder:latest"
 
+# Plain English: "concurrency" decides what happens when this workflow starts
+# again while an earlier run is still going. Runs sharing the same "group" name
+# are one queue, and cancel-in-progress means the newer run kicks the older one
+# out of that queue.
+#
+# The platform is part of the group name ON PURPOSE — same reason the ISO
+# workflow puts its variant in (see .github/workflows/build-iso.yml). Without
+# it, amd64 and arm64 shared one queue, so starting the arm64 disk would cancel
+# an amd64 disk that was still building. Now they have a queue each and can
+# build at the same time, while re-running the SAME platform still cancels the
+# older run of it.
+#
+# The "|| 'pr'" is a safety net: inputs.platform only exists when you press
+# "Run workflow" by hand, so pull-request runs land in their own clearly-named
+# queue rather than one ending in nothing.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}-${{ inputs.platform || 'pr' }}
   cancel-in-progress: true
 
 jobs:

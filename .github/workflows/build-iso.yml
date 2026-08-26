@@ -64,8 +64,23 @@ on:
 
 permissions: {}
 
+# Plain English: "concurrency" is GitHub's rule for what happens when you start
+# this workflow again while an earlier run is still going. Runs that share the
+# same "group" name are treated as the same queue, and cancel-in-progress means
+# a new run kicks the older one out of that queue.
+#
+# The variant is part of the group name ON PURPOSE. Without it, base and nvidia
+# shared one queue, so starting the NVIDIA ISO would cancel a base ISO that was
+# still building (that really happened, 2026-08-26). Now they have a queue each
+# and can build at the same time — while starting a second base ISO still
+# cancels the first base ISO, which is what you want when you fix something and
+# re-run it.
+#
+# The "|| 'base'" is a safety net: inputs.variant only exists when you press
+# "Run workflow" by hand, so if this workflow is ever triggered another way the
+# group name still ends in a real word instead of nothing.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}-${{ inputs.variant || 'base' }}
   cancel-in-progress: true
 
 jobs:

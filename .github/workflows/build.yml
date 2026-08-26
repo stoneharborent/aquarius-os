@@ -30,8 +30,21 @@ on:
 env:
   IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"  # do not edit
 
+# Plain English: "concurrency" decides what happens when this workflow starts
+# again while an earlier run is still going. Runs sharing the same "group" name
+# are one queue, and cancel-in-progress means the newer run kicks the older one
+# out — so pushing twice in a row doesn't leave a stale build running.
+#
+# No variant in the group name here, and that's correct: unlike the ISO and disk
+# workflows, ONE run of this builds BOTH base and nvidia together (that's the
+# matrix below), so there is no second run for it to cancel by mistake.
+#
+# This used to also tack on inputs.brand_name and inputs.stream_name. Those
+# inputs don't exist in this workflow — they were leftovers from the upstream
+# ublue template we started from, so they always came out empty. Removed so the
+# group name says what it means.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}-${{ inputs.brand_name}}-${{ inputs.stream_name }}
+  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:
