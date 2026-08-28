@@ -101,6 +101,97 @@ fc-cache --system-only --force --verbose
 dnf5 install -y kdeplasma-addons
 
 # ==============================================================================
+# PHASE 2, TRACK B — THE CODEC LAYER
+# ==============================================================================
+# The headline: there was almost nothing to install. The codec plan listed four
+# things to bake in, and Bazzite already had all four. We checked them one at a
+# time against the real published image instead of installing on faith, because
+# an unnecessary package is a package we own forever.
+#
+# Checked against ghcr.io/ublue-os/bazzite:stable, build 44.20260825 (Fedora 44).
+# The full audit, including how to re-run it yourself, is in docs/codec-layer.md.
+#
+#   gstreamer1-plugins-bad-free  ALREADY THERE. This is the package that carries
+#                                libgstva.so — the modern VA-API encoders and
+#                                decoders (vah264enc, vah265enc and friends) —
+#                                plus libgstnvcodec.so for NVIDIA's NVENC/NVDEC.
+#                                The "GStreamer VA-API encode gap" in our
+#                                research note turned out to be about a FLATPAK
+#                                add-on for OBS, not a system package, and
+#                                Bazzite already preinstalls that too.
+#
+#   libheif                      ALREADY THERE — and it is the unrestricted
+#                                build from the fedora-multimedia repository,
+#                                which includes the HEVC decoder plug-in
+#                                (libheif-libde265.so). That is what makes an
+#                                iPhone HEIC photo open at all.
+#
+#   kf6-kimageformats            ALREADY THERE. Ships kimg_heif.so, which is the
+#                                piece that gives Dolphin HEIC thumbnails and
+#                                previews. Nothing extra needed for KDE.
+#
+#   libva-utils                  ALREADY THERE. This is the package that
+#                                provides the `vainfo` command, which is how a
+#                                user checks that hardware video works.
+#
+#   libva-nvidia-driver          ALREADY THERE — on the NVIDIA image only, which
+#                                is exactly right. It bridges NVIDIA's NVDEC to
+#                                VA-API and is meaningless on an AMD or Intel
+#                                machine.
+#                                ⚠️ Do NOT add it to this file. This one script
+#                                builds BOTH images, so a line here would put an
+#                                NVIDIA-only driver on the AMD/Intel image.
+#
+#   mesa VA-API drivers          PRESENT, but not under the name you would
+#                                expect, and this one has a trap in it. Bazzite
+#                                REMOVES Fedora's mesa-va-drivers package and
+#                                uses Terra's Mesa instead, whose
+#                                mesa-dri-drivers package contains the VA-API
+#                                drivers (radeonsi_drv_video.so and friends)
+#                                directly.
+#                                ⚠️ Never "restore" mesa-va-drivers here. Those
+#                                files are already owned by another installed
+#                                package, so the build would fail on a file
+#                                conflict — or worse, quietly swap out a
+#                                version-locked Mesa.
+#
+# So: no codec package is installed below. The one real gap was a player on the
+# command line, which is the next section.
+# ------------------------------------------------------------------------------
+
+# ==============================================================================
+# THE REFERENCE PLAYER — mpv, with hardware decoding on
+# ==============================================================================
+# mpv plays anything ffmpeg can read, steps through video a single frame at a
+# time, and — the reason it is here — prints exactly which decoder it picked.
+# That makes it the honest way to prove hardware video is working on a given
+# machine, and a genuinely useful tool when you are checking footage off a card.
+#
+# Its factory settings are a plain text file that ships with this repo:
+#   system_files/etc/mpv/mpv.conf   →   /etc/mpv/mpv.conf
+# It turns hardware decoding on and explains itself line by line. Like every
+# other default in AquariusOS, a user's own ~/.config/mpv/mpv.conf sits above it
+# and wins. (mpv reads BOTH files and the user's answer takes precedence — it is
+# a starting point, not a lock.)
+#
+# The mpv package owns the /etc/mpv directory but ships no mpv.conf of its own,
+# so nothing overwrites ours.
+# ------------------------------------------------------------------------------
+
+dnf5 install -y mpv
+
+# The desktop's video player is Haruna, which Bazzite installs as a Flatpak on
+# first boot and which already hardware-decodes out of the box. mpv is here as a
+# tool, not as a rival, so its launcher is hidden — otherwise a second video
+# player icon appears in the app grid and can quietly take over "open video
+# files with" from Haruna.
+#
+# Hiding the launcher does not hide the program: typing `mpv` in a terminal
+# works exactly as before. This is the same trick Bazzite itself uses to keep
+# btop, nvtop and makemkv out of the menus.
+desktop-file-edit --set-key=Hidden --set-value=true /usr/share/applications/mpv.desktop
+
+# ==============================================================================
 # PHASE 2 — The Creator Layer  (NOT ACTIVE YET — stubs only)
 # ==============================================================================
 # Everything below is commented out on purpose. It is the shape of what comes
