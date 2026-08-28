@@ -227,7 +227,9 @@ desktop-file-edit --set-key=Hidden --set-value=true /usr/share/applications/mpv.
 # What this installs, and why:
 #
 #   /usr/bin/aq-ingest        the command itself
-#   <python site-packages>/aq_ingest/   the code it runs
+#   /usr/lib/pythonX.Y/site-packages/aq_ingest/
+#                             the code it runs. NOT /usr/local — see the long
+#                             warning further down before touching that line.
 #   /usr/share/kio/servicemenus/aquarius-make-editor-ready.desktop
 #                             the Dolphin right-click menu item (copied in by the
 #                             system_files step at the top of this file — all we
@@ -252,10 +254,54 @@ if ! command -v python3 > /dev/null 2>&1; then
   exit 1
 fi
 
-# Python puts third-party modules in a folder whose name contains the Python
-# version (…/python3.13/site-packages), and that version changes when Fedora
-# moves on. So ask Python where its own folder is rather than guessing.
-AQ_INGEST_SITE="$(python3 -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+# WHERE THE CODE GOES — and why this is not the obvious one-liner.
+#
+# Python modules live in a folder whose name contains the Python version
+# (…/python3.14/site-packages), and that version changes when Fedora moves on,
+# so the folder does have to be worked out rather than typed in.
+#
+# ⚠️ The obvious way to work it out is to ask Python:
+#       python3 -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])'
+#    DO NOT USE THAT. On Fedora it lies. Fedora patches Python so that outside
+#    of a package build that question is answered with /usr/local/lib/… — their
+#    way of keeping things you install yourself apart from things the package
+#    manager owns. Reasonable on a normal computer; wrong here twice over:
+#
+#      1. On this kind of OS /usr/local is not a real folder in the image at
+#         all. It is redirected to writable storage that does not exist yet at
+#         build time, so the build dies with the baffling message
+#         "install: cannot create directory '/usr/local': File exists".
+#      2. Even if it worked, /usr/local is the user's space, not the image's.
+#         Anything we put there is not really part of AquariusOS.
+#
+#    This cost one red build (Actions run 33219496395). Do not "simplify" it
+#    back to sysconfig.
+#
+# So: build the real system path from the Python version instead. This is the
+# folder Fedora's own Python packages live in and it is always searched. It is
+# "lib" and not "lib64" on purpose — lib64 is for modules with compiled C
+# inside them, and aq-ingest is pure Python.
+#
+# (The other candidate was `rpm -E %python3_sitelib`, which gives the same
+# answer. It was rejected because it only works if the python3-rpm-macros
+# package happens to be installed, and when it is not, `rpm -E` cheerfully
+# succeeds and prints the text "%python3_sitelib" — we would install into a
+# folder literally called that and never notice. Failing loudly beats failing
+# quietly, and the two lines below cannot fail quietly.)
+AQ_PYTHON_VERSION="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+AQ_INGEST_SITE="/usr/lib/python${AQ_PYTHON_VERSION}/site-packages"
+
+# Belt and braces. If that folder is somehow not one this Python actually looks
+# in, stop now — installing into a folder nothing reads would give us a
+# green build and a command that does not work.
+if ! python3 -c "import sys; sys.exit(0 if '${AQ_INGEST_SITE}' in sys.path else 1)"; then
+  echo "AQUARIUS ERROR: ${AQ_INGEST_SITE} is not on this image's Python search path."
+  echo "                Installing aq-ingest there would produce a broken command."
+  echo "                Python looks in:"
+  python3 -c "import sys; print('\n'.join('                  ' + p for p in sys.path if p))"
+  exit 1
+fi
+
 install -d -m 0755 "${AQ_INGEST_SITE}"
 rm -rf "${AQ_INGEST_SITE:?}/aq_ingest"
 cp -a /ctx/ingest/aq_ingest "${AQ_INGEST_SITE}/aq_ingest"

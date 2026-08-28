@@ -175,6 +175,12 @@ class ImageWiringTests(unittest.TestCase):
     def setUp(self) -> None:
         self.build = (REPO / "build_files/build.sh").read_text(encoding="utf-8")
         self.containerfile = (REPO / "Containerfile").read_text(encoding="utf-8")
+        # The lines that actually run, with the comments dropped. Some of the comments
+        # in build.sh quote the wrong ways of doing things in order to warn about them,
+        # so a check for "this must not appear" has to look at the code, not the prose.
+        self.build_code = "\n".join(
+            line for line in self.build.splitlines() if not line.lstrip().startswith("#")
+        )
 
     def test_the_build_can_see_the_ingest_source(self):
         self.assertIn(
@@ -189,7 +195,23 @@ class ImageWiringTests(unittest.TestCase):
 
     def test_the_code_the_command_imports_is_installed_too(self):
         self.assertIn("/ctx/ingest/aq_ingest", self.build)
-        self.assertIn("purelib", self.build, "the package must land on Python's own path")
+        self.assertIn(
+            'AQ_INGEST_SITE="/usr/lib/python${AQ_PYTHON_VERSION}/site-packages"',
+            self.build,
+            "the package must land in the image's own Python folder",
+        )
+
+    def test_the_install_never_goes_back_to_the_sysconfig_answer(self):
+        # Fedora patches Python so that sysconfig's "purelib" answers /usr/local/lib/...
+        # outside an RPM build. On an ostree image /usr/local is not ours and is not even
+        # a real folder at build time, so that answer fails the build outright — it did
+        # once already (Actions run 33219496395). The comment above the fix explains it;
+        # this test is what stops someone "tidying" it back.
+        self.assertNotIn("purelib", self.build_code)
+        self.assertNotIn("sysconfig", self.build_code)
+        self.assertNotIn("/usr/local", self.build_code)
+        # …and the warning that explains why must stay next to the fix.
+        self.assertIn("sysconfig", self.build, "the explanation was deleted with the bug")
 
     def test_the_build_marks_the_service_menu_executable(self):
         self.assertIn("chmod 0755 /usr/share/kio/servicemenus/*.desktop", self.build)
