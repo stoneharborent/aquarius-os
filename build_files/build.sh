@@ -139,6 +139,81 @@ dnf5 install -y kdeplasma-addons
 #  this TODO list and into the real step at the bottom of this file.)
 
 # ==============================================================================
+# PHASE 2 — "MAKE EDITOR-READY" INGEST HELPER  (aq-ingest, Milestone 2)
+# ==============================================================================
+# ADDED BY THE INGEST M2 BRANCH. This whole block is self-contained: if you ever
+# want AquariusOS without the ingest helper, delete from this banner down to the
+# "end of the ingest helper" line and nothing else breaks.
+#
+# What this installs, and why:
+#
+#   /usr/bin/aq-ingest        the command itself
+#   <python site-packages>/aq_ingest/   the code it runs
+#   /usr/share/kio/servicemenus/aquarius-make-editor-ready.desktop
+#                             the Dolphin right-click menu item (copied in by the
+#                             system_files step at the top of this file — all we
+#                             do here is mark it executable, which KDE requires)
+#
+# The tool takes files off a camera card and writes editor-friendly copies next
+# to them, so DaVinci Resolve opens them with picture AND sound. The design is
+# in ../docs/ingest-helper-spec.md; the beginner walkthrough is in
+# docs/ingest-right-click.md.
+# ------------------------------------------------------------------------------
+
+# notify-send lives in libnotify. It is how the tool tells you it has started and
+# finished when you launch it from the right-click menu (there is no terminal
+# window to print into). Almost certainly already present on a KDE image; this
+# line costs a second and guarantees it.
+dnf5 install -y libnotify
+
+# The tool is written in Python (standard library only — nothing to download).
+# Every Fedora-based image has Python, but say so plainly if that ever changes.
+if ! command -v python3 > /dev/null 2>&1; then
+  echo "AQUARIUS ERROR: this image has no python3, so aq-ingest cannot be installed."
+  exit 1
+fi
+
+# Python puts third-party modules in a folder whose name contains the Python
+# version (…/python3.13/site-packages), and that version changes when Fedora
+# moves on. So ask Python where its own folder is rather than guessing.
+AQ_INGEST_SITE="$(python3 -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+install -d -m 0755 "${AQ_INGEST_SITE}"
+rm -rf "${AQ_INGEST_SITE:?}/aq_ingest"
+cp -a /ctx/ingest/aq_ingest "${AQ_INGEST_SITE}/aq_ingest"
+
+# Drop any compiled leftovers that came along from a developer's machine, then
+# build fresh ones so the first run is not slowed down compiling on the spot.
+find "${AQ_INGEST_SITE}/aq_ingest" -name '__pycache__' -type d -prune -exec rm -rf {} +
+python3 -m compileall -q "${AQ_INGEST_SITE}/aq_ingest"
+
+install -D -m 0755 /ctx/ingest/aq-ingest /usr/bin/aq-ingest
+
+# KDE ignores a right-click menu file that is not marked executable.
+chmod 0755 /usr/share/kio/servicemenus/*.desktop
+
+# Prove it actually works inside the image rather than hoping. If the command
+# cannot start, the build fails here instead of shipping a broken menu item.
+/usr/bin/aq-ingest --version
+/usr/bin/aq-ingest --help > /dev/null
+
+# aq-ingest cannot do anything without ffmpeg. Installing ffmpeg belongs to the
+# Phase 2 codec-defaults work, NOT here — two branches installing the same codec
+# stack different ways is how images break. So: check, and say so loudly if it is
+# missing. This deliberately does not fail the build, because the helper is still
+# correctly installed; it just has nothing to drive.
+for aq_tool in ffmpeg ffprobe; do
+  if ! command -v "${aq_tool}" > /dev/null 2>&1; then
+    echo "AQUARIUS WARNING: ${aq_tool} is not in this image, so aq-ingest will refuse"
+    echo "                  to run until the Phase 2 codec layer installs it."
+  fi
+done
+# heif-convert (package libheif-tools) is only needed for iPhone HEIC photos; the
+# tool falls back to ffmpeg for those, so its absence is a note, not a warning.
+command -v heif-convert > /dev/null 2>&1 || echo "AQUARIUS NOTE: heif-convert not installed."
+
+# ------------------------- end of the ingest helper ---------------------------
+
+# ==============================================================================
 # AQUARIUSOS IDENTITY — make the OS call itself AquariusOS
 # ==============================================================================
 # Everything above this point installs things. This last step renames things:

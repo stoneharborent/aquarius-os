@@ -13,7 +13,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import __version__, runner
+from . import __version__, notify, runner
 from .config import (
     ConfigError,
     Settings,
@@ -37,6 +37,10 @@ examples:
   aq-ingest ~/Videos/CardDump          fix everything in a folder
   aq-ingest --dry-run ~/Videos/A001    show what would happen, change nothing
   aq-ingest --force clip.MP4           redo a file even if a fixed copy exists
+
+You do not have to use the terminal at all: in the file manager, right-click a camera
+card, a folder or a selection of clips and choose "Make Editor-Ready". That runs this same
+command with --notify, so the progress and the result arrive as desktop notifications.
 
 Settings live in ~/.config/aquarius/ingest.toml and a record of every run is kept in
 ~/.local/state/aquarius/ingest.log
@@ -83,6 +87,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="print the report as JSON instead of plain text",
     )
+    parser.add_argument(
+        "--notify",
+        action="store_true",
+        help="report progress and the result as desktop notifications "
+        "(this is how the file manager's right-click menu runs it)",
+    )
     parser.add_argument("--version", action="version", version=f"aq-ingest {__version__}")
     return parser
 
@@ -127,6 +137,18 @@ def _print_human(results: list[runner.Result], summary: str, log_file: Path | No
         print(f"Full record: {log_file}")
 
 
+def make_notifier(args: argparse.Namespace) -> notify.Notifier:
+    """The one place a Notifier is built, so tests can swap it for a fake."""
+    return notify.Notifier(enabled=args.notify, dry_run=args.dry_run)
+
+
+def _stop(notifier: notify.Notifier, message: str) -> int:
+    """Report a we-cannot-start problem on both the terminal and the desktop."""
+    print(message, file=sys.stderr)
+    notifier.failure(message)
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -136,11 +158,12 @@ def main(argv: list[str] | None = None) -> int:
         print("\nTell aq-ingest which files or folders to work on.", file=sys.stderr)
         return 2
 
+    notifier = make_notifier(args)
+
     try:
         settings: Settings = load_settings(args.config, create=not args.dry_run)
     except ConfigError as exc:
-        print(f"aq-ingest could not start.\n{exc}", file=sys.stderr)
-        return 2
+        return _stop(notifier, f"aq-ingest could not start.\n{exc}")
     settings = with_overrides(settings, resolve_edition=args.resolve_edition)
 
     jobs, problems = runner.collect_inputs(list(args.paths))
@@ -148,13 +171,17 @@ def main(argv: list[str] | None = None) -> int:
         print(problem, file=sys.stderr)
 
     if not jobs:
-        if not problems:
-            print("Nothing to do — no files were found in what you gave me.", file=sys.stderr)
-        return 2
+        if problems:
+            notifier.failure("\n".join(problems))
+            return 2
+        return _stop(notifier, "Nothing to do — no files were found in what you gave me.")
+
+    total = len(jobs)
+    notifier.start(total)
 
     results: list[runner.Result] = []
     try:
-        for source, root in jobs:
+        for done, (source, root) in enumerate(jobs, start=1):
             results.append(
                 runner.process_one(
                     source,
@@ -165,9 +192,9 @@ def main(argv: list[str] | None = None) -> int:
                     force_transcode=args.force_transcode,
                 )
             )
+            notifier.progress(done, total, source.name)
     except ToolMissing as exc:
-        print(f"aq-ingest cannot run.\n{exc}", file=sys.stderr)
-        return 2
+        return _stop(notifier, f"aq-ingest cannot run.\n{exc}")
 
     summary = runner.summarize(results)
     if args.dry_run:
@@ -189,6 +216,9 @@ def main(argv: list[str] | None = None) -> int:
         )
     else:
         _print_human(results, summary, log_file)
+
+    # Last, so a notification never appears before the work behind it is finished.
+    notifier.finish(results, summary, log_file)
 
     failures = [r for r in results if r.status == runner.FAILED]
     if failures:

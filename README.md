@@ -90,6 +90,8 @@ built on, and why that specific one, is written up in
 | `aquarius-os.env` | Settings: both image names, both base images, description, GitHub username. One place, used everywhere. | Once, at setup |
 | `system_files/` | Anything here gets copied into the OS's filesystem. `system_files/usr/…` becomes `/usr/…` in the running OS. Holds the desktop look: colour scheme, wallpaper, fonts, layout. | Sometimes |
 | `branding/` | **The design.** Colours, fonts, logo and wallpaper artwork, with `tokens.md` as the single source of truth. Read [`branding/README.md`](./branding/README.md) before changing how anything looks. | To change the look |
+| `ingest/` | **"Make Editor-Ready"** — the tool that takes camera files and writes copies DaVinci Resolve can actually open, with sound. Added to the right-click menu in the Files app. Read [`ingest/README.md`](./ingest/README.md). | Rarely |
+| `docs/ingest-right-click.md` | **How to get a camera card ready for editing** — the beginner walkthrough for the above. No terminal needed. | Read it |
 | `disk_config/` | Settings for turning the OS image into an installable `.iso` / VM disk. `iso.toml` is the one that's used. | Once, at setup |
 | `.github/workflows/build.yml` | The build robot's instructions: build **both** OS images and publish them. Runs on every push + nightly. | No |
 | `.github/workflows/build-iso.yml` | The second robot: turns one published OS image into a USB installer `.iso`. You run this by hand and pick which image. | No |

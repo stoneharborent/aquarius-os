@@ -1,0 +1,46 @@
+# =============================================================================
+# AquariusOS — "Make Editor-Ready" right-click menu (Dolphin service menu)
+# =============================================================================
+# Plain English: this file is what puts "Make Editor-Ready" in the menu you get
+# when you right-click a camera card, a folder, or some video clips in the file
+# manager. Clicking it runs the aq-ingest tool on whatever you selected.
+#
+# WHERE THIS FILE HAS TO LIVE
+#   /usr/share/kio/servicemenus/          <- Plasma 6 / KDE Frameworks 6 (ours)
+#   /usr/share/kservices5/ServiceMenus/   <- the OLD Plasma 5 folder. Not us.
+# Putting it in the old folder on Plasma 6 makes the menu item silently never
+# appear, with no error anywhere. See docs/ingest-right-click.md.
+#
+# THINGS THAT LOOK WRONG BUT ARE NOT
+#   Type=Service          Correct for a right-click menu (a normal app would be
+#                         Type=Application). `desktop-file-validate` does not
+#                         know about Service and will complain about it — that
+#                         warning is expected and can be ignored. Our own check
+#                         (ingest/tests/test_desktop.py) validates this file
+#                         properly instead.
+#   no ServiceTypes= line KDE needed `ServiceTypes=KonqPopupMenu/Plugin` before
+#                         Frameworks 5.85. It is gone in KF6.
+#   the executable bit    KDE only trusts a service menu whose file is marked
+#                         executable. build_files/build.sh sets it.
+#
+# %F becomes the list of files/folders you selected, as ordinary paths.
+# There is no Terminal= line, so nothing opens a terminal window: the tool runs
+# in the background and talks to you through desktop notifications (--notify).
+# =============================================================================
+
+[Desktop Entry]
+Type=Service
+Name=Make Editor-Ready
+Icon=aquarius-logo
+# What you can right-click on: any video, iPhone HEIC photos, and folders
+# (a camera card mounted on the desktop is a folder as far as KDE is concerned).
+MimeType=video/*;image/heif;image/heic;image/heif-sequence;image/heic-sequence;inode/directory;
+Actions=makeEditorReady;
+# Show the item directly in the right-click menu instead of burying it inside
+# the "Actions" sub-menu.
+X-KDE-Priority=TopLevel
+
+[Desktop Action makeEditorReady]
+Name=Make Editor-Ready
+Icon=aquarius-logo
+Exec=aq-ingest --notify %F

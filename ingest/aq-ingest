@@ -19,7 +19,9 @@ if sys.version_info < (3, 11):
     )
     raise SystemExit(2)
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
+# realpath, not abspath: /usr/bin/aq-ingest may be a symlink, and we want the folder the
+# real script lives in, not the folder the link lives in.
+_HERE = os.path.dirname(os.path.realpath(__file__))
 if os.path.isdir(os.path.join(_HERE, "aq_ingest")) and _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 

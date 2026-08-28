@@ -16,7 +16,7 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-from aq_ingest import cli
+from aq_ingest import cli, notify
 
 from . import fixtures
 
@@ -350,6 +350,90 @@ class BehaviourTests(IngestTestCase):
     def test_a_missing_path_is_reported_and_fails(self):
         report = self.run_cli(str(self.work / "nope.mp4"), expect=2)
         self.assertIn("nope.mp4", report.get("stderr", ""))
+
+
+# ---------------------------------------------------------------------------------
+# Milestone 2 — what the right-click menu actually triggers
+# ---------------------------------------------------------------------------------
+
+
+class RecordingNotifier:
+    """A Notifier that writes down what it was told instead of talking to a desktop."""
+
+    def __init__(self, dry_run: bool = False) -> None:
+        self.dry_run = dry_run
+        self.started: list[int] = []
+        self.progress_calls: list[tuple[int, int, str]] = []
+        self.finished: list[tuple[list, str]] = []
+        self.failures: list[str] = []
+
+    active = True
+
+    def start(self, total):
+        self.started.append(total)
+
+    def progress(self, done, total, name):
+        self.progress_calls.append((done, total, name))
+
+    def finish(self, results, summary, log_file=None):
+        self.finished.append((results, summary))
+
+    def failure(self, message):
+        self.failures.append(message)
+
+
+class NotificationTests(IngestTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.notifier = RecordingNotifier()
+
+        def fake_factory(args):
+            # Stand in for the real factory, but keep its one decision: --notify or not.
+            self.notifier.dry_run = args.dry_run
+            return self.notifier if args.notify else notify.Notifier(enabled=False)
+
+        patcher = unittest.mock.patch.object(cli, "make_notifier", fake_factory)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_the_right_click_run_reports_start_and_finish(self):
+        source = self.fixture(fixtures.aac_mp4)
+        report = self.run_cli("--notify", "--resolve-edition", "studio", str(source))
+        self.assertEqual(self.only(report)["status"], "rewrapped")
+
+        self.assertEqual(self.notifier.started, [1])
+        self.assertEqual(len(self.notifier.finished), 1)
+        results, summary = self.notifier.finished[0]
+        self.assertEqual(summary, report["summary"])
+        self.assertEqual([r.status for r in results], ["rewrapped"])
+        self.assertEqual(self.notifier.failures, [])
+
+    def test_a_folder_run_reports_progress_for_each_file(self):
+        self.fixture(fixtures.aac_mp4, "A001/one.mp4")
+        self.fixture(fixtures.aac_mp4, "A001/two.mp4")
+        self.run_cli("--notify", "--resolve-edition", "studio", str(self.work / "A001"))
+        self.assertEqual([c[0] for c in self.notifier.progress_calls], [1, 2])
+        self.assertEqual({c[1] for c in self.notifier.progress_calls}, {2})
+
+    def test_a_problem_before_any_work_becomes_a_notification_not_silence(self):
+        self.run_cli("--notify", str(self.work / "nope.mp4"), expect=2)
+        self.assertEqual(self.notifier.started, [], "nothing was started, so say nothing started")
+        self.assertEqual(len(self.notifier.failures), 1)
+        self.assertIn("nope.mp4", self.notifier.failures[0])
+
+    def test_a_broken_settings_file_becomes_a_notification_too(self):
+        source = self.fixture(fixtures.pcm_wav)
+        config = self.config('resolve_edition = "premium"\n')
+        self.run_cli("--notify", "--config", str(config), str(source), expect=2)
+        self.assertEqual(len(self.notifier.failures), 1)
+        self.assertIn("resolve_edition", self.notifier.failures[0])
+
+    def test_the_normal_terminal_run_is_untouched_by_all_this(self):
+        source = self.fixture(fixtures.aac_mp4)
+        report = self.run_cli("--resolve-edition", "studio", str(source))
+        self.assertEqual(self.only(report)["status"], "rewrapped")
+        self.assertEqual(self.notifier.started, [], "no --notify means no notifications")
+        self.assertEqual(self.notifier.finished, [])
 
 
 if __name__ == "__main__":

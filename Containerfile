@@ -31,6 +31,10 @@ ARG BASE_IMAGE=ghcr.io/ublue-os/bazzite:stable
 FROM scratch AS ctx
 COPY build_files /
 COPY system_files /system_files
+# The "Make Editor-Ready" ingest helper. Its source lives in ingest/ so that its tests
+# sit next to it; build.sh installs it into the OS from here. (Added with the ingest
+# Milestone 2 work — see the matching section at the bottom of build_files/build.sh.)
+COPY ingest /ingest
 
 # ------------------------------------------------------------------------------
 # Base Image — what AquariusOS is built on top of
