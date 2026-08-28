@@ -142,12 +142,18 @@ dnf5 install -y kdeplasma-addons
 # AQUARIUSOS IDENTITY — make the OS call itself AquariusOS
 # ==============================================================================
 # Everything above this point installs things. This last step renames things:
-# it rewrites the small file that holds the name of the operating system, so
+# it rewrites the small files that hold the name of the operating system, so
 # KDE's "About This System", the login screen and `neofetch` all say
 # "AquariusOS" instead of "Bazzite".
 #
+# Note "files", plural. There are two, and it took a shipped image to find that
+# out: os-release, which nearly everything reads, AND a KDE-only override file
+# (/etc/xdg/kcm-about-distrorc) that the About This System page reads FIRST.
+# Bazzite ships its own copy of the second one. Miss it and the About page keeps
+# saying Bazzite forever, no matter how correct os-release is.
+#
 # It is deliberately the LAST step, so that nothing installed afterwards can
-# overwrite the name we just set. If you add new steps to this file, add them
+# overwrite the names we just set. If you add new steps to this file, add them
 # ABOVE this line.
 #
 # The details, and the list of things we purposely leave saying "Bazzite" and

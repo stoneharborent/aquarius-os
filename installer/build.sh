@@ -68,10 +68,11 @@ cp -a /src/system_files/shared/. /
 # Point the Anaconda installer profile at whatever this image calls itself
 # ------------------------------------------------------------------------------
 # Anaconda picks its settings file by matching the ID= line in /etc/os-release.
-# AquariusOS is built on Bazzite and has not been rebranded yet (Phase 3), so
-# that ID is still "bazzite" today. Rather than hard-code either name and have it
-# silently stop matching the day branding lands, we read the real value here and
-# write it into the profile. Nothing to remember later.
+# AquariusOS is branded now, but ID is one of the few fields we deliberately
+# leave saying "bazzite" (build_files/image-info.sh explains why), so that is
+# still the value this matches today. Rather than hard-code either name and have
+# it silently stop matching if that decision is ever revisited, we read the real
+# value here and write it into the profile. Nothing to remember later.
 # shellcheck source=/dev/null
 source /etc/os-release
 sed -i "s/@OS_ID@/${ID}/" /etc/anaconda/profile.d/aquarius-os.conf

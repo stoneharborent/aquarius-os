@@ -131,6 +131,96 @@ jobs:
             ${IMAGE_NAME} \
             ${DEFAULT_TAG}
 
+      # ------------------------------------------------------------------------
+      # Prove the finished image really calls itself AquariusOS
+      # ------------------------------------------------------------------------
+      # Plain English: this starts the image we just built, looks inside it, and
+      # fails the build if anything still says "Bazzite" where it should say
+      # "AquariusOS".
+      #
+      # Why this exists: on 2026-08-28 an image shipped, installed, and booted
+      # with KDE's About page still saying "Bazzite 44 / NVIDIA Edition /
+      # https://bazzite.gg". The build had been green the whole time, because the
+      # only thing it checked was one line of one file. A green tick is supposed
+      # to mean "the OS knows its own name", so from now on it is checked here,
+      # from the outside, on the exact image that gets pushed.
+      #
+      # It runs AFTER the rechunk step on purpose — that way we are inspecting
+      # the same bits that go to the registry, not an earlier copy of them.
+      #
+      # `podman` is already installed on GitHub's Ubuntu runners, and the script
+      # is fed in on standard input so there is no quoting to get wrong.
+      - name: Verify OS identity
+        id: verify-identity
+        run: |
+          set -euo pipefail
+          cat >/tmp/verify-identity.sh <<'SCRIPT'
+          set -u
+
+          fails=0
+          check() {  # check "<description>" "<pattern>" "<file>"
+            if grep -Eq "$2" "$3"; then
+              echo "  OK   $1"
+            else
+              echo "  FAIL $1  — /$2/ not found in $3"
+              fails=1
+            fi
+          }
+
+          echo "== /usr/lib/os-release =="
+          cat /usr/lib/os-release
+          echo "== /etc/os-release =="
+          ls -l /etc/os-release
+          echo "== /etc/xdg/kcm-about-distrorc =="
+          cat /etc/xdg/kcm-about-distrorc || echo "(missing!)"
+          echo "== checks =="
+
+          # The two os-release files must BOTH say AquariusOS. On Fedora the
+          # second is a link to the first, so this also proves the link is intact.
+          check "/etc/os-release NAME"          '^NAME="AquariusOS"'      /etc/os-release
+          check "/etc/os-release PRETTY_NAME"   '^PRETTY_NAME="AquariusOS"' /etc/os-release
+          check "/usr/lib/os-release says AquariusOS" 'AquariusOS'        /usr/lib/os-release
+
+          # The fields the About page and the network name are built from.
+          check "LOGO is ours"                  '^LOGO=aquarius-logo$'    /etc/os-release
+          check "DEFAULT_HOSTNAME is aquarius"  '^DEFAULT_HOSTNAME="aquarius"$' /etc/os-release
+          check "VARIANT is an AquariusOS edition" '^VARIANT="(NVIDIA|Desktop) Edition"$' /etc/os-release
+
+          # ID stays "bazzite" deliberately — Bazzite's tooling and our Anaconda
+          # installer profile both key off it. Checked so nobody "tidies" it away.
+          check "ID deliberately left as bazzite" '^ID=bazzite$'          /etc/os-release
+
+          # KDE's About page override. This is the file that caused the bug.
+          check "About page name"               '^Name=AquariusOS$'       /etc/xdg/kcm-about-distrorc
+          check "About page website"            '^Website=https://github\.com/' /etc/xdg/kcm-about-distrorc
+
+          # Nothing user-facing may still send people to bazzite.gg as our home.
+          if grep -q '^HOME_URL="https://bazzite.gg"' /etc/os-release; then
+            echo "  FAIL HOME_URL still points at bazzite.gg"
+            fails=1
+          else
+            echo "  OK   HOME_URL is not bazzite.gg"
+          fi
+
+          # The logo file the two settings above name has to actually be there.
+          if [ -f /usr/share/icons/hicolor/scalable/apps/aquarius-logo.svg ]; then
+            echo "  OK   aquarius-logo.svg is installed"
+          else
+            echo "  FAIL aquarius-logo.svg is missing — the About page would be blank"
+            fails=1
+          fi
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::This image does not identify as AquariusOS. See the checks above."
+            exit 1
+          fi
+          echo "All identity checks passed."
+          SCRIPT
+
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" </tmp/verify-identity.sh
+
       # If you are feeling adventurous, use the new distro agnostic rechunker
       # https://github.com/coreos/chunkah
       # You can delete the Rechunk with rpm-ostree portion then if you use this
