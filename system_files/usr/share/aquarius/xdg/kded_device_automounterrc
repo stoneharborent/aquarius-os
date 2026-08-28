@@ -1,0 +1,132 @@
+# ==============================================================================
+# AquariusOS — system-wide removable-drive defaults
+# ==============================================================================
+# WHAT THIS FILE IS
+#   Factory settings for KDE's "Removable Device Automounter" — the small
+#   background service that decides whether a memory card, a camera or an SSD
+#   mounts by itself when you plug it in, or waits for you to click it.
+#
+#   Like its neighbours `kdeglobals` and `kwinrc` in this same folder,
+#   everything here is a DEFAULT and never a forced value. The moment a user
+#   changes any of it in System Settings → Removable Storage → Removable
+#   Devices, their choice is written to their own
+#   ~/.config/kded_device_automounterrc, which sits ABOVE this file in KDE's
+#   search order and wins from then on, permanently.
+#
+#   The full explanation of that search order — and the warning about the tiny
+#   zz-aquarius.sh script that makes this whole folder count for anything — is
+#   at the top of `kdeglobals`. Read that one first if any of this is new.
+#
+# WHY THE FILENAME LOOKS LIKE THAT
+#   It is not a typo and the "kded_" is not optional. The service declares its
+#   own settings file, and the name it declares is exactly
+#   `kded_device_automounterrc`.
+#     Source: plasma-desktop/solid-device-automounter/lib/
+#     AutomounterSettingsBase.kcfg (Plasma/6.7) — <kcfgfile
+#     name="kded_device_automounterrc"/>
+#
+# WHY A FILE IN THIS FOLDER REACHES IT
+#   Worth checking rather than assuming, because a sister setting in this OS —
+#   the Super key — turned out NOT to be reachable this way (see
+#   docs/gnome-flow-behavior-layer.md for that story). This one is fine. The
+#   generated settings class is a KConfigSkeleton built from the file name
+#   above, and KConfigSkeleton opens its file with KConfig::FullConfig, which is
+#   KDE's cascading mode: walk every folder in XDG_CONFIG_DIRS, top to bottom,
+#   first answer wins. Our folder is at the front of that list.
+#     Source: kconfig/src/core/kcoreconfigskeleton.cpp (master), constructor
+#     KCoreConfigSkeleton(const QString &configname, …) —
+#     KSharedConfig::openConfig(configname, KConfig::FullConfig)
+#
+# WHY WE SET IT AT ALL
+#   AquariusOS is a machine you plug camera cards into all day. Every card,
+#   every offload SSD, every drive is a click you should not have to make. This
+#   is the macOS behaviour, and it is the behaviour AquariusTransfer and the
+#   ingest helper are being built to assume.
+#
+#   This does NOT replace what Bazzite already does. Bazzite ships a separate
+#   udev-based service (ublue-os-media-automount-udev) that mounts labelled
+#   INTERNAL btrfs/ext4 partitions under /run/media/system at boot. That covers
+#   fixed disks. This file covers the removable ones. They do not overlap.
+# ==============================================================================
+
+[General]
+
+# ------------------------------------------------------------------------------
+# The master switch
+# ------------------------------------------------------------------------------
+# KDE ships this OFF, and when it is off the background service does not merely
+# sit idle — it asks to be unloaded and switches off its own autoloading, so
+# none of the settings below can matter. Turning it on is what puts the rest of
+# this file into play.
+#   Source (default false): AutomounterSettingsBase.kcfg, entry
+#   "AutomountEnabled".
+#   Source (self-unload): plasma-desktop/solid-device-automounter/kded/
+#   DeviceAutomounter.cpp — init() calls setModuleAutoloading(false) and
+#   unloadModule() when automounting is disabled.
+AutomountEnabled=true
+
+# ------------------------------------------------------------------------------
+# Mount things when they are plugged in
+# ------------------------------------------------------------------------------
+# This is the one that does the work you actually notice: push a card into the
+# reader and it appears, no click.
+#   Source (default false): AutomounterSettingsBase.kcfg, entry
+#   "AutomountOnPlugin"; used by AutomounterSettings::shouldAutomountDevice()
+#   for the Attach case.
+AutomountOnPlugin=true
+
+# ------------------------------------------------------------------------------
+# …including cards this machine has never seen before
+# ------------------------------------------------------------------------------
+# Without this line the previous one only helps with drives you have already
+# mounted by hand at least once. That is the wrong shape for a camera workflow,
+# where every shoot brings cards the machine has never met. This is the line
+# that makes "plug it in and it is there" true on day one.
+#   Source (default false): AutomounterSettingsBase.kcfg, entry
+#   "AutomountUnknownDevices"; shouldAutomountDevice() returns true immediately
+#   when it is set, and otherwise requires the device to be already known.
+#
+# The honest trade-off: an unknown drive is mounted without being asked, which
+# is exactly what macOS and Windows do, and exactly what some security-minded
+# people switch off. It is one checkbox in System Settings, and their choice
+# sticks.
+AutomountUnknownDevices=true
+
+# ------------------------------------------------------------------------------
+# Deliberately left OFF: mounting everything at login
+# ------------------------------------------------------------------------------
+# This is written out rather than omitted, because "we thought about it and said
+# no" is more useful to the next person than silence. The value below is also
+# KDE's own default, so this line changes nothing — it only records the
+# decision.
+#
+# Turning it on would mount every storage volume the machine can see at every
+# login, unknown ones included. On a dual-boot gaming PC — a very ordinary
+# AquariusOS machine — that means the Windows partition gets mounted every time
+# you log in, and any encrypted volume pops a password prompt at you before you
+# have opened anything. The behaviour we actually wanted is about plugging
+# things IN, which is the setting above.
+#
+# Cost of leaving it off: a card that was already sitting in the reader when the
+# machine booted waits for one click. That is a fair price.
+#   Source (default false): AutomounterSettingsBase.kcfg, entry
+#   "AutomountOnLogin".
+AutomountOnLogin=false
+
+# ------------------------------------------------------------------------------
+# Known limitation — this reaches NEW accounts reliably, old ones maybe not
+# ------------------------------------------------------------------------------
+# Read the self-unload note under AutomountEnabled again, because it has a tail.
+# When the service starts up and finds automounting off, it does not just stop:
+# it writes "do not autoload me" into the user's own ~/.config/kded6rc. That
+# file belongs to the user and sits above everything we ship.
+#
+# So on a fresh AquariusOS install, or any account created after this file
+# shipped, the service starts with automounting already on and never disables
+# itself — this works. But an account that has already logged into a build
+# WITHOUT this file may be carrying that "do not autoload me" line, in which
+# case the service never starts and this file is never read.
+#
+# The fix, for such an account, is one click: System Settings → Removable
+# Storage → Removable Devices → "Enable automatic mounting of removable media".
+# We do not force it, because ~/.config is the user's, not ours.

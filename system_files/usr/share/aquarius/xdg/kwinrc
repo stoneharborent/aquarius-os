@@ -125,3 +125,24 @@ BorderActivate=7
 # Screen-edge actions for the other seven corners and edges — left alone. The
 #   top-left corner is the only one we claim; everything else stays however
 #   Plasma and Bazzite left it.
+#
+# [NightColor] Active — Night Light, the feature that warms the screen towards
+#   orange after sunset. On a machine people grade video on, a screen that
+#   quietly changes colour is a real problem, so this was investigated as part
+#   of the Phase 2 "colour-managed desktop" work. Nothing needs writing: KWin
+#   ships it switched OFF, and neither Bazzite nor Fedora turns it on.
+#     Source: kwin/src/plugins/nightlight/nightlightsettings.kcfg (Plasma/6.7)
+#     — <entry name="Active" type="Bool"><default>false</default>.
+#   Anyone who wants it can switch it on in System Settings → Display & Monitor
+#   → Night Light, and anyone grading should leave it alone. Written down here
+#   rather than set, because a line that repeats an existing default is noise
+#   unless it is buying insurance, and there is nothing here to insure against.
+#
+# Colour profiles (ICC) — also investigated, also nothing to ship, but for a
+#   different reason: they are per-screen and per-machine. Plasma 6.7 has a full
+#   colour-management stack and will happily use an ICC profile per display
+#   (System Settings → Display & Monitor → Colour Profile), but the profile that
+#   belongs to one monitor is meaningless on another, so there is no such thing
+#   as a sensible factory default. KWin stores the choice in its per-output
+#   configuration, not in this file, so it could not be shipped from here even
+#   if it made sense to. The full reasoning is in docs/codec-layer.md.
