@@ -198,7 +198,14 @@ bake_appimage() {
     # WITHOUT its "you may run this" flag, whatever it had when it was built, so
     # without this line the next command is "Permission denied".
     chmod +x "$work/app.AppImage"
-    ( cd "$work" && ./app.AppImage --appimage-extract >/dev/null )
+    if ! ( cd "$work" && ./app.AppImage --appimage-extract >/dev/null ); then
+        die "${name}: the AppImage refused to unpack." \
+            "" \
+            "The download's fingerprint was correct, so the file is not damaged." \
+            "That leaves two likely causes: it is not really an AppImage, or it" \
+            "was built for a different kind of processor than this build runs on" \
+            "(AquariusOS is x86_64 only — see the standing decisions in CLAUDE.md)."
+    fi
     [ -d "$work/squashfs-root" ] || die "${name}: --appimage-extract produced no squashfs-root."
     [ -x "$work/squashfs-root/AppRun" ] || die "${name}: no runnable AppRun inside the AppImage."
 
