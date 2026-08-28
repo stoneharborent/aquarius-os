@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Install DaVinci Resolve
+GenericName=Video Editor Installer
+Comment=Set up Blackmagic's DaVinci Resolve on this computer, step by step
+Exec=/usr/bin/ujust install-resolve
+TryExec=/usr/bin/ujust
+Icon=applications-multimedia
+Terminal=true
+StartupNotify=false
+Categories=AudioVideo;Video;AudioVideoEditing;
+Keywords=davinci;resolve;blackmagic;colour;color;grade;video;editor;install;

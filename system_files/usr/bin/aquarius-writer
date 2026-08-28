@@ -1,0 +1,31 @@
+#!/usr/bin/bash
+# ==============================================================================
+# Aquarius Writer — launcher
+# ==============================================================================
+# Plain English: the real program lives in /usr/lib/aquarius/aquarius-writer/,
+# which is a folder full of files nobody should have to know about. This tiny
+# script is the friendly front door: typing `aquarius-writer` in a terminal, or
+# clicking the icon in the app grid, both end up here.
+#
+# The two exported names are the ones an unpacked AppImage expects to be told:
+#   APPDIR — where the program's own files are.
+#   OWD    — "original working directory", the folder you launched it from, so
+#            that opening a file by a relative name works.
+#
+# `exec` replaces this script with the app rather than leaving a spare shell
+# hanging around underneath it.
+# ==============================================================================
+
+set -u
+
+APPDIR="/usr/lib/aquarius/aquarius-writer"
+export APPDIR
+OWD="${PWD}"
+export OWD
+
+if [ ! -x "${APPDIR}/AppRun" ]; then
+    echo "Aquarius Writer does not seem to be installed (${APPDIR}/AppRun is missing)." >&2
+    exit 1
+fi
+
+exec "${APPDIR}/AppRun" "$@"

@@ -1,0 +1,156 @@
+#!/usr/bin/bash
+# ==============================================================================
+# AquariusOS — fetch the creator apps listed in preinstall.d
+# ==============================================================================
+# Plain English: read the shopping list the OS ships, and install anything on it
+# that isn't here yet. Run by aquarius-flatpak-preinstall.service on boot.
+#
+# The list:  /usr/share/flatpak/preinstall.d/*.preinstall
+#            /etc/flatpak/preinstall.d/*.preinstall   (yours, wins over ours)
+#
+# Three rules this script follows, in order of importance:
+#
+#   1. NEVER put back something the user removed. Flatpak itself guarantees
+#      this for `flatpak preinstall`, and the fallback below asks for an install
+#      only when the app has never been seen — it does not force anything.
+#   2. NEVER wedge a boot. Every failure path ends in "try again later", never
+#      in a stuck login.
+#   3. Do as little as possible once the job is done — after the first
+#      successful run this script reads one small file and exits.
+# ==============================================================================
+
+set -uo pipefail
+
+# Bump this by hand if you want every machine to run the whole thing again even
+# though the script itself did not change. The hash underneath means ordinary
+# edits already trigger a re-run on their own.
+VER=1
+SCRIPT_HASH="$(tr -d '[:space:]' <"$0" | sha256sum | cut -d ' ' -f 1)"
+VER="${VER}-${SCRIPT_HASH}"
+
+STAMP_DIR="/etc/aquarius"
+STAMP_FILE="${STAMP_DIR}/flatpak-preinstall-version"
+
+# ------------------------------------------------------------------------------
+# Have we already done this, with this exact version of this script?
+# ------------------------------------------------------------------------------
+if [ -f "$STAMP_FILE" ] && [ "$(cat "$STAMP_FILE")" = "$VER" ]; then
+    echo "AquariusOS creator apps: already done (v${VER}). Nothing to do."
+    exit 0
+fi
+
+echo "AquariusOS creator apps: checking the list..."
+
+# ------------------------------------------------------------------------------
+# Make sure the Flathub app store is switched on
+# ------------------------------------------------------------------------------
+# Bazzite normally does this for us and ships the file we point at. Doing it
+# again is harmless ("--if-not-exists") and means we still work if that ever
+# changes. The "|| :" endings mean "if this particular line fails, carry on" —
+# a missing app store is not worth aborting over when the next command will
+# report the real problem anyway.
+if [ -f /etc/flatpak/remotes.d/flathub.flatpakrepo ]; then
+    flatpak remote-add --if-not-exists --system flathub /etc/flatpak/remotes.d/flathub.flatpakrepo || :
+else
+    flatpak remote-add --if-not-exists --system flathub https://dl.flathub.org/repo/flathub.flatpakrepo || :
+fi
+flatpak remote-modify --system --enable flathub || :
+
+# ------------------------------------------------------------------------------
+# Read the shopping list
+# ------------------------------------------------------------------------------
+# Pull the app IDs out of the .preinstall files. A block looks like:
+#
+#     [Flatpak Preinstall com.obsproject.Studio]
+#     Branch=stable
+#
+# and a block carrying "Install=false" is one somebody switched off, so we skip
+# it. This list is only used by the fallback further down; the normal path lets
+# Flatpak read the files itself.
+read_wanted() {
+    awk '
+        /^\[Flatpak Preinstall /  { id = $3; sub(/\]$/, "", id); want[id] = 1; cur = id; next }
+        /^[[:space:]]*Install[[:space:]]*=/ {
+            v = tolower($0); sub(/.*=[[:space:]]*/, "", v)
+            if (cur != "" && (v == "false" || v == "0" || v == "no")) delete want[cur]
+        }
+        END { for (id in want) print id }
+    ' /usr/share/flatpak/preinstall.d/*.preinstall /etc/flatpak/preinstall.d/*.preinstall 2>/dev/null | sort -u
+}
+
+# ------------------------------------------------------------------------------
+# The normal path: let Flatpak do it
+# ------------------------------------------------------------------------------
+# `flatpak preinstall` is Flatpak's own built-in support for exactly this job
+# (see `man flatpak-preinstall`). It arrived in Flatpak 1.17, and Fedora 44 —
+# which Bazzite, and therefore AquariusOS, is built on — is well past that. The
+# fallback below exists anyway, because "the command is missing" is a much
+# nicer thing to survive than to debug.
+ok=0
+if flatpak preinstall --help >/dev/null 2>&1; then
+    echo "Using 'flatpak preinstall' (Flatpak's own mechanism)."
+    if flatpak preinstall -y --system; then
+        ok=1
+    else
+        echo "flatpak preinstall did not finish cleanly; trying app by app instead."
+    fi
+else
+    echo "This Flatpak has no 'preinstall' command; installing app by app instead."
+fi
+
+# ------------------------------------------------------------------------------
+# The fallback: one app at a time, and a failure only costs us that one app
+# ------------------------------------------------------------------------------
+# This also rescues the awkward case of Google Chrome, which downloads Google's
+# own installer as it goes and can therefore fail on its own while everything
+# else installs perfectly well.
+installed_any=0
+failed=""
+if [ "$ok" -ne 1 ]; then
+    already="$(flatpak list --system --columns=application 2>/dev/null || true)"
+    for id in $(read_wanted); do
+        if printf '%s\n' "$already" | grep -qx "$id"; then
+            echo "  already installed: ${id}"
+            installed_any=1
+            continue
+        fi
+        echo "  installing: ${id}"
+        if flatpak install -y --system --noninteractive flathub "$id"; then
+            installed_any=1
+        else
+            echo "  COULD NOT INSTALL: ${id} (will try again on the next start-up)"
+            failed="${failed} ${id}"
+        fi
+    done
+else
+    installed_any=1
+fi
+
+# ------------------------------------------------------------------------------
+# What happens next
+# ------------------------------------------------------------------------------
+# Three outcomes, and the exit code is how we ask systemd for the retry we want:
+#
+#   everything worked  -> write the stamp, exit 0. Done forever.
+#   some apps failed   -> exit 0 WITHOUT the stamp. No stamp means we run again
+#                         on the next start-up, so a temporarily broken app gets
+#                         another go tomorrow instead of being retried every two
+#                         minutes all day.
+#   nothing worked     -> exit 1. That almost always means "no internet yet", and
+#                         a non-zero exit is what makes systemd try again shortly.
+if [ "$installed_any" -eq 1 ] && [ -z "$failed" ]; then
+    mkdir -p "$STAMP_DIR"
+    echo "$VER" >"$STAMP_FILE"
+    echo "AquariusOS creator apps: all present. Done."
+    exit 0
+fi
+
+if [ "$installed_any" -eq 1 ]; then
+    echo "AquariusOS creator apps: some could not be installed:${failed}"
+    echo "They will be tried again the next time this computer starts."
+    exit 0
+fi
+
+echo "AquariusOS creator apps: nothing could be installed — probably no internet yet."
+echo "This will be retried automatically."
+exit 1

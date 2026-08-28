@@ -192,42 +192,30 @@ dnf5 install -y mpv
 desktop-file-edit --set-key=Hidden --set-value=true /usr/share/applications/mpv.desktop
 
 # ==============================================================================
-# PHASE 2 — The Creator Layer  (NOT ACTIVE YET — stubs only)
+# PHASE 2, TRACK A — The Creator Layer  (LIVE since 2026-08-28)
 # ==============================================================================
-# Everything below is commented out on purpose. It is the shape of what comes
-# next, kept visible so the structure is obvious. Do not uncomment casually:
-# each of these makes builds slower and adds something we then have to support.
+# This one line is the whole creator app suite. Everything it does — the Flatpak
+# shopping list, baking in Aquarius Editor and Aquarius Writer, and the DaVinci
+# Resolve installer — lives in its own file so that this one stays readable:
 #
-# DECISION ON RECORD (ROADMAP.md): creator apps ship as FLATPAKS, not as system
-# packages. Flatpaks update independently of the OS and can't break a boot.
+#     build_files/creator-apps.sh
 #
-# The intended mechanism is a "preinstalled Flatpak list" that Bazzite/ublue
-# installs on first boot, NOT `flatpak install` here — Flatpaks generally cannot
-# be installed during an image build. Confirm the current ublue mechanism before
-# implementing (it has historically been a file under
-# /usr/share/ublue-os/ shipped via system_files/, plus a systemd unit).
+# Read that file before changing anything about which apps ship. Beginner-facing
+# write-up of the result: docs/creator-apps.md
 #
-# TODO (Phase 2) — creator suite Flatpak IDs:
-#   com.blackmagicdesign.resolve      # DaVinci Resolve helper (Flathub: needs
-#                                     # the proprietary installer; verify the ID
-#                                     # and licensing before shipping)
-#   org.kde.kdenlive                  # Kdenlive — video editor
-#   com.obsproject.Studio             # OBS Studio — streaming / recording
-#   org.kde.krita                     # Krita — painting / design
-#   org.blender.Blender               # Blender — 3D
-#   org.ardour.Ardour                 # Ardour — DAW
-#   org.audacityteam.Audacity         # Audacity — audio editing
-#   md.obsidian.Obsidian              # Obsidian — notes
+# DECISION ON RECORD (ROADMAP.md): third-party creator apps ship as FLATPAKS,
+# not as system packages. Flatpaks update on their own and a broken one can
+# never stop the OS from booting. The only things baked into the image are our
+# own two apps, which are not on Flathub.
 #
-# TODO (Phase 2) — system-level pieces that genuinely cannot be Flatpaks:
-#   # dnf5 install -y v4l2loopback  # OBS virtual camera kernel module support
-#   #                               # (check: Bazzite may already ship this)
-#
-# TODO (Phase 2) — "Creator Mode" first-boot choice (Gamer / Creator / Both).
-#   Needs a first-boot app or systemd unit shipped via system_files/.
-#
-# (OS identity — "AquariusOS" in About This System — is DONE. It moved out of
-#  this TODO list and into the real step at the bottom of this file.)
+# Still to do in Phase 2, deliberately NOT here yet:
+#   * "Creator Mode" first-boot choice (Gamer / Creator / Both) — needs a
+#     first-boot app; the screen is designed, the mechanism is not chosen.
+#   * v4l2loopback for the OBS virtual camera — check whether Bazzite already
+#     ships it before adding anything.
+# ------------------------------------------------------------------------------
+
+/ctx/creator-apps.sh
 
 # ==============================================================================
 # PHASE 2 — "MAKE EDITOR-READY" INGEST HELPER  (aq-ingest, Milestone 2)
