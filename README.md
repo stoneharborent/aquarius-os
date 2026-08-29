@@ -20,13 +20,13 @@ to put it on GitHub.
 
    Containerfile        ──►   reads the recipe            ──►   ghcr.io/<you>/aquarius-os
    build_files/build.sh       downloads Bazzite                 ghcr.io/<you>/aquarius-os-nvidia
-   system_files/              runs our build script             (bootable OS images)
-   aquarius-os.env            packages up the result                     │
-                              …twice: once for AMD/Intel,               ▼
-        ▲                     once for NVIDIA                    an .iso you can
-        │                                                        burn to a USB stick
-   you edit a file                                               and install on a PC
-   and `git push`
+   system_files/              runs our build script             ghcr.io/<you>/aquarius-os-deck
+   aquarius-os.env            packages up the result            (bootable OS images)
+                              …three times: AMD/Intel,                  │
+        ▲                     NVIDIA, and handheld                      ▼
+        │                                                        an .iso you can
+   you edit a file                                               burn to a USB stick
+   and `git push`                                                and install on a PC
 ```
 
 Three things to understand and then you know the model:
@@ -53,29 +53,48 @@ exactly what you want when non-technical creators are your audience.
 
 ## Which image do I pick?
 
-There are **two AquariusOS images**. They are the same operating system — same apps, same
-settings, same everything — built on two different graphics-driver foundations. You pick
-based on one thing: **what graphics card is in the machine.**
+There are **three AquariusOS images**. They are the same operating system — same apps, same
+settings, same creator suite — built on three different Bazzite foundations. Two questions
+pick one for you, in this order:
+
+**1. Is the machine a gaming handheld?** (ROG Xbox Ally, ROG Ally X, Steam Deck, Legion Go —
+something with a screen, thumbsticks and no keyboard.)
+
+| Answer | Pick | Full address |
+|---|---|---|
+| **Yes, it's a handheld** | `aquarius-os-deck` | `ghcr.io/stoneharborent/aquarius-os-deck:latest` |
+
+**2. Otherwise — what graphics card is in it?**
 
 | Your graphics card | Pick | Full address |
 |---|---|---|
 | **NVIDIA** — any RTX card (including the RTX 5090), or a GTX 16-series | `aquarius-os-nvidia` | `ghcr.io/stoneharborent/aquarius-os-nvidia:latest` |
-| **AMD or Intel** — including laptop/handheld built-in graphics | `aquarius-os` | `ghcr.io/stoneharborent/aquarius-os:latest` |
+| **AMD or Intel** — including laptop built-in graphics | `aquarius-os` | `ghcr.io/stoneharborent/aquarius-os:latest` |
 
 If you're not sure, it's AMD or Intel — NVIDIA cards are a deliberate purchase and you'd know.
 
+**What the handheld one does differently.** It starts up in **Game Mode** — the full-screen,
+controller-driven Steam interface, the same shape of thing a Steam Deck boots into — instead
+of a desktop. The desktop is still there and is still the whole AquariusOS creator desktop:
+you switch to it from Steam's power menu, and everything below is waiting for you. That is
+the point of the image, and the thing no other handheld OS offers: dock the handheld, switch
+to Desktop, and edit the footage you just captured.
+
 **Why they can't be one image:** NVIDIA graphics need NVIDIA's own driver baked into the OS,
-and that driver can't be present on machines that don't have the card. So the split happens
-one level down, in Bazzite, and we inherit it. Nothing about AquariusOS itself differs.
+and that driver can't be present on machines that don't have the card. Handhelds need a
+different startup mode and a pile of handheld-specific hardware support. Both splits happen
+one level down, in Bazzite, and we inherit them. Nothing about the AquariusOS layer differs
+between the three — it is genuinely one recipe.
 
 **You are not stuck with your choice.** Switching between them later is one command and a
 reboot — see "Switching between the two images" in [GETTING-STARTED.md](./GETTING-STARTED.md).
 Worth knowing if you ever swap the graphics card in a machine.
 
-Both are built by the same GitHub Actions run, from the same recipe, at the same time. There
-is no "the NVIDIA one is behind" — they ship together. Which Bazzite image the NVIDIA one is
-built on, and why that specific one, is written up in
-[`docs/nvidia-variant-research.md`](./docs/nvidia-variant-research.md).
+All three are built by the same GitHub Actions run, from the same recipe, at the same time.
+There is no "the NVIDIA one is behind" — they ship together. Which Bazzite image each one is
+built on, and why that specific one:
+[`docs/nvidia-variant-research.md`](./docs/nvidia-variant-research.md) and
+[`docs/deck-variant-research.md`](./docs/deck-variant-research.md).
 
 ---
 
@@ -85,20 +104,21 @@ built on, and why that specific one, is written up in
 |---|---|---|
 | `README.md` | This file. | — |
 | `GETTING-STARTED.md` | **Click-by-click setup for putting this on GitHub.** Start here. | Read it |
-| `Containerfile` | The recipe. Says "start from Bazzite, then run our build script." Used for both images — which Bazzite to start from is a knob it accepts. | Rarely |
-| `build_files/build.sh` | **The main file you edit.** Installs packages and makes changes on top of Bazzite. Applies to both images. This is where the creator apps will go in Phase 2. | Often |
-| `aquarius-os.env` | Settings: both image names, both base images, description, GitHub username. One place, used everywhere. | Once, at setup |
+| `Containerfile` | The recipe. Says "start from Bazzite, then run our build script." Used for all three images — which Bazzite to start from is a knob it accepts. | Rarely |
+| `build_files/build.sh` | **The main file you edit.** Installs packages and makes changes on top of Bazzite. Applies to all three images. This is where the creator apps live. | Often |
+| `aquarius-os.env` | Settings: all three image names, all three base images, description, GitHub username. One place, used everywhere. | Once, at setup |
 | `system_files/` | Anything here gets copied into the OS's filesystem. `system_files/usr/…` becomes `/usr/…` in the running OS. Holds the desktop look: colour scheme, wallpaper, fonts, layout. | Sometimes |
 | `branding/` | **The design.** Colours, fonts, logo and wallpaper artwork, with `tokens.md` as the single source of truth. Read [`branding/README.md`](./branding/README.md) before changing how anything looks. | To change the look |
 | `ingest/` | **"Make Editor-Ready"** — the tool that takes camera files and writes copies DaVinci Resolve can actually open, with sound. Added to the right-click menu in the Files app. Read [`ingest/README.md`](./ingest/README.md). | Rarely |
 | `docs/ingest-right-click.md` | **How to get a camera card ready for editing** — the beginner walkthrough for the above. No terminal needed. | Read it |
 | `disk_config/` | Settings for turning the OS image into an installable `.iso` / VM disk. `iso.toml` is the one that's used. | Once, at setup |
-| `.github/workflows/build.yml` | The build robot's instructions: build **both** OS images and publish them. Runs on every push + nightly. | No |
+| `.github/workflows/build.yml` | The build robot's instructions: build **all three** OS images and publish them. Runs on every push + nightly. | No |
 | `.github/workflows/build-iso.yml` | The second robot: turns one published OS image into a USB installer `.iso`. You run this by hand and pick which image. | No |
 | `.github/workflows/build-disk.yml` | Makes a virtual-machine disk for testing. By hand, AMD/Intel image only. | No |
-| `installer/` | The live USB installer environment the ISO robot builds. Works for either image. | Rarely |
+| `installer/` | The live USB installer environment the ISO robot builds. Works for any of the three images. | Rarely |
 | `Justfile` | A collection of shortcut commands used by the build robot (and usable on a Linux machine). | No |
 | `docs/nvidia-variant-research.md` | Why the NVIDIA image is built on `bazzite-nvidia-open` and not `bazzite-nvidia`. | Reference |
+| `docs/deck-variant-research.md` | Why the handheld image is built on `bazzite-deck`, what it inherits, and why none of our layers fight Game Mode. | Reference |
 | `docs/UPSTREAM-TEMPLATE-README.md` | The original README from the upstream template we copied, kept for reference. Written for experts. | Reference |
 | `LICENSE` | Apache 2.0, inherited from the upstream template. | No |
 
@@ -118,6 +138,8 @@ What's set up:
 - Image name: **`aquarius-os`** → publishes to `ghcr.io/<your-github-username>/aquarius-os`
 - Second image: **`aquarius-os-nvidia`**, same recipe on `ghcr.io/ublue-os/bazzite-nvidia-open:stable`,
   built by the same run — see "Which image do I pick?" above
+- Third image: **`aquarius-os-deck`**, same recipe on `ghcr.io/ublue-os/bazzite-deck:stable`,
+  built by the same run — the handheld one, boots into Game Mode
 - Build layer: installs exactly one package (`htop`) as proof the layer works
 - Phase 2 creator apps: **commented-out stubs only** in `build_files/build.sh` — visible, not active
 

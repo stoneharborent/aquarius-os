@@ -8,7 +8,8 @@
 #
 # It asks you ONE question: which AquariusOS? "base" is the normal one, for AMD
 # and Intel graphics. "nvidia" is the one for machines with an NVIDIA graphics
-# card. It builds one ISO per run, not both — pick the one you need.
+# card. "deck" is the handheld one — a ROG Xbox Ally, Steam Deck or similar,
+# which boots into Game Mode. It builds one ISO per run — pick the one you need.
 #
 # It happens in two stages, and that is the important thing to understand:
 #
@@ -16,6 +17,25 @@
 #             This is a live desktop with the Fedora installer on it, with a copy
 #             of AquariusOS tucked inside so installing works offline.
 #   Stage 2 — hand that payload to Titanoboa, which squashes it into an .iso.
+#
+# ---- Why the handheld ISO uses TWO images -----------------------------------
+# For "base" and "nvidia" the live desktop you boot from the USB stick and the
+# OS that gets written to the disk are the same image. For "deck" they are NOT,
+# and that is deliberate:
+#
+#   the live session you boot  →  aquarius-os        (a normal desktop)
+#   what gets INSTALLED        →  aquarius-os-deck   (boots into Game Mode)
+#
+# Because the handheld image's whole job is to skip the desktop and start Steam
+# in Game Mode. Boot a live USB of it and you would be sitting in Steam's
+# controller UI with the installer somewhere behind it — which is a terrible way
+# to install an operating system. So the live half of a handheld ISO is the
+# ordinary desktop, and the handheld image travels along inside it as cargo.
+#
+# This is not our invention: it is exactly what Bazzite does for its own deck
+# ISOs, and it is the reason installer/Containerfile has taken two separate
+# image arguments (BASE_IMAGE and INSTALL_IMAGE_PAYLOAD) since it was written.
+# Until now we always passed the same value to both. See installer/README.md.
 #
 # Why two stages: Titanoboa refuses to build an ISO unless the image contains
 # /usr/lib/bootc-image-builder/iso.yaml (the "container-native ISO contract").
@@ -49,15 +69,16 @@ on:
   workflow_dispatch:
     inputs:
       variant:
-        description: "Which AquariusOS? NVIDIA graphics card -> nvidia. AMD or Intel -> base."
+        description: "Which AquariusOS? Handheld (Ally / Steam Deck) -> deck. NVIDIA graphics card -> nvidia. AMD or Intel PC -> base."
         required: true
         default: base
         type: choice
         options:
           - base
           - nvidia
+          - deck
       image-ref:
-        description: "Advanced: a specific image instead. Leave BLANK to use the choice above."
+        description: "Advanced: a specific image to INSTALL instead. Leave BLANK to use the choice above."
         required: false
         default: ""
         type: string
@@ -146,24 +167,54 @@ jobs:
         run: |
           set -euo pipefail
           # If nobody typed a specific image, work it out from the variant they
-          # picked. These two names must match IMAGE_NAME and NVIDIA_IMAGE_NAME
-          # in aquarius-os.env — `just` isn't installed on this runner, so this
-          # is the one other place they appear. Change both together.
+          # picked. These three names must match IMAGE_NAME, NVIDIA_IMAGE_NAME
+          # and DECK_IMAGE_NAME in aquarius-os.env — `just` isn't installed on
+          # this runner, so this is the one other place they appear. Change both
+          # together.
+          #
+          # IMAGE_REF is what gets INSTALLED onto the machine.
+          DESKTOP_IMAGE_NAME="aquarius-os"
           if [[ -z "${IMAGE_REF}" ]]; then
             case "${VARIANT}" in
-              base)   IMAGE_NAME="aquarius-os" ;;
+              base)   IMAGE_NAME="${DESKTOP_IMAGE_NAME}" ;;
               nvidia) IMAGE_NAME="aquarius-os-nvidia" ;;
+              deck)   IMAGE_NAME="aquarius-os-deck" ;;
               *)
-                echo "::error::Unknown variant '${VARIANT}' — expected 'base' or 'nvidia'."
+                echo "::error::Unknown variant '${VARIANT}' — expected 'base', 'nvidia' or 'deck'."
                 exit 1
                 ;;
             esac
             IMAGE_REF="ghcr.io/${OWNER}/${IMAGE_NAME}:latest"
           fi
-          echo "Building an ISO from: ${IMAGE_REF}"
           # Lowercase it — registries reject capital letters in image names.
           IMAGE_REF="${IMAGE_REF,,}"
+
+          # LIVE_IMAGE_REF is what the USB stick BOOTS INTO while you install.
+          #
+          # Normally it is the same image. The handheld one is the exception —
+          # it boots into Game Mode instead of a desktop, so a live session made
+          # of it would drop you into Steam with the installer hidden behind it.
+          # For that one, the live session is the ordinary desktop image and the
+          # handheld image rides along as the thing being installed. The long
+          # explanation is in this file's header; Bazzite does the same.
+          #
+          # This is decided from the image NAME, not from the variant input, so
+          # that the "Advanced" image-ref box gets the same treatment: type a
+          # -deck image in there by hand and you still get a usable installer.
+          if [[ "${IMAGE_REF}" == *"-deck"* ]]; then
+            LIVE_IMAGE_REF="ghcr.io/${OWNER}/${DESKTOP_IMAGE_NAME}:latest"
+            LIVE_IMAGE_REF="${LIVE_IMAGE_REF,,}"
+            echo "Handheld image detected. The live session will be the desktop image."
+          else
+            LIVE_IMAGE_REF="${IMAGE_REF}"
+          fi
+
+          echo "This ISO will INSTALL:   ${IMAGE_REF}"
+          echo "Its live session runs:   ${LIVE_IMAGE_REF}"
+
           # Turn "ghcr.io/owner/aquarius-os:latest" into "aquarius-os-latest".
+          # Named after the image being INSTALLED — that is what somebody is
+          # choosing when they download an ISO.
           NAME_PART="${IMAGE_REF##*/}"
           ISO_BASENAME="${NAME_PART/:/-}-live-amd64.iso"
           # One folder holds the finished ISO and its checksum, and is what gets
@@ -172,6 +223,7 @@ jobs:
           UPLOAD_DIR="${RUNNER_TEMP}/upload"
           mkdir -p "${UPLOAD_DIR}"
           echo "image-ref=${IMAGE_REF}" >> "$GITHUB_OUTPUT"
+          echo "live-image-ref=${LIVE_IMAGE_REF}" >> "$GITHUB_OUTPUT"
           echo "iso-basename=${ISO_BASENAME}" >> "$GITHUB_OUTPUT"
           echo "upload-dir=${UPLOAD_DIR}" >> "$GITHUB_OUTPUT"
           echo "iso-dest=${UPLOAD_DIR}/${ISO_BASENAME}" >> "$GITHUB_OUTPUT"
@@ -183,18 +235,23 @@ jobs:
       #
       # --cap-add sys_admin is required: installer/build.sh runs podman inside the
       # build to embed a copy of AquariusOS into the live image.
-      # BASE_IMAGE and INSTALL_IMAGE_PAYLOAD are the same for us. Bazzite only
-      # splits them because its handheld ISOs boot a desktop but install the deck
-      # image.
+      #
+      # The two --build-arg lines are the split described in this file's header:
+      #   BASE_IMAGE            what the live USB session is made of
+      #   INSTALL_IMAGE_PAYLOAD what gets written to the machine's disk
+      # For base and nvidia these are the same image, as they always were. For
+      # the handheld image they differ, which is the case Bazzite wrote these
+      # two arguments for in the first place.
       - name: Build the installer payload image
         env:
           IMAGE_REF: ${{ steps.names.outputs.image-ref }}
+          LIVE_IMAGE_REF: ${{ steps.names.outputs.live-image-ref }}
         run: |
           set -euxo pipefail
           sudo env TMPDIR=/mnt/podman-storage/tmp podman build \
             --cap-add sys_admin \
             --security-opt label=disable \
-            --build-arg BASE_IMAGE="${IMAGE_REF}" \
+            --build-arg BASE_IMAGE="${LIVE_IMAGE_REF}" \
             --build-arg INSTALL_IMAGE_PAYLOAD="${IMAGE_REF}" \
             -t localhost/payload:latest \
             installer/
@@ -278,8 +335,11 @@ jobs:
         if: failure()
         env:
           IMAGE_REF: ${{ steps.names.outputs.image-ref }}
+          LIVE_IMAGE_REF: ${{ steps.names.outputs.live-image-ref }}
         run: |
-          echo "The image this run was trying to turn into an ISO: ${IMAGE_REF:-(not worked out yet)}"
+          echo "The image this run was trying to INSTALL: ${IMAGE_REF:-(not worked out yet)}"
+          echo "The image its live session runs:          ${LIVE_IMAGE_REF:-(not worked out yet)}"
+          echo "(Those two differ only for the handheld ISO — that is on purpose.)"
           cat <<'EOF'
           ------------------------------------------------------------------
           This ISO build failed. Find the first red step above — that tells
@@ -289,11 +349,13 @@ jobs:
             Something in installer/ broke. Common causes:
               * A package name changed upstream, so a `dnf install` in
                 installer/build.sh or one of the two hook scripts failed.
-              * The AquariusOS image could not be downloaded. Check that the
-                image named just above this box is still PUBLIC on GHCR, and
+              * An AquariusOS image could not be downloaded. Check that BOTH
+                images named just above this box are still PUBLIC on GHCR, and
                 that the "Build AquariusOS image" workflow has succeeded at
-                least once for that variant. (The NVIDIA image is a separate
-                package and needs making public separately.)
+                least once for each. (Every variant is its own package on GHCR
+                and each needs making public separately — that is a one-time
+                click per image, and it is the usual reason a brand-new
+                variant's first ISO fails here.)
               * Ran out of disk. Check the "Show disk space" step.
 
           "Build the ISO" failed

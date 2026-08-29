@@ -8,19 +8,31 @@
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
-# WE BUILD TWO VERSIONS OF AQUARIUSOS FROM THIS ONE FILE
+# WE BUILD THREE VERSIONS OF AQUARIUSOS FROM THIS ONE FILE
 # ------------------------------------------------------------------------------
 #   aquarius-os          for AMD and Intel graphics  → ghcr.io/ublue-os/bazzite:stable
 #   aquarius-os-nvidia   for NVIDIA graphics         → ghcr.io/ublue-os/bazzite-nvidia-open:stable
+#   aquarius-os-deck     for gaming handhelds        → ghcr.io/ublue-os/bazzite-deck:stable
 #
 # They are identical apart from that starting point, so there is deliberately only
 # ONE recipe: the starting point is a knob (`BASE_IMAGE`) instead of a fixed line,
-# and GitHub Actions builds this file twice, once with each value. The default
-# below is the AMD/Intel one, so a plain `podman build .` with no extra arguments
-# still produces exactly what it always did.
+# and GitHub Actions builds this file once per value. The default below is the
+# AMD/Intel one, so a plain `podman build .` with no extra arguments still
+# produces exactly what it always did.
+#
+# ⚠️ "Identical apart from the starting point" is a rule, not an accident. There
+# is NO variant branching in this file or in build_files/build.sh, and adding one
+# should be the last resort — every branch is a code path that only one of the
+# three images ever exercises. The handheld build was checked against this rule
+# when it was added (2026-08-28) and needed no branch at all: everything that
+# makes a handheld a handheld is inside bazzite-deck, and everything we layer on
+# top is desktop-session-scoped and simply does not run in Game Mode. The
+# reasoning is written out in docs/deck-variant-research.md, §"Do our layers
+# conflict?".
 #
 # The real list of image names lives in aquarius-os.env — change it there, not
 # here. Why -nvidia-open and not -nvidia: docs/nvidia-variant-research.md.
+# Why -deck and not -deck-gnome: docs/deck-variant-research.md.
 #
 # ⚠️ This line MUST stay above the first FROM. An ARG written after a FROM belongs
 # to that one build stage only, and would not be visible to the FROM further down
@@ -42,7 +54,8 @@ COPY ingest /ingest
 # Bazzite stable, KDE desktop. This is the gaming layer we inherit for free:
 # Steam, Game Mode, GPU drivers, controller support, handheld support.
 # (`bazzite:stable` is the KDE desktop variant. The GNOME variant is
-# `bazzite-gnome:stable`; handhelds use `bazzite-deck:stable` — Phase 4.)
+# `bazzite-gnome:stable` and we do not use it; handhelds use
+# `bazzite-deck:stable`, which is the third variant we build — Phase 2G.)
 #
 # Which Bazzite this actually is comes from the BASE_IMAGE argument declared at
 # the very top of this file, above the first FROM. That placement is what makes
@@ -51,7 +64,6 @@ FROM ${BASE_IMAGE}
 
 ## Other possible base images include:
 # ghcr.io/ublue-os/bazzite:testing
-# ghcr.io/ublue-os/bazzite-deck:stable      # Steam Deck / handheld — Phase 4
 # ghcr.io/ublue-os/aurora:stable
 #
 # ... and so on, here are more base images
@@ -71,13 +83,14 @@ FROM ${BASE_IMAGE}
 # RUN rm /opt && mkdir /opt
 
 ### WHICH IMAGE AM I?
-## One recipe builds two images (aquarius-os and aquarius-os-nvidia), and the
-## build script needs to record its own name inside the OS — the file at
+## One recipe builds three images (aquarius-os, aquarius-os-nvidia and
+## aquarius-os-deck), and the build script needs to record its own name inside
+## the OS — the file at
 ## /usr/share/ublue-os/image-info.json says which image is installed, and it has
 ## to be right or update tooling points at the wrong download.
 ##
 ## So the name is a knob too, exactly like BASE_IMAGE above. The Justfile fills
-## these in for each of the two builds; the defaults below mean a plain
+## these in for each of the three builds; the defaults below mean a plain
 ## `podman build .` with no arguments still works and still produces the normal
 ## AquariusOS image.
 ##

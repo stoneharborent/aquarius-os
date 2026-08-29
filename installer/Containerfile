@@ -24,9 +24,19 @@
 
 # BASE_IMAGE          — what the live desktop is made of.
 # INSTALL_IMAGE_PAYLOAD — the image that gets written to the target machine's
-#                         disk. For AquariusOS these are the same image; Bazzite
-#                         only splits them because its handheld ("deck") ISOs
-#                         boot a desktop live session but install the deck image.
+#                         disk.
+#
+# These two are the SAME image for the base and NVIDIA ISOs, and DIFFERENT for
+# the handheld one:
+#
+#   deck ISO:  BASE_IMAGE = aquarius-os        (an ordinary desktop to install FROM)
+#              INSTALL_…  = aquarius-os-deck   (the Game Mode image being installed)
+#
+# Because a live session made of the handheld image would boot into Steam's
+# controller interface with the installer hidden behind it. Bazzite splits them
+# for exactly this reason and we now do too — which is what these two arguments
+# were here for all along. The long version is in the header of
+# ../.github/workflows/build-iso.yml, which is what passes them in.
 ARG BASE_IMAGE=${BASE_IMAGE:-ghcr.io/stoneharborent/aquarius-os:latest}
 ARG INSTALL_IMAGE_PAYLOAD=${INSTALL_IMAGE_PAYLOAD:-ghcr.io/stoneharborent/aquarius-os:latest}
 

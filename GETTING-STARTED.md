@@ -228,20 +228,21 @@ If the push in step 4d didn't start a build, start one by hand:
    **Run workflow** button.
 3. Wait ~10 seconds and refresh. A new run appears at the top with a **yellow dot** (running).
 
-Click into the run. You'll see **two jobs**, not one:
+Click into the run. You'll see **three jobs**, not one:
 
 - **Build and push image (base)** — the AMD/Intel AquariusOS
 - **Build and push image (nvidia)** — the NVIDIA one
+- **Build and push image (deck)** — the handheld one (ROG Xbox Ally, Steam Deck…)
 
-They run at the same time and are independent. Click either to watch its live log.
+They run at the same time and are independent. Click any of them to watch its live log.
 
 **What you're looking at:** each line is one step. The big one is "Build Image" — that's
 GitHub downloading Bazzite (several GB) and running our build script on top of it. The
 "Rechunk" step afterwards is repackaging and is normally the slowest part. This is why we
 don't build on your Mac.
 
-**If one job is green and the other is red**, that's deliberate — they're set up so a problem
-with one can't stop the other from shipping. Read the red one's log; the green one's output
+**If one job is green and another is red**, that's deliberate — they're set up so a problem
+with one can't stop the others from shipping. Read the red one's log; the green ones' output
 is fine and already published.
 
 **When it finishes:**
@@ -259,24 +260,27 @@ A first build taking 30–60 minutes is normal. Later builds are faster.
 ## Step 6 — Where the OS actually lives
 
 Your built OS is published to **GitHub Container Registry (GHCR)** — GitHub's storage for
-container images. Every run produces **two** packages, because there are two AquariusOS
+container images. Every run produces **three** packages, because there are three AquariusOS
 images (see "Which image do I pick?" just below):
 
 ```
 ghcr.io/YOUR-USERNAME/aquarius-os:latest          ← AMD / Intel graphics
 ghcr.io/YOUR-USERNAME/aquarius-os-nvidia:latest   ← NVIDIA graphics
+ghcr.io/YOUR-USERNAME/aquarius-os-deck:latest     ← gaming handhelds (Game Mode)
 ```
 
 To see them: go to your **GitHub profile page** (not the repo) → the **Packages** tab. You'll
-see both listed, with tags and publish dates.
+see all three listed, with tags and publish dates.
 
 **Make each one public** (do this once per package, or nobody can install it):
 On the package page → **Package settings** (right side) → scroll to **Danger Zone** →
 **Change package visibility** → **Public**.
 
-> ⚠️ These are two separate packages. Making `aquarius-os` public does **not** make
-> `aquarius-os-nvidia` public. Do it twice. The first time the NVIDIA image is built, a new
-> package appears in that list and starts out private, same as the first one did.
+> ⚠️ These are three separate packages. Making `aquarius-os` public does **not** make
+> `aquarius-os-nvidia` or `aquarius-os-deck` public. Do it three times. Every time a NEW
+> image variant is built for the first time, a new package appears in that list and starts
+> out **private**, same as the first one did — and a private image is the usual reason a
+> brand-new variant's first ISO build fails.
 
 This is not yet a thing you can burn to a USB stick — it's the OS in "container" form. Two
 ways to actually run it:
@@ -292,27 +296,43 @@ ways to actually run it:
 
 ## Step 6.5 — Which image do I pick?
 
-Two AquariusOS images exist. Same operating system, same apps, same settings — the only
-difference is which graphics driver is built in. Pick by **what graphics card is in the
-machine**:
+Three AquariusOS images exist. Same operating system, same apps, same creator suite — what
+differs is which Bazzite they are built on. Answer two questions in order.
+
+**First: is the machine a gaming handheld?** A ROG Xbox Ally, ROG Ally X, Steam Deck or
+Legion Go — a screen with thumbsticks attached and no keyboard.
+
+| Answer | Use this image |
+|---|---|
+| **Yes** | `aquarius-os-deck` |
+
+That one **starts up in Game Mode** — the full-screen, controller-driven Steam interface,
+rather than a desktop. The AquariusOS desktop and all the creator apps are still there and
+one switch away (Steam menu → Power → Switch to Desktop). If the answer is yes, you are done;
+skip the graphics-card question, because every handheld of this kind has AMD graphics and the
+handheld image already accounts for that.
+
+**Otherwise: what graphics card is in the machine?**
 
 | Graphics card in the machine | Use this image |
 |---|---|
 | **NVIDIA** — any RTX card (RTX 5090 included), or GTX 16-series | `aquarius-os-nvidia` |
-| **AMD or Intel** — including the built-in graphics in most laptops and handhelds | `aquarius-os` |
+| **AMD or Intel** — including the built-in graphics in most laptops | `aquarius-os` |
 
 Not sure? It's AMD or Intel. An NVIDIA card is something you buy on purpose.
 
-**Why there have to be two.** NVIDIA cards need NVIDIA's own driver built into the operating
-system, and that driver can't be present on machines without the card. Bazzite splits its
-images for exactly this reason, and we inherit the split. Nothing that we add is different
-between them.
+**Why there have to be three.** NVIDIA cards need NVIDIA's own driver built into the
+operating system, and that driver can't be present on machines without the card. Handhelds
+need to start in a different mode entirely, plus a stack of handheld-only hardware support
+(buttons, gyro, fan and power controls). Bazzite splits its images for exactly these reasons,
+and we inherit both splits. Nothing that *we* add is different between them.
 
 Picking wrong isn't dangerous — an NVIDIA machine running the AMD/Intel image usually boots
-to a low-resolution desktop with no game performance, rather than exploding. Fix it by
+to a low-resolution desktop with no game performance, and a handheld running the plain
+desktop image just boots to a desktop instead of Game Mode. Neither explodes. Fix it by
 switching, below.
 
-### Switching between the two images
+### Switching between the images
 
 If you installed the wrong one, or you swapped the graphics card in a machine, you don't
 reinstall. On the AquariusOS machine itself (not your Mac), open a terminal and run **one**
@@ -324,7 +344,14 @@ sudo bootc switch ghcr.io/YOUR-USERNAME/aquarius-os-nvidia:latest
 
 # Moving BACK to AMD / Intel:
 sudo bootc switch ghcr.io/YOUR-USERNAME/aquarius-os:latest
+
+# Turning a handheld into a Game-Mode machine:
+sudo bootc switch ghcr.io/YOUR-USERNAME/aquarius-os-deck:latest
 ```
+
+That last one is genuinely useful: it is how you take a handheld that already has the plain
+desktop AquariusOS on it and turn it into the Game Mode one, without reinstalling. And
+`sudo bootc rollback` takes it straight back.
 
 Then reboot. It downloads the other image, and on the next start-up you're on it.
 
@@ -357,15 +384,21 @@ own workflow, and it only runs when you ask.
 1. Repo → **Actions** tab → **Build AquariusOS ISO (Titanoboa)** in the left sidebar.
 2. Click the **Run workflow** button on the right.
 3. There are two boxes:
-   - **Which AquariusOS?** — pick `nvidia` if the PC you're installing on has an NVIDIA
-     graphics card, `base` if it has AMD or Intel. (See Step 6.5.) This is the only one you
-     normally touch.
+   - **Which AquariusOS?** — pick `deck` if you're installing on a gaming handheld,
+     `nvidia` if the PC has an NVIDIA graphics card, `base` if it has AMD or Intel.
+     (See Step 6.5.) This is the only one you normally touch.
    - **Advanced: a specific image instead** — **leave this blank.** It's an escape hatch for
      building an ISO of an older dated tag, and the choice above is ignored if you type in it.
 4. Click the green **Run workflow**. This one is slow — plan on an hour. You can close the
    tab; it keeps running on GitHub's machines.
 
-   One run makes **one** ISO. Need both? Run it twice.
+   One run makes **one** ISO. Need another? Run it again.
+
+> **A note on the `deck` ISO, so nothing surprises you.** When you boot that USB stick you
+> get an ordinary AquariusOS **desktop** with the installer on it — *not* Game Mode. That is
+> correct and deliberate. Game Mode is a terrible place to run an installer from, so the live
+> session is the desktop and the handheld image travels inside it as the thing being
+> installed. Game Mode appears the first time the *installed* machine starts up.
 5. When it finishes, click into the run and scroll to the bottom. Under **Artifacts** there's
    a downloadable `.zip` containing:
    - the **`.iso`** — the USB installer
@@ -453,6 +486,7 @@ updates even on days you don't touch anything.
 | S3 hosting for ISO downloads | Not set up. ISOs come out as GitHub artifacts instead, which is fine until there's a public download page. |
 | ISO built, but never tested on real hardware | Open. The pieces are all in place (Step 7), but nobody has yet booted the resulting USB stick on an actual PC. Until someone does, treat the first ISO as unproven. |
 | The NVIDIA image has never been built or booted | Open, and newer than everything else here. `aquarius-os-nvidia` is wired up end to end (build, publish, sign, ISO) but the first green run and the first boot on the RTX PC are both still to come. Assume nothing about it until then. |
+| The handheld image has never been built or booted | Open, and the newest thing here. `aquarius-os-deck` is wired end to end (build, publish, sign, ISO) but has never been through GitHub Actions and has never started up on a handheld. Nobody has yet confirmed that it reaches Game Mode, that the AquariusOS desktop behind Game Mode looks right, or that the creator apps are usable on a 7-inch screen. Assume nothing about it until a real ROG Xbox Ally has booted it. Background: `docs/deck-variant-research.md`. |
 | Live session still looks like Bazzite | Cosmetic, Phase 3. The installer USB shows plain Bazzite KDE with an AquariusOS terminal greeting — we didn't carry over Bazzite's wallpaper, panel layout or login popups. See `installer/README.md`. |
 | Updates aren't signature-checked after install | Open. Bazzite tells a freshly installed machine to verify image signatures on every update. AquariusOS can't yet, because it doesn't ship a signing policy for `ghcr.io/stoneharborent` — so that check is switched off. Noted in `installer/titanoboa_hook_postrootfs.sh`; turn it on the day the policy exists. |
 | Artifacthub listing | Optional, ignored. See `artifacthub-repo.yml`. |

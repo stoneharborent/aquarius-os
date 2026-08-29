@@ -267,10 +267,11 @@ image_name $target_image=image_name:
 
     echo "${image_name}"
 
-# Which of the two AquariusOS images a variant means.
+# Which of the three AquariusOS images a variant means.
 #
-# "base"   -> aquarius-os         (AMD / Intel graphics)
-# "nvidia" -> aquarius-os-nvidia  (NVIDIA graphics)
+# "base"   -> aquarius-os         (AMD / Intel graphics, desktop)
+# "nvidia" -> aquarius-os-nvidia  (NVIDIA graphics, desktop)
+# "deck"   -> aquarius-os-deck    (gaming handhelds — boots into Game Mode)
 #
 # The GitHub Actions build asks these two recipes instead of hardcoding names, so
 # aquarius-os.env stays the one place image names live.
@@ -279,14 +280,15 @@ variant-image-name variant="base":
     #!/usr/bin/env bash
     set -euo pipefail
 
-    if [[ "{{ variant }}" == "base" ]]; then
-        echo "${IMAGE_NAME}"
-    elif [[ "{{ variant }}" == "nvidia" ]]; then
-        echo "${NVIDIA_IMAGE_NAME}"
-    else
-        echo "Unknown variant '{{ variant }}' — expected 'base' or 'nvidia'." >&2
-        exit 1
-    fi
+    case "{{ variant }}" in
+        base)   echo "${IMAGE_NAME}" ;;
+        nvidia) echo "${NVIDIA_IMAGE_NAME}" ;;
+        deck)   echo "${DECK_IMAGE_NAME}" ;;
+        *)
+            echo "Unknown variant '{{ variant }}' — expected 'base', 'nvidia' or 'deck'." >&2
+            exit 1
+            ;;
+    esac
 
 # Which Bazzite image a variant is built on top of.
 [group('Utility')]
@@ -294,14 +296,15 @@ variant-base-image variant="base":
     #!/usr/bin/env bash
     set -euo pipefail
 
-    if [[ "{{ variant }}" == "base" ]]; then
-        echo "${BASE_IMAGE}"
-    elif [[ "{{ variant }}" == "nvidia" ]]; then
-        echo "${NVIDIA_BASE_IMAGE}"
-    else
-        echo "Unknown variant '{{ variant }}' — expected 'base' or 'nvidia'." >&2
-        exit 1
-    fi
+    case "{{ variant }}" in
+        base)   echo "${BASE_IMAGE}" ;;
+        nvidia) echo "${NVIDIA_BASE_IMAGE}" ;;
+        deck)   echo "${DECK_BASE_IMAGE}" ;;
+        *)
+            echo "Unknown variant '{{ variant }}' — expected 'base', 'nvidia' or 'deck'." >&2
+            exit 1
+            ;;
+    esac
 
 # Command: _rootful_load_image
 # Description: This script checks if the current user is root or running under sudo. If not, it attempts to resolve the image tag using podman inspect.

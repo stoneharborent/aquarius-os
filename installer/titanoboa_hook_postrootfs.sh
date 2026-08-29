@@ -268,6 +268,72 @@ qrencode -o "$SECUREBOOT_DOC_URL_QR" "$SECUREBOOT_DOC_URL"
 )
 
 # ------------------------------------------------------------------------------
+# Handhelds: give the live installer an on-screen keyboard
+# ------------------------------------------------------------------------------
+# THIS IS THE ONE THING A HANDHELD ISO GENUINELY NEEDS THAT THE OTHERS DO NOT.
+#
+# The situation: a ROG Xbox Ally has a touchscreen and no keyboard. Anaconda asks
+# for a user name and a password. With no on-screen keyboard there is literally
+# no way to answer it — the install is impossible until somebody finds a USB
+# keyboard and a hub. So this is not a nicety, it is the difference between an
+# ISO that installs and one that dead-ends.
+#
+# Why it has to be done HERE and not inherited: the live session of a handheld
+# ISO is our *desktop* image (see the header of .github/workflows/build-iso.yml
+# for why), and the desktop image has no reason to carry handheld keyboard
+# settings. Only the ISO build knows that the thing being installed is a
+# handheld, so only the ISO build can join the two facts up.
+#
+# `imageref` is worked out near the top of this file from INSTALL_IMAGE_PAYLOAD —
+# the image being INSTALLED, not the one the live session is made of — so this
+# test asks the right question even though the surrounding filesystem is the
+# desktop image. Same variable the NVIDIA blocks below use.
+#
+# Part 1 is lifted from ublue-os/bazzite's own copy of this hook (Apache-2.0),
+# which does exactly this for its deck ISOs — Bazzite moves the Maliit keyboard's
+# launcher out of a backup folder to switch it on for KDE. The `|| :` is theirs
+# too: a base image that stops shipping the backup copy must not fail an ISO
+# build over it, so we print a loud warning instead of dying.
+if [[ $imageref == *-deck* ]]; then
+    echo "Handheld image detected — enabling the on-screen keyboard in the live session."
+
+    if [[ -f /usr/share/ublue-os/backup/com.github.maliit.keyboard.desktop ]]; then
+        mv -v /usr/share/ublue-os/backup/com.github.maliit.keyboard.desktop \
+            /usr/share/applications/com.github.maliit.keyboard.desktop
+    else
+        echo "::warning::No Maliit keyboard launcher found to restore. A handheld"
+        echo "::warning::installing from this ISO may need a USB keyboard. Check"
+        echo "::warning::whether the base image renamed /usr/share/ublue-os/backup/."
+    fi
+
+    # Part 2 goes one step further than Bazzite, on purpose.
+    #
+    # Restoring the launcher makes the keyboard available; it does not switch
+    # Plasma's virtual keyboard ON. On an INSTALLED handheld that second half
+    # arrives with the deck base, in the two lines that Bazzite's
+    # `steamdeck-kde-presets` package puts in /etc/xdg/kwinrc. The live session
+    # is built from the desktop image, whose preset package deliberately deletes
+    # that file — so those two lines are exactly what is missing here, and they
+    # are the same two lines the installed system will have. We write them
+    # ourselves rather than hoping the launcher alone is enough.
+    #
+    # If a future base image starts shipping /etc/xdg/kwinrc on the desktop
+    # variant too, this appends to it rather than replacing it, so nothing of
+    # theirs is lost.
+    mkdir -p /etc/xdg
+    if ! grep -q '^VirtualKeyboardEnabled=true' /etc/xdg/kwinrc 2>/dev/null; then
+        cat >>/etc/xdg/kwinrc <<'KWINEOF'
+
+[Wayland]
+InputMethod[$e]=/usr/share/applications/org.kde.plasma.keyboard.desktop
+VirtualKeyboardEnabled=true
+KWINEOF
+    fi
+    echo "--- /etc/xdg/kwinrc in the live image is now: ---"
+    cat /etc/xdg/kwinrc
+fi
+
+# ------------------------------------------------------------------------------
 # NVIDIA machines: make the live session able to draw a picture
 # ------------------------------------------------------------------------------
 # Only runs when building the ISO for aquarius-os-nvidia. Background: the

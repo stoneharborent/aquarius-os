@@ -119,11 +119,27 @@ IMAGE_NAME="${IMAGE_NAME:-aquarius-os}"
 IMAGE_VENDOR="${IMAGE_VENDOR:-stoneharborent}"
 
 # The "edition" line, printed under the name on KDE's About page. This is the
-# one identity field that genuinely differs between our two images, so it is
-# worked out from the image name rather than typed twice. Bazzite words its own
+# one identity field that genuinely differs between our images, so it is worked
+# out from the image name rather than typed three times. Bazzite words its own
 # the same way ("NVIDIA Edition" / "Desktop Edition"), which is where the phrase
 # Royce saw on the About screen came from in the first place.
+#
+# "Handheld Edition" is the deck image (aquarius-os-deck), which boots into Game
+# Mode on a ROG Xbox Ally / Steam Deck class machine. The user only ever reads
+# this on the About page in DESKTOP mode — Game Mode has no About page — so it
+# says the thing that is useful there: this desktop belongs to a handheld.
+#
+# The deck line is listed FIRST on purpose. If a bazzite-deck-nvidia variant is
+# ever added, its name would match both patterns, and "Handheld" is the more
+# useful half of "handheld with an NVIDIA GPU" — a case order change, not a
+# rewrite. `case` stops at the first match.
+#
+# ⚠️ If you add an edition here, add it to the matching allow-list in the
+# "Verify OS identity" step of .github/workflows/build.yml too, or the build
+# goes red on a name it has never heard of. That is deliberate: an unrecognised
+# edition means somebody added an image and only half-wired it.
 case "$IMAGE_NAME" in
+*-deck*) IMAGE_VARIANT="Handheld Edition" ;;
 *-nvidia*) IMAGE_VARIANT="NVIDIA Edition" ;;
 *) IMAGE_VARIANT="Desktop Edition" ;;
 esac
@@ -162,13 +178,61 @@ FEDORA_VERSION="$(rpm -E %fedora)"
 # build a version string like "43.20260825".
 BUILD_DATE="$(date -u +%Y%m%d)"
 
-# What we were built on top of — "bazzite" or "bazzite-nvidia-open". We read it
-# out of the existing file rather than guessing, so this stays correct for both
-# of our images without either of them having to be told which one it is.
-# The `|| true` and the fallback mean a missing or surprising file cannot fail
-# the whole build over a label.
-BASE_IMAGE_NAME="$(sed -n 's/.*"image-name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$IMAGE_INFO" 2>/dev/null | head -n1 || true)"
-BASE_IMAGE_NAME="${BASE_IMAGE_NAME:-bazzite}"
+# ⚠️ base-image-name IS LOAD-BEARING. READ THIS BEFORE TOUCHING THE LINE THAT READS IT.
+#
+# This field is not a label. Bazzite's own first-boot scripts read it back out of
+# this file at RUNTIME and change what they do based on it. The one that matters
+# most is /usr/libexec/bazzite-autologin, which runs before the login screen on
+# every boot of the handheld image and decides which session to log into:
+#
+#     if base-image-name =~ "kinoite"   -> KDE
+#     elif base-image-name =~ "silverblue" -> GNOME
+#     else  "Unknown base image ... leaving autologin alone"
+#
+# That last branch is the whole problem. Bazzite fills this field with the plain
+# word "kinoite" (KDE) or "silverblue" (GNOME) — the FEDORA edition underneath,
+# not the name of the Bazzite image. If we overwrite it with anything else, that
+# `else` fires, autologin is skipped, and the handheld boots to a login screen
+# instead of Game Mode. No error, no clue, just the wrong OS.
+#
+# And that is exactly what this script used to do. Until 2026-08-28 the line
+# below read `"image-name"` with a leading `.*`, which matched the
+# `"base-image-name"` line too and took the first hit — so it copied Bazzite's
+# IMAGE name ("bazzite", "bazzite-deck") into a field that is supposed to hold
+# the Fedora edition. Nothing on the desktop images reads it, so it sat there
+# harmlessly and wrong for months. On the handheld base it would have broken the
+# single feature the image exists for. Found by reading Bazzite's runtime scripts
+# while adding the deck variant; written up in docs/deck-variant-research.md.
+#
+# So: read the field by its own name, anchored to the start of the line so it
+# cannot be confused with any other key, and pass it through untouched.
+BASE_IMAGE_NAME="$(sed -n 's/^[[:space:]]*"base-image-name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$IMAGE_INFO" 2>/dev/null | head -n1 || true)"
+
+# If it is missing or is a word Bazzite's autologin does not recognise, stop the
+# build. The alternative is shipping a handheld image that quietly refuses to
+# start Game Mode, which is precisely the class of silent failure this repo keeps
+# getting bitten by. If Bazzite ever adds a third Fedora edition, this line going
+# red is how we find out — add the word here and move on.
+case "$BASE_IMAGE_NAME" in
+*kinoite* | *silverblue*) : ;;
+*)
+  echo "ERROR: ${IMAGE_INFO} has base-image-name='${BASE_IMAGE_NAME}'." >&2
+  echo "       Bazzite's own boot-time scripts expect 'kinoite' or 'silverblue'" >&2
+  echo "       there and skip autologin on anything else — which on the handheld" >&2
+  echo "       image means it boots to a login screen instead of Game Mode." >&2
+  echo "       The file as it stands:" >&2
+  cat "$IMAGE_INFO" >&2
+  exit 1
+  ;;
+esac
+
+# Which Bazzite image we were actually built on top of — "bazzite",
+# "bazzite-nvidia-open", "bazzite-deck". This is genuinely useful to have
+# recorded, and it is what the old code was trying to capture; it just put it in
+# the wrong field. It gets its own key, under a name nothing upstream will ever
+# collide with. Extra keys in this file are ignored by everything that reads it.
+UPSTREAM_IMAGE_NAME="$(sed -n 's/^[[:space:]]*"image-name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$IMAGE_INFO" 2>/dev/null | head -n1 || true)"
+UPSTREAM_IMAGE_NAME="${UPSTREAM_IMAGE_NAME:-unknown}"
 
 # Where this image can be downloaded from. "ostree-unverified-registry" means
 # "pull it from a normal container registry, without checking a signature."
@@ -190,11 +254,49 @@ cat >"$IMAGE_INFO" <<EOF
   "image-tag": "latest",
   "image-branch": "stable",
   "base-image-name": "${BASE_IMAGE_NAME}",
+  "aquarius-upstream-image": "${UPSTREAM_IMAGE_NAME}",
   "fedora-version": "${FEDORA_VERSION}",
   "version": "${FEDORA_VERSION}.${BUILD_DATE}",
   "version-pretty": "${IMAGE_PRETTY_NAME} ${FEDORA_VERSION} (${BUILD_DATE})"
 }
 EOF
+
+# ------------------------------------------------------------------------------
+# Step 1b — the OTHER thing Bazzite's boot scripts read out of that file
+# ------------------------------------------------------------------------------
+# Several of Bazzite's first-boot and session scripts ask "am I a handheld?" and
+# they all answer it the same way: by checking whether image-name in the file we
+# just rewrote CONTAINS the word "deck". For example, in bazzite-hardware-setup:
+#
+#     if [[ "$IMAGE_NAME" != *deck* && "$IMAGE_NAME" != *dx* ]]; then
+#         rm -f /etc/sddm.conf.d/steamos.conf     # i.e. "you are not a handheld"
+#
+# We just replaced their image-name with ours. Ours is "aquarius-os-deck", which
+# still contains "deck", so every one of those tests keeps giving the right
+# answer — but only by virtue of the name we happened to choose. That is too
+# important to leave as a happy accident, so it is asserted here.
+#
+# If the handheld image is ever renamed to something without "deck" in it, this
+# fails the build with an explanation instead of shipping a handheld that has
+# quietly stopped believing it is one.
+case "$IMAGE_NAME" in
+*deck*)
+  echo "OK: image-name '${IMAGE_NAME}' contains 'deck', so Bazzite's handheld checks still match."
+  ;;
+*)
+  # Not a deck build. Make sure we are not on a handheld BASE while claiming a
+  # non-handheld name — that combination is the broken one.
+  if [ "${UPSTREAM_IMAGE_NAME}" != "${UPSTREAM_IMAGE_NAME#*deck}" ]; then
+    echo "ERROR: this image is built on the handheld base '${UPSTREAM_IMAGE_NAME}'," >&2
+    echo "       but is named '${IMAGE_NAME}', which does not contain 'deck'." >&2
+    echo "       Bazzite's own boot scripts decide 'am I a handheld?' by looking" >&2
+    echo "       for that word in image-name, so this image would boot with its" >&2
+    echo "       handheld setup switched off. Rename it, or build it on the" >&2
+    echo "       desktop base." >&2
+    exit 1
+  fi
+  ;;
+esac
 
 # ------------------------------------------------------------------------------
 # Step 2 — the name everyone actually sees

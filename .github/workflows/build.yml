@@ -2,14 +2,15 @@
 # Builds the AquariusOS container images and publishes them to GitHub Container
 # Registry.
 #
-# It builds TWO images from the same recipe, side by side, every run:
+# It builds THREE images from the same recipe, side by side, every run:
 #
 #   aquarius-os          for AMD and Intel graphics  (the default AquariusOS)
 #   aquarius-os-nvidia   for NVIDIA graphics cards
+#   aquarius-os-deck     for gaming handhelds — boots into Game Mode
 #
 # That is what the "matrix" below is: one job definition, run once per variant.
-# If one goes red the other still finishes (fail-fast is off), so a problem with
-# the NVIDIA build can never stop the normal image from shipping.
+# If one goes red the others still finish (fail-fast is off), so a problem with
+# the handheld build can never stop the normal image from shipping.
 #
 # Neither image name nor base image is hardcoded here — both come from
 # aquarius-os.env, which the Justfile reads. One place, used everywhere.
@@ -36,8 +37,10 @@ env:
 # out — so pushing twice in a row doesn't leave a stale build running.
 #
 # No variant in the group name here, and that's correct: unlike the ISO and disk
-# workflows, ONE run of this builds BOTH base and nvidia together (that's the
-# matrix below), so there is no second run for it to cancel by mistake.
+# workflows, ONE run of this builds ALL THREE variants together (that's the
+# matrix below), so there is no second run for it to cancel by mistake. Adding a
+# variant to the matrix therefore needs no change here — checked again when the
+# deck variant was added, 2026-08-28.
 #
 # This used to also tack on inputs.brand_name and inputs.stream_name. Those
 # inputs don't exist in this workflow — they were leftovers from the upstream
@@ -53,12 +56,14 @@ jobs:
     runs-on: ubuntu-24.04
 
     strategy:
-      # Don't let one variant failing cancel the other one mid-build.
+      # Don't let one variant failing cancel the others mid-build.
       fail-fast: false
       matrix:
-        # "base" and "nvidia" are the two names the Justfile understands
-        # (`just variant-image-name` / `just variant-base-image`).
-        variant: [base, nvidia]
+        # These are the names the Justfile understands
+        # (`just variant-image-name` / `just variant-base-image`). Adding one
+        # here without adding it there fails the "Image Name" step immediately,
+        # which is the intended behaviour — the Justfile is the list of record.
+        variant: [base, nvidia, deck]
 
     permissions:
       contents: read
@@ -184,7 +189,10 @@ jobs:
           # The fields the About page and the network name are built from.
           check "LOGO is ours"                  '^LOGO=aquarius-logo$'    /etc/os-release
           check "DEFAULT_HOSTNAME is aquarius"  '^DEFAULT_HOSTNAME="aquarius"$' /etc/os-release
-          check "VARIANT is an AquariusOS edition" '^VARIANT="(NVIDIA|Desktop) Edition"$' /etc/os-release
+          # The edition line. This list must match the `case` in
+          # build_files/image-info.sh — a new image whose edition is not named in
+          # BOTH places is a half-wired image, and this is where that gets caught.
+          check "VARIANT is an AquariusOS edition" '^VARIANT="(NVIDIA|Desktop|Handheld) Edition"$' /etc/os-release
 
           # ID stays "bazzite" deliberately — Bazzite's tooling and our Anaconda
           # installer profile both key off it. Checked so nobody "tidies" it away.
@@ -193,6 +201,62 @@ jobs:
           # KDE's About page override. This is the file that caused the bug.
           check "About page name"               '^Name=AquariusOS$'       /etc/xdg/kcm-about-distrorc
           check "About page website"            '^Website=https://github\.com/' /etc/xdg/kcm-about-distrorc
+
+          # --- the file Bazzite's own boot scripts read -----------------------
+          # /usr/share/ublue-os/image-info.json is not a label. Bazzite's
+          # first-boot and session scripts read it back at RUNTIME. Two fields in
+          # it decide, on the handheld image, whether the machine starts up in
+          # Game Mode at all — and we overwrite the whole file. So the two fields
+          # that matter are checked here, on the finished image, for every
+          # variant. Full explanation: build_files/image-info.sh, step 1.
+          INFO=/usr/share/ublue-os/image-info.json
+          echo "== ${INFO} =="
+          cat "$INFO" || echo "(missing!)"
+
+          json_field() {  # json_field <key>  → its value, or nothing
+            sed -n "s/^[[:space:]]*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$INFO" | head -n1
+          }
+
+          if [ ! -f "$INFO" ]; then
+            echo "  FAIL ${INFO} does not exist"
+            fails=1
+          else
+            # 1. base-image-name must stay the word Bazzite put there. Their
+            #    /usr/libexec/bazzite-autologin reads it to choose which session
+            #    to log into and silently skips autologin on anything it does not
+            #    recognise — which on a handheld means no Game Mode.
+            base_img="$(json_field base-image-name)"
+            case "$base_img" in
+              *kinoite* | *silverblue*)
+                echo "  OK   base-image-name is '${base_img}' (bazzite-autologin understands it)" ;;
+              *)
+                echo "  FAIL base-image-name is '${base_img}' — expected kinoite or silverblue."
+                echo "       Bazzite's autologin skips anything else, so a handheld built"
+                echo "       like this boots to a login screen instead of Game Mode."
+                fails=1 ;;
+            esac
+
+            # 2. image-name must be OUR image's name, and — because Bazzite's
+            #    scripts ask "am I a handheld?" by looking for the substring
+            #    "deck" in it — a handheld image's name must still contain it.
+            img="$(json_field image-name)"
+            if [ "$img" = "${EXPECTED_IMAGE_NAME}" ]; then
+              echo "  OK   image-name is '${img}'"
+            else
+              echo "  FAIL image-name is '${img}', expected '${EXPECTED_IMAGE_NAME}'"
+              fails=1
+            fi
+            case "${EXPECTED_IMAGE_NAME}" in
+              *deck*)
+                case "$img" in
+                  *deck*) echo "  OK   handheld image-name still contains 'deck'" ;;
+                  *)
+                    echo "  FAIL this is the handheld image but image-name '${img}' has no 'deck' in it."
+                    echo "       Bazzite's handheld setup would switch itself off."
+                    fails=1 ;;
+                esac ;;
+            esac
+          fi
 
           # Nothing user-facing may still send people to bazzite.gg as our home.
           if grep -q '^HOME_URL="https://bazzite.gg"' /etc/os-release; then
@@ -217,8 +281,13 @@ jobs:
           echo "All identity checks passed."
           SCRIPT
 
+          # EXPECTED_IMAGE_NAME is handed IN to the container rather than baked
+          # into the script above: the heredoc is quoted ('SCRIPT') so that
+          # nothing in it is expanded out here on the runner, which is what keeps
+          # all the grep patterns readable and free of escaping.
           podman run --rm --pull=never -i \
             --entrypoint /usr/bin/bash \
+            -e EXPECTED_IMAGE_NAME="${IMAGE_NAME}" \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" </tmp/verify-identity.sh
 
       # If you are feeling adventurous, use the new distro agnostic rechunker
