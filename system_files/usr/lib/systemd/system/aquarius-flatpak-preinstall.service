@@ -5,6 +5,10 @@
 # (/usr/share/flatpak/preinstall.d/). Somebody has to actually go and fetch
 # them. On AquariusOS that somebody is this service.
 #
+# The list is short on purpose — two web browsers. Everything else a creator
+# might want is offered in a window on the first login instead, so that a big
+# download is always something somebody chose.
+#
 # Why we need our own instead of using something Bazzite already has: Bazzite
 # puts its default apps on the machine during INSTALLATION, from the USB stick.
 # Our installer does not do that (it keeps the ISO small), and that route also
@@ -18,7 +22,7 @@
 # ==============================================================================
 
 [Unit]
-Description=Install the AquariusOS creator apps (Flatpaks)
+Description=Install the AquariusOS preinstalled apps (Flatpaks)
 Documentation=man:flatpak-preinstall(1)
 Documentation=https://github.com/stoneharborent/aquarius-os/blob/main/docs/creator-apps.md
 

@@ -194,14 +194,20 @@ desktop-file-edit --set-key=Hidden --set-value=true /usr/share/applications/mpv.
 # ==============================================================================
 # PHASE 2, TRACK A — The Creator Layer  (LIVE since 2026-08-28)
 # ==============================================================================
-# This one line is the whole creator app suite. Everything it does — the Flatpak
-# shopping list, baking in Aquarius Editor and Aquarius Writer, and the DaVinci
-# Resolve installer — lives in its own file so that this one stays readable:
+# This one line is the whole creator app suite. Everything it does lives in its
+# own file so that this one stays readable:
 #
 #     build_files/creator-apps.sh
 #
-# Read that file before changing anything about which apps ship. Beginner-facing
-# write-up of the result: docs/creator-apps.md
+# In short, an app reaches a user in one of three ways:
+#   baked in      Aquarius Editor, Aquarius Writer
+#   preinstalled  Firefox, Google Chrome — a browser is not optional
+#   offered       OBS Studio, Audacity, Blender, DaVinci Resolve — one
+#                 tick-box window on the first login, everything pre-ticked
+#
+# Read that file before changing anything about which apps ship, and which of
+# the three groups they land in. Beginner-facing write-up of the result:
+# docs/creator-apps.md
 #
 # DECISION ON RECORD (ROADMAP.md): third-party creator apps ship as FLATPAKS,
 # not as system packages. Flatpaks update on their own and a broken one can

@@ -310,26 +310,24 @@ install-resolve-aac-plugin:
     echo "AAC should now appear as an audio option when you export."
     echo ""
 
-# Fetch the AquariusOS creator apps again if any failed to install
+# Pick which creator apps to add (OBS, Audacity, Blender, DaVinci Resolve)
 [group('AquariusOS')]
 install-creator-apps:
     #!/usr/bin/bash
     set -uo pipefail
 
-    echo ""
-    echo "AquariusOS normally installs OBS Studio, Audacity, Firefox and Google"
-    echo "Chrome by itself the first time this computer is online. This runs"
-    echo "that same job again — useful if you were offline at the time, or if"
-    echo "one of them failed."
-    echo ""
-    echo "Anything you deliberately uninstalled will come back. That is the"
-    echo "only thing this can do that you might not want."
-    echo ""
-    read -r -p "Go ahead? [y/N] " reply
-    case "${reply}" in
-        [yY]*) ;;
-        *) echo "Nothing was changed."; exit 0 ;;
-    esac
+    # This is the same tick-box window AquariusOS shows on the first login, and
+    # it is deliberately the SAME script rather than a copy of what it does —
+    # one place to fix, one behaviour to explain. "--again" tells it to ignore
+    # the note recording that the question was already asked.
+    #
+    # It puts a window on screen, so it needs a desktop. Run from a text-only
+    # login there is nothing sensible it could do, and saying so is kinder than
+    # a Qt error.
+    if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
+        echo "This one opens a window, so it needs to be run from the desktop."
+        echo "Log in normally and look for \"Install Creator Apps\" in your apps."
+        exit 1
+    fi
 
-    sudo rm -f /etc/aquarius/flatpak-preinstall-version
-    sudo /usr/libexec/aquarius-flatpak-preinstall
+    exec /usr/libexec/aquarius-creator-apps-offer --again

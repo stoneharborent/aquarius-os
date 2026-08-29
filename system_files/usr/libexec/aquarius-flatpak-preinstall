@@ -1,9 +1,15 @@
 #!/usr/bin/bash
 # ==============================================================================
-# AquariusOS — fetch the creator apps listed in preinstall.d
+# AquariusOS — fetch the apps listed in preinstall.d (the browsers)
 # ==============================================================================
 # Plain English: read the shopping list the OS ships, and install anything on it
 # that isn't here yet. Run by aquarius-flatpak-preinstall.service on boot.
+#
+# Today that list is exactly two web browsers, Firefox and Chrome, because a
+# browser is the one app a computer is unusable without. The rest of the creator
+# apps are OFFERED at first login instead, by a different script
+# (/usr/libexec/aquarius-creator-apps-offer). This one stays deliberately dumb:
+# it installs what the list says, whatever the list happens to say.
 #
 # The list:  /usr/share/flatpak/preinstall.d/*.preinstall
 #            /etc/flatpak/preinstall.d/*.preinstall   (yours, wins over ours)
@@ -35,11 +41,11 @@ STAMP_FILE="${STAMP_DIR}/flatpak-preinstall-version"
 # Have we already done this, with this exact version of this script?
 # ------------------------------------------------------------------------------
 if [ -f "$STAMP_FILE" ] && [ "$(cat "$STAMP_FILE")" = "$VER" ]; then
-    echo "AquariusOS creator apps: already done (v${VER}). Nothing to do."
+    echo "AquariusOS preinstalled apps: already done (v${VER}). Nothing to do."
     exit 0
 fi
 
-echo "AquariusOS creator apps: checking the list..."
+echo "AquariusOS preinstalled apps: checking the list..."
 
 # ------------------------------------------------------------------------------
 # Make sure the Flathub app store is switched on
@@ -141,16 +147,16 @@ fi
 if [ "$installed_any" -eq 1 ] && [ -z "$failed" ]; then
     mkdir -p "$STAMP_DIR"
     echo "$VER" >"$STAMP_FILE"
-    echo "AquariusOS creator apps: all present. Done."
+    echo "AquariusOS preinstalled apps: all present. Done."
     exit 0
 fi
 
 if [ "$installed_any" -eq 1 ]; then
-    echo "AquariusOS creator apps: some could not be installed:${failed}"
+    echo "AquariusOS preinstalled apps: some could not be installed:${failed}"
     echo "They will be tried again the next time this computer starts."
     exit 0
 fi
 
-echo "AquariusOS creator apps: nothing could be installed — probably no internet yet."
+echo "AquariusOS preinstalled apps: nothing could be installed — probably no internet yet."
 echo "This will be retried automatically."
 exit 1

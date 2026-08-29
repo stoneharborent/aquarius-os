@@ -1,0 +1,233 @@
+#!/usr/bin/bash
+# ==============================================================================
+# AquariusOS — the one-time "recommended creator apps" offer
+# ==============================================================================
+# Plain English: one window, on the first login, with a tick-box list of the
+# apps a creator usually wants. Everything is ticked already, so "OK" is the
+# whole job. Whatever the answer, the question is never asked again — but the
+# same window stays in the app grid forever under "Install Creator Apps", so
+# changing your mind later costs one click.
+#
+# WHY THESE APPS ARE AN OFFER AND THE BROWSERS ARE NOT
+# A web browser is the one app a computer is unusable without, so Firefox and
+# Chrome simply arrive (see the .preinstall list). Blender is three gigabytes of
+# 3D suite and OBS is a streaming studio — those should be a choice somebody
+# made, even if making it takes one click. DaVinci Resolve is a third case
+# again: nobody is allowed to ship it, so all we can offer is to walk you
+# through installing it.
+#
+# WHY kdialog AND NOT SOMETHING PRETTIER
+# kdialog is part of Plasma, so it is guaranteed to be on every AquariusOS
+# machine — no new dependency, nothing to compile, nothing to maintain. Its
+# tick-box list is plain, so the plainness is dealt with in the writing: each
+# line carries its own short "what is this for", which is the thing a beginner
+# actually needs. A custom window would look nicer and would be one more program
+# to keep working across a decade of Plasma releases. Not worth it.
+#
+# THE RULES THIS FOLLOWS, WHICH MATTER MORE THAN THE FEATURE
+#   * It asks ONCE, ever, per user. The answer is recorded either way.
+#   * It never holds up the login: it runs in the background and waits until the
+#     desktop has settled before showing anything.
+#   * Saying no is not a dead end — "Install Creator Apps" stays in the app grid.
+#   * A user can switch the whole thing off the normal KDE way, in
+#     System Settings -> Autostart, like any other start-up item.
+#
+# HOW IT IS STARTED
+#   at login  : /etc/xdg/autostart/aquarius-creator-apps-offer.desktop
+#   on demand : /usr/share/applications/aquarius-install-creator-apps.desktop
+#               (which passes --again, so it ignores the "already asked" note)
+# ==============================================================================
+
+set -uo pipefail
+
+MODE="${1:-autostart}"
+
+STAMP_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/aquarius"
+STAMP_FILE="${STAMP_DIR}/creator-apps-offered"
+
+# Small helper: a desktop notification that does not steal focus or need
+# clicking away. kdialog again, so still no new dependencies.
+notify() {
+    kdialog --title "AquariusOS" --passivepopup "$1" "${2:-8}" >/dev/null 2>&1 || :
+}
+
+remember() {
+    mkdir -p "$STAMP_DIR" 2>/dev/null || :
+    printf '%s\n' "$1" >"$STAMP_FILE" 2>/dev/null || :
+}
+
+# ------------------------------------------------------------------------------
+# Should we be running at all?
+# ------------------------------------------------------------------------------
+if [ "$MODE" != "--again" ]; then
+    # Already answered? Then we are done, forever.
+    [ -f "$STAMP_FILE" ] && exit 0
+
+    # Never ask inside the USB installer session. The live session's temporary
+    # account is called "liveuser", and anything installed there is thrown away
+    # when the machine restarts, so asking would be cruel.
+    [ "$(id -un)" = "liveuser" ] && exit 0
+fi
+
+# kdialog is how KDE asks questions from a script. It is part of Plasma, so it
+# is always here. If it somehow is not, say nothing at all rather than failing
+# in front of the user — and do NOT record an answer, so the question can still
+# be asked on a later login.
+command -v kdialog >/dev/null 2>&1 || exit 0
+
+if [ "$MODE" != "--again" ]; then
+    # Popping a window up while the panel and wallpaper are still appearing
+    # feels broken. Half a minute is long enough for the desktop to be usable.
+    sleep 30
+fi
+
+# ------------------------------------------------------------------------------
+# What is already here?
+# ------------------------------------------------------------------------------
+# Anything installed already starts UNTICKED, so re-opening this window later
+# offers you what you do not have rather than what you do.
+INSTALLED="$(flatpak list --columns=application 2>/dev/null || true)"
+
+have_flatpak() { printf '%s\n' "$INSTALLED" | grep -qx "$1"; }
+
+# shellcheck disable=SC2329  # called indirectly, by name, through state_for
+have_resolve() {
+    podman container exists davincibox 2>/dev/null && return 0
+    [ -f "$HOME/.local/share/applications/DaVinciResolve.desktop" ]
+}
+
+state_for() { if "$@"; then echo off; else echo on; fi; }
+
+# ------------------------------------------------------------------------------
+# The window
+# ------------------------------------------------------------------------------
+# kdialog's tick-box list takes its items in threes: a short tag it hands back
+# to us, the words the user reads, and whether it starts ticked.
+#
+# --separate-output is what makes this safe to read: without it kdialog returns
+# every choice on ONE line wrapped in quotes, which a script then has to unpick.
+# With it, we get one plain tag per line and can just read them.
+#
+# The tags are the real Flathub app IDs, except "resolve", which is not an app
+# we can install — it is a request to start the guided setup further down.
+ITEMS=(
+    com.obsproject.Studio      "OBS Studio  —  record your screen and stream live"                    "$(state_for have_flatpak com.obsproject.Studio)"
+    org.audacityteam.Audacity  "Audacity  —  record and tidy up audio and voiceovers"                 "$(state_for have_flatpak org.audacityteam.Audacity)"
+    org.blender.Blender        "Blender  —  3D modelling, animation and visual effects (about 3 GB)"  "$(state_for have_flatpak org.blender.Blender)"
+    resolve                    "DaVinci Resolve  —  professional editing and colour (guided setup)"   "$(state_for have_resolve)"
+)
+
+# kdialog exits 0 for OK and 1 for Cancel, so the `if !` below IS the
+# "did they say no" test. Written this way round on purpose: reading the exit
+# code out of $? on a later line is the classic way to lose it to some
+# harmless-looking command that ran in between.
+if ! CHOICES="$(kdialog \
+    --title "Set up your creator apps" \
+    --separate-output \
+    --checklist "AquariusOS can set these up for you now. They are the apps most people doing this kind of work end up wanting, and they are all ticked — clicking OK is the whole job.
+
+Untick anything you do not want. You can come back to this window any time: look for \"Install Creator Apps\" in your apps.
+
+You may be asked for your password once. That is normal — it is how Linux installs software for everybody who uses this computer." \
+    "${ITEMS[@]}" 2>/dev/null)"; then
+    # Cancel, or the window was closed. Never ask again.
+    remember "declined"
+    exit 0
+fi
+
+# From here on the question counts as answered, whatever happens next. If an
+# install fails we tell the user and leave the app-grid entry to try again — we
+# do not re-ask unprompted at every login.
+remember "answered"
+
+# ------------------------------------------------------------------------------
+# Sort the answers into "flatpaks" and "the Resolve walkthrough"
+# ------------------------------------------------------------------------------
+WANT_RESOLVE=0
+FLATPAKS=()
+while IFS= read -r tag; do
+    [ -z "$tag" ] && continue
+    if [ "$tag" = "resolve" ]; then
+        WANT_RESOLVE=1
+    else
+        FLATPAKS+=("$tag")
+    fi
+done <<<"$CHOICES"
+
+if [ "${#FLATPAKS[@]}" -eq 0 ] && [ "$WANT_RESOLVE" -eq 0 ]; then
+    # OK was pressed with everything unticked. Nothing to do, and nothing to
+    # say — silently agreeing is the polite response to "no thanks".
+    exit 0
+fi
+
+# ------------------------------------------------------------------------------
+# Install the Flatpaks
+# ------------------------------------------------------------------------------
+# This whole script is already running in the background, so there is no window
+# to watch and nothing is blocked; the two notifications are how the user knows
+# it started and finished.
+#
+# The apps go in SYSTEM-wide, the same as the browsers the OS preinstalls, so
+# that every account on the machine gets them and Bazzite's own Flatpak tweaks
+# (which are applied system-wide) reach them. That is what the password prompt
+# is for.
+#
+# One command for all of them on purpose: one transaction means the password is
+# asked for once rather than once per app.
+FAILED=""
+if [ "${#FLATPAKS[@]}" -gt 0 ]; then
+    notify "Installing your creator apps in the background. You can carry on using the computer." 10
+
+    if ! flatpak install -y --system --noninteractive flathub "${FLATPAKS[@]}"; then
+        # One app can fail on its own — Google-style apps that fetch their real
+        # installer at the last moment are the usual culprit. Rather than lose
+        # the whole batch, try them one at a time and report only the ones that
+        # really did not make it.
+        for id in "${FLATPAKS[@]}"; do
+            have_flatpak "$id" && continue
+            flatpak install -y --system --noninteractive flathub "$id" || FAILED="${FAILED} ${id}"
+        done
+    fi
+
+    # Re-read the list rather than trusting the exit codes.
+    INSTALLED="$(flatpak list --columns=application 2>/dev/null || true)"
+    STILL_MISSING=""
+    for id in "${FLATPAKS[@]}"; do
+        have_flatpak "$id" || STILL_MISSING="${STILL_MISSING} ${id}"
+    done
+
+    if [ -z "$STILL_MISSING" ]; then
+        notify "Your creator apps are installed and ready." 8
+    else
+        notify "Some apps could not be installed:${STILL_MISSING}. Open \"Install Creator Apps\" from your apps to try again." 15
+    fi
+fi
+
+# ------------------------------------------------------------------------------
+# DaVinci Resolve, last
+# ------------------------------------------------------------------------------
+# Deliberately after the Flatpaks rather than at the same time: Resolve's setup
+# needs the user's attention and a large download of its own, and two big
+# downloads plus a conversation at once is a bad first five minutes.
+#
+# It opens a real terminal window, because the walkthrough asks questions and
+# shows progress. Hiding that behind a spinner would be dishonest, and would
+# leave nothing to read when something goes wrong.
+if [ "$WANT_RESOLVE" -eq 1 ]; then
+    notify "Opening the DaVinci Resolve setup — it will ask you a few questions." 10
+
+    if command -v konsole >/dev/null 2>&1; then
+        konsole --noclose -e /usr/bin/ujust install-resolve >/dev/null 2>&1 &
+    elif command -v xdg-terminal-exec >/dev/null 2>&1; then
+        xdg-terminal-exec /usr/bin/ujust install-resolve >/dev/null 2>&1 &
+    else
+        # No terminal we recognise. Tell the truth and point at the app-grid
+        # entry, which does exactly the same thing.
+        kdialog --title "Set up DaVinci Resolve" --msgbox \
+            "AquariusOS could not open a terminal window automatically.
+
+Open your apps and click \"Install DaVinci Resolve\" to carry on." >/dev/null 2>&1 || :
+    fi
+fi
+
+exit 0

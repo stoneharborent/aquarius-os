@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=AquariusOS creator apps offer
+Comment=Asks once, on the first login, which creator apps to set up
+Exec=/usr/libexec/aquarius-creator-apps-offer
+TryExec=/usr/libexec/aquarius-creator-apps-offer
+Icon=applications-multimedia
+Terminal=false
+NoDisplay=true
+OnlyShowIn=KDE;
+X-KDE-autostart-phase=2

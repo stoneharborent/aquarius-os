@@ -6,6 +6,18 @@
 # service aquarius-flatpak-preinstall.service does the actual downloading the
 # first time the machine has internet.
 #
+# WHAT IS ON THIS LIST, AND WHAT IS NOT (decided by Royce, 2026-08-28)
+#
+# Only a web browser is unconditional. Everything a creator might want — OBS,
+# Audacity, Blender, DaVinci Resolve — is OFFERED instead, in a single tick-box
+# window on the first login, with everything pre-ticked. The reasoning: a
+# browser is the one app a computer is unusable without, so it should simply be
+# there; a 3 GB 3D suite should be a choice somebody made, even if making it
+# takes one click. See /usr/libexec/aquarius-creator-apps-offer.
+#
+# Two browsers rather than one, because people arrive with an existing habit and
+# the machine should not argue with it.
+#
 # The file format is Flatpak's own, documented in `man flatpak-preinstall`. Each
 # app gets a block whose heading is its full Flathub app ID.
 #
@@ -23,19 +35,12 @@
 # flathub.org page, keep Branch=stable. Check the ID really exists first —
 # https://flathub.org/apps/<the-id> should load. A typo here is silent.
 #
+# ⚠️ Before adding anything, ask whether it belongs in the first-login OFFER
+# instead. This list is for things that should be on every AquariusOS machine
+# whether the owner asked or not, and that is a very short list.
+#
 # The beginner write-up: docs/creator-apps.md
 # ==============================================================================
-
-# ---- Recording and streaming -------------------------------------------------
-# OBS Studio. The reason the codec workstream adds the GStreamer VA-API encode
-# packages to the OS: without them OBS cannot use the graphics card to encode.
-[Flatpak Preinstall com.obsproject.Studio]
-Branch=stable
-
-# ---- Audio -------------------------------------------------------------------
-# Audacity. Small, familiar, and the fastest way to clean up a voiceover.
-[Flatpak Preinstall org.audacityteam.Audacity]
-Branch=stable
 
 # ---- Browsers ----------------------------------------------------------------
 # Firefox. Note for anyone comparing us to stock Bazzite: Bazzite does ship
@@ -44,6 +49,10 @@ Branch=stable
 # AquariusOS this line is what actually puts Firefox on the machine — it is not
 # a duplicate. On a machine that came from Bazzite and was switched over to us,
 # Firefox is already there and Flatpak simply leaves it alone.
+#
+# Installing it system-wide also matters on the NVIDIA edition: Bazzite's own
+# start-up housekeeping sets Firefox's hardware-video-decode settings with
+# `flatpak override --system`, and those only reach a system-installed Firefox.
 [Flatpak Preinstall org.mozilla.firefox]
 Branch=stable
 
@@ -56,14 +65,3 @@ Branch=stable
 #     everything it can and tries the stragglers again on the next boot.
 [Flatpak Preinstall com.google.Chrome]
 Branch=stable
-
-# ---- Add more here -----------------------------------------------------------
-# Example — Krita, the painting app. Uncomment to ship it:
-#
-#   [Flatpak Preinstall org.kde.krita]
-#   Branch=stable
-#
-# Krita, Blender and Ardour were considered for the first creator wave and
-# deliberately left out (Royce, 2026-08-28): a short list that everybody uses
-# beats a long list that mostly sits there taking up space. They are one click
-# away in the app store whenever they are wanted.

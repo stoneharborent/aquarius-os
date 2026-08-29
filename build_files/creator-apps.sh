@@ -3,26 +3,33 @@
 # AquariusOS — the creator app layer  (Phase 2, Workstream A)
 # ==============================================================================
 # Plain English: this is the step that makes AquariusOS a *creator's* OS rather
-# than "Bazzite with a new paint job". It does three separate jobs:
+# than "Bazzite with a new paint job".
 #
-#   1. QUEUE THE FLATPAK APPS.        OBS Studio, Audacity, Firefox and Google
-#                                     Chrome. These are not baked into the OS —
-#                                     they are *listed*, and a small service
-#                                     installs them the first time the machine
-#                                     is online. Nobody has to open a terminal.
+# There are exactly THREE ways an app can reach a user, and which one an app
+# gets is a real decision, not an implementation detail:
 #
-#   2. BAKE IN THE AQUARIUS APPS.     Aquarius Editor and Aquarius Writer are
-#                                     ours, they are not on Flathub, so their
-#                                     Linux releases are downloaded HERE, during
-#                                     the build, checked against the checksums
-#                                     GitHub published with them, and unpacked
-#                                     into the image. They are part of the OS.
+#   BAKED IN.    Aquarius Editor and Aquarius Writer. They are ours, they are on
+#                no app store, so their Linux releases are downloaded HERE
+#                during the build, checked against the checksums GitHub
+#                published with them, and unpacked into the image. They are as
+#                much a part of the OS as the file manager.
 #
-#   3. LEAVE A DOOR OPEN FOR RESOLVE. DaVinci Resolve cannot legally be shipped
-#                                     by us. Instead the OS ships a one-click
-#                                     installer (`ujust install-resolve`, plus a
-#                                     first-login "want it?" pop-up). No file of
-#                                     Blackmagic's is in this image.
+#   PREINSTALLED. Firefox and Google Chrome, and nothing else. A web browser is
+#                the one app a computer is unusable without, so it should simply
+#                be there. They are *listed* rather than baked, and a small
+#                service installs them the first time the machine is online.
+#
+#   OFFERED.     OBS Studio, Audacity, Blender and DaVinci Resolve. One tick-box
+#                window on the first login, everything pre-ticked, so saying yes
+#                to all of it is one click — but three gigabytes of 3D suite is
+#                still somebody's decision. Declining is never a dead end: the
+#                same window lives in the app grid forever.
+#
+# DaVinci Resolve is a case of its own inside that last group: nobody except
+# Blackmagic is allowed to hand out the installer, so all AquariusOS can offer
+# is to walk you through it. No file of Blackmagic's is anywhere in this image.
+#
+# Nobody has to open a terminal for any of it.
 #
 # Called from build_files/build.sh. Everything it copies into place lives in
 # system_files/ except the two Aquarius apps, which are downloaded here.
@@ -278,8 +285,13 @@ for name in aquarius-editor aquarius-writer; do
 done
 
 # ==============================================================================
-# JOB 2 — queue the Flatpak apps for first boot
+# JOB 2 — queue the browsers for first boot
 # ==============================================================================
+# Exactly two Flatpaks arrive without being asked for: Firefox and Chrome. A
+# browser is the one app a computer is unusable without. Everything else a
+# creator might want is OFFERED instead, in a tick-box window on the first login
+# (JOB 3 below), so that three gigabytes of Blender is always somebody's choice.
+#
 # The list itself is a plain text file that arrived with system_files/:
 #     /usr/share/flatpak/preinstall.d/aquarius-creator-apps.preinstall
 # and the service that acts on it is:
@@ -292,7 +304,29 @@ done
 systemctl enable aquarius-flatpak-preinstall.service
 
 # ==============================================================================
-# JOB 3 — make our `ujust` recipes visible
+# JOB 3 — the first-login "which creator apps do you want?" window
+# ==============================================================================
+# Nothing to switch on: it is an ordinary desktop start-up item, and it arrived
+# with system_files/ like everything else. Listed here so that the three ways
+# apps reach a user are all named in one place.
+#
+#   asks the question : /etc/xdg/autostart/aquarius-creator-apps-offer.desktop
+#   does the work     : /usr/libexec/aquarius-creator-apps-offer
+#   opens it again    : /usr/share/applications/aquarius-install-creator-apps.desktop
+#
+# Prove the pieces are all present, so a rename can never ship as a start-up
+# item pointing at nothing.
+# ------------------------------------------------------------------------------
+
+[ -x /usr/libexec/aquarius-creator-apps-offer ] \
+    || die "The creator-apps offer script is missing or not executable."
+[ -f /etc/xdg/autostart/aquarius-creator-apps-offer.desktop ] \
+    || die "The creator-apps offer is not wired into start-up."
+[ -f /usr/share/applications/aquarius-install-creator-apps.desktop ] \
+    || die "\"Install Creator Apps\" is missing from the app grid."
+
+# ==============================================================================
+# JOB 4 — make our `ujust` recipes visible
 # ==============================================================================
 # `ujust` is the friendly command menu Bazzite gives us — type `ujust` and you
 # get a list of one-line jobs. The menu is assembled from a plain list of
