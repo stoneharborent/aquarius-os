@@ -166,13 +166,50 @@ version of AquariusOS from before the app existed.
 Try updating the system (Discover, or 'ujust update' in a terminal) and restart."
 fi
 
+# CAN WE EVEN OPEN THE FOLDER?
+# This has to be asked BEFORE anything about the files inside it, because a
+# folder you may not enter makes every file in it look like it does not exist.
+# That is not a hypothetical: the image of 2026-08-28 shipped Aquarius Editor
+# with all 3,097 of its folders set to 0700 — root may enter, nobody else may —
+# and the launcher of the day duly reported "AppRun is missing" when AppRun was
+# sitting right there, in perfect order, behind a locked door. An hour went into
+# looking for a file that had never gone anywhere.
+if [ ! -x "$APPDIR" ] || [ ! -r "$APPDIR" ]; then
+    fail "${APP_NAME} is installed, but this account is not allowed to open it." \
+"AquariusOS cannot look inside:
+
+    ${APPDIR}
+
+$(ls -ld "$APPDIR" 2>&1)
+
+That folder needs to be openable by everyone (mode 0755). At 0700 only the
+system administrator can see into it, so the app appears — correctly, from where
+you are standing — to be missing entirely.
+
+This is a fault in the operating system image, not in anything you did. Please
+report it with the line above."
+fi
+
+if [ ! -e "${APPDIR}/AppRun" ]; then
+    fail "${APP_NAME} is installed, but the file that starts it is not there." \
+"AquariusOS expected:
+
+    ${APPDIR}/AppRun
+
+The app's folder exists and can be opened, but that file is genuinely absent —
+so this is not a permissions problem. The app was unpacked incorrectly when the
+system image was built.
+
+This is a fault in the operating system image, not in anything you did."
+fi
+
 if [ ! -x "${APPDIR}/AppRun" ]; then
-    fail "${APP_NAME} is installed, but it cannot be started." \
+    fail "${APP_NAME} is installed, but this account is not allowed to run it." \
 "The file AquariusOS uses to start it:
 
     ${APPDIR}/AppRun
 
-is missing, or this account is not allowed to run it.
+exists, but this account may not run it.
 
 $(ls -ld "${APPDIR}/AppRun" 2>&1)
 

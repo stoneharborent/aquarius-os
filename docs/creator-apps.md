@@ -81,12 +81,29 @@ in this document.
 Both apps shipped. Both appeared in the app grid. Clicking either one did
 **nothing at all** — no window, no error, no sign anything had been tried.
 
-The cause, for Aquarius Writer, was one file. Inside the AppImage, the file that
-starts the program carried permissions `0770`: its owner may run it, its group
-may run it, and nobody else may. Everything in an OS build runs as **root**, and
-root ignores permissions, so every check in the build passed. Then a real person
-with a real account clicked the icon and the answer was "Permission denied" —
-written to a terminal that was not there.
+There were **two different faults, one per app**. The numbers below were read
+out of the published image itself, layer by layer, not guessed:
+
+| | What was wrong | What you saw in a terminal |
+|---|---|---|
+| **Aquarius Writer** | One file — `AppRun.wrapped`, the program `AppRun` hands over to — was mode `0770`. Owner and group may run it; nobody else may. (The same app also carried 85 files as `0777`.) | `AppRun: line 12: …/AppRun.wrapped: Permission denied` |
+| **Aquarius Editor** | Nothing wrong with any file. **All 3,097 of its folders were `0700`**, starting with the app folder itself — root may enter, nobody else may. | `Aquarius Editor does not seem to be installed (…/AppRun is missing)` — about a file that was present and perfectly formed, behind a locked door |
+
+Everything in an OS build runs as **root**, and root ignores permissions, so
+every check in the build passed and the build was green. The first person to
+find out was the person the OS is for.
+
+The two apps differ because **each AppImage carries its own copy of the code
+that unpacks it**, and those copies disagree about what permissions to give the
+folders they create: the Writer's (from linuxdeploy) makes them `0755`, the
+Editor's (from electron-builder) makes them `0700`. Neither is wrong for its own
+purposes. Both are ours to fix.
+
+> **A trap worth knowing about.** Unpacking the same AppImage with `unsquashfs`
+> on a developer machine produces `0755` folders and hides the Editor's fault
+> completely. Only the app's own unpacker reproduces it. That is why the check
+> that matters most runs against the finished, published image rather than
+> against a local unpack.
 
 The general lesson is bigger than the bug:
 
@@ -97,11 +114,12 @@ The general lesson is bigger than the bug:
 > them sane is part of installing, exactly as it is for a package.
 
 So the build now normalises the whole tree — folders `0755`, programs `0755`,
-data `0644`, nothing world-writable (that same AppImage shipped 53 files as
-`0777`) — and then **proves** it, twice: once during the build, and once on the
-finished image after packaging, in the "Verify creator apps" step of the build
-workflow. The checks are written as *"could somebody who is not root run this"*,
-because `[ -x file ]` asked as root cannot answer that question.
+data `0644`, nothing world-writable — and then **proves** it, twice: once during
+the build, and once on the finished image after packaging, in the "Verify
+creator apps" step of the build workflow. The checks are written as *"could
+somebody who is not root run this"*, because `[ -x file ]` asked as root cannot
+answer that question. Both were tested against a faithful reconstruction of the
+broken image: the gate rejects it, on every count.
 
 ### When an app will not start, it now says so
 

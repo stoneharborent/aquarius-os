@@ -222,37 +222,64 @@ bake_appimage() {
 
     # --- FIX THE PERMISSIONS. THIS IS NOT OPTIONAL. ---------------------------
     # This is the single most important block in this file, and it was missing
-    # from the first shipped image.
+    # from the first shipped image. It is the whole of the 2026-08-28 bug.
     #
-    # WHAT WENT WRONG (2026-08-28, RTX 4090 bench test)
-    # Aquarius Writer shipped, appeared in the app grid, and clicking it did
-    # absolutely nothing. No window, no error. Inside the AppImage, the file
-    # AppRun hands over to — AppRun.wrapped — carried mode 0770:
+    # WHAT WENT WRONG (RTX 4090 bench test, then confirmed by pulling the
+    # published image apart layer by layer)
     #
-    #     -rwxrwx---  AppRun.wrapped
+    # Both apps shipped, both appeared in the app grid, and clicking either did
+    # absolutely nothing — no window, no error. TWO DIFFERENT FAULTS, one per
+    # app, and the numbers below are read out of the image that was on the
+    # machine, not guessed:
     #
-    # Owner and group may run it; everybody else may not. Everything in this
-    # build runs as ROOT, and root ignores permissions, so every check passed
-    # and the build was green. Then a real person with a real account clicked
-    # the icon, and the shell's answer was "Permission denied" — printed to a
-    # terminal that was not there. Silence.
+    #   AQUARIUS WRITER   one file, AppRun.wrapped — the program AppRun hands
+    #                     over to — was mode 0770. Owner and group may run it,
+    #                     nobody else may. In a terminal:
+    #
+    #                       AppRun: line 12: …/AppRun.wrapped: Permission denied
+    #
+    #                     The same AppImage also carried 85 files as 0777.
+    #
+    #   AQUARIUS EDITOR   nothing wrong with any file. ALL 3,097 OF ITS FOLDERS
+    #                     were mode 0700, starting with the app folder itself.
+    #                     A folder you may not enter makes every file inside it
+    #                     read as missing, so the launcher of the day reported
+    #
+    #                       Aquarius Editor does not seem to be installed
+    #                       (…/AppRun is missing)
+    #
+    #                     about a file that was present and perfectly formed.
+    #
+    # WHY THE TWO APPS DIFFER AT ALL: each AppImage carries its own copy of the
+    # runtime that implements `--appimage-extract`, and they do not agree about
+    # what permissions to give the folders they create. The Writer's (from
+    # linuxdeploy) makes them 0755. The Editor's (from electron-builder) makes
+    # them 0700. Neither is wrong for its own purposes; both are our problem.
+    #
+    # ⚠️ AND NOTE HOW EASY THIS IS TO MISS WHEN TESTING. Extracting the same
+    #    AppImage with `unsquashfs` on a developer machine produces 0755 folders
+    #    and hides the Editor fault completely. Only the app's own extractor
+    #    reproduces it. That is why the check that matters most now runs against
+    #    the finished, published image (the "Verify creator apps" step in
+    #    .github/workflows/build.yml) rather than against a local unpack.
     #
     # WHY IT IS THE BUILD'S JOB TO FIX
-    # An AppImage carries whatever permissions its build machine happened to
-    # produce, and normally that never shows, because a mounted AppImage is read
-    # by the person running it. The moment we unpack one into /usr — which we do
-    # on purpose, for good reasons, three comments above — those permissions
-    # become SYSTEM permissions, shared by every account on the computer. Making
-    # them sane is therefore part of installing, exactly as it is for a package.
+    # An AppImage carries whatever permissions its build machine and its own
+    # extractor happen to produce, and normally that never shows, because the
+    # person running an AppImage is the person who downloaded it. The moment we
+    # unpack one into /usr — which we do on purpose, for good reasons, three
+    # comments above — those become SYSTEM permissions, shared by every account
+    # on the computer. Making them sane is part of installing, exactly as it is
+    # for a package.
     #
     # WHAT "SANE" MEANS IN /usr
     #   directories        0755  anyone may enter and list
     #   runnable files     0755  anyone may run
     #   everything else    0644  anyone may read
     #
-    # And nothing, anywhere, is writable by anyone but root. The Writer AppImage
-    # also shipped 53 files and one directory as 0777 — world-writable files in
-    # /usr are a genuine security hole, so the same three lines close that too.
+    # and nothing, anywhere, writable by anyone but root — which is what closes
+    # the Writer's 85 world-writable files. Symlinks are left alone: a symlink
+    # is always 0777 and its permissions mean nothing.
     #
     # "Runnable" is decided by whether the OWNER could run it, which is how the
     # packaging tool recorded its intent. We are widening that intent to
