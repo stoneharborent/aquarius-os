@@ -220,10 +220,115 @@ bake_appimage() {
     rm -rf "${APP_ROOT:?}/${name}"
     mv "$work/squashfs-root" "${APP_ROOT}/${name}"
 
+    # --- FIX THE PERMISSIONS. THIS IS NOT OPTIONAL. ---------------------------
+    # This is the single most important block in this file, and it was missing
+    # from the first shipped image.
+    #
+    # WHAT WENT WRONG (2026-08-28, RTX 4090 bench test)
+    # Aquarius Writer shipped, appeared in the app grid, and clicking it did
+    # absolutely nothing. No window, no error. Inside the AppImage, the file
+    # AppRun hands over to — AppRun.wrapped — carried mode 0770:
+    #
+    #     -rwxrwx---  AppRun.wrapped
+    #
+    # Owner and group may run it; everybody else may not. Everything in this
+    # build runs as ROOT, and root ignores permissions, so every check passed
+    # and the build was green. Then a real person with a real account clicked
+    # the icon, and the shell's answer was "Permission denied" — printed to a
+    # terminal that was not there. Silence.
+    #
+    # WHY IT IS THE BUILD'S JOB TO FIX
+    # An AppImage carries whatever permissions its build machine happened to
+    # produce, and normally that never shows, because a mounted AppImage is read
+    # by the person running it. The moment we unpack one into /usr — which we do
+    # on purpose, for good reasons, three comments above — those permissions
+    # become SYSTEM permissions, shared by every account on the computer. Making
+    # them sane is therefore part of installing, exactly as it is for a package.
+    #
+    # WHAT "SANE" MEANS IN /usr
+    #   directories        0755  anyone may enter and list
+    #   runnable files     0755  anyone may run
+    #   everything else    0644  anyone may read
+    #
+    # And nothing, anywhere, is writable by anyone but root. The Writer AppImage
+    # also shipped 53 files and one directory as 0777 — world-writable files in
+    # /usr are a genuine security hole, so the same three lines close that too.
+    #
+    # "Runnable" is decided by whether the OWNER could run it, which is how the
+    # packaging tool recorded its intent. We are widening that intent to
+    # everyone, never inventing it.
+    #
+    # ⚠️ This must run BEFORE the chrome-sandbox block below. These lines clear
+    #    the setuid bit; the block below is what deliberately sets it, on the one
+    #    file that is supposed to have it.
+    find "${APP_ROOT}/${name}" -type d -exec chmod 0755 {} +
+    find "${APP_ROOT}/${name}" -type f -perm -u+x -exec chmod 0755 {} +
+    find "${APP_ROOT}/${name}" -type f ! -perm -u+x -exec chmod 0644 {} +
+    say "  permissions normalised (dirs 0755, programs 0755, data 0644)"
+
+    # A symlink pointing at a folder on the machine that built the AppImage is
+    # dead weight in an OS image: it can never resolve, and it leaks the build
+    # server's directory layout. Both of our apps ship at least one (the Writer's
+    # .DirIcon points into /home/runner/work/…). Drop any that do not resolve.
+    while IFS= read -r dangling; do
+        [ -n "$dangling" ] || continue
+        say "  removing broken symlink ${dangling#"${APP_ROOT}/${name}/"} -> $(readlink "$dangling")"
+        rm -f "$dangling"
+    done < <(find "${APP_ROOT}/${name}" -xtype l)
+
+    # --- let our launcher have the last word on the window system -------------
+    # Apps packaged with the "linuxdeploy GTK plugin" — Aquarius Writer is one —
+    # carry a start-up snippet that the packaging tool generated, and one of its
+    # lines is:
+    #
+    #     export GDK_BACKEND=x11
+    #
+    # unconditionally. That snippet is sourced AFTER whatever we set, so it
+    # silently overwrites us: /usr/bin/aquarius-writer cannot influence the
+    # window system at all while that line stands. It exists as a workaround for
+    # an old crash on Wayland (tauri-apps/tauri#8541); upstream's own fix, in
+    # tauri-apps/tauri#15786, is to make it a DEFAULT rather than an order:
+    #
+    #     export GDK_BACKEND="${GDK_BACKEND:-x11}"
+    #
+    # We apply exactly that, to the copy in our image. Note what this does NOT
+    # do: it does not change the behaviour of the app one bit. With nothing set,
+    # the value is still x11, still XWayland, still what the app was released
+    # with. All it does is make the knob reachable, so that a future NVIDIA or
+    # Wayland problem can be fixed in a launcher instead of in a rebuild.
+    local gtk_hook="${APP_ROOT}/${name}/apprun-hooks/linuxdeploy-plugin-gtk.sh"
+    if [ -f "$gtk_hook" ] && grep -q '^export GDK_BACKEND=x11' "$gtk_hook"; then
+        # shellcheck disable=SC2016  # the ${GDK_BACKEND:-x11} must reach the file
+        #                               unexpanded — that is the entire point.
+        sed -i \
+            's|^export GDK_BACKEND=x11.*|export GDK_BACKEND="${GDK_BACKEND:-x11}" # AquariusOS: a default, not an order|' \
+            "$gtk_hook"
+        say "  GDK_BACKEND is now overridable by the launcher"
+    fi
+
     # --- the Chrome sandbox, if this app has one ------------------------------
-    # Electron apps ship a small helper called chrome-sandbox that has to be
-    # owned by root and carry the "setuid" bit, or the app refuses to start its
-    # security sandbox. This is exactly the fix that unpacking makes possible.
+    # Electron apps ship a small helper called chrome-sandbox. It is the OLD way
+    # Chromium sandboxes itself, and it only works when the file is owned by root
+    # and carries the "setuid" bit — which a self-mounting AppImage can never
+    # have, and an unpacked one can. So we set it.
+    #
+    # WHAT THIS IS AND IS NOT WORTH
+    # Chromium has preferred the newer user-namespace sandbox since 2015 and only
+    # looks at this file when user namespaces are unavailable. Bazzite has them,
+    # so on a normal AquariusOS machine this helper is never even consulted.
+    # (Chromium's own order of preference is in content/browser/zygote_host/
+    # zygote_host_impl_linux.cc.)
+    #
+    # It is still set correctly, for the case where it does get consulted, and
+    # because the failure when it is wrong is unusually nasty: Electron does not
+    # fall back, it aborts, with
+    #
+    #     The SUID sandbox helper binary was found, but is not configured
+    #     correctly. Rather than run without sandboxing I'm aborting now.
+    #
+    # and from the app grid that abort is completely silent. /usr/bin/aquarius-editor
+    # steers around it at launch time as well; belt and braces, on the one
+    # failure mode that leaves no trace.
     if [ -f "${APP_ROOT}/${name}/chrome-sandbox" ]; then
         chown root:root "${APP_ROOT}/${name}/chrome-sandbox"
         chmod 4755 "${APP_ROOT}/${name}/chrome-sandbox"
@@ -232,13 +337,47 @@ bake_appimage() {
 
     # --- the icon -------------------------------------------------------------
     # Different app toolkits put their icon in different places under different
-    # names, so instead of guessing we take the biggest PNG we can find and
-    # install it under a name WE choose. The .desktop files in system_files/
-    # then say Icon=aquarius-editor / Icon=aquarius-writer and always match.
-    local icon
-    icon="$(find "${APP_ROOT}/${name}" -maxdepth 6 -type f -name '*.png' \
-              \( -path '*/icons/*' -o -path "${APP_ROOT}/${name}/*.png" \) \
+    # names, so we go looking. The .desktop files in system_files/ say
+    # Icon=aquarius-editor / Icon=aquarius-writer, and whatever we find gets
+    # installed under exactly that name, so the two can never disagree.
+    #
+    # ⚠️ THIS USED TO PICK THE WRONG PICTURE, and it is worth understanding why,
+    #    because the mistake is an easy one to make again. The old search was
+    #
+    #        find … -maxdepth 6 -name '*.png' \
+    #             \( -path '*/icons/*' -o -path "${APP_ROOT}/${name}/*.png" \)
+    #
+    #    which reads as "an icon from an icons folder, or a PNG sitting at the
+    #    top of the app". It is neither. In `find`, the `*` in -path matches
+    #    slashes too, so `…/aquarius-editor/*.png` matches EVERY png anywhere in
+    #    the app — and then "biggest wins" handed Aquarius Editor a vendor logo
+    #    out of resources/remotion-bundle/vendor-icons/. The depth limit of 6
+    #    made it worse by hiding the real icon, which lives seven levels down at
+    #    usr/share/icons/hicolor/1024x1024/apps/.
+    #
+    # So it now looks in named places, in order of how much they mean, and stops
+    # at the first hit. No cleverness, no "biggest file anywhere".
+    local icon=""
+
+    #   1. The proper home for an application icon. Biggest resolution wins, and
+    #      everything under here genuinely IS this app's icon.
+    icon="$(find "${APP_ROOT}/${name}/usr/share/icons" -type f -name '*.png' \
               -printf '%s %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2- || true)"
+
+    #   2. A PNG sitting loose at the top of the app folder — genuinely
+    #      maxdepth 1 this time. Several packaging tools drop the icon there.
+    if [ -z "$icon" ]; then
+        icon="$(find "${APP_ROOT}/${name}" -maxdepth 1 -type f -name '*.png' \
+                  -printf '%s %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2- || true)"
+    fi
+
+    #   3. .DirIcon — the AppImage format's own answer to "which one is the
+    #      icon". Usually a symlink; [ -f ] follows it, so this only fires when
+    #      it actually points at something.
+    if [ -z "$icon" ] && [ -f "${APP_ROOT}/${name}/.DirIcon" ]; then
+        icon="${APP_ROOT}/${name}/.DirIcon"
+    fi
+
     if [ -n "$icon" ]; then
         install -Dm0644 "$icon" "/usr/share/pixmaps/${name}.png"
         say "  icon installed from ${icon#"${APP_ROOT}/${name}/"}"
@@ -275,14 +414,110 @@ for entry in "${AQUARIUS_APPS[@]}"; do
     bake_appimage $entry
 done
 
-# The launchers in /usr/bin and the app-grid entries in /usr/share/applications
-# arrived with the system_files/ copy at the top of build.sh. Prove they line up
-# with what we just unpacked, so a typo can never ship as a dead menu icon.
+# ------------------------------------------------------------------------------
+# PROVE IT — the check that should have existed the first time
+# ------------------------------------------------------------------------------
+# The build had checks before this. They all passed, and both apps still shipped
+# broken. The reason is worth stating plainly, because it applies to every check
+# anyone writes in this repo:
+#
+#     EVERY TEST IN THIS BUILD RUNS AS ROOT, AND ROOT IGNORES PERMISSIONS.
+#
+# `[ -x file ]` asked as root answers "is ANY execute bit set", which is true of
+# a file nobody but root can run. So the old check — `[ -x AppRun ]` — was
+# incapable of catching the exact bug that shipped.
+#
+# The rule below is therefore written the way a normal user experiences it: not
+# "can I run this", but "could a person who is not root, and not in this file's
+# group, run this". That question has an honest answer even when root asks it.
+# ------------------------------------------------------------------------------
+
+# `ls -l`-style listing of the offending files, for the error message. Kept to a
+# handful of lines: if a hundred files are wrong they are all wrong for the same
+# reason and five examples say so just as well.
+show_some() { printf '%s\n' "$1" | head -8 | xargs -r ls -ld 2>/dev/null || true; }
+
 for name in aquarius-editor aquarius-writer; do
+    app="${APP_ROOT}/${name}"
+
+    # --- the pieces exist and point at each other ----------------------------
     [ -x "/usr/bin/${name}" ] || die "Launcher /usr/bin/${name} is missing or not executable."
     [ -f "/usr/share/applications/${name}.desktop" ] || die "App-grid entry for ${name} is missing."
-    [ -x "${APP_ROOT}/${name}/AppRun" ] || die "${APP_ROOT}/${name}/AppRun is missing or not executable."
+    [ -d "$app" ] || die "${app} is missing — the app did not unpack."
+    [ -x "$app/AppRun" ] || die "${app}/AppRun is missing or not executable."
+    [ -x /usr/libexec/aquarius-app-launch ] \
+        || die "/usr/libexec/aquarius-app-launch is missing — both launchers call it."
+
+    # --- could an ordinary person actually run this? -------------------------
+    # 1. Everything must be readable by everyone. An unreadable data file inside
+    #    an app is just as fatal as an unrunnable program, and far more confusing.
+    unreadable="$(find "$app" \( -type f -o -type d \) ! -perm -o+r)"
+    [ -z "$unreadable" ] || die \
+        "${name}: some installed files cannot be READ by an ordinary account." \
+        "" "$(show_some "$unreadable")" "" \
+        "Everything under ${app} must be world-readable. Fix it where the app is" \
+        "unpacked (the permission-normalising block in this file), not here."
+
+    # 2. Anything the packager marked runnable must be runnable BY EVERYONE.
+    #    This is the check that catches mode 0770 — the bug of 2026-08-28.
+    notrunnable="$(find "$app" -type f -perm -u+x ! -perm -o+x)"
+    [ -z "$notrunnable" ] || die \
+        "${name}: a program inside the app cannot be RUN by an ordinary account." \
+        "" "$(show_some "$notrunnable")" "" \
+        "This is exactly the fault that shipped on 2026-08-28: AppRun.wrapped was" \
+        "mode 0770, so every check passed as root and every real user got a silent" \
+        "\"Permission denied\" when they clicked the icon." \
+        "" \
+        "Nothing needs fixing here — the permission-normalising block earlier in" \
+        "this file exists to prevent it, so if this fires, that block did not run" \
+        "or was changed."
+
+    # 3. Directories must be enterable, or nothing inside them can be reached.
+    noentry="$(find "$app" -type d ! -perm -o+x)"
+    [ -z "$noentry" ] || die \
+        "${name}: a folder inside the app cannot be opened by an ordinary account." \
+        "" "$(show_some "$noentry")"
+
+    # 4. Nothing in /usr may be writable by just anyone. The Writer's AppImage
+    #    arrived with 53 world-writable files; on a shared computer that is a way
+    #    for one account to replace another account's program.
+    writable="$(find "$app" ! -type l -perm -o+w)"
+    [ -z "$writable" ] || die \
+        "${name}: files inside the app are writable by ANY account." \
+        "" "$(show_some "$writable")" "" \
+        "Nothing installed into /usr may be world-writable."
+
+    # 5. No symlink may point at nothing. These are usually absolute paths left
+    #    over from the machine that built the AppImage.
+    broken="$(find "$app" -xtype l)"
+    [ -z "$broken" ] || die \
+        "${name}: the app contains symlinks that point at nothing." \
+        "" "$(show_some "$broken")"
+
+    say "${name}: permissions verified for ordinary accounts."
 done
+
+# --- the Electron sandbox helper, checked on the way out ----------------------
+# Aquarius Editor refuses to start at all — instantly, with no window — if this
+# file exists but is not root-owned with the setuid bit. Since we are the ones
+# who set it, we are the ones who check it.
+#
+# NOTE ON WHAT THIS DOES *NOT* PROVE: this runs inside the build, before the
+# image is re-packed for delivery ("rechunked"). Whether the setuid bit survives
+# that is a separate question, and it is answered separately, on the finished
+# image, by the "Verify creator apps" step in .github/workflows/build.yml.
+SANDBOX="${APP_ROOT}/aquarius-editor/chrome-sandbox"
+if [ -e "$SANDBOX" ]; then
+    mode="$(stat -c '%a' "$SANDBOX")"
+    owner="$(stat -c '%U:%G' "$SANDBOX")"
+    [ "$mode" = "4755" ] && [ "$owner" = "root:root" ] || die \
+        "aquarius-editor: chrome-sandbox is ${owner} mode ${mode}, expected root:root mode 4755." \
+        "" \
+        "Electron aborts on startup with \"The SUID sandbox helper binary was found," \
+        "but is not configured correctly\" when this is wrong — and from the app grid" \
+        "that abort is completely silent."
+    say "aquarius-editor: chrome-sandbox is root:root 4755."
+fi
 
 # ==============================================================================
 # JOB 2 — queue the browsers for first boot
@@ -345,5 +580,66 @@ AQUARIUS_JUST="/usr/share/ublue-os/just/96-aquarius-creator.just"
 if ! grep -qF "$AQUARIUS_JUST" /usr/share/ublue-os/justfile; then
     echo "import \"${AQUARIUS_JUST}\"" >>/usr/share/ublue-os/justfile
 fi
+
+# ------------------------------------------------------------------------------
+# NAME COLLISIONS IN THE ujust MENU — the check that has to exist
+# ------------------------------------------------------------------------------
+# We are the last import in a menu assembled from a dozen files we do not own,
+# and `just` handles a name we share with an earlier file in one of two ways:
+#
+#   collides with a RECIPE   silently resolved in favour of the EARLIER import.
+#                            Ours never runs, and nothing anywhere says so. This
+#                            is what happened to `install-resolve` on 2026-08-28.
+#
+#   collides with an ALIAS   a HARD ERROR — "recipe X is redefined as an alias" —
+#                            which `allow-duplicate-recipes` does not cover, and
+#                            which takes down the WHOLE menu. Not just that
+#                            recipe: `ujust`, `ujust --list`, and every unrelated
+#                            recipe on the machine.
+#
+# The second one would ship an OS where `ujust` does not work at all, so it is
+# checked here and it is fatal. The first is only a wasted recipe, so it is a
+# warning — but a loud one, because a recipe that can never run is a lie in the
+# menu and should be either renamed or deleted.
+# ------------------------------------------------------------------------------
+#
+# LC_ALL=C throughout: `comm` compares two streams that `sort` produced, and the
+# two only agree about what "sorted" means if they are using the same collation.
+export LC_ALL=C
+
+our_recipes="$(grep -oE '^[a-z][a-z0-9-]*:' "$AQUARIUS_JUST" | tr -d ':' | sort -u || true)"
+[ -n "$our_recipes" ] || die \
+    "No recipes found in ${AQUARIUS_JUST}." \
+    "Either the file is empty or its recipes are no longer written in the shape" \
+    "this check looks for (a name at the start of a line, ending in a colon)."
+say "Our ujust recipes: $(echo "$our_recipes" | tr '\n' ' ')"
+
+for other in /usr/share/ublue-os/just/*.just; do
+    [ "$other" = "$AQUARIUS_JUST" ] && continue
+    [ -f "$other" ] || continue
+
+    # An alias line looks like:  alias install-davinci := install-resolve
+    their_aliases="$(grep -oE '^alias[[:space:]]+[a-z0-9-]+' "$other" \
+                       | awk '{print $2}' | sort -u || true)"
+    their_recipes="$(grep -oE '^[a-z][a-z0-9-]*[[:space:]]*[A-Z_a-z0-9="]*:' "$other" \
+                       | sed -E 's/[[:space:]].*//; s/:$//' | sort -u || true)"
+
+    clash="$(comm -12 <(printf '%s\n' "$our_recipes") <(printf '%s\n' "$their_aliases") || true)"
+    [ -z "$clash" ] || die \
+        "A ujust recipe name in ${AQUARIUS_JUST} collides with an ALIAS in ${other}:" \
+        "" "  ${clash}" "" \
+        "That is a hard error in \`just\`, and it does not break only that one" \
+        "recipe — it breaks the ENTIRE ujust menu on the shipped image. Rename" \
+        "our recipe. See the header of 96-aquarius-creator.just."
+
+    clash="$(comm -12 <(printf '%s\n' "$our_recipes") <(printf '%s\n' "$their_recipes") || true)"
+    if [ -n "$clash" ]; then
+        echo "  WARNING: these recipe names already exist in ${other}:"
+        printf '%s\n' "$clash" | sed 's/^/           /'
+        echo "           ${other} is imported BEFORE ours, and \`just\` resolves a"
+        echo "           duplicate in favour of the earlier import — so OUR version"
+        echo "           can never run. Rename it or delete it."
+    fi
+done
 
 say "Creator app layer done."

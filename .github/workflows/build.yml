@@ -231,6 +231,148 @@ jobs:
       #      ${IMAGE_NAME} \
       #      ${DEFAULT_TAG}
 
+      # ------------------------------------------------------------------------
+      # Prove the creator apps can actually be run by a real person
+      # ------------------------------------------------------------------------
+      # Plain English: this opens the finished image and checks that the two
+      # apps AquariusOS builds in — Aquarius Editor and Aquarius Writer — are
+      # installed in a way that an ordinary account can actually start.
+      #
+      # WHY IT EXISTS
+      # On 2026-08-28 an image shipped in which BOTH apps were present, both
+      # appeared in the app grid, and clicking either did nothing at all. One
+      # file inside Aquarius Writer was mode 0770 — runnable by its owner and by
+      # nobody else. Every check in the build had passed, because every check in
+      # the build runs as root, and root ignores permissions. The first person
+      # to find out was the person the OS is for.
+      #
+      # So the question this step asks is not "does this file exist" but
+      # "COULD SOMEBODY WHO IS NOT ROOT RUN THIS". It is asked here, on the
+      # image that is about to be pushed, after the rechunk step — because
+      # rechunking re-packs every file, and whether it preserves things like the
+      # setuid bit on Electron's sandbox helper is precisely the kind of thing
+      # nobody should be taking on trust.
+      - name: Verify creator apps
+        id: verify-creator-apps
+        run: |
+          set -euo pipefail
+          cat >/tmp/verify-creator-apps.sh <<'SCRIPT'
+          set -u
+
+          fails=0
+          bad() { echo "  FAIL $*"; fails=1; }
+          ok()  { echo "  OK   $*"; }
+
+          # The launcher every app-grid click goes through.
+          for f in /usr/bin/aquarius-editor /usr/bin/aquarius-writer /usr/libexec/aquarius-app-launch; do
+            if [ -x "$f" ] && [ -r "$f" ]; then ok "$f is present and runnable"
+            else bad "$f is missing or not runnable"; ls -l "$f" || true; fi
+          done
+
+          for app in aquarius-editor aquarius-writer; do
+            dir="/usr/lib/aquarius/${app}"
+            echo "== ${dir} =="
+
+            if [ ! -d "$dir" ]; then bad "${dir} does not exist"; continue; fi
+
+            # The entry point.
+            if [ -x "${dir}/AppRun" ]; then ok "AppRun is executable"
+            else bad "AppRun missing or not executable"; fi
+
+            # --- the checks that matter: could a NON-root account use this? ---
+            # 1. everything readable by everyone
+            n="$(find "$dir" \( -type f -o -type d \) ! -perm -o+r | tee /tmp/x | wc -l)"
+            if [ "$n" -eq 0 ]; then ok "every file and folder is world-readable"
+            else bad "${n} files/folders are not readable by an ordinary account"; head -5 /tmp/x | xargs -r ls -ld; fi
+
+            # 2. anything the packager marked runnable is runnable by everyone.
+            #    THIS is the check that catches the 0770 bug.
+            n="$(find "$dir" -type f -perm -u+x ! -perm -o+x | tee /tmp/x | wc -l)"
+            if [ "$n" -eq 0 ]; then ok "every program inside is world-executable"
+            else bad "${n} programs cannot be run by an ordinary account"; head -5 /tmp/x | xargs -r ls -l; fi
+
+            # 3. folders can be entered
+            n="$(find "$dir" -type d ! -perm -o+x | tee /tmp/x | wc -l)"
+            if [ "$n" -eq 0 ]; then ok "every folder can be entered"
+            else bad "${n} folders cannot be entered"; head -5 /tmp/x | xargs -r ls -ld; fi
+
+            # 4. nothing in /usr may be writable by anyone who happens to log in
+            n="$(find "$dir" ! -type l -perm -o+w | tee /tmp/x | wc -l)"
+            if [ "$n" -eq 0 ]; then ok "nothing is world-writable"
+            else bad "${n} world-writable files under /usr"; head -5 /tmp/x | xargs -r ls -l; fi
+
+            # 5. no symlink left pointing at the build machine
+            n="$(find "$dir" -xtype l | tee /tmp/x | wc -l)"
+            if [ "$n" -eq 0 ]; then ok "no broken symlinks"
+            else bad "${n} symlinks point at nothing"; head -5 /tmp/x | xargs -r ls -l; fi
+
+            # 6. the app-grid entry, and the icon it names
+            d="/usr/share/applications/${app}.desktop"
+            if [ -f "$d" ]; then ok "app-grid entry present"
+            else bad "app-grid entry ${d} missing"; fi
+            if [ -f "/usr/share/pixmaps/${app}.png" ]; then ok "icon installed"
+            else bad "no icon at /usr/share/pixmaps/${app}.png — the grid would show a placeholder"; fi
+          done
+
+          # --- Electron's sandbox helper, on the FINAL image -------------------
+          # This is the one the rechunk step could plausibly damage. Electron
+          # aborts instantly, with no window at all, if this file exists but is
+          # not root-owned with the setuid bit set.
+          sb=/usr/lib/aquarius/aquarius-editor/chrome-sandbox
+          if [ -e "$sb" ]; then
+            mode="$(stat -c '%a' "$sb")"; own="$(stat -c '%U:%G' "$sb")"
+            if [ "$mode" = "4755" ] && [ "$own" = "root:root" ]; then
+              ok "chrome-sandbox survived packaging as root:root 4755"
+            else
+              bad "chrome-sandbox is ${own} mode ${mode}, expected root:root 4755"
+              echo "       (the image build set it correctly, so this means the"
+              echo "        rechunk/packaging step did not preserve the setuid bit)"
+            fi
+          fi
+
+          # --- our ujust recipes are actually in the menu ----------------------
+          if grep -q '96-aquarius-creator.just' /usr/share/ublue-os/justfile; then
+            ok "AquariusOS recipes are imported into ujust"
+          else
+            bad "96-aquarius-creator.just is not imported — 'ujust' would not list our recipes"
+          fi
+          if [ -x /usr/libexec/aquarius-install-resolve ]; then
+            ok "the DaVinci Resolve walkthrough is installed"
+          else
+            bad "/usr/libexec/aquarius-install-resolve is missing or not runnable"
+          fi
+
+          # --- desktop entries are valid --------------------------------------
+          # Only "error:" lines fail the build. desktop-file-validate also emits
+          # "hint:" and "warning:" lines about things like an entry belonging to
+          # two main menu categories — worth reading, never worth refusing to
+          # ship an OS over.
+          if command -v desktop-file-validate >/dev/null 2>&1; then
+            for d in /usr/share/applications/aquarius-*.desktop; do
+              out="$(desktop-file-validate "$d" 2>&1 || true)"
+              errs="$(printf '%s\n' "$out" | grep -F 'error:' || true)"
+              if [ -n "$errs" ]; then
+                bad "invalid desktop entry $(basename "$d"):"; printf '       %s\n' "$errs"
+              else
+                ok "valid: $(basename "$d")"
+                [ -n "$out" ] && printf '       (note) %s\n' "$out"
+              fi
+            done
+          else
+            echo "  NOTE desktop-file-validate is not in the image; skipping entry validation"
+          fi
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::The creator apps in this image cannot be started by an ordinary account. See above."
+            exit 1
+          fi
+          echo "All creator-app checks passed."
+          SCRIPT
+
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" </tmp/verify-creator-apps.sh
+
       - name: Generate Build Tags
         id: gen-build-tags
         run: |

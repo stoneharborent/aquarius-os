@@ -3,29 +3,102 @@
 # Aquarius Editor — launcher
 # ==============================================================================
 # Plain English: the real program lives in /usr/lib/aquarius/aquarius-editor/,
-# which is a folder full of files nobody should have to know about. This tiny
-# script is the friendly front door: typing `aquarius-editor` in a terminal, or
-# clicking the icon in the app grid, both end up here.
+# which is a folder full of files nobody should have to know about. This is the
+# friendly front door: typing `aquarius-editor` in a terminal, or clicking the
+# icon in the app grid, both end up here.
 #
-# The two exported names are the ones an unpacked AppImage expects to be told:
-#   APPDIR — where the program's own files are.
-#   OWD    — "original working directory", the folder you launched it from, so
-#            that opening a file by a relative name works.
+# The generic work — checking the app is really runnable, keeping a log, and
+# putting a real error on screen if it fails — is shared with Aquarius Writer
+# and lives in /usr/libexec/aquarius-app-launch. Read that file first; it
+# explains why a launcher does any of this at all.
 #
-# `exec` replaces this script with the app rather than leaving a spare shell
-# hanging around underneath it.
+# What is left HERE is the part that is true of this app and no other: Aquarius
+# Editor is an Electron app, and Electron has one specific way of refusing to
+# start that produces no window and no message.
 # ==============================================================================
 
 set -u
 
-APPDIR="/usr/lib/aquarius/aquarius-editor"
-export APPDIR
-OWD="${PWD}"
-export OWD
+APP_ID="aquarius-editor"
+APPDIR="/usr/lib/aquarius/${APP_ID}"
 
-if [ ! -x "${APPDIR}/AppRun" ]; then
-    echo "Aquarius Editor does not seem to be installed (${APPDIR}/AppRun is missing)." >&2
-    exit 1
+# ------------------------------------------------------------------------------
+# THE CHROME SANDBOX — the one thing that makes Electron die in silence
+# ------------------------------------------------------------------------------
+# Electron is a web browser with an app inside it, so it sandboxes its own
+# rendering the way Chrome sandboxes a tab. On Linux it can do that two ways:
+#
+#   the USER-NAMESPACE sandbox   the modern one. Needs nothing special: the
+#                                kernel lets an ordinary program build itself a
+#                                tiny private world. Bazzite — and so
+#                                AquariusOS — has this switched on.
+#   the SETUID sandbox           the old one. Needs a small helper program,
+#                                'chrome-sandbox', that is owned by root and
+#                                carries the setuid bit (mode 4755).
+#
+# The trap is in how Electron chooses. If the helper file EXISTS but is not set
+# up correctly, Electron does not shrug and use the modern sandbox. It stops
+# dead, prints
+#
+#     The SUID sandbox helper binary was found, but is not configured
+#     correctly. Rather than run without sandboxing I'm aborting now.
+#
+# and exits. Clicked from the app grid there is no terminal for that sentence to
+# appear in, so what a person sees is: nothing.
+#
+# The image build sets that file to root:root 4755, and the build checks it, and
+# the finished image is checked again after packaging (see the "Verify creator
+# apps" step in .github/workflows/build.yml). Three checks. But this is a
+# LAUNCHER: its job is that the app starts on the machine in front of it, not
+# that everything went well somewhere else three weeks ago. So it looks.
+#
+# If the helper is not set up correctly we do NOT reach for --no-sandbox, which
+# would turn the sandbox off altogether. We pass --disable-setuid-sandbox, which
+# tells Electron "do not consider the old mechanism" — and it then uses the
+# user-namespace sandbox, which is what a correctly configured system was going
+# to use anyway. The app stays sandboxed. Only if user namespaces are ALSO
+# unavailable is there a real choice to make, and then we say so in the log and
+# start unsandboxed rather than leaving the user with a dead icon.
+SANDBOX_HELPER="${APPDIR}/chrome-sandbox"
+EXTRA_ARGS=()
+
+if [ -e "$SANDBOX_HELPER" ] && [ ! -u "$SANDBOX_HELPER" ]; then
+    # The file is there and the setuid bit is not. Skip the old mechanism.
+    if unshare -Ur true 2>/dev/null; then
+        EXTRA_ARGS+=(--disable-setuid-sandbox)
+        echo "aquarius-editor: chrome-sandbox is not setuid; using the user-namespace sandbox instead." >&2
+    else
+        EXTRA_ARGS+=(--no-sandbox)
+        echo "aquarius-editor: WARNING — no working sandbox on this system. Starting without one." >&2
+    fi
 fi
 
-exec "${APPDIR}/AppRun" "$@"
+# ------------------------------------------------------------------------------
+# TELL ME EVERYTHING
+# ------------------------------------------------------------------------------
+# Electron is quiet by default: a graphics driver problem can take the whole app
+# down having printed nothing at all. This turns its internal log on and sends
+# it to the same place as everything else, which is the log file the shared
+# launcher keeps.
+#
+#     AQUARIUS_DEBUG=1 aquarius-editor
+#
+# It is not on by default because it is genuinely a lot of output, and because
+# nothing should be slower forever on account of a bug we already fixed.
+if [ "${AQUARIUS_DEBUG:-0}" = "1" ]; then
+    EXTRA_ARGS+=(--enable-logging=stderr --v=1)
+fi
+
+# ------------------------------------------------------------------------------
+# Everything else is the shared launcher's job.
+# ------------------------------------------------------------------------------
+# Our flags go before the user's on purpose: Chromium accepts its switches
+# anywhere, and this way a file name passed by the desktop ("open this with
+# Aquarius Editor") is still the last thing on the line, where it reads
+# naturally in the log.
+#
+# The odd-looking ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} is the way to expand an
+# array that may be empty while `set -u` is on, without the shell complaining
+# about an unset variable.
+exec /usr/libexec/aquarius-app-launch "$APP_ID" "Aquarius Editor" \
+    ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} "$@"

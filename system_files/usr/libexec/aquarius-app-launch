@@ -1,0 +1,272 @@
+#!/usr/bin/bash
+# ==============================================================================
+# AquariusOS — the shared front door for our own baked-in apps
+# ==============================================================================
+# Plain English: Aquarius Editor and Aquarius Writer are not installed the way
+# ordinary Linux programs are. Each one is a whole folder of files under
+# /usr/lib/aquarius/, and the thing that starts it is a small script in
+# /usr/bin. This is the part those two small scripts share.
+#
+# WHY THIS FILE EXISTS AT ALL — the lesson of 2026-08-28
+# ------------------------------------------------------------------------------
+# On that day both apps shipped, both appeared in the app grid, and clicking
+# either of them did NOTHING. No window, no error, no sign that anything had
+# been tried. The cause turned out to be a single wrong file permission inside
+# one of the apps — a five-second fix — but finding it took a bug report, a
+# terminal session and a day, because the failure was completely silent.
+#
+# A program that dies quietly is worse than a program that crashes loudly. So
+# this launcher makes three promises:
+#
+#   1. IT CHECKS FIRST. Before starting anything it confirms the app is really
+#      there and that THIS user is actually allowed to run the files involved.
+#      A permission problem is caught by name instead of vanishing into a failed
+#      exec that nobody sees.
+#   2. IT KEEPS THE EVIDENCE. Everything the app prints goes to a log file in
+#      the user's own folder, and the previous run is kept alongside it.
+#   3. IT SAYS SO. If the app fails to start — or starts and then falls over —
+#      a real window appears saying what happened, where the log is, and what to
+#      type to see it happen live.
+#
+# WHY IT STAYS RUNNING WHILE THE APP RUNS
+# The obvious way to write a launcher is `exec the-app`, which replaces this
+# script with the app and leaves nothing behind. We deliberately do not, because
+# a process that has replaced itself can no longer notice that its replacement
+# failed. Staying alive costs about a megabyte of memory and buys us promise 3.
+#
+# HOW IT IS CALLED
+#   /usr/libexec/aquarius-app-launch <app-id> <Human Name> [arguments…]
+# for example
+#   /usr/libexec/aquarius-app-launch aquarius-writer "Aquarius Writer" notes.md
+#
+# The two callers are /usr/bin/aquarius-editor and /usr/bin/aquarius-writer.
+# Anything specific to ONE app (graphics-driver workarounds, sandbox flags)
+# belongs in those files, not here.
+# ==============================================================================
+
+set -u
+
+if [ "$#" -lt 2 ]; then
+    echo "usage: aquarius-app-launch <app-id> <human name> [args…]" >&2
+    exit 64
+fi
+
+APP_ID="$1"; shift
+APP_NAME="$1"; shift
+
+APPDIR="/usr/lib/aquarius/${APP_ID}"
+
+# ------------------------------------------------------------------------------
+# Where the log goes
+# ------------------------------------------------------------------------------
+# ~/.local/state is the standard place for "files a program writes about itself
+# that the user does not need to see, but that are worth keeping between runs".
+# Not ~/.cache (which anything may delete) and not ~/.config (which is settings).
+#
+# If we cannot write there for any reason we fall back to a temporary folder
+# rather than giving up — a launcher that refuses to start the app because it
+# could not open its own log file would be a ridiculous thing to ship.
+LOG_DIR="${XDG_STATE_HOME:-${HOME:-/tmp}/.local/state}/aquarius"
+if ! mkdir -p "$LOG_DIR" 2>/dev/null; then
+    LOG_DIR="${TMPDIR:-/tmp}"
+fi
+LOG="${LOG_DIR}/${APP_ID}.log"
+PREV_LOG="${LOG_DIR}/${APP_ID}.previous.log"
+
+# ------------------------------------------------------------------------------
+# How we complain
+# ------------------------------------------------------------------------------
+# One window, three sentences, and the log path. kdialog is part of Plasma so it
+# is always here on AquariusOS; zenity is the fallback in case somebody is
+# running one of our apps on a non-KDE desktop; the terminal is the last resort
+# and is what you get when there is no desktop at all (an SSH session, say).
+#
+# --detailederror puts the technical part behind a "Details" button, which is
+# exactly the right shape: a beginner reads three sentences, and the person
+# helping them clicks once and gets the stack trace.
+say_sorry() {          # say_sorry <headline> <details>
+    local headline="$1" details="$2"
+
+    # No desktop? Then a window is not possible and the terminal is the whole
+    # interface. Print both parts plainly.
+    if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
+        printf '%s\n\n%s\n' "$headline" "$details" >&2
+        return
+    fi
+
+    if command -v kdialog >/dev/null 2>&1; then
+        kdialog --title "${APP_NAME}" --detailederror "$headline" "$details" \
+            >/dev/null 2>&1 && return
+        # Very old kdialog builds have no --detailederror. Fall through.
+        kdialog --title "${APP_NAME}" --error "$headline" >/dev/null 2>&1 && return
+    fi
+    if command -v zenity >/dev/null 2>&1; then
+        printf '%s\n\n%s\n' "$headline" "$details" \
+            | zenity --error --title="${APP_NAME}" --width=700 --text-info \
+            >/dev/null 2>&1 && return
+        zenity --error --title="${APP_NAME}" --width=700 --text="$headline" \
+            >/dev/null 2>&1 && return
+    fi
+
+    printf '%s\n\n%s\n' "$headline" "$details" >&2
+}
+
+# The last few lines of the log, which is nearly always where the real message
+# is. Kept short on purpose — a dialog is not a log viewer.
+log_tail() {
+    if [ -s "$LOG" ]; then
+        printf 'The last lines of %s were:\n\n%s\n' "$LOG" "$(tail -n 20 "$LOG")"
+    else
+        printf 'The log at %s is empty — the program did not manage to print anything.\n' "$LOG"
+    fi
+}
+
+# What we tell people to type. Running the same command in a terminal is the
+# single most useful next step, so it is in every message.
+HOW_TO_SEE_IT="To watch it happen, open a terminal (Konsole) and type:
+
+    ${APP_ID}
+
+For a great deal more detail, type this instead:
+
+    AQUARIUS_DEBUG=1 ${APP_ID}
+
+Everything the app prints appears there, and is also saved to:
+
+    ${LOG}
+
+The run before this one is kept at:
+
+    ${PREV_LOG}"
+
+fail() {               # fail <headline> <extra detail>
+    say_sorry "$1" "$2
+
+${HOW_TO_SEE_IT}"
+    exit 1
+}
+
+# ------------------------------------------------------------------------------
+# Check before we leap
+# ------------------------------------------------------------------------------
+# Each of these is a real failure that has happened or could happen, and each
+# one used to produce silence.
+
+if [ ! -d "$APPDIR" ]; then
+    fail "${APP_NAME} is not installed on this system." \
+"AquariusOS expected to find it at:
+
+    ${APPDIR}
+
+That folder does not exist. This should be impossible on a normal AquariusOS
+install — the app is built into the operating system itself. The likely causes
+are an interrupted system update, or a system that was rolled back to an older
+version of AquariusOS from before the app existed.
+
+Try updating the system (Discover, or 'ujust update' in a terminal) and restart."
+fi
+
+if [ ! -x "${APPDIR}/AppRun" ]; then
+    fail "${APP_NAME} is installed, but it cannot be started." \
+"The file AquariusOS uses to start it:
+
+    ${APPDIR}/AppRun
+
+is missing, or this account is not allowed to run it.
+
+$(ls -ld "${APPDIR}/AppRun" 2>&1)
+
+This is a fault in the operating system image, not in anything you did. Please
+report it with the line above."
+fi
+
+# The permission bug that caused the silent failure of 2026-08-28 was one level
+# further in: AppRun was fine, and the file AppRun starts was not readable or
+# runnable by an ordinary account. So we check the whole chain, not just the
+# front door.
+#
+# 'AppRun.wrapped' is the second half of AppRun for apps packaged with
+# linuxdeploy (Aquarius Writer); '<app-id>' at the top level is the equivalent
+# for apps packaged with electron-builder (Aquarius Editor). Anything else we do
+# not know about is simply not checked, which is the correct behaviour — this
+# list is a set of known trip-hazards, not a definition of what an app is.
+for candidate in "${APPDIR}/AppRun.wrapped" "${APPDIR}/${APP_ID}" "${APPDIR}/usr/bin/${APP_ID}"; do
+    [ -e "$candidate" ] || continue
+    [ -x "$candidate" ] && continue
+    fail "${APP_NAME} is installed, but this account is not allowed to run it." \
+"A file inside the app cannot be executed by you:
+
+$(ls -l "$candidate" 2>&1)
+
+It needs to be readable and executable by everyone (mode 755). A file that is
+0770, or one that is not readable by 'other', works when tested as the root user
+during the build and then fails for every real person who clicks the icon.
+
+This is a fault in the operating system image, not in anything you did. Please
+report it with the line above."
+done
+
+# ------------------------------------------------------------------------------
+# Start it, and keep what it says
+# ------------------------------------------------------------------------------
+# One previous log is kept. Two runs is enough to answer "did it also do this
+# last time?", and it means the file can never grow without limit.
+[ -f "$LOG" ] && mv -f "$LOG" "$PREV_LOG" 2>/dev/null
+
+{
+    echo "=============================================================="
+    echo "${APP_NAME} — started $(date '+%Y-%m-%d %H:%M:%S')"
+    echo "  app dir : ${APPDIR}"
+    echo "  command : ${APPDIR}/AppRun $*"
+    echo "  session : ${XDG_SESSION_TYPE:-unknown}   desktop: ${XDG_CURRENT_DESKTOP:-unknown}"
+    # shellcheck disable=SC1091  # /etc/os-release only exists on the target OS
+    echo "  OS      : $(. /etc/os-release 2>/dev/null && echo "${PRETTY_NAME:-unknown} ${VARIANT:-}")"
+    echo "=============================================================="
+} >"$LOG" 2>/dev/null
+
+# APPDIR and OWD are what an unpacked AppImage expects to be told: where its own
+# files are, and which folder it was launched from (so that opening a file by a
+# relative name works).
+export APPDIR
+OWD="${PWD}"
+export OWD
+
+STARTED_AT="$(date +%s)"
+"${APPDIR}/AppRun" "$@" >>"$LOG" 2>&1
+STATUS=$?
+RAN_FOR=$(( $(date +%s) - STARTED_AT ))
+
+# ------------------------------------------------------------------------------
+# Did it work?
+# ------------------------------------------------------------------------------
+# A clean exit needs no comment, whenever it happens.
+[ "$STATUS" -eq 0 ] && exit 0
+
+# 130 and 143 are "the user pressed Ctrl+C" and "something asked it to close".
+# Neither is a fault, and neither deserves a window.
+if [ "$STATUS" -eq 130 ] || [ "$STATUS" -eq 143 ]; then
+    exit "$STATUS"
+fi
+
+# An app that ran for a while and then exited badly is a CRASH — the user saw a
+# window and lost it. An app that died within a few seconds NEVER APPEARED, and
+# that is the case this whole file exists for. The two deserve different words.
+if [ "$RAN_FOR" -lt 10 ]; then
+    say_sorry \
+"${APP_NAME} could not start.
+
+It stopped after ${RAN_FOR} second(s) without opening a window (exit code ${STATUS})." \
+"$(log_tail)
+
+${HOW_TO_SEE_IT}"
+else
+    say_sorry \
+"${APP_NAME} has stopped unexpectedly.
+
+It had been running for ${RAN_FOR} seconds (exit code ${STATUS})." \
+"$(log_tail)
+
+${HOW_TO_SEE_IT}"
+fi
+
+exit "$STATUS"

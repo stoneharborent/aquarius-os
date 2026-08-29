@@ -3,29 +3,97 @@
 # Aquarius Writer — launcher
 # ==============================================================================
 # Plain English: the real program lives in /usr/lib/aquarius/aquarius-writer/,
-# which is a folder full of files nobody should have to know about. This tiny
-# script is the friendly front door: typing `aquarius-writer` in a terminal, or
-# clicking the icon in the app grid, both end up here.
+# which is a folder full of files nobody should have to know about. This is the
+# friendly front door: typing `aquarius-writer` in a terminal, or clicking the
+# icon in the app grid, both end up here.
 #
-# The two exported names are the ones an unpacked AppImage expects to be told:
-#   APPDIR — where the program's own files are.
-#   OWD    — "original working directory", the folder you launched it from, so
-#            that opening a file by a relative name works.
+# The generic work — checking the app is really runnable, keeping a log, and
+# putting a real error on screen if it fails — is shared with Aquarius Editor
+# and lives in /usr/libexec/aquarius-app-launch. Read that file first; it
+# explains why a launcher does any of this at all.
 #
-# `exec` replaces this script with the app rather than leaving a spare shell
-# hanging around underneath it.
+# What is left HERE is the part that is true of this app and no other.
 # ==============================================================================
 
 set -u
 
-APPDIR="/usr/lib/aquarius/aquarius-writer"
-export APPDIR
-OWD="${PWD}"
-export OWD
+APP_ID="aquarius-writer"
 
-if [ ! -x "${APPDIR}/AppRun" ]; then
-    echo "Aquarius Writer does not seem to be installed (${APPDIR}/AppRun is missing)." >&2
-    exit 1
+# ------------------------------------------------------------------------------
+# WHAT AQUARIUS WRITER ACTUALLY IS, MECHANICALLY
+# ------------------------------------------------------------------------------
+# It is a Tauri app: a native window whose contents are drawn by WebKitGTK, the
+# same engine that draws pages in GNOME Web. That matters here because WebKitGTK
+# has a long-running, unfixed disagreement with NVIDIA's proprietary driver, and
+# an RTX 4090 is exactly the machine this is tested on.
+#
+# THE PROBLEM
+# WebKitGTK 2.42 introduced a faster way of handing rendered frames to the
+# window system ("the DMA-BUF renderer"). On NVIDIA's driver the call it depends
+# on fails, and the result is a window that opens and stays BLANK. WebKit's own
+# bug for it — "[GTK] Disable DMABuf renderer for NVIDIA proprietary drivers",
+# bugs.webkit.org #262607 — was closed WONTFIX, and it was still reproducing on
+# WebKitGTK 2.46 in late 2024. So this is not something to wait out.
+#
+# THE FIX, AND WHY THIS PARTICULAR ONE
+# There are two switches people reach for, and they are not equal:
+#
+#   WEBKIT_DISABLE_DMABUF_RENDERER=1    falls back to the pre-2.42 way of moving
+#                                       frames. Everything else, including
+#                                       hardware acceleration, stays on. This is
+#                                       the one Tauri's own documentation lists
+#                                       first, and the one we use.
+#   WEBKIT_DISABLE_COMPOSITING_MODE=1   turns hardware compositing off
+#                                       altogether. It fixes more, and costs
+#                                       far more. Left OFF here; it is the
+#                                       escape hatch below, not the default.
+#
+# ONLY ON NVIDIA
+# On AMD and Intel the fast path works and there is no reason to give it up, so
+# this is switched on only when NVIDIA's driver is actually loaded. /dev/nvidiactl
+# exists exactly when it is.
+#
+# ANYTHING THE USER SET WINS
+# Every variable below uses ${VAR:-default}, so someone debugging can export the
+# opposite value and this file gets out of the way.
+if [ -e /dev/nvidiactl ] || [ -d /proc/driver/nvidia ]; then
+    export WEBKIT_DISABLE_DMABUF_RENDERER="${WEBKIT_DISABLE_DMABUF_RENDERER:-1}"
 fi
 
-exec "${APPDIR}/AppRun" "$@"
+# The escape hatches, for when the window opens and is blank or unresponsive and
+# the line above was not enough. Neither is set by default; both are honoured if
+# the user exports them:
+#
+#   WEBKIT_DISABLE_COMPOSITING_MODE=1   no hardware compositing at all
+#   __NV_DISABLE_EXPLICIT_SYNC=1        for the Wayland "Error 71" crash
+#   AQUARIUS_GDK_BACKEND=wayland        see below
+#
+# WHICH WINDOW SYSTEM THE APP TALKS TO
+# The app's own start-up script forces GDK_BACKEND=x11, which on a Wayland
+# desktop means it runs through XWayland. That was a workaround for an old Tauri
+# crash on Wayland, and it is baked into the file the packaging tool generated,
+# not into anything we control — so the build patches that one line to respect a
+# value we set (see build_files/creator-apps.sh) and this is where we would set
+# it. We deliberately set NOTHING by default: XWayland is the behaviour the app
+# was released and tested with, and changing it is a bigger decision than a bug
+# fix. If the window ever turns out to be dead to clicks under Wayland — which
+# is a reported symptom of forcing XWayland on NVIDIA — this is the knob:
+if [ -n "${AQUARIUS_GDK_BACKEND:-}" ]; then
+    export GDK_BACKEND="${AQUARIUS_GDK_BACKEND}"
+fi
+
+# ------------------------------------------------------------------------------
+# TELL ME EVERYTHING
+# ------------------------------------------------------------------------------
+# WebKitGTK fails quietly: the DMA-BUF renderer can fail to start up and all you
+# see is a blank window. WEBKIT_DEBUG=Compositing is what makes it say so, and
+# G_MESSAGES_DEBUG=all does the same for GTK underneath it. Both go to the log
+# file the shared launcher keeps.
+#
+#     AQUARIUS_DEBUG=1 aquarius-writer
+if [ "${AQUARIUS_DEBUG:-0}" = "1" ]; then
+    export WEBKIT_DEBUG="${WEBKIT_DEBUG:-Compositing}"
+    export G_MESSAGES_DEBUG="${G_MESSAGES_DEBUG:-all}"
+fi
+
+exec /usr/libexec/aquarius-app-launch "$APP_ID" "Aquarius Writer" "$@"
