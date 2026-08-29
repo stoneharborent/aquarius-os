@@ -154,6 +154,81 @@ off.
 
 ---
 
+## How a baked-in app updates itself
+
+Here is a problem that only exists on an operating system like this one.
+
+AquariusOS keeps `/usr` **read-only** while the machine is running. That is a
+feature — it is why a bad install cannot break the OS and why you can always roll
+back to yesterday. But Aquarius Editor lives in `/usr`, and it means the app
+**cannot update itself in place**. Normally that is fine: a new Editor arrives
+with the next OS update. It stops being fine the day we ship a bad bug on a
+Friday, because then everybody lives with it until they reboot.
+
+So Aquarius Editor is allowed to keep a newer copy of itself in your home folder,
+where writing is allowed, and the OS decides which of the two to start.
+
+**Where the newer copy lives.** In one folder, and it looks like this:
+
+```
+~/.local/share/aquarius/aquarius-editor/
+├── versions/
+│   ├── 0.4.0/          a complete unpacked copy of the app
+│   └── 0.4.1/
+└── current -> versions/0.4.1
+```
+
+Each folder under `versions/` is named after its version and nothing else —
+`0.4.1`, never `v0.4.1`. When a download is finished and checked, the app
+re-points `current` at it. Re-pointing a link happens instantly, so there is no
+moment where `current` leads to a half-written folder.
+
+**What the OS does at every launch.** It reads its own version out of
+`/usr/lib/aquarius/aquarius-editor/VERSION` (a one-line text file written when
+the image was built), reads the downloaded copy's version off the folder name,
+and compares them **as version numbers**. If the download is genuinely newer, the
+OS starts it. Otherwise it starts its own copy.
+
+Comparing them as version numbers rather than as text is the whole trick, and it
+is why there is a test suite for eleven lines of shell: as plain text, "0.9.0"
+comes *after* "0.10.0", and a machine that believed that would stop taking
+updates forever the day the Editor reached 0.10.
+
+**A broken download can never stop the app from opening.** A link pointing at
+nothing, a folder with a nonsense name, a download that was interrupted
+half-way — every one of those ends the same way: a line in the log, the built-in
+copy starts, and you never find out. This is deliberate and it is the most
+important rule in the whole arrangement.
+
+**Old downloads get cleaned up.** Each copy is roughly 2 GB. Once the OS itself
+catches up — its own version is the same or newer — the downloaded copies are
+deleted the next time you start the app, because the app would never run them
+again and knows how to fetch a fresh one. Nothing is *ever* deleted while the
+download is the newer one.
+
+**How to see which copy started.** It is in the first few lines of the log:
+
+```
+less ~/.local/state/aquarius/aquarius-editor.log
+```
+
+near the top, next to the word `copy`, along with both version numbers and a
+sentence explaining the choice.
+
+**What the app is told.** Before starting it, the launcher sets two environment
+variables: `AQUARIUS_OS_MANAGED_INSTALL=1` (meaning "the operating system put you
+here, so you may manage your own updates this way") and
+`AQUARIUS_UPDATE_OVERLAY_DIR`, the folder above. Both halves of this arrangement
+have to agree about that folder, so if it ever moves, it moves in the app and in
+`system_files/usr/libexec/aquarius-app-overlay` on the same day.
+
+**Today this is Aquarius Editor only.** Aquarius Writer works exactly as it
+always has. Turning it on for the Writer is four lines copied into
+`system_files/usr/bin/aquarius-writer`; the build already writes a `VERSION` file
+for both apps.
+
+---
+
 ## Preinstalled: the two browsers
 
 A Flatpak is a self-contained app that updates on its own schedule, separately
@@ -468,6 +543,8 @@ Full background on all of this: `docs/codec-research.md`.
 | `system_files/usr/libexec/aquarius-resolve-launch` | What DaVinci's menu entries actually run. Hands the container your cursor theme, and nothing else it can work out for itself. |
 | `system_files/usr/bin/aquarius-editor`, `…-writer` | Small launchers. Typing the name, or clicking the icon, comes here. Each holds only what is true of that one app. |
 | `system_files/usr/libexec/aquarius-app-launch` | **What both of those call.** Pre-flight checks, the log file, and the error window. Read this one first. |
+| `system_files/usr/libexec/aquarius-app-overlay` | **Which copy of the app starts** — the one in the OS, or a newer one the app downloaded into your home folder. Not a program; a set of functions the launchers read in. See "How a baked-in app updates itself" above. |
+| `tests/test-aquarius-semver.sh`, `tests/test-aquarius-overlay.sh` | The tests for that decision. Run on every pull request, and again inside the finished image during the build. |
 | `system_files/usr/share/applications/aquarius-{editor,writer}.desktop` | The entries in the app grid. |
 
 On the installed machine, the two Aquarius apps live in
@@ -481,7 +558,10 @@ On the installed machine, the two Aquarius apps live in
   `https://flathub.org/apps/<the-id>` really loads first — a typo in the
   `.preinstall` file fails silently.
 * **Ship a newer Aquarius Editor or Writer:** change the version tag in
-  `creator-apps.sh`. Nothing else.
+  `creator-apps.sh`. Nothing else. That tag is also the number that gets written
+  into the app's `VERSION` file, so it has to read like `v0.4.1` — the build
+  stops if it does not, or if it disagrees with the name of the file the release
+  actually published.
 * **Add another app of ours:** add a line to `AQUARIUS_APPS`, and add a launcher,
   a `.desktop` file and an entry to the check loop in `creator-apps.sh`. The
   release must publish exactly one `.AppImage` and a `SHA256SUMS.txt` next to it.

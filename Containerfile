@@ -47,6 +47,12 @@ COPY system_files /system_files
 # sit next to it; build.sh installs it into the OS from here. (Added with the ingest
 # Milestone 2 work — see the matching section at the bottom of build_files/build.sh.)
 COPY ingest /ingest
+# Shell test suites that the build runs against the OS it has just assembled — at the
+# moment, the ones that check how the app launcher decides between the copy of Aquarius
+# Editor baked into the image and a newer copy downloaded into the user's home folder.
+# They are run from build_files/creator-apps.sh. None of this is copied into the
+# finished image; it is only here so the build can run it.
+COPY tests /tests
 
 # ------------------------------------------------------------------------------
 # Base Image — what AquariusOS is built on top of

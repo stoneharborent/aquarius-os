@@ -23,6 +23,44 @@ APP_ID="aquarius-editor"
 APPDIR="/usr/lib/aquarius/${APP_ID}"
 
 # ------------------------------------------------------------------------------
+# IS THERE A NEWER COPY IN YOUR HOME FOLDER?
+# ------------------------------------------------------------------------------
+# AquariusOS keeps /usr read-only, so the copy of Aquarius Editor that ships with
+# the operating system can never update itself in place. Instead the app is
+# allowed to download a newer copy of itself into your home folder, and this is
+# where the OS decides which of the two to start.
+#
+# All the thinking lives in /usr/libexec/aquarius-app-overlay — read that file
+# for the whole arrangement. Four lines here:
+#
+#   AQ_INSTALL_ROOT   comes back as the folder to start the app from
+#   AQ_LAUNCH_NOTES   comes back as plain English about why, for the log file
+#
+# and it also sets the two environment variables that tell the app it is on an
+# OS-managed install and where it may write updates.
+#
+# ⚠️ THIS HAS TO HAPPEN BEFORE THE SANDBOX CHECK BELOW, and that is not a matter
+# of taste. The check looks at a file called chrome-sandbox inside the app, and
+# the answer is DIFFERENT for the two copies: the built-in one has that file set
+# up by the image build as a root-owned setuid program, and a copy the app
+# downloaded into your home folder cannot possibly have that — you are not root
+# when you download something. Asking the question about the wrong folder is
+# precisely the mistake that makes Electron abort with no window at all.
+#
+# If the file is missing for any reason we simply carry on with the built-in
+# copy: no updates, but the app still starts, which is the important half.
+AQ_INSTALL_ROOT="$APPDIR"
+AQ_LAUNCH_NOTES=""
+if [ -r /usr/libexec/aquarius-app-overlay ]; then
+    # shellcheck source=../libexec/aquarius-app-overlay
+    . /usr/libexec/aquarius-app-overlay
+    aq_overlay_prepare "$APP_ID"
+    APPDIR="$AQ_INSTALL_ROOT"
+else
+    AQ_LAUNCH_NOTES="update overlay: /usr/libexec/aquarius-app-overlay is missing from this system, so no check for a downloaded update was made. Starting the copy built into AquariusOS."
+fi
+
+# ------------------------------------------------------------------------------
 # THE CHROME SANDBOX — the one thing that makes Electron die in silence
 # ------------------------------------------------------------------------------
 # Electron is a web browser with an app inside it, so it sandboxes its own
@@ -52,11 +90,19 @@ APPDIR="/usr/lib/aquarius/${APP_ID}"
 # apart to confirm the bit really does survive packaging: it reads -rwsr-xr-x
 # root root, so all of that machinery is working.
 #
-# This check is therefore not expected to fire. It is here because this is a
-# LAUNCHER: its job is that the app starts on the machine in front of it, not
-# that everything went well somewhere else three weeks ago — and because the
-# failure it guards against is the silent kind, which is the kind worth spending
-# four lines on.
+# This check is therefore not expected to fire ON THE BUILT-IN COPY. It is here
+# because this is a LAUNCHER: its job is that the app starts on the machine in
+# front of it, not that everything went well somewhere else three weeks ago —
+# and because the failure it guards against is the silent kind, which is the kind
+# worth spending four lines on.
+#
+# ⚠️ ON A DOWNLOADED UPDATE IT IS EXPECTED TO FIRE, EVERY TIME. That copy is
+# unpacked in your home folder by the app itself, running as you, and only root
+# can make a file setuid — so its chrome-sandbox is always an ordinary file. This
+# block is what stops that from being a dead icon: it notices, skips the old
+# mechanism, and the app runs on the modern user-namespace sandbox exactly as the
+# built-in copy does. That is why the folder was worked out further up, before
+# this line.
 #
 # If the helper is not set up correctly we do NOT reach for --no-sandbox, which
 # would turn the sandbox off altogether. We pass --disable-setuid-sandbox, which
@@ -106,5 +152,12 @@ fi
 # The odd-looking ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} is the way to expand an
 # array that may be empty while `set -u` is on, without the shell complaining
 # about an unset variable.
+#
+# The two variables handed over are which folder to start (worked out at the top
+# of this file) and the plain-English story of that decision, which the shared
+# launcher writes into the first few lines of the app's log.
+export AQUARIUS_INSTALL_ROOT="$APPDIR"
+export AQUARIUS_LAUNCH_NOTES="$AQ_LAUNCH_NOTES"
+
 exec /usr/libexec/aquarius-app-launch "$APP_ID" "Aquarius Editor" \
     ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} "$@"

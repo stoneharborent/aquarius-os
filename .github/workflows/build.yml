@@ -381,6 +381,21 @@ jobs:
             else bad "app-grid entry ${d} missing"; fi
             if [ -f "/usr/share/pixmaps/${app}.png" ]; then ok "icon installed"
             else bad "no icon at /usr/share/pixmaps/${app}.png — the grid would show a placeholder"; fi
+
+            # 7. the version stamp.
+            #    /usr is read-only on this kind of OS, so a baked-in app cannot
+            #    update itself in place. Aquarius Editor instead downloads a
+            #    newer copy of itself into the user's home folder, and at every
+            #    launch the OS compares that download against this file to decide
+            #    which one to start. No file, no comparison, and the app silently
+            #    stops accepting updates — with no error anywhere. Hence checking
+            #    it on the finished image.
+            v="$(cat "${dir}/VERSION" 2>/dev/null || true)"
+            if printf '%s' "$v" | grep -qE '^[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}(-[0-9A-Za-z.-]+)?$'; then
+              ok "VERSION says ${v}"
+            else
+              bad "${dir}/VERSION is missing or is not a bare version number (read: '${v}')"
+            fi
           done
 
           # --- Electron's sandbox helper, on the FINAL image -------------------
@@ -397,6 +412,36 @@ jobs:
               echo "       (the image build set it correctly, so this means the"
               echo "        rechunk/packaging step did not preserve the setuid bit)"
             fi
+          fi
+
+          # --- the app-update library, on the FINAL image ----------------------
+          # /usr/libexec/aquarius-app-overlay is what decides, at every launch,
+          # whether a copy of Aquarius Editor downloaded into the user's home
+          # folder is newer than the one built into the OS.
+          #
+          # Losing it does not break anything visibly: the launcher shrugs, starts
+          # the built-in copy, and the app just quietly never takes an update
+          # again. That is exactly the kind of silent loss worth a CI check.
+          #
+          # The three sums below are the ones that would ruin somebody's day if
+          # they came out wrong — most of all 0.10.0 against 0.9.0, which plain
+          # text comparison gets backwards. The full test suites are run during
+          # the build (build_files/creator-apps.sh) and on every pull request
+          # (.github/workflows/launcher-tests.yml); this is the last word, asked
+          # of the library that is actually about to be published.
+          ov=/usr/libexec/aquarius-app-overlay
+          if [ -r "$ov" ]; then
+            ok "$(basename "$ov") is installed"
+            # shellcheck source=/dev/null
+            . "$ov"
+            for case in "0.4.1 0.3.0 1" "0.3.0 0.4.1 -1" "0.10.0 0.9.0 1" "0.3.0 0.3.0 0"; do
+              set -- $case
+              got="$(aq_semver_compare "$1" "$2" 2>/dev/null || echo error)"
+              if [ "$got" = "$3" ]; then ok "version comparison: $1 vs $2 = $got"
+              else bad "version comparison: $1 vs $2 gave '${got}', expected '$3'"; fi
+            done
+          else
+            bad "$ov is missing — Aquarius Editor would silently stop taking updates"
           fi
 
           # --- our ujust recipes are actually in the menu ----------------------

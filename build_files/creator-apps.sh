@@ -293,6 +293,61 @@ bake_appimage() {
     find "${APP_ROOT}/${name}" -type f ! -perm -u+x -exec chmod 0644 {} +
     say "  permissions normalised (dirs 0755, programs 0755, data 0644)"
 
+    # --- WRITE DOWN WHICH VERSION THIS IS -------------------------------------
+    # A plain text file containing one line, e.g. "0.3.0", next to the app.
+    #
+    # WHY THE OPERATING SYSTEM NEEDS TO KNOW ITS OWN APP'S VERSION
+    # /usr is read-only on AquariusOS, so a baked-in app can never update itself
+    # in place. Aquarius Editor is therefore allowed to download a newer copy of
+    # itself into the user's home folder, and at every launch the OS has to
+    # answer one question: is that download actually NEWER than what I already
+    # have? It cannot answer that without knowing what it has. This file is the
+    # answer. The launcher reads it — see /usr/libexec/aquarius-app-overlay.
+    #
+    # WHERE THE NUMBER COMES FROM
+    # The release tag, with its leading "v" removed. The tag is the version:
+    # it is what the release is called, it is right there in the table at the top
+    # of this file, and nothing has to be parsed out of anything.
+    #
+    # It is then CHECKED against the name of the file that was actually
+    # downloaded (AquariusEditor-0.3.0-x86_64.AppImage), and the build stops if
+    # the two disagree. That catches the one mistake this could make: a tag
+    # pointing at a release whose attachment is a different build. Only the three
+    # numbers are compared, because a file name is allowed to carry other
+    # dash-separated words after them ("-x86_64") that are not part of a version.
+    local version file_version
+    version="${tag#v}"
+
+    if ! printf '%s' "$version" \
+         | grep -qE '^[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}(-[0-9A-Za-z.-]+)?$'; then
+        die "${name}: the release tag '${tag}' is not a version number." \
+            "" \
+            "The tag has to read like v0.3.0 (optionally v0.4.0-beta.1), because" \
+            "the number in it is written into ${APP_ROOT}/${name}/VERSION and the" \
+            "launcher compares downloaded updates against it." \
+            "" \
+            "Fix the tag in the AQUARIUS_APPS table at the top of this file."
+    fi
+
+    file_version="$(printf '%s' "$file" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    if [ -n "$file_version" ] && [ "$file_version" != "${version%%-*}" ]; then
+        die "${name}: the release tag and the downloaded file disagree about the version." \
+            "" \
+            "  tag says   ${version}" \
+            "  file named ${file}  (which reads as ${file_version})" \
+            "" \
+            "One of the two is wrong, and baking the wrong number in would make the" \
+            "app's updater compare against a version that was never shipped."
+    fi
+    if [ -z "$file_version" ]; then
+        echo "  NOTE: ${file} carries no version number in its name, so the tag" \
+             "(${version}) could not be cross-checked. Using it as it stands."
+    fi
+
+    printf '%s\n' "$version" >"${APP_ROOT}/${name}/VERSION"
+    chmod 0644 "${APP_ROOT}/${name}/VERSION"
+    say "  version stamped: ${version} → ${APP_ROOT}/${name}/VERSION"
+
     # A symlink pointing at a folder on the machine that built the AppImage is
     # dead weight in an OS image: it can never resolve, and it leaks the build
     # server's directory layout. Both of our apps ship at least one (the Writer's
@@ -475,6 +530,27 @@ for name in aquarius-editor aquarius-writer; do
     [ -x /usr/libexec/aquarius-app-launch ] \
         || die "/usr/libexec/aquarius-app-launch is missing — both launchers call it."
 
+    # --- the version stamp ---------------------------------------------------
+    # Without this file the launcher cannot tell whether a downloaded update is
+    # newer than what the OS already has, so it stops offering updates at all —
+    # silently, and correctly, which is exactly the sort of quiet loss of a
+    # feature that never gets noticed. So it is checked here instead.
+    [ -f "$app/VERSION" ] || die \
+        "${name}: ${app}/VERSION was not written." \
+        "" \
+        "The launcher compares downloaded updates against this file. Without it," \
+        "an update the app downloads would never be started. It is written by the" \
+        "\"WRITE DOWN WHICH VERSION THIS IS\" block earlier in this file."
+    baked_version="$(cat "$app/VERSION")"
+    printf '%s' "$baked_version" \
+        | grep -qE '^[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}(-[0-9A-Za-z.-]+)?$' || die \
+        "${name}: ${app}/VERSION does not contain a version number." \
+        "" \
+        "  it contains: ${baked_version}" \
+        "" \
+        "It must be one bare version number and nothing else — 0.3.0, not v0.3.0."
+    say "${name}: version ${baked_version}."
+
     # --- could an ordinary person actually run this? -------------------------
     # 1. Everything must be readable by everyone. An unreadable data file inside
     #    an app is just as fatal as an unrunnable program, and far more confusing.
@@ -548,6 +624,52 @@ if [ -e "$SANDBOX" ]; then
         "that abort is completely silent."
     say "aquarius-editor: chrome-sandbox is root:root 4755."
 fi
+
+# --- the update-overlay library, and the sums it does --------------------------
+# /usr/libexec/aquarius-app-overlay is the piece that decides, at every launch,
+# whether a copy of the app downloaded into the user's home folder is newer than
+# the one built into the OS. Two things are checked about it.
+#
+# FIRST, that it is there at all. It is sourced by /usr/bin/aquarius-editor, and
+# a missing file there does not crash anything — the launcher shrugs, starts the
+# built-in copy and carries on. That is the right behaviour at run time and a
+# terrible thing to ship, because the app would simply stop taking updates and
+# nobody would ever see an error. So it is caught here.
+#
+# SECOND, that it works. Two test suites, both run HERE, inside the image,
+# against the INSTALLED copy of the library — not against the one in the repo,
+# which is a different question:
+#
+#   test-aquarius-semver.sh   the version comparison. Comparing "0.10.0" against
+#                             "0.9.0" as ordinary text gives the wrong answer,
+#                             and the wrong answer here means every machine pins
+#                             itself to an old build forever.
+#   test-aquarius-overlay.sh  what the launcher DOES with that answer: which copy
+#                             it starts, and — the rule worth being nervous about
+#                             — that it never deletes a download that is newer
+#                             than the OS.
+[ -r /usr/libexec/aquarius-app-overlay ] \
+    || die "/usr/libexec/aquarius-app-overlay is missing." \
+           "" \
+           "Aquarius Editor reads it at every launch to find out whether a newer" \
+           "copy has been downloaded. Without it the app silently stops updating."
+
+for aq_test in test-aquarius-semver.sh test-aquarius-overlay.sh; do
+    [ -x "/ctx/tests/${aq_test}" ] || die \
+        "tests/${aq_test} is missing from the build context." \
+        "" \
+        "The Containerfile copies the tests/ folder in with 'COPY tests /tests'." \
+        "If that line was removed, this check cannot run and the update logic" \
+        "would ship untested."
+
+    say "Running tests/${aq_test} against the installed library..."
+    "/ctx/tests/${aq_test}" /usr/libexec/aquarius-app-overlay || die \
+        "tests/${aq_test} failed against the installed library." \
+        "" \
+        "See the output just above for which case gave the wrong answer. The" \
+        "library is /usr/libexec/aquarius-app-overlay (in the repo:" \
+        "system_files/usr/libexec/aquarius-app-overlay)."
+done
 
 # ==============================================================================
 # JOB 2 — queue the browsers for first boot
