@@ -73,6 +73,67 @@ knowing:
   Change the version tag, push, and the next build picks up the new release.
   Nothing else needs touching.
 
+### Unpacking an app means owning its permissions
+
+Added after the bench test of **28 August 2026**, which is the most useful thing
+in this document.
+
+Both apps shipped. Both appeared in the app grid. Clicking either one did
+**nothing at all** — no window, no error, no sign anything had been tried.
+
+The cause, for Aquarius Writer, was one file. Inside the AppImage, the file that
+starts the program carried permissions `0770`: its owner may run it, its group
+may run it, and nobody else may. Everything in an OS build runs as **root**, and
+root ignores permissions, so every check in the build passed. Then a real person
+with a real account clicked the icon and the answer was "Permission denied" —
+written to a terminal that was not there.
+
+The general lesson is bigger than the bug:
+
+> An AppImage carries whatever permissions its build machine happened to
+> produce. That normally never shows, because the person running an AppImage is
+> the person who downloaded it. **The moment you unpack one into `/usr`, those
+> become system permissions, shared by every account on the machine.** Making
+> them sane is part of installing, exactly as it is for a package.
+
+So the build now normalises the whole tree — folders `0755`, programs `0755`,
+data `0644`, nothing world-writable (that same AppImage shipped 53 files as
+`0777`) — and then **proves** it, twice: once during the build, and once on the
+finished image after packaging, in the "Verify creator apps" step of the build
+workflow. The checks are written as *"could somebody who is not root run this"*,
+because `[ -x file ]` asked as root cannot answer that question.
+
+### When an app will not start, it now says so
+
+The other half of that failure was the silence, and silence is a design choice
+we had made by accident. Both apps now start through a shared launcher,
+`/usr/libexec/aquarius-app-launch`, which:
+
+* **checks before it leaps** — the app is really installed, and this account can
+  really run the files involved;
+* **keeps the evidence** — everything the app prints goes to
+  `~/.local/state/aquarius/<app>.log`, with the previous run kept beside it as
+  `<app>.previous.log`;
+* **puts a window on screen** when the app fails to start or falls over, saying
+  what happened, where the log is, and what to type to watch it happen live.
+
+If you are chasing a problem, the two commands worth knowing are:
+
+```
+aquarius-writer                  # run it in a terminal and watch
+AQUARIUS_DEBUG=1 aquarius-writer # the same, with the graphics engine's own log
+```
+
+The launchers also carry the one workaround each app needs. Aquarius Writer is
+drawn by WebKitGTK, which has an unfixed disagreement with NVIDIA's driver that
+produces a blank window; on NVIDIA machines only, the launcher sets
+`WEBKIT_DISABLE_DMABUF_RENDERER=1`, which steps back to the older, still
+hardware-accelerated drawing path. Aquarius Editor is Electron, which aborts
+instantly and silently if its `chrome-sandbox` helper is present but not
+configured as root-owned `4755`; the launcher checks, and if it is wrong, keeps
+the app sandboxed the modern way instead of either dying or turning the sandbox
+off.
+
 ---
 
 ## Preinstalled: the two browsers
@@ -214,9 +275,8 @@ There is an **"Install Creator Apps"** entry (the checklist) *and* a separate
 **"Install DaVinci Resolve"** entry. That is deliberate, not a leftover:
 "DaVinci Resolve" is the name people will actually type into the app search, and
 somebody who wants only Resolve should not have to walk through a checklist to
-reach it. They lead to the same place — the Resolve entry runs
-`ujust install-resolve`, which is exactly what the checklist calls when Resolve
-is ticked.
+reach it. They lead to the same place — both run
+`/usr/libexec/aquarius-install-resolve` directly.
 
 ---
 
@@ -229,7 +289,29 @@ this repository or in the OS image.
 
 What AquariusOS ships instead is the shortest honest path to having it, reachable
 three ways — the first-login checklist, the "Install DaVinci Resolve" app entry,
-and `ujust install-resolve` — all of which run the same thing.
+and `ujust aquarius-resolve` — all of which run the same thing.
+
+> ### ⚠️ It is `ujust aquarius-resolve`, not `ujust install-resolve`
+>
+> `ujust install-resolve` is a **different** walkthrough that arrives with the
+> Universal Blue base image, in
+> `/usr/share/ublue-os/just/30-distrobox.just`. It works, but it is written for
+> people who already have the installer: it opens Blackmagic's page and then
+> immediately stops with *"Installer not found"* if the file is not already in
+> your home or Downloads folder. On 2026-08-28 that is exactly what happened to
+> the first person to try it on real hardware.
+>
+> AquariusOS cannot take that name — `just` gives a repeated recipe name to
+> whichever file was imported first, and ours is imported last, on purpose, so
+> that we never shadow the base image by accident. So ours has its own name, and
+> **nothing you click ever goes through `ujust`**: the checklist and the app-grid
+> entry both run our script directly. The only place the name matters is if you
+> type it yourself.
+>
+> The difference that matters: **ours waits.** It opens the download page and
+> then sits there, checking every few seconds, for as long as you need — and it
+> looks inside Downloads *and* one level of folders below it, because unzipping
+> the download is what most people do next.
 
 ### What the installer actually does
 
@@ -238,9 +320,18 @@ and `ujust install-resolve` — all of which run the same thing.
    and AMD/Intel cards need different graphics libraries.
 3. Makes sure your account is allowed to talk to the graphics card (the `render`
    and `video` groups). If it had to add you, it tells you to restart at the end.
-4. Opens Blackmagic's download page in your browser and waits for you to download
-   the free Linux version into your Downloads folder. It finds the file itself,
-   zipped or not.
+4. Opens Blackmagic's download page in your browser and then **waits** — with a
+   window saying so, and a message in the terminal every half minute — until the
+   download appears. There is no deadline and nothing to time. It looks in
+   Downloads, in the folders one level inside Downloads (unzipping makes one),
+   and in your home folder, and it copes with the `.zip` whether you opened it
+   or not.
+
+   It also tells you, twice, **not to run the installer yourself.** Blackmagic's
+   installer expects an ordinary Linux system: run on AquariusOS directly it
+   stops with a complaint about a missing package such as `zlib`. Nothing is
+   broken when that happens, but it is a dead end — the installer only works
+   inside the environment step 5 builds.
 5. Builds a **davincibox** — a sealed-off mini-Linux on your machine, sharing
    your home folder but with its own system libraries, holding everything Resolve
    needs. This is the well-established community solution for Resolve on
@@ -298,8 +389,10 @@ Full background on all of this: `docs/codec-research.md`.
 | `system_files/etc/xdg/autostart/aquarius-creator-apps-offer.desktop` | What starts that window at login. |
 | `system_files/usr/share/applications/aquarius-install-creator-apps.desktop` | "Install Creator Apps" — re-opens the window, forever. |
 | `system_files/usr/share/applications/aquarius-install-resolve.desktop` | "Install DaVinci Resolve" — the direct route. |
-| `system_files/usr/share/ublue-os/just/96-aquarius-creator.just` | The `ujust` recipes: `install-creator-apps`, `install-resolve`, `install-resolve-aac-plugin`. |
-| `system_files/usr/bin/aquarius-editor`, `…-writer` | Small launchers. Typing the name, or clicking the icon, comes here. |
+| `system_files/usr/share/ublue-os/just/96-aquarius-creator.just` | The `ujust` recipes: `install-creator-apps`, `aquarius-resolve`, `install-resolve-aac-plugin`. Read its header before adding a recipe — name collisions with the base image are silent, and one kind of collision breaks the whole `ujust` menu. |
+| `system_files/usr/libexec/aquarius-install-resolve` | **The DaVinci Resolve walkthrough.** A real script, so that nothing user-facing depends on winning a `ujust` name. |
+| `system_files/usr/bin/aquarius-editor`, `…-writer` | Small launchers. Typing the name, or clicking the icon, comes here. Each holds only what is true of that one app. |
+| `system_files/usr/libexec/aquarius-app-launch` | **What both of those call.** Pre-flight checks, the log file, and the error window. Read this one first. |
 | `system_files/usr/share/applications/aquarius-{editor,writer}.desktop` | The entries in the app grid. |
 
 On the installed machine, the two Aquarius apps live in

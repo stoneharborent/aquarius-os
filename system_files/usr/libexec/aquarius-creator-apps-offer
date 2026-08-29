@@ -216,10 +216,19 @@ fi
 if [ "$WANT_RESOLVE" -eq 1 ]; then
     notify "Opening the DaVinci Resolve setup — it will ask you a few questions." 10
 
+    # ⚠️ This calls OUR script by its full path, and never `ujust install-resolve`.
+    # Universal Blue ships a recipe of that name in 30-distrobox.just, it is
+    # imported before ours, and `just` silently resolves duplicate names in
+    # favour of the earlier import — so `ujust install-resolve` can never reach
+    # us. On 2026-08-28 a bench test proved it: upstream's version opened
+    # Blackmagic's download page and instantly failed with "Installer not found",
+    # because the tester had not had a chance to download anything yet. A first
+    # login must not depend on winning a name collision, so it does not.
+    # Full explanation: the header of 96-aquarius-creator.just.
     if command -v konsole >/dev/null 2>&1; then
-        konsole --noclose -e /usr/bin/ujust install-resolve >/dev/null 2>&1 &
+        konsole --noclose -e /usr/libexec/aquarius-install-resolve >/dev/null 2>&1 &
     elif command -v xdg-terminal-exec >/dev/null 2>&1; then
-        xdg-terminal-exec /usr/bin/ujust install-resolve >/dev/null 2>&1 &
+        xdg-terminal-exec /usr/libexec/aquarius-install-resolve >/dev/null 2>&1 &
     else
         # No terminal we recognise. Tell the truth and point at the app-grid
         # entry, which does exactly the same thing.

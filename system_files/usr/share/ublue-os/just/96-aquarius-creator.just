@@ -13,201 +13,79 @@
 # docs/creator-apps.md at https://github.com/stoneharborent/aquarius-os
 # ==============================================================================
 
+# ==============================================================================
+# DAVINCI RESOLVE — and why our recipe is NOT called `install-resolve`
+# ==============================================================================
+# The walkthrough itself is a real script:
+#
+#     /usr/libexec/aquarius-install-resolve
+#
+# and the recipe below only calls it. It moved out of this file on 2026-08-28,
+# after a bench test on real hardware, and the reason is worth knowing before
+# anybody "tidies" the obvious name back in.
+#
+# WHAT HAPPENED
+# The tester ran `ujust install-resolve` and got a walkthrough that opened
+# Blackmagic's download page and then, a second later, said:
+#
+#     Installer not found
+#     Please place the file DaVinci_Resolve_*_Linux.run in /home/… or /home/…/Downloads
+#
+# and quit — the exact failure ours exists to prevent. That message is not ours.
+# It comes from
+#
+#     /usr/share/ublue-os/just/30-distrobox.just
+#
+# which is part of the `ublue-os-just` package that every Universal Blue image
+# installs, AquariusOS included. (Bazzite used to have its own copy and deleted
+# it in September 2024, precisely because upstream now provides it — which is
+# why grepping the Bazzite repo for it finds nothing.)
+#
+# WHY OURS LOST, AND WHY IT ALWAYS WILL
+# `ujust` runs one big justfile that imports every recipe file in number order,
+# with `set allow-duplicate-recipes := true`, so a repeated name is not an error
+# — it is silently resolved. And `just`'s rule for two imports at the same depth
+# is (from the just manual, "Imports"):
+#
+#     "the one from the earlier import will override the one from the later
+#      import"
+#
+# — which the manual itself calls a bug it cannot fix without breaking
+# compatibility (casey/just#2540). `30-distrobox.just` is imported around nine
+# lines before our `96-…` file. This is not a coin toss we sometimes lose. From
+# number 96 we can NEVER win. So there is no point defining `install-resolve`
+# here at all, and it is deliberately not defined.
+#
+# WHAT WE DO INSTEAD
+# Nothing AquariusOS puts in front of a user goes through `ujust` for this:
+#
+#   the first-login tick-box window  → /usr/libexec/aquarius-install-resolve
+#   the app grid entry               → /usr/libexec/aquarius-install-resolve
+#   the terminal                     → `ujust aquarius-resolve`, below
+#
+# `ujust install-resolve` still exists and still runs upstream's version. It is
+# not broken, it is just not ours and not as gentle. Our documentation says
+# `aquarius-resolve`.
+#
+# ⚠️ IF YOU ARE TEMPTED TO FIGHT FOR THE NAME, READ THIS FIRST.
+# There are ways to win it — importing this file before 30-distrobox, or
+# appending the recipe to the top level of /usr/share/ublue-os/justfile, which
+# does override imports. Both were considered and rejected: they mean editing a
+# file the base image owns, on every build, and a base-image change to import
+# order becomes a silent regression.
+#
+# ⚠️ AND NEVER USE THESE THREE NAMES: `install-davinci`, `install-davinci-resolve`,
+# `install-resolve-studio`. Upstream defines them as ALIASES, and a recipe whose
+# name collides with an alias is a HARD ERROR that `allow-duplicate-recipes`
+# does not cover — it would take down the ENTIRE `ujust` menu on the shipped
+# image, not just that one recipe.
+# ==============================================================================
+
 # Set up DaVinci Resolve, the professional video editor (walks you through it)
 [group('AquariusOS')]
-install-resolve:
+aquarius-resolve:
     #!/usr/bin/bash
-    set -uo pipefail
-
-    echo ""
-    echo "=================================================================="
-    echo " Setting up DaVinci Resolve on AquariusOS"
-    echo "=================================================================="
-    echo ""
-    echo "DaVinci Resolve is made by Blackmagic Design. Their licence does not"
-    echo "allow anyone else to hand out the installer, so AquariusOS cannot"
-    echo "include it. You download it from them; this script does the rest."
-    echo ""
-    echo "What is about to happen, in plain terms:"
-    echo ""
-    echo "  1. A web page opens. Fill in Blackmagic's form and download the"
-    echo "     FREE Linux version. Put it in your Downloads folder."
-    echo "  2. This script builds a small, sealed-off Linux environment on"
-    echo "     your machine that has everything Resolve needs. Nothing about"
-    echo "     your actual system is changed."
-    echo "  3. Resolve is installed inside that environment and appears in"
-    echo "     your apps like any other program."
-    echo ""
-    echo "It takes roughly fifteen minutes, nearly all of it downloading."
-    echo "You can stop at any time with Ctrl+C and nothing will be left broken."
-    echo ""
-    read -r -p "Carry on? [y/N] " reply
-    case "${reply}" in
-        [yY]*) ;;
-        *) echo "No problem — nothing was changed."; exit 0 ;;
-    esac
-
-    # -- the tools we need ----------------------------------------------------
-    # These all ship with AquariusOS. Checking is a courtesy, so that a missing
-    # one produces a sentence instead of "command not found".
-    for tool in podman distrobox lshw; do
-        if ! command -v "${tool}" >/dev/null 2>&1; then
-            echo ""
-            echo "This needs '${tool}', which is missing from this system."
-            echo "That should not be possible on AquariusOS — please report it."
-            exit 1
-        fi
-    done
-
-    # -- which graphics card? -------------------------------------------------
-    # NVIDIA cards and everyone else need different builds of the environment.
-    # NVIDIA uses its own compute libraries; AMD and Intel use OpenCL.
-    if lshw -c video 2>/dev/null | grep -qi "driver=nvidia"; then
-        echo ""
-        echo "NVIDIA graphics detected — using the NVIDIA build."
-        DBOX_IMAGE="ghcr.io/zelikos/davincibox:latest"
-        DBOX_FLAGS="--device nvidia.com/gpu=all"
-    else
-        echo ""
-        echo "AMD or Intel graphics detected — using the OpenCL build."
-        DBOX_IMAGE="ghcr.io/zelikos/davincibox-opencl:latest"
-        DBOX_FLAGS=""
-    fi
-
-    # -- permission to talk to the graphics card ------------------------------
-    # Resolve needs your account to be in the 'render' and 'video' groups. Most
-    # accounts already are; if not, this adds them, and the change only takes
-    # effect after a restart.
-    NEEDS_RESTART=0
-    for grp in render video; do
-        if ! id -nG "${USER}" | tr ' ' '\n' | grep -qx "${grp}"; then
-            echo "Adding you to the '${grp}' group (Resolve needs it)..."
-            sudo usermod -aG "${grp}" "${USER}" || true
-            NEEDS_RESTART=1
-        fi
-    done
-
-    # -- get the installer from Blackmagic ------------------------------------
-    DOWNLOADS="${HOME}/Downloads"
-    mkdir -p "${DOWNLOADS}"
-
-    find_installer() {
-        find "${DOWNLOADS}" -maxdepth 2 \
-            \( -iname 'DaVinci_Resolve_*_Linux.run' -o -iname 'DaVinci_Resolve_*Linux*.zip' \) \
-            -print 2>/dev/null | sort | tail -1
-    }
-
-    INSTALLER="$(find_installer)"
-    if [ -z "${INSTALLER}" ]; then
-        echo ""
-        echo "------------------------------------------------------------------"
-        echo " Now download DaVinci Resolve"
-        echo "------------------------------------------------------------------"
-        echo "Opening Blackmagic's download page in your browser."
-        echo ""
-        echo "  * Choose DaVinci Resolve (the FREE one, not Studio) for LINUX."
-        echo "  * Fill in their form — they ask for a name and email."
-        echo "  * Save the file into your Downloads folder."
-        echo ""
-        xdg-open "https://www.blackmagicdesign.com/products/davinciresolve" >/dev/null 2>&1 &
-        echo "When the download has finished, come back here and press Enter."
-        read -r _
-        INSTALLER="$(find_installer)"
-    fi
-
-    if [ -z "${INSTALLER}" ]; then
-        echo ""
-        echo "No DaVinci Resolve installer was found in ${DOWNLOADS}."
-        echo "If you saved it somewhere else, move it there and run this again:"
-        echo "    ujust install-resolve"
-        exit 1
-    fi
-    echo ""
-    echo "Found: ${INSTALLER}"
-
-    # -- unpack it ------------------------------------------------------------
-    # Blackmagic hand out a .zip with a .run file inside. The .run file is
-    # itself an archive, and it knows how to unpack itself.
-    WORK="$(mktemp -d -t resolve-setup-XXXXXX)"
-    trap 'rm -rf "${WORK}"' EXIT
-    cd "${WORK}" || exit 1
-
-    case "${INSTALLER}" in
-        *.zip)
-            echo "Unzipping..."
-            if command -v unzip >/dev/null 2>&1; then
-                unzip -q "${INSTALLER}" -d "${WORK}"
-            else
-                python3 -c 'import sys,zipfile;zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' "${INSTALLER}" "${WORK}"
-            fi
-            RUNFILE="$(find "${WORK}" -maxdepth 2 -iname '*_Linux.run' | head -1)"
-            ;;
-        *)
-            RUNFILE="${INSTALLER}"
-            ;;
-    esac
-
-    if [ -z "${RUNFILE:-}" ] || [ ! -f "${RUNFILE}" ]; then
-        echo "Could not find the Linux installer inside ${INSTALLER}."
-        echo "It may be a Windows or Mac download by mistake."
-        exit 1
-    fi
-
-    echo "Unpacking the installer (this takes a minute)..."
-    chmod +x "${RUNFILE}"
-    if ! "${RUNFILE}" --appimage-extract >/dev/null 2>&1; then
-        echo "The installer would not unpack. It may have downloaded incompletely."
-        echo "Delete it from ${DOWNLOADS} and try again."
-        exit 1
-    fi
-
-    # -- build the sealed-off environment -------------------------------------
-    # 'distrobox' makes a container that shares your home folder but has its own
-    # system libraries. davincibox is a well-maintained community image whose
-    # whole purpose is holding what Resolve needs on Linux.
-    echo ""
-    echo "Building the environment Resolve runs in..."
-    echo "(This downloads roughly 2 GB the first time.)"
-    if podman container exists davincibox 2>/dev/null; then
-        echo "An environment called 'davincibox' already exists — reusing it."
-    else
-        # shellcheck disable=SC2086
-        if ! distrobox create -i "${DBOX_IMAGE}" ${DBOX_FLAGS} -n davincibox -Y; then
-            echo "Could not create the environment. Check your internet connection."
-            exit 1
-        fi
-    fi
-
-    # -- install Resolve into it ----------------------------------------------
-    echo ""
-    echo "Installing DaVinci Resolve. This is the long part."
-    if ! distrobox enter davincibox -- setup-davinci "${WORK}/squashfs-root/AppRun" distrobox; then
-        echo ""
-        echo "The install did not finish. Nothing on your real system was changed."
-        echo "You can safely try again with: ujust install-resolve"
-        exit 1
-    fi
-
-    echo ""
-    echo "=================================================================="
-    echo " Done. 'DaVinci Resolve' is now in your apps."
-    echo "=================================================================="
-    if [ "${NEEDS_RESTART}" -eq 1 ]; then
-        echo ""
-        echo "One thing left: RESTART THE COMPUTER before opening Resolve."
-        echo "Your account was just given permission to use the graphics card,"
-        echo "and that only takes effect after a restart."
-    fi
-    echo ""
-    echo "Two things worth knowing about Resolve on Linux:"
-    echo ""
-    echo "  * The FREE version cannot open ordinary phone/camera MP4 files."
-    echo "    That is Blackmagic's licensing, not AquariusOS. The AquariusOS"
-    echo "    ingest helper converts those files so they import cleanly."
-    echo "  * Even Resolve STUDIO imports MP4s with SILENT AUDIO on Linux."
-    echo "    If you own Studio, there is a community plug-in that fixes it:"
-    echo "        ujust install-resolve-aac-plugin"
-    echo ""
+    exec /usr/libexec/aquarius-install-resolve
 
 # Add the community AAC audio plug-in to DaVinci Resolve STUDIO (not the free one)
 [group('AquariusOS')]
@@ -254,7 +132,7 @@ install-resolve-aac-plugin:
     if ! podman container exists davincibox 2>/dev/null; then
         echo ""
         echo "DaVinci Resolve does not appear to be set up yet on this machine."
-        echo "Run this first:   ujust install-resolve"
+        echo "Run this first:   ujust aquarius-resolve"
         exit 1
     fi
 
