@@ -46,11 +46,17 @@ APPDIR="/usr/lib/aquarius/${APP_ID}"
 # and exits. Clicked from the app grid there is no terminal for that sentence to
 # appear in, so what a person sees is: nothing.
 #
-# The image build sets that file to root:root 4755, and the build checks it, and
-# the finished image is checked again after packaging (see the "Verify creator
-# apps" step in .github/workflows/build.yml). Three checks. But this is a
+# The image build sets that file to root:root 4755, the build checks it, and the
+# finished image is checked again after packaging (the "Verify creator apps" step
+# in .github/workflows/build.yml). The published image of 2026-08-28 was taken
+# apart to confirm the bit really does survive packaging: it reads -rwsr-xr-x
+# root root, so all of that machinery is working.
+#
+# This check is therefore not expected to fire. It is here because this is a
 # LAUNCHER: its job is that the app starts on the machine in front of it, not
-# that everything went well somewhere else three weeks ago. So it looks.
+# that everything went well somewhere else three weeks ago — and because the
+# failure it guards against is the silent kind, which is the kind worth spending
+# four lines on.
 #
 # If the helper is not set up correctly we do NOT reach for --no-sandbox, which
 # would turn the sandbox off altogether. We pass --disable-setuid-sandbox, which

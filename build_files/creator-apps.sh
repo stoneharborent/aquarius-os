@@ -529,10 +529,13 @@ done
 # file exists but is not root-owned with the setuid bit. Since we are the ones
 # who set it, we are the ones who check it.
 #
-# NOTE ON WHAT THIS DOES *NOT* PROVE: this runs inside the build, before the
-# image is re-packed for delivery ("rechunked"). Whether the setuid bit survives
-# that is a separate question, and it is answered separately, on the finished
-# image, by the "Verify creator apps" step in .github/workflows/build.yml.
+# DOES THE SETUID BIT SURVIVE PACKAGING? YES — checked, not assumed. The
+# published image of 2026-08-28 was pulled apart layer by layer and this file
+# reads `-rwsr-xr-x 0 0` in it, so `rpm-ostree compose build-chunked-oci` keeps
+# it intact. That question is nevertheless re-asked on every build, on the
+# finished image, by the "Verify creator apps" step in
+# .github/workflows/build.yml — a thing that is true today and load-bearing
+# forever is exactly the kind of thing to keep checking.
 SANDBOX="${APP_ROOT}/aquarius-editor/chrome-sandbox"
 if [ -e "$SANDBOX" ]; then
     mode="$(stat -c '%a' "$SANDBOX")"
