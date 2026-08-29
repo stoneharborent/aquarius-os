@@ -1,0 +1,150 @@
+#!/usr/bin/bash
+# ==============================================================================
+# AquariusOS — the front door for DaVinci Resolve
+# ==============================================================================
+# Plain English: Resolve does not run on AquariusOS directly. It lives inside a
+# small sealed-off Linux ("davincibox") that `ujust aquarius-resolve` builds, and
+# it is started by stepping into that box and running it there.
+#
+# The davincibox project already writes app-menu entries that do exactly that.
+# This script sits in front of them and hands the box a few things it cannot
+# work out for itself — chiefly WHAT YOUR MOUSE POINTER LOOKS LIKE.
+#
+# WHY THAT IS NOT A JOKE
+# ------------------------------------------------------------------------------
+# Reported from the bench, 2026-08-28: "the mouse cursor inside Resolve changes
+# theme and becomes much smaller than the desktop cursor."
+#
+# That is not Resolve being odd. It is the whole story of what a container is.
+# Resolve runs as an X11 application (davincibox's own run-davinci sets
+# QT_QPA_PLATFORM=xcb), and an X11 application decides what to draw for a
+# pointer by reading two environment variables — XCURSOR_THEME and XCURSOR_SIZE
+# — and then looking for that theme on ITS OWN disk. Inside the box:
+#
+#   * neither variable is set, because the box never saw your KDE settings; and
+#   * your cursor theme is not installed there either, because the box is a
+#     minimal Fedora with Resolve's dependencies and nothing else.
+#
+# So X falls back to its ancient built-in pointer at its ancient default size,
+# and you get a small black arrow in the middle of your own desktop. Every
+# containerised app has this problem; most people never fix it and assume the
+# app is ugly.
+#
+# THE FIX, IN THREE PARTS
+#   XCURSOR_THEME   read out of YOUR KDE settings, right now, at launch. Not
+#                   baked in when Resolve was installed — so changing your
+#                   cursor theme in System Settings just works, with no
+#                   re-running of anything.
+#   XCURSOR_SIZE    the same.
+#   XCURSOR_PATH    where to FIND that theme from inside the box. distrobox
+#                   mounts the whole host system at /run/host, so the themes on
+#                   your real disk are visible there. (This is not a guess:
+#                   davincibox's own run-davinci already reaches through
+#                   /run/host for OFX plug-ins and the system D-Bus socket.)
+#
+# HOW THE VALUES GET IN
+# `distrobox enter --additional-flags "--env NAME=value"` — the documented way,
+# straight out of distrobox's own manual for `enter`. Deliberately NOT relying
+# on distrobox happening to copy our environment across: a thing that is
+# documented is a thing that will still work next year.
+#
+# USAGE
+#   aquarius-resolve-launch [program-inside-the-box] [arguments…]
+# with no arguments it starts Resolve itself. The app-menu entries are pointed
+# at this script by /usr/libexec/aquarius-install-resolve.
+# ==============================================================================
+
+set -uo pipefail
+
+CONTAINER="davincibox"
+
+if ! command -v distrobox >/dev/null 2>&1; then
+    echo "distrobox is missing from this system — that should not be possible on AquariusOS." >&2
+    exit 1
+fi
+
+if ! podman container exists "$CONTAINER" 2>/dev/null; then
+    msg="DaVinci Resolve is not set up on this computer yet.
+
+Open your apps and click \"Install DaVinci Resolve\" to set it up, or run
+    ujust aquarius-resolve
+in a terminal."
+    if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v kdialog >/dev/null 2>&1; then
+        kdialog --title "DaVinci Resolve" --error "$msg" >/dev/null 2>&1
+    fi
+    printf '%s\n' "$msg" >&2
+    exit 1
+fi
+
+# ------------------------------------------------------------------------------
+# What does this person's pointer look like?
+# ------------------------------------------------------------------------------
+# KDE keeps it in kcminputrc, group [Mouse], keys cursorTheme and cursorSize.
+# kreadconfig6 is the supported way to ask; it is part of Plasma, so it is here.
+# kreadconfig5 is tried after it purely so this file survives a Plasma 5 machine.
+#
+# The fallbacks matter: on a brand-new account neither key has been written yet,
+# and BOTH tools correctly return nothing. "Nothing" is not an error, it means
+# "the defaults" — which on any KDE system are Breeze at 24.
+read_kde() {   # read_kde <group> <key>
+    local v=""
+    if command -v kreadconfig6 >/dev/null 2>&1; then
+        v="$(kreadconfig6 --file kcminputrc --group "$1" --key "$2" 2>/dev/null)"
+    fi
+    if [ -z "$v" ] && command -v kreadconfig5 >/dev/null 2>&1; then
+        v="$(kreadconfig5 --file kcminputrc --group "$1" --key "$2" 2>/dev/null)"
+    fi
+    printf '%s' "$v"
+}
+
+CURSOR_THEME="${XCURSOR_THEME:-$(read_kde Mouse cursorTheme)}"
+CURSOR_SIZE="${XCURSOR_SIZE:-$(read_kde Mouse cursorSize)}"
+[ -n "$CURSOR_THEME" ] || CURSOR_THEME="breeze_cursors"
+[ -n "$CURSOR_SIZE" ] || CURSOR_SIZE="24"
+
+# Where a theme may be found, from inside the box. Its own /usr/share/icons
+# first (in case it has the theme too, which is faster), then yours through
+# /run/host, then your personal ones. ${HOME} is the same folder in both places
+# — distrobox shares it — so those two entries need no translation.
+CURSOR_PATH="/usr/share/icons:/run/host/usr/share/icons:/run/host/usr/local/share/icons:${HOME}/.local/share/icons:${HOME}/.icons"
+
+ENV_FLAGS=(
+    --env "XCURSOR_THEME=${CURSOR_THEME}"
+    --env "XCURSOR_SIZE=${CURSOR_SIZE}"
+    --env "XCURSOR_PATH=${CURSOR_PATH}"
+)
+
+# ------------------------------------------------------------------------------
+# The size of Resolve's own window
+# ------------------------------------------------------------------------------
+# Also from the bench: "no way to hide or reduce the window size."
+#
+# davincibox starts Resolve with QT_AUTO_SCREEN_SCALE_FACTOR=1, which tells Qt to
+# scale the interface to the display. On a 4K screen that can open a window
+# larger than the screen it is on, and a window whose edges are past the edge of
+# the display has no edges left to drag.
+#
+# We do NOT override that by default: on most displays it is right, and guessing
+# somebody's preferred interface size is not a bug fix. It is one variable away
+# for anyone it bites:
+#
+#     AQUARIUS_RESOLVE_SCALE=1     turn the automatic scaling off entirely
+#     AQUARIUS_RESOLVE_SCALE=1.5   or pick a factor by hand
+#
+# and the window can always be wrestled back with the keyboard — see the notes
+# printed by the installer, and docs/creator-apps.md.
+if [ -n "${AQUARIUS_RESOLVE_SCALE:-}" ]; then
+    ENV_FLAGS+=(--env "QT_AUTO_SCREEN_SCALE_FACTOR=0")
+    ENV_FLAGS+=(--env "QT_SCALE_FACTOR=${AQUARIUS_RESOLVE_SCALE}")
+fi
+
+# `distrobox enter -a` takes ONE string, so the flags are joined into one.
+# None of the values can contain a space in practice (a cursor theme name is a
+# directory name), and joining is what the documented examples do.
+EXTRA=""
+for f in "${ENV_FLAGS[@]}"; do
+    EXTRA="${EXTRA}${EXTRA:+ }${f}"
+done
+
+exec distrobox enter -n "$CONTAINER" --additional-flags "$EXTRA" \
+    -- /usr/bin/run-davinci "$@"

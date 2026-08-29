@@ -87,6 +87,38 @@ aquarius-resolve:
     #!/usr/bin/bash
     exec /usr/libexec/aquarius-install-resolve
 
+# Re-point DaVinci Resolve's menu entries at the AquariusOS launcher (fixes the tiny cursor)
+[group('AquariusOS')]
+aquarius-resolve-fixups:
+    #!/usr/bin/bash
+    set -uo pipefail
+
+    # The install does this already. This recipe exists for the one case where
+    # it needs doing again: davincibox rewrites the app-menu entries whenever
+    # its own `add-davinci-launcher` runs, which puts them back to stepping
+    # into the container directly — and then the mouse pointer inside Resolve
+    # goes back to being a small black arrow.
+    #
+    # It does NOT need running when you change your cursor theme. The launcher
+    # reads that fresh every time Resolve starts.
+    APPS_DIR="${HOME}/.local/share/applications"
+    patched=0
+    for entry in "${APPS_DIR}"/DaVinci*.desktop "${APPS_DIR}"/blackmagicraw*.desktop; do
+        [ -f "${entry}" ] || continue
+        if grep -q '^Exec=.*run-davinci ' "${entry}"; then
+            sed -i 's|^Exec=.*run-davinci |Exec=/usr/libexec/aquarius-resolve-launch |' "${entry}"
+            patched=$((patched + 1))
+        fi
+    done
+    update-desktop-database "${APPS_DIR}" >/dev/null 2>&1 || :
+
+    if [ "${patched}" -gt 0 ]; then
+        echo "Updated ${patched} DaVinci Resolve menu entries."
+    else
+        echo "Nothing to change — the menu entries already point at the AquariusOS launcher,"
+        echo "or DaVinci Resolve is not installed on this machine yet."
+    fi
+
 # Add the community AAC audio plug-in to DaVinci Resolve STUDIO (not the free one)
 [group('AquariusOS')]
 install-resolve-aac-plugin:

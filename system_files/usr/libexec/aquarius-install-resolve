@@ -377,6 +377,57 @@ if ! distrobox enter davincibox -- setup-davinci "${WORK}/squashfs-root/AppRun" 
     exit 1
 fi
 
+# ==============================================================================
+# MAKE IT FEEL LIKE PART OF THE COMPUTER
+# ==============================================================================
+# davincibox has just written app-menu entries into
+# ~/.local/share/applications/ that step into the container and run Resolve.
+# They work. We point them at our own front door instead, which does the same
+# thing plus the handful of things a container cannot know about the desktop
+# around it — mainly what your mouse pointer is supposed to look like.
+#
+# Why this is a rewrite of THEIR file rather than a file of our own: the entries
+# are generated at install time from Resolve's own .desktop files, which carry
+# the real names, icons and MIME types. Regenerating that ourselves would mean
+# owning a copy of somebody else's data forever. Editing one line of Exec= does
+# not.
+#
+# It is written to be safe when it does not match: if the line is not the shape
+# we expect, we leave the file exactly as it was and say so. A slightly wrong
+# cursor is a far better outcome than a launcher that does not launch.
+# ------------------------------------------------------------------------------
+
+echo ""
+echo "Tidying up the app-menu entries..."
+
+APPS_DIR="${HOME}/.local/share/applications"
+patched=0
+skipped=0
+for entry in "${APPS_DIR}"/DaVinci*.desktop "${APPS_DIR}"/blackmagicraw*.desktop; do
+    [ -f "${entry}" ] || continue
+    # Their line looks like:
+    #   Exec=distrobox enter -n davincibox -- /usr/bin/run-davinci /opt/resolve/bin/resolve %u
+    # We want everything AFTER run-davinci to survive untouched.
+    if grep -q '^Exec=.*run-davinci ' "${entry}"; then
+        sed -i 's|^Exec=.*run-davinci |Exec=/usr/libexec/aquarius-resolve-launch |' "${entry}"
+        patched=$((patched + 1))
+    else
+        skipped=$((skipped + 1))
+    fi
+done
+
+if [ "${patched}" -gt 0 ]; then
+    echo "  ${patched} entries now use the AquariusOS launcher."
+fi
+if [ "${skipped}" -gt 0 ]; then
+    echo "  ${skipped} entries were left alone — they did not look the way we expected."
+    echo "  Resolve will still start; the mouse pointer inside it may look wrong."
+fi
+
+# The menu caches what it has seen. Without this the entries can take a login to
+# appear or update.
+update-desktop-database "${APPS_DIR}" >/dev/null 2>&1 || :
+
 echo ""
 echo "=================================================================="
 echo " Done. 'DaVinci Resolve' is now in your apps."
@@ -389,6 +440,32 @@ if [ "${NEEDS_RESTART}" -eq 1 ]; then
 fi
 echo ""
 echo "You can delete the file you downloaded — Resolve is installed now."
+echo ""
+echo "------------------------------------------------------------------"
+echo " If Resolve's window is bigger than your screen"
+echo "------------------------------------------------------------------"
+echo "Resolve sizes its own window, and on a 4K display it sometimes opens"
+echo "one larger than the screen — with its edges, and its close and"
+echo "minimise buttons, past the edge of the display. It looks like a"
+echo "window you cannot move, shrink or get rid of. You can. The desktop"
+echo "can drive any window from the keyboard, whether or not you can see"
+echo "its edges:"
+echo ""
+echo "  Hold Meta and DRAG anywhere in the window   move it"
+echo "  Hold Meta and RIGHT-DRAG anywhere in it     resize it"
+echo "  Alt+F3                                      the window menu"
+echo "                                              (Move, Resize, Minimise…)"
+echo "  Meta+PageDown                               minimise"
+echo "  Meta+PageUp                                 maximise"
+echo "  Meta+Backspace                              restore it afterwards"
+echo ""
+echo "(Meta is the key with the Windows or Command symbol on it. Move and"
+echo "Resize have no key of their own — they live in the Alt+F3 menu.)"
+echo ""
+echo "If it keeps happening, start Resolve once with the interface scaling"
+echo "turned off, from a terminal:"
+echo ""
+echo "    AQUARIUS_RESOLVE_SCALE=1 /usr/libexec/aquarius-resolve-launch"
 echo ""
 echo "Two things worth knowing about Resolve on Linux:"
 echo ""

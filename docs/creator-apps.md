@@ -363,6 +363,62 @@ and `ujust aquarius-resolve` — all of which run the same thing.
 If anything fails, it says so and stops. Nothing is left half-installed, and
 running it again is always safe.
 
+### Two things the container cannot know on its own
+
+Both found on the bench of 28 August 2026, after Resolve was installed and
+working.
+
+**The mouse pointer was the wrong theme and much too small.** This is not a
+Resolve quirk, it is what a container is. Resolve runs as an X11 application,
+and an X11 application decides what to draw for a pointer by reading
+`XCURSOR_THEME` and `XCURSOR_SIZE` and then finding that theme on *its own*
+disk. Inside the box neither is set — it never saw your KDE settings — and your
+theme is not installed there either, so X falls back to its ancient built-in
+arrow at its ancient default size.
+
+AquariusOS now starts Resolve through `/usr/libexec/aquarius-resolve-launch`,
+which reads your cursor theme and size out of KDE **at the moment you launch**
+and hands them to the container, along with an `XCURSOR_PATH` that reaches back
+through `/run/host` to the themes on your real disk. Because it reads them
+fresh every time, changing your cursor in System Settings just works — nothing
+to re-run.
+
+The installer re-points DaVinci's app-menu entries at that launcher. If
+davincibox ever rewrites them (it does that whenever its own
+`add-davinci-launcher` runs) the pointer goes small again; `ujust
+aquarius-resolve-fixups` puts it back.
+
+**The window could not be minimised or made smaller.** Resolve sizes its own
+window, and davincibox starts it with Qt's automatic display scaling on. On a
+4K screen that can produce a window bigger than the screen it is on — and a
+window whose edges are past the edge of the display has no edges left to drag.
+
+There is nothing to fix in the window itself; the desktop can already drive any
+window from the keyboard, seen or unseen. These are Plasma's defaults, and
+AquariusOS does not change them (verified against KWin's own
+`src/useractions.cpp` and `kwin.kcfg`):
+
+| | |
+|---|---|
+| **Meta + drag** anywhere in the window | move it |
+| **Meta + right-drag** anywhere in it | resize it |
+| **Alt + F3** | the window menu — Move, Resize, Minimise, and the rest |
+| **Meta + PageDown** | minimise |
+| **Meta + PageUp** | maximise |
+| **Meta + Backspace** | restore afterwards |
+
+Note that Move and Resize have **no key of their own** in Plasma — they are
+reachable from the Alt+F3 menu, or by the mouse gestures above. If the oversized
+window is a recurring nuisance rather than a one-off, start Resolve once with
+the scaling off:
+
+```
+AQUARIUS_RESOLVE_SCALE=1 /usr/libexec/aquarius-resolve-launch
+```
+
+We deliberately do **not** turn that scaling off by default. On most displays it
+is right, and choosing somebody's interface size for them is not a bug fix.
+
 ### The two things about Resolve on Linux
 
 Both are Blackmagic's decisions, and no operating system can change them from the
@@ -409,6 +465,7 @@ Full background on all of this: `docs/codec-research.md`.
 | `system_files/usr/share/applications/aquarius-install-resolve.desktop` | "Install DaVinci Resolve" — the direct route. |
 | `system_files/usr/share/ublue-os/just/96-aquarius-creator.just` | The `ujust` recipes: `install-creator-apps`, `aquarius-resolve`, `install-resolve-aac-plugin`. Read its header before adding a recipe — name collisions with the base image are silent, and one kind of collision breaks the whole `ujust` menu. |
 | `system_files/usr/libexec/aquarius-install-resolve` | **The DaVinci Resolve walkthrough.** A real script, so that nothing user-facing depends on winning a `ujust` name. |
+| `system_files/usr/libexec/aquarius-resolve-launch` | What DaVinci's menu entries actually run. Hands the container your cursor theme, and nothing else it can work out for itself. |
 | `system_files/usr/bin/aquarius-editor`, `…-writer` | Small launchers. Typing the name, or clicking the icon, comes here. Each holds only what is true of that one app. |
 | `system_files/usr/libexec/aquarius-app-launch` | **What both of those call.** Pre-flight checks, the log file, and the error window. Read this one first. |
 | `system_files/usr/share/applications/aquarius-{editor,writer}.desktop` | The entries in the app grid. |

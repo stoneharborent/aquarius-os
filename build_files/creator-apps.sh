@@ -589,6 +589,12 @@ systemctl enable aquarius-flatpak-preinstall.service
     || die "The creator-apps offer is not wired into start-up."
 [ -f /usr/share/applications/aquarius-install-creator-apps.desktop ] \
     || die "\"Install Creator Apps\" is missing from the app grid."
+[ -x /usr/libexec/aquarius-install-resolve ] \
+    || die "The DaVinci Resolve walkthrough is missing or not executable."
+[ -x /usr/libexec/aquarius-resolve-launch ] \
+    || die "The DaVinci Resolve launcher is missing or not executable."
+[ -f /usr/share/applications/aquarius-install-resolve.desktop ] \
+    || die "\"Install DaVinci Resolve\" is missing from the app grid."
 
 # ==============================================================================
 # JOB 4 — make our `ujust` recipes visible

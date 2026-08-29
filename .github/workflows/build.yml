@@ -336,11 +336,10 @@ jobs:
           else
             bad "96-aquarius-creator.just is not imported — 'ujust' would not list our recipes"
           fi
-          if [ -x /usr/libexec/aquarius-install-resolve ]; then
-            ok "the DaVinci Resolve walkthrough is installed"
-          else
-            bad "/usr/libexec/aquarius-install-resolve is missing or not runnable"
-          fi
+          for f in /usr/libexec/aquarius-install-resolve /usr/libexec/aquarius-resolve-launch; do
+            if [ -x "$f" ]; then ok "$(basename "$f") is installed"
+            else bad "$f is missing or not runnable"; fi
+          done
 
           # --- desktop entries are valid --------------------------------------
           # Only "error:" lines fail the build. desktop-file-validate also emits
