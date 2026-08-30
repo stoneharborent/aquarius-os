@@ -43,10 +43,27 @@
 #   is the macOS behaviour, and it is the behaviour AquariusTransfer and the
 #   ingest helper are being built to assume.
 #
-#   This does NOT replace what Bazzite already does. Bazzite ships a separate
-#   udev-based service (ublue-os-media-automount-udev) that mounts labelled
-#   INTERNAL btrfs/ext4 partitions under /run/media/system at boot. That covers
-#   fixed disks. This file covers the removable ones. They do not overlap.
+#   This does NOT replace what Bazzite already does, and since 2026-08-30 it is
+#   one of THREE things on this machine that mount drives. They are deliberately
+#   layered and they do not fight, because each one skips anything that is
+#   already mounted:
+#
+#     1. Bazzite's ublue-os-media-automount.service
+#        Labelled INTERNAL btrfs and ext4 partitions, at boot, into
+#        /run/media/system. Inherited; we do not touch it.
+#
+#     2. AquariusOS's aquarius-internal-automount.service   ← the new one
+#        Everything (1) walks past: NTFS (the Windows game drive), exFAT, XFS,
+#        F2FS, FAT, and ext4/btrfs drives nobody bothered to name. Also at boot,
+#        also into /run/media/system. A system service, so it works for every
+#        account on the machine including ones that already existed.
+#        Read /usr/libexec/aquarius-internal-automount for the full reasoning.
+#
+#     3. THIS FILE
+#        KDE's per-user automounter. Covers the things the two boot-time
+#        services cannot: anything plugged in while you are sitting there, and
+#        (since the login switch was turned on below) anything already in the
+#        machine when you log in.
 # ==============================================================================
 
 [General]
@@ -93,25 +110,63 @@ AutomountOnPlugin=true
 AutomountUnknownDevices=true
 
 # ------------------------------------------------------------------------------
-# Deliberately left OFF: mounting everything at login
+# …and mount everything again at login
 # ------------------------------------------------------------------------------
-# This is written out rather than omitted, because "we thought about it and said
-# no" is more useful to the next person than silence. The value below is also
-# KDE's own default, so this line changes nothing — it only records the
-# decision.
+# ⚠️ DECISION REVERSED — Royce, 2026-08-30.
 #
-# Turning it on would mount every storage volume the machine can see at every
-# login, unknown ones included. On a dual-boot gaming PC — a very ordinary
-# AquariusOS machine — that means the Windows partition gets mounted every time
-# you log in, and any encrypted volume pops a password prompt at you before you
-# have opened anything. The behaviour we actually wanted is about plugging
-# things IN, which is the setting above.
+# This line used to read `AutomountOnLogin=false`, and the note here argued for
+# leaving it off. The argument was: turning it on mounts the Windows partition at
+# every login, and pops a password prompt for any encrypted volume before you
+# have opened anything.
 #
-# Cost of leaving it off: a card that was already sitting in the reader when the
-# machine booted waits for one click. That is a fair price.
-#   Source (default false): AutomounterSettingsBase.kcfg, entry
-#   "AutomountOnLogin".
-AutomountOnLogin=false
+# Royce has overruled that. The Windows partition being mounted every time is no
+# longer a cost — it is the POINT. On AquariusOS every internal data drive is
+# meant to be sitting there ready, exactly the way an external disk is on a Mac,
+# and a dual-boot gaming PC's Windows game drive is the single most important
+# example of that. So this switch is now ON.
+#
+# WHAT THIS SETTING ACTUALLY BUYS US, given the rest of the system
+#   The heavy lifting for internal drives is NOT done here. It is done by a
+#   system service that runs before anybody logs in:
+#     /usr/libexec/aquarius-internal-automount
+#     /usr/lib/systemd/system/aquarius-internal-automount.service
+#   That service is what mounts NTFS, exFAT, XFS and unlabelled ext4 drives, and
+#   it is what makes this work for accounts that already existed. Read its
+#   comments for the full reasoning; the short version is that a system service
+#   reaches every account and every boot, and a per-user setting like this one
+#   cannot.
+#
+#   This line is the second belt. It catches the case the boot-time service
+#   cannot: media that KDE, not the OS, is responsible for — most usefully a
+#   camera card that was already sitting in the reader when the machine was
+#   switched on, which used to wait for one click and now does not.
+#
+#   The two do not fight. Whichever gets there first mounts the volume; the other
+#   sees it is already mounted and does nothing.
+#
+# THE HONEST COST — encrypted volumes
+#   This is real and it is worth knowing about before it surprises you. If this
+#   machine has a LUKS-encrypted Linux drive or a BitLocker-encrypted Windows
+#   drive attached, KDE will now try to open it as you log in, and opening an
+#   encrypted drive means asking for its password. So you may get a password
+#   prompt shortly after logging in, for a drive you were not thinking about.
+#
+#   Nothing is unlocked without that password, and cancelling the prompt is
+#   harmless — the drive simply stays locked and you can unlock it later by
+#   clicking it in the Files app.
+#
+#   (The boot-time service deliberately does NOT touch encrypted drives at all,
+#   for the same reason: it runs before anyone is logged in, so it has nobody to
+#   ask.)
+#
+#   If the prompt is unwelcome, this is one tick-box: System Settings →
+#   Removable Storage → Removable Devices → "Automatically mount all removable
+#   media at login". Untick it and your choice wins from then on, permanently.
+#
+#   Source (KDE's own default is false): AutomounterSettingsBase.kcfg, entry
+#   "AutomountOnLogin"; used by AutomounterSettings::shouldAutomountDevice() for
+#   the Login case.
+AutomountOnLogin=true
 
 # ------------------------------------------------------------------------------
 # Known limitation — this reaches NEW accounts reliably, old ones maybe not

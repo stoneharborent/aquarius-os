@@ -1,0 +1,62 @@
+# ==============================================================================
+# AquariusOS — mount the internal data drives at boot
+# ==============================================================================
+# Plain English: this is the note that tells the machine "when you start up, run
+# the drive-mounting script". The script itself, with all the reasoning in it, is
+# /usr/libexec/aquarius-internal-automount — read that one first if you want to
+# know WHAT gets mounted and what deliberately does not.
+#
+# It is a "oneshot": it runs, finishes, and stays finished. It is not a
+# background process sitting there watching things.
+#
+# WHY IT IS SAFE
+#   Nothing on this machine waits for it (no other unit lists it in Requires=),
+#   and every mount it makes carries the `nofail` option. So a drive that is
+#   broken, unplugged, or busy cannot stop AquariusOS from booting. The worst
+#   case is a missing icon and an explanation in the log.
+#
+# TO SEE WHAT IT DID
+#   systemctl status aquarius-internal-automount
+#   journalctl -u aquarius-internal-automount
+#
+# TO RUN IT AGAIN WITHOUT REBOOTING
+#   sudo systemctl restart aquarius-internal-automount
+# ==============================================================================
+
+[Unit]
+Description=Mount the internal data drives (AquariusOS)
+Documentation=https://github.com/stoneharborent/aquarius-os/blob/main/docs/drives-and-desktop-icons.md
+
+# local-fs.target is systemd's way of saying "the disks this machine needs in
+# order to be itself are now mounted". Waiting for it means /etc/fstab has
+# already had its turn, so by the time we look, anything fstab wanted is mounted
+# and we will correctly skip it.
+After=local-fs.target
+Requires=local-fs.target
+
+# Bazzite ships an automounter of its own for labelled ext4 and btrfs drives.
+# Running after it means it gets first refusal on every drive it understands,
+# and we only ever pick up what it left behind. Two services, one pass each, no
+# race. If that service is ever removed from Bazzite, this line quietly does
+# nothing — After= on a unit that does not exist is not an error.
+After=ublue-os-media-automount.service
+
+# The desktop should be able to show these drives the moment somebody logs in,
+# so get in before the login screen rather than after it.
+Before=display-manager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/aquarius-internal-automount
+
+# Stay "active" after finishing, so `systemctl status` shows a tidy green
+# "active (exited)" rather than looking like it died.
+RemainAfterExit=yes
+
+# A wedged disk controller can make a mount attempt hang. The script already
+# gives each individual drive a one-minute limit; this is the outer backstop for
+# the whole pass, so a machine full of sick disks still finishes booting.
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

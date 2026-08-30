@@ -1,0 +1,603 @@
+#!/usr/bin/env python3
+# ==============================================================================
+# AquariusOS — mount every internal data drive at boot, Windows drives included
+# ==============================================================================
+# WHAT THIS DOES, IN ONE SENTENCE
+#   At every boot, this looks at every disk bolted inside the machine, works out
+#   which ones hold files a person would want, and mounts them — so a second SSD
+#   or a Windows game drive is simply THERE when you log in, with no clicking.
+#
+# WHERE THE DRIVES APPEAR
+#   /run/media/system/<name of the drive>
+#   That folder is not something we invented. It is where Bazzite's own
+#   automounter puts fixed disks, and where `systemd-mount` puts a disk when you
+#   do not tell it otherwise, so everything on the machine already agrees about
+#   it. The desktop shows these as icons — see the companion tool
+#   /usr/libexec/aquarius-desktop-volumes.
+#
+# WHY THIS FILE EXISTS AT ALL — what Bazzite already does, and the gap
+#   Bazzite ships `ublue-os-media-automount-udev`, which is a service of exactly
+#   this shape (a boot-time script that calls `systemd-mount`). We are not
+#   replacing it and we do not fight it: anything it has already mounted is
+#   skipped here, because "is it mounted already?" is the first question this
+#   script asks.
+#
+#   But their script deliberately handles TWO filesystems and no others —
+#   ext4 and btrfs — and only when the partition carries a name (a label).
+#   Everything else it walks past:
+#
+#       if block_dev["fstype"] not in FS_MAPPINGS.keys():   # ext4, btrfs
+#           print(f"Skipping ...: unsupported filesystem type ...")
+#       ...
+#       if not any([block_dev["label"], block_dev["partlabel"]]):
+#           print(f"Skipping ...: no label or partlabel")
+#
+#     Source: ublue-os/packages, packages/ublue-os-media-automount-udev/
+#     ublue-os-media-automount.py (v0.19), function filter_dev().
+#
+#   That leaves the single most common drive on a gaming PC unmounted: the
+#   NTFS partition Windows lives on, or the NTFS drive the Steam library is on
+#   in a dual-boot machine. It also leaves out exFAT (the format most big
+#   portable SSDs and camera drives ship in), XFS, F2FS, and any ext4 drive
+#   whose owner never bothered to name it.
+#
+#   ROYCE'S DECISION, 2026-08-30: on AquariusOS, every internal data drive
+#   mounts itself. This script is that decision.
+#
+# WHY A BOOT SERVICE AND NOT ONE OF THE OTHER FOUR OPTIONS
+#   Four mechanisms were on the table. The trade-off, written out honestly:
+#
+#   1. THIS ONE — a small boot-time service that mounts things (chosen).
+#      + It is a system service, so it works for EVERY account on the machine,
+#        including accounts that already existed before this shipped. Nothing
+#        has to be copied into anybody's home folder and nothing has to be
+#        clicked once.
+#      + It lives entirely in /usr, which IS the OS image, so an OS update
+#        updates it and nothing local can drift away from it.
+#      + We write the skip rules ourselves, so "never touch swap, the EFI boot
+#        partition, Windows' recovery partition or the disk we are booted from"
+#        is something we can actually guarantee and can be read in one file.
+#      + It is the same shape as the thing Bazzite already ships, so there is
+#        one pattern on the machine instead of two.
+#      − An internal drive plugged in while the machine is RUNNING is not
+#        picked up until the next boot. See "KNOWN LIMITATION" at the bottom.
+#
+#   2. Flipping KDE's "mount everything at login" switch on its own.
+#      − It is per-user: it does nothing at all until somebody logs in, and it
+#        would not mount a drive for a machine sitting at the login screen.
+#      − It mounts through udisks2, which chooses the NTFS driver itself; we
+#        want to name the driver (see the ntfs3 note below).
+#      We turned that switch on ANYWAY, as a second belt — it is what catches a
+#      card that was already in the reader at boot. See the decision written
+#      into /usr/share/aquarius/xdg/kded_device_automounterrc.
+#
+#   3. A systemd mount generator, or writing entries into /etc/fstab.
+#      − /etc/fstab is per-machine. It cannot be shipped inside an OS image,
+#        because the image does not know what disks your machine has.
+#      − A generator would have to be handed the same skip rules as this file
+#        and would then be a harder-to-read version of it, running at a much
+#        more dangerous moment in boot: a generator that gets something wrong
+#        can stop the machine booting. This script cannot — every mount it makes
+#        is a transient unit that nothing else depends on.
+#
+#   4. A udisks2 policy file.
+#      − udisks2 policy says who is ALLOWED to mount what. It never mounts
+#        anything by itself. Wrong tool.
+#
+# WHY ntfs3 AND NOT ntfs-3g
+#   There are two ways to read a Windows disk on Linux. `ntfs-3g` is the old one
+#   and runs in userspace through FUSE; `ntfs3` is a driver inside the Linux
+#   kernel itself, contributed by Paragon Software and merged in Linux 5.15.
+#   The kernel one is dramatically faster — which is the whole ballgame when the
+#   drive holds a Steam library — and it is what a modern Fedora kernel ships.
+#   So this script names it explicitly (`--type=ntfs3`) rather than saying
+#   "ntfs" and letting the system pick, because "let the system pick" can land
+#   on ntfs-3g and quietly halve your read speed.
+#     Source: Linux kernel Documentation/filesystems/ntfs3.rst
+#
+# ==============================================================================
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+
+# ------------------------------------------------------------------------------
+# WHICH FILESYSTEMS WE MOUNT, AND HOW
+# ------------------------------------------------------------------------------
+# The key is the filesystem type as `lsblk` reports it. The value is the list of
+# mount options handed to the kernel.
+#
+# Options that appear nearly everywhere, and what they mean:
+#   rw          read and write (the default; written out so it is obvious)
+#   noatime     do not write to the disk every time a file is merely READ.
+#               Saves a great deal of pointless writing, especially on SSDs.
+#   nofail      if this mount goes wrong, shrug and carry on. Nothing on this
+#               machine is allowed to fail to boot because a data drive is
+#               missing.
+#   users       any logged-in person may unmount this drive again without being
+#               asked for a password — so "eject" in the Files app just works.
+#   exec        programs on this drive may be run. This has to be written out
+#               because `users` above quietly turns it off, and a Steam library
+#               on a data drive is a folder full of programs.
+#   x-gvfs-show list this drive in GTK apps' file dialogs too. KDE finds it
+#               either way; this is for the GNOME-flavoured half of the app
+#               world (Firefox, Chrome, OBS, Blender).
+#
+# The `uid=` / `gid=` / `umask=` group only appears on the Windows and camera-card
+# filesystems (ntfs3, exfat, vfat). Those formats have no idea what a Linux user
+# is, so the kernel has to be TOLD who owns every file on the disk. See
+# desktop_owner_ids() further down for who we name and why.
+#
+# ⚠️ Anything NOT in this table is left alone. That is the safety rule: a
+# filesystem we have not thought about is a filesystem we do not touch.
+# ------------------------------------------------------------------------------
+
+# Written as a function because two of the entries need the owner's numeric id,
+# which we have to look up on the running machine.
+def mount_options(fstype: str, uid: int, gid: int) -> str | None:
+    posix_common = "rw,noatime,nofail,users,exec,x-gvfs-show"
+
+    # Filesystems that store Linux ownership and permissions themselves. The
+    # kernel reads who owns what off the disk, so we say nothing about it.
+    if fstype == "ext4":
+        # errors=remount-ro: if the filesystem starts reporting corruption, flip
+        # it to read-only rather than carrying on writing to a sick disk.
+        return "defaults,errors=remount-ro," + posix_common
+    if fstype == "btrfs":
+        # These five are Bazzite's own btrfs options, copied deliberately so a
+        # btrfs drive is mounted the same way whichever of the two services on
+        # this machine got to it first.
+        #   Source: ublue-os-media-automount.py, FS_MAPPINGS["btrfs"].
+        return (
+            "defaults,lazytime,commit=120,discard=async,"
+            "compress-force=zstd:1,space_cache=v2," + posix_common
+        )
+    if fstype in ("xfs", "f2fs"):
+        return "defaults," + posix_common
+
+    # Filesystems with no notion of Linux ownership. We name an owner.
+    #   umask=0022 → the owner can read, write and run; everybody else can read
+    #   and run but not write. That is the ordinary shape of a personal file.
+    if fstype == "ntfs3":
+        # windows_names: refuse to CREATE a filename Windows itself could not
+        #   open (the characters " * / : < > ? \ | and control characters).
+        #   Without it, Linux will happily write a file that Windows can then
+        #   never see, which is a nasty surprise on a shared drive.
+        # prealloc: reserve disk space in bigger bites while a file is growing.
+        #   Cuts fragmentation badly on a drive that is mostly big video files.
+        #   Source for both: Documentation/filesystems/ntfs3.rst
+        return (
+            f"rw,noatime,nofail,users,exec,x-gvfs-show,"
+            f"uid={uid},gid={gid},umask=0022,windows_names,prealloc,iocharset=utf8"
+        )
+    if fstype == "exfat":
+        return f"rw,noatime,nofail,users,exec,x-gvfs-show,uid={uid},gid={gid},umask=0022"
+    if fstype == "vfat":
+        # shortname=mixed + utf8: show the long, correctly-accented filename
+        # rather than the 1980s eight-character version.
+        return (
+            f"rw,noatime,nofail,users,exec,x-gvfs-show,"
+            f"uid={uid},gid={gid},umask=0022,shortname=mixed,utf8"
+        )
+
+    return None
+
+
+# `lsblk` says "ntfs" for a Windows filesystem; the DRIVER we want to use is
+# called "ntfs3". Everywhere else the two names are the same. This is the only
+# place that difference lives.
+FS_DRIVER = {"ntfs": "ntfs3"}
+
+
+# ------------------------------------------------------------------------------
+# THINGS WE MUST NEVER MOUNT — by what is stored on them
+# ------------------------------------------------------------------------------
+# These are filesystem types that either are not files at all, or are a locked
+# box, or are one layer of a stack that something else is responsible for
+# assembling. Mounting any of them is somewhere between pointless and harmful.
+# ------------------------------------------------------------------------------
+NEVER_MOUNT_FSTYPES = {
+    # Virtual memory. Not a folder. Already handled by the system.
+    "swap",
+    # Encrypted containers. There is nothing to mount until they are UNLOCKED,
+    # and unlocking means asking a human for a password, which a boot-time
+    # service has no business doing. See the ENCRYPTED VOLUMES note at the
+    # bottom of this file.
+    "crypto_LUKS",
+    "BitLocker",
+    # Building blocks of a bigger volume. The device that appears once they are
+    # assembled is the one worth mounting, and it shows up separately.
+    "LVM2_member",
+    "linux_raid_member",
+    "isw_raid_member",
+    "ddf_raid_member",
+    "zfs_member",
+    "VMFS_volume_member",
+    # Read-only system images, not user data.
+    "squashfs",
+    "erofs",
+    "DM_snapshot_cow",
+}
+
+# ------------------------------------------------------------------------------
+# THINGS WE MUST NEVER MOUNT — by what the partition table SAYS they are
+# ------------------------------------------------------------------------------
+# A modern disk records what each partition is FOR, as a long code number. This
+# is a second, independent safety net: even if a partition's contents look like
+# an ordinary readable filesystem (the EFI boot partition genuinely is a plain
+# FAT disk full of files), its declared purpose says "leave me alone".
+#
+# The codes below are the standard ones, published by the UEFI forum and used by
+# every partitioning tool on earth.
+#   Source: https://en.wikipedia.org/wiki/GUID_Partition_Table#Partition_type_GUIDs
+#   Source: systemd's Discoverable Partitions Specification, which uses the same
+#   list — https://uapi-group.org/specifications/specs/discoverable_partitions_specification/
+# ------------------------------------------------------------------------------
+NEVER_MOUNT_PARTTYPES = {
+    # --- GPT disks (anything made this century) ---
+    # The EFI System Partition. This is how the machine boots. It is already
+    # mounted at /boot/efi and must never be handed to a user as a data drive.
+    "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+    # BIOS boot partition — raw bootloader code, not a filesystem at all.
+    "21686148-6449-6e6f-744e-656564454649",
+    # Microsoft Reserved. Empty scratch space Windows keeps for itself.
+    "e3c9e316-0b5c-4db8-817d-f92df00215ae",
+    # Windows Recovery Environment — the "repair your PC" partition. Mounting it
+    # puts a folder on somebody's desktop that they must never edit.
+    "de94bba4-06d1-4d40-a16a-bfd50179d6ac",
+    # Linux swap, and the Linux "extended boot" (/boot) partition.
+    "0657fd6d-a4ab-43c4-84e5-0933c84b4f4f",
+    "bc13c2ff-59e6-4262-a352-b275fd6f7172",
+    # Linux LVM / RAID / LUKS containers, said a second way.
+    "e6d6d379-f507-44c2-a23c-238f2a3df928",
+    "a19d880f-05fc-4d3b-a006-743f0f84911e",
+    "ca7d7ccb-63ed-4c53-861c-1742536059cc",
+    # --- Old-style MBR disks, where the code is a two-digit number ---
+    "0x05",  # extended partition (a container, not a filesystem)
+    "0x0f",  # extended partition, the large-disk version
+    "0x82",  # Linux swap
+    "0x27",  # Windows recovery
+    "0xef",  # EFI System Partition
+    "0xee",  # "protective" entry that marks a GPT disk to old tools
+}
+
+# Device kinds worth looking at. A whole disk with no partition table on it is
+# included on purpose: a spare SSD formatted end-to-end with no partitions is a
+# real and ordinary thing, and it holds real files.
+#   part = a partition   disk = a whole drive
+#   lvm  = a volume assembled by LVM      md/raid* = a RAID array
+LOOK_AT_TYPES = {"part", "disk", "lvm", "md", "raid0", "raid1", "raid5", "raid6", "raid10"}
+
+
+def log(message: str) -> None:
+    """Print a line into the system journal.
+
+    `systemctl status aquarius-internal-automount` shows these, and
+    `journalctl -u aquarius-internal-automount` shows all of them. If a drive
+    you expected did not turn up, the reason is written here in words.
+    """
+    print(message, flush=True)
+
+
+def desktop_owner_ids() -> tuple[int, int]:
+    """Work out who to hand the Windows and camera-card drives to.
+
+    Filesystems like NTFS, exFAT and FAT store no Linux ownership, so the kernel
+    needs to be told, at mount time, which single account owns every file on the
+    disk. There is no way around naming somebody.
+
+    We name the machine's first real human account — the lowest user id at or
+    above 1000, which is the account created when AquariusOS was installed.
+    That is right for a personal creator/gaming machine, which is what this OS
+    is for.
+
+    HONEST LIMITATION: on a machine with several people's accounts, only that
+    first person gets WRITE access to a Windows drive; everybody else can read
+    it. Fixing that properly needs a shared group, which is a decision for
+    whoever sets such a machine up — `mount -o remount,gid=...` and an
+    /etc/fstab line are the tools. This is a default, and the default is aimed
+    at the one-person machine.
+
+    If there is no human account yet (a machine being built by a robot, say),
+    we fall back to root, which still yields a readable drive.
+    """
+    best: tuple[int, int] | None = None
+    try:
+        with open("/etc/passwd", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                fields = line.rstrip("\n").split(":")
+                if len(fields) < 7:
+                    continue
+                try:
+                    uid = int(fields[2])
+                    gid = int(fields[3])
+                except ValueError:
+                    continue
+                # 1000-59999 is the range Fedora hands out to people. Below it
+                # are system accounts; 65534 is "nobody".
+                if not 1000 <= uid < 60000:
+                    continue
+                if best is None or uid < best[0]:
+                    best = (uid, gid)
+    except OSError as error:
+        log(f"  note: could not read /etc/passwd ({error}); using root as the owner")
+
+    return best if best is not None else (0, 0)
+
+
+def block_devices() -> list[dict]:
+    """Ask the system for every disk and partition it can see.
+
+    `lsblk` is the standard tool for this and it can answer in JSON, so nothing
+    here has to guess at the shape of a line of text.
+    """
+    columns = (
+        "NAME,KNAME,TYPE,FSTYPE,LABEL,PARTLABEL,PARTTYPE,PARTUUID,UUID,"
+        "HOTPLUG,RO,MOUNTPOINTS"
+    )
+    output = subprocess.check_output(
+        ["lsblk", "--noheadings", "--paths", "--list", "--json", f"--output={columns}"],
+        text=True,
+    )
+    return json.loads(output).get("blockdevices", [])
+
+
+def fstab_identifiers() -> set[str]:
+    """Everything /etc/fstab already has an opinion about.
+
+    If a drive is listed in /etc/fstab then somebody has deliberately said how
+    and where they want it mounted. We must not second-guess that, so we collect
+    every way fstab might be naming a device — the device path, its UUID, its
+    partition UUID and its label — and skip anything that matches.
+
+    An empty or missing fstab is normal and not an error.
+    """
+    identifiers: set[str] = set()
+    try:
+        output = subprocess.run(
+            [
+                "findmnt",
+                "--fstab",
+                "--json",
+                "--evaluate",
+                "--output=SOURCE,UUID,PARTUUID,LABEL,PARTLABEL",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.strip()
+        if output:
+            for entry in json.loads(output).get("filesystems", []):
+                for value in entry.values():
+                    if isinstance(value, str) and value:
+                        identifiers.add(value)
+    except (OSError, ValueError) as error:
+        log(f"  note: could not read /etc/fstab ({error}); assuming it is empty")
+
+    return identifiers
+
+
+def skip_reason(device: dict, fstab: set[str]) -> str | None:
+    """Say why we are NOT mounting this device, or None if we should mount it.
+
+    The order of these checks is the order of the rules, cheapest and most
+    absolute first. Every one of them prints its reason into the journal, so
+    "why is my drive not there?" always has a written answer.
+    """
+    name = device.get("name") or "?"
+    fstype = (device.get("fstype") or "").strip()
+
+    if (device.get("type") or "") not in LOOK_AT_TYPES:
+        return f"it is a {device.get('type')}, not a disk or a partition"
+
+    # THE BOOTED SYSTEM, /boot, /boot/efi, and anything Bazzite's own automounter
+    # got to first. `lsblk` lists every place a device is currently mounted; if
+    # there is one, our work here is done. This single check is what keeps us off
+    # the disk AquariusOS itself is running from.
+    mountpoints = [m for m in (device.get("mountpoints") or []) if m]
+    if mountpoints:
+        return f"it is already mounted at {', '.join(mountpoints)}"
+
+    if device.get("hotplug"):
+        # Removable media — cards, USB sticks, camera drives. Those belong to
+        # KDE's own automounter, which mounts them into the logged-in person's
+        # own folder the moment they are plugged in. Two services mounting the
+        # same card in two different places is a mess, so we stay out.
+        return "it is removable (KDE's automounter handles those)"
+
+    if not fstype:
+        return "there is no filesystem on it"
+
+    if fstype in NEVER_MOUNT_FSTYPES:
+        return f"a {fstype} volume is never mounted by this service"
+
+    parttype = (device.get("parttype") or "").lower()
+    if parttype in NEVER_MOUNT_PARTTYPES:
+        return f"the partition table says it is a system partition ({parttype})"
+
+    for key in ("name", "kname", "uuid", "partuuid", "label", "partlabel"):
+        value = device.get(key)
+        if value and value in fstab:
+            return "/etc/fstab already has an entry for it"
+
+    if mount_options(FS_DRIVER.get(fstype, fstype), 0, 0) is None:
+        return f"we have no mount settings for a {fstype} filesystem"
+
+    return None
+
+
+def mount_point_for(device: dict, taken: set[str]) -> str:
+    """Choose the folder this drive will appear in.
+
+    Preference order: the name the drive gives itself (its label), then the name
+    the partition table gives it, then a last-resort name built from its unique
+    id so that two unnamed drives can never collide.
+
+    The result always lives under /run/media/system/, which is where Bazzite and
+    `systemd-mount` both put fixed disks already.
+    """
+    raw = (device.get("label") or device.get("partlabel") or "").strip()
+    if not raw:
+        unique = (device.get("uuid") or device.get("partuuid") or "").replace("-", "")
+        raw = f"Disk-{unique[:8]}" if unique else os.path.basename(device.get("name", "disk"))
+
+    # A mount point is a folder name, so the characters a folder name cannot
+    # contain have to go. A slash would create a folder inside another folder;
+    # a leading dot would make the drive invisible.
+    safe = "".join("-" if character in '/\\:\0' else character for character in raw)
+    safe = safe.strip().strip(".") or "Disk"
+
+    candidate = f"/run/media/system/{safe}"
+    suffix = 2
+    while candidate in taken or os.path.ismount(candidate):
+        candidate = f"/run/media/system/{safe}-{suffix}"
+        suffix += 1
+    taken.add(candidate)
+    return candidate
+
+
+def run_mount(device_path: str, where: str, driver: str, options: str) -> bool:
+    """Actually mount it, and say plainly whether that worked.
+
+    `systemd-mount` is used rather than plain `mount` for two reasons that matter
+    on this kind of OS:
+      * it creates a proper, temporary systemd unit, which means the mount shows
+        up in `systemctl`, is cleaned up correctly on shutdown, and leaves a log;
+      * `--collect` tells systemd to forget the unit entirely if the mount fails,
+        instead of leaving a failed unit lying around scaring people.
+    """
+    command = [
+        "systemd-mount",
+        "--collect",
+        f"--type={driver}",
+        f"--options={options}",
+        device_path,
+        where,
+    ]
+    log(f"  mounting {device_path} ({driver}) at {where}")
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        log(f"  FAILED: {device_path} took longer than a minute to mount; moving on")
+        return False
+
+    if result.returncode == 0:
+        return True
+
+    for line in (result.stderr or result.stdout or "").splitlines():
+        if line.strip():
+            log(f"    {line.strip()}")
+    return False
+
+
+def mount_device(device: dict, where: str, uid: int, gid: int) -> None:
+    """Mount one drive, with one fallback for the Windows case."""
+    fstype = (device.get("fstype") or "").strip()
+    driver = FS_DRIVER.get(fstype, fstype)
+    options = mount_options(driver, uid, gid)
+    if options is None:  # already ruled out by skip_reason(); belt and braces
+        return
+
+    if run_mount(device["name"], where, driver, options):
+        return
+
+    # ------------------------------------------------------------------
+    # THE HIBERNATED-WINDOWS CASE
+    # ------------------------------------------------------------------
+    # Windows 10 and 11 ship with "Fast Startup" switched ON. What that setting
+    # actually does is: shutting down does not shut down. Windows hibernates
+    # instead, leaving the disk marked "I am still using this, do not touch".
+    #
+    # The Linux ntfs3 driver honours that mark and refuses to mount the drive
+    # for writing, which is the correct and careful thing to do — writing to a
+    # disk that a sleeping Windows still believes it owns is how people lose
+    # files. The driver has a `force` option that overrides it; we do NOT use
+    # it, and the kernel's own documentation says why:
+    #
+    #   "force — Forces the driver to mount partitions even if volume is marked
+    #    dirty. Not recommended for use."
+    #     Source: Documentation/filesystems/ntfs3.rst
+    #
+    # So instead we mount it READ-ONLY. You can open your files, copy footage
+    # off it, and point Steam at it; you just cannot write to it until Windows
+    # has been shut down properly. That is a far better outcome than the drive
+    # silently not being there at all.
+    #
+    # The real fix, for a person who wants to write to it: in Windows, Control
+    # Panel → Power Options → "Choose what the power buttons do" → untick "Turn
+    # on fast startup". Or hold Shift while clicking Shut Down, once.
+    # ------------------------------------------------------------------
+    if driver != "ntfs3":
+        log(f"  FAILED: {device['name']} could not be mounted; skipping it")
+        return
+
+    log(
+        "  the Windows drive refused a read-write mount — this almost always means "
+        "Windows was hibernated rather than shut down (its 'Fast Startup' setting). "
+        "Trying again read-only so the files are at least readable."
+    )
+    read_only = options.replace("rw,", "ro,", 1)
+    if run_mount(device["name"], where, driver, read_only):
+        log("  mounted READ-ONLY. To get write access: shut Windows down fully once.")
+    else:
+        log(f"  FAILED: {device['name']} could not be mounted at all; skipping it")
+
+
+def main() -> int:
+    if os.getuid() != 0:
+        print("aquarius-internal-automount must run as root", file=sys.stderr)
+        return 1
+
+    uid, gid = desktop_owner_ids()
+    log(f"Windows and camera-card drives will be owned by uid={uid} gid={gid}.")
+
+    fstab = fstab_identifiers()
+    taken: set[str] = set()
+    mounted = 0
+
+    for device in block_devices():
+        name = device.get("name") or "?"
+        reason = skip_reason(device, fstab)
+        if reason is not None:
+            log(f"Skipping {name}: {reason}.")
+            continue
+
+        where = mount_point_for(device, taken)
+        log(f"Mounting {name}: a {device.get('fstype')} drive.")
+        mount_device(device, where, uid, gid)
+        mounted += 1
+
+    log(f"Done. {mounted} drive(s) were candidates for mounting.")
+    return 0
+
+
+# ==============================================================================
+# KNOWN LIMITATION — a drive plugged in while the machine is running
+# ==============================================================================
+# This runs once, at boot. An internal drive that appears afterwards (you opened
+# the case and connected a SATA disk with the power on, which is unusual and not
+# something most machines support) is not picked up until the next restart.
+#
+# There is no need to reboot to test a change, though:
+#     sudo systemctl restart aquarius-internal-automount
+# is safe to run at any time and does exactly the same work. Anything already
+# mounted is skipped, so running it twice changes nothing.
+#
+# ==============================================================================
+# ENCRYPTED VOLUMES — said out loud, because it is the one honest cost
+# ==============================================================================
+# A LUKS-encrypted Linux drive or a BitLocker-encrypted Windows drive is skipped
+# here, deliberately and permanently. Not because we could not try, but because
+# opening one means asking a person for a password, and a service that runs
+# before anybody has logged in has nobody to ask.
+#
+# Encrypted drives therefore still behave the way they always did: they appear
+# in the Files app as a locked drive, and clicking one asks for the password.
+# That is the correct behaviour and we are not changing it.
+# ==============================================================================
+
+if __name__ == "__main__":
+    sys.exit(main())
