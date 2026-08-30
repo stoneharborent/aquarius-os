@@ -65,7 +65,7 @@ set -euo pipefail
 
 AQUARIUS_APPS=(
     "aquarius-editor stoneharborent/aquarius-editor v0.3.0"
-    "aquarius-writer stoneharborent/aquarius-writer v0.1.2"
+    "aquarius-writer stoneharborent/aquarius-writer v0.2.0"
 )
 
 # Where the unpacked apps live inside the OS. /usr/lib is the normal home for
