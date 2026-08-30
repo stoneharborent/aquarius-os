@@ -222,10 +222,21 @@ SESSION_SWITCH_COMMANDS = (
 #
 # HOW THE CHECK IS WRITTEN, and why it leans the way it does: a session says
 # what it is in the XDG_CURRENT_DESKTOP environment variable, which Plasma sets
-# to "KDE" and Valve's Game Mode sets to "gamescope".
+# to "KDE" and Game Mode sets to "gamescope".
 #   Source: the desktop-entry specification, §"Registered OnlyShowIn
 #   Environments"; plasma-workspace startplasma sets XDG_CURRENT_DESKTOP=KDE and
 #   hands it to systemd with `dbus-update-activation-environment --systemd`.
+#
+# Bazzite makes exactly the same test, in the same shape, for the same reason —
+# which is the best confirmation available that both halves of it are right:
+#
+#     # /usr/bin/switcherooctl (Bazzite's override)
+#     if [ "$XDG_CURRENT_DESKTOP" != "gamescope" ] && [ -n "$XDG_CURRENT_DESKTOP" ]; then
+#
+#   Source: ublue-os/bazzite, system_files/overrides/usr/bin/switcherooctl.
+#   Note the second half of their condition: an EMPTY answer is treated as "not
+#   a desktop I know about" and handled separately. We lean the other way and
+#   run, because our two failure modes are not symmetrical — see below.
 #
 # If that variable is EMPTY we run anyway. That is deliberate and it is the safe
 # direction to fail in: an empty answer means we could not tell, and the cost of
