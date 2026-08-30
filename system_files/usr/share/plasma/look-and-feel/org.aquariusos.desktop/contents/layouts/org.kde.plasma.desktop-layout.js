@@ -184,6 +184,41 @@ for (var i = 0; i < allDesktops.length; i++) {
 }
 
 // =============================================================================
+// 4. DRIVE ICONS AND APP ICONS — handled elsewhere, on purpose
+// =============================================================================
+// Two desktop behaviours Royce asked for on 2026-08-30 are deliberately NOT in
+// this file, and it is worth knowing why before somebody tries to add them here.
+//
+//   * Every mounted drive shows as an icon on the desktop, the system drive
+//     included and labelled "AquariusOS", like a Mac.
+//   * The desktop never holds application icons.
+//
+// Neither is something a layout script can do. This script runs ONCE, for a
+// brand-new account, and then never again (see "WHEN IT RUNS" at the top) —
+// but drives come and go all day, and Royce's existing installs would never see
+// a word of it. Both jobs therefore live in a small background program that runs
+// for each logged-in person and is switched on for every account, old and new:
+//
+//     /usr/libexec/aquarius-desktop-volumes
+//     /usr/lib/systemd/user/aquarius-desktop-volumes.service
+//
+// Read the program's comments for the full reasoning, including the honest
+// explanation of why "no app icons" is a tidy-up rather than a lock.
+//
+// ⚠️ WHAT THIS FILE DOES CONTRIBUTE, and must keep contributing: the settings
+// written just above are Folder View settings, and Folder View is the component
+// that draws files in the Desktop folder as icons. The drive icons ARE files in
+// that folder. So if the desktop containment is ever switched from Folder View
+// to the plain "Desktop" one, the drive icons stop appearing — and the cause
+// would be very hard to guess. Leave it as Folder View.
+//
+// Also deliberately NOT set here: Folder View's file FILTER (`filterMode`,
+// `filterMimeTypes`). Hiding every shortcut file would indeed keep app icons off
+// the desktop — and would hide the drive icons with them, because both are the
+// same kind of file as far as KDE is concerned. That was checked and rejected;
+// the reasoning is written out in the program named above.
+
+// =============================================================================
 // TODO — what is deliberately NOT here yet
 // =============================================================================
 // The genuine macOS top bar also carries the focused window's TITLE and its

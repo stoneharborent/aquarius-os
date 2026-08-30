@@ -111,10 +111,12 @@ built on, and why that specific one:
 | `branding/` | **The design.** Colours, fonts, logo and wallpaper artwork, with `tokens.md` as the single source of truth. Read [`branding/README.md`](./branding/README.md) before changing how anything looks. | To change the look |
 | `ingest/` | **"Make Editor-Ready"** — the tool that takes camera files and writes copies DaVinci Resolve can actually open, with sound. Added to the right-click menu in the Files app. Read [`ingest/README.md`](./ingest/README.md). | Rarely |
 | `docs/ingest-right-click.md` | **How to get a camera card ready for editing** — the beginner walkthrough for the above. No terminal needed. | Read it |
+| `docs/drives-and-desktop-icons.md` | **Why every drive mounts itself and shows up on the desktop** — including the Windows game drive on a dual-boot PC, and why the desktop keeps no app icons. Written for a beginner; also the record of what was rejected and why. | Read it |
 | `disk_config/` | Settings for turning the OS image into an installable `.iso` / VM disk. `iso.toml` is the one that's used. | Once, at setup |
 | `.github/workflows/build.yml` | The build robot's instructions: build **all three** OS images and publish them. Runs on every push + nightly. | No |
 | `.github/workflows/build-iso.yml` | The second robot: turns one published OS image into a USB installer `.iso`. You run this by hand and pick which image. | No |
 | `.github/workflows/build-disk.yml` | Makes a virtual-machine disk for testing. By hand, AMD/Intel image only. | No |
+| `.github/workflows/drive-tests.yml` | Fast checks for the two scripts behind "drives mount themselves" and "drives on the desktop". Runs in seconds on every pull request. | No |
 | `installer/` | The live USB installer environment the ISO robot builds. Works for any of the three images. | Rarely |
 | `Justfile` | A collection of shortcut commands used by the build robot (and usable on a Linux machine). | No |
 | `docs/nvidia-variant-research.md` | Why the NVIDIA image is built on `bazzite-nvidia-open` and not `bazzite-nvidia`. | Reference |
@@ -170,6 +172,7 @@ What a user actually sees after installing:
 | **Fonts** | **Inter** for everything you read in the interface, **JetBrains Mono** for code and the terminal, **Sora** for headlines. |
 | **Wallpaper** | "The Pour" — blurred ribbons of blue and violet pouring diagonally across near-black. |
 | **Desktop** | A thin bar across the top (launcher, the app's menus, tray, clock) and a floating dock at the bottom. Desktop icons stack down the right-hand edge. Deliberately Mac-shaped. |
+| **Drives** | Every drive in the machine mounts itself and shows as an icon on the desktop — the Windows game drive included, and the system disk itself, labelled "AquariusOS" the way a Mac shows "Macintosh HD". The desktop holds files and drives only, never app icons. See [`docs/drives-and-desktop-icons.md`](./docs/drives-and-desktop-icons.md). |
 
 **Everything is a default, never a rule.** If somebody changes their wallpaper or picks a
 different colour scheme, their choice is stored in their own home folder and wins — and no

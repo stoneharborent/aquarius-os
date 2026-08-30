@@ -1,0 +1,738 @@
+#!/usr/bin/env python3
+# ==============================================================================
+# AquariusOS — drives on the desktop, and no app icons on the desktop
+# ==============================================================================
+# WHAT THIS DOES, IN TWO SENTENCES
+#   1. Every drive that is mounted gets an icon on your desktop — including the
+#      drive AquariusOS itself is installed on, which is labelled "AquariusOS",
+#      exactly the way a Mac shows "Macintosh HD". Double-click one and the
+#      Files app opens on that drive.
+#   2. The desktop is kept for files and drives only. An application icon that
+#      lands on it is quietly moved into a holding folder, not deleted.
+#
+# It is a small program that runs in the background for each logged-in person.
+# It costs almost nothing: it sleeps until the kernel tells it something has been
+# mounted or unmounted, and wakes for a moment every two seconds to glance at
+# whether the desktop folder changed.
+#
+# ==============================================================================
+# PART 1 — WHY DRIVES ON THE DESKTOP NEEDS A PROGRAM AT ALL
+# ==============================================================================
+# On a Mac this is a checkbox. On KDE Plasma 6 there is no such checkbox, and no
+# hidden setting either — the feature genuinely does not exist. What Plasma gives
+# us instead is a desktop that IS a folder: the icons you see are the real files
+# in your Desktop folder, drawn by a component called Folder View.
+#
+# So the way to put a drive on the desktop is to put a FILE in the Desktop folder
+# that stands for that drive. That is what this program does, and it is the only
+# mechanism that needs nothing compiled and nothing installed from outside.
+#
+# THE FILE WE WRITE, and why each piece of it is the way it is:
+#
+#     [Desktop Entry]
+#     Type=Link                 ← "I am a shortcut to a place", not a program.
+#     Name=Game Drive           ← what is written under the icon
+#     Icon=drive-harddisk       ← the picture
+#     URL=file:///run/media/system/Game Drive
+#     X-Aquarius-Volume=true    ← our own marker; see below
+#
+#   Type=Link is doing a lot of quiet work. KDE follows a Link shortcut straight
+#   to its destination with no "are you sure you want to run this?" warning and
+#   no need for the file to be marked executable — unlike a shortcut to a
+#   PROGRAM, which is checked carefully before it is allowed to run. So
+#   double-clicking a drive icon simply opens the drive.
+#     Source: kio/src/gui/openurljob.cpp — handleDesktopFiles() calls runLink()
+#     for `cfg.hasLinkType()` before any of the executable-file checks.
+#
+#   The file name ends in `.desktop` and it has to. KDE only reads the `Name=`
+#   line out of a file whose name ends that way, so a differently-named file
+#   would show up on the desktop with its raw filename underneath instead of the
+#   drive's proper name.
+#     Source: kconfig KDesktopFile::isDesktopFile() is literally
+#     `return path.endsWith(QLatin1String(".desktop"));`, and plasma-workspace
+#     kioworkers/desktop/kio_desktop.cpp calls it before reading `Name=` into
+#     the label shown on the desktop.
+#
+#   X-Aquarius-Volume=true is a marker with no meaning to KDE at all. It is how
+#   THIS program recognises its own files. It is the reason we can tidy up
+#   drives that have been unplugged without ever risking one of your files: we
+#   only ever delete a file that carries our mark.
+#
+# WHAT WE DELIBERATELY DID NOT DO
+#   * No third-party desktop widget. The spec for this desktop
+#     (docs/gnome-principles-kde-spec.md, item B7) rules out compiled add-ons,
+#     and every "volumes on desktop" widget for Plasma is one.
+#   * No symbolic links instead of these shortcut files. A link to a folder gets
+#     a plain folder icon, and we want real drive icons with real drive names.
+#
+# ==============================================================================
+# PART 2 — WHY "NO APP ICONS" IS A TIDY-UP AND NOT A LOCK
+# ==============================================================================
+# Royce's rule: like a Mac, the desktop holds files and drives, never
+# applications. The obvious way to deliver that would be to switch off the
+# "Add to Desktop" menu item. We went and checked whether Plasma lets us, and the
+# honest answer is that it does not — not cleanly.
+#
+#   The menu item is offered whenever ONE condition is true: the desktop is not
+#   locked. There is no setting, and no system-administrator override, that
+#   turns off just this one thing.
+#     Source: plasma-workspace/applets/kicker/actionlist.cpp line ~152 —
+#       if (ContainmentInterface::mayAddLauncher(appletInterface, ...Desktop))
+#           actionList << ... i18n("Add to Desktop") ...
+#     and plasma-workspace/applets/kicker/containmentinterface.cpp,
+#     mayAddLauncher(), whose entire test for the Desktop case is
+#       return (containment->immutability() == Plasma::Types::Mutable);
+#
+#   The two things that WOULD stop it are both locked doors:
+#     * locking the desktop (`plasma/plasmoshell/unlockedDesktop` in KDE's
+#       administrator settings) — which also stops you moving any icon,
+#       rearranging any widget, or editing your app launcher's favourites;
+#     * making the Desktop folder read-only, which KDE's own documentation
+#       suggests and which would also stop you saving a file to your desktop.
+#       Source: https://develop.kde.org/docs/administration/kiosk/keys/ —
+#       "In order to prevent adding, removing, or renaming icons, you should set
+#        the desktop folder read-only."
+#   AquariusOS does not ship locked doors (spec item B7: "GNOME's 'simple' means
+#   simple defaults, not locked doors"), so neither of those is acceptable.
+#
+#   Hiding all shortcut files instead was considered and rejected: Folder View's
+#   file filter can hide every `.desktop` file, but our drive icons ARE
+#   `.desktop` files, so that setting would hide the drives too. There is no way
+#   to write the filter so that it catches one and not the other — its patterns
+#   have no way to say "except these".
+#     Source: plasma-desktop containments/desktop/plugins/folder/foldermodel.cpp
+#     — filterAcceptsRow() hides an item when
+#       !(matchPattern(item) && matchMimeType(item))
+#     and matchMimeType() compares the file's real type, which for every shortcut
+#     file, ours included, is `application/x-desktop`.
+#
+# SO: A TIDY-UP, WITH THE FRONT DOOR LEFT UNLOCKED.
+#   Nothing stops you putting an app icon on the desktop. This program simply
+#   picks it up again and puts it in a holding folder —
+#   ~/.local/share/aquarius/desktop-app-icons/ — and tells you it did. Nothing
+#   is deleted, the app itself is untouched and still in the app grid, and the
+#   file can be dragged straight back out of the holding folder.
+#
+#   And it is one line to switch off, which is written into the notification you
+#   get and repeated in the holding folder's own README. See CONFIG below.
+#
+# ==============================================================================
+
+from __future__ import annotations
+
+import os
+import re
+import select
+import shutil
+import subprocess
+import sys
+import time
+from urllib.parse import quote
+
+# The file the drive shortcuts and the tidy-up both answer to. It does not exist
+# by default; creating it is how somebody changes their mind.
+CONFIG_PATH = "~/.config/aquarius-desktop.conf"
+
+# Where an application icon goes when it is tidied off the desktop.
+HOLDING_DIR = "~/.local/share/aquarius/desktop-app-icons"
+
+# The line in our shortcut files that means "this one is ours".
+OUR_MARKER = "X-Aquarius-Volume=true"
+
+# ------------------------------------------------------------------------------
+# WHICH MOUNTED THINGS COUNT AS "A DRIVE"
+# ------------------------------------------------------------------------------
+# Linux mounts a great many things that are not drives: bookkeeping folders the
+# kernel invents, temporary folders that live in memory, the innards of Flatpak
+# apps. None of those belong on a desktop. Rather than trying to list every kind
+# of non-drive, we ask two questions, and something has to pass BOTH:
+#
+#   1. Is it backed by a real piece of hardware? (its source starts with /dev/)
+#   2. Is it somewhere a person would expect a drive to be?
+#
+# The second question is what the list below answers.
+# ------------------------------------------------------------------------------
+DRIVE_LOCATIONS = (
+    # Where this OS, Bazzite, and systemd all put fixed disks.
+    "/run/media/",
+    # Where KDE puts a card or a USB stick you plugged in: /run/media/<you>/...
+    # (covered by the line above), and where older tools put them.
+    "/media/",
+    # The traditional "mount it here" folder. On this kind of OS /mnt is really a
+    # signpost pointing at /var/mnt, so both spellings are listed.
+    "/mnt/",
+    "/var/mnt/",
+)
+
+# Filesystems that exist only inside the computer's head — no disk, nothing to
+# show. Listed as a second net in case something ever gets mounted into one of
+# the folders above without being a real drive.
+NOT_A_DRIVE_FSTYPES = {
+    "autofs", "bpf", "cgroup", "cgroup2", "configfs", "debugfs", "devpts",
+    "devtmpfs", "efivarfs", "fuse.gvfsd-fuse", "fuse.portal", "fusectl",
+    "hugetlbfs", "mqueue", "nsfs", "overlay", "proc", "pstore", "ramfs",
+    "securityfs", "selinuxfs", "sysfs", "tmpfs", "tracefs",
+}
+
+
+def expand(path: str) -> str:
+    return os.path.expanduser(path)
+
+
+def log(message: str) -> None:
+    """Write a line where `journalctl --user -u aquarius-desktop-volumes` sees it."""
+    print(message, flush=True)
+
+
+# ==============================================================================
+# CONFIG — the two switches, and how somebody turns them off
+# ==============================================================================
+# ~/.config/aquarius-desktop.conf, if it exists, is read as plain `key=value`
+# lines. Both switches are ON unless the file says otherwise:
+#
+#     ShowDrivesOnDesktop=false        stop putting drive icons on the desktop
+#     KeepAppIconsOffDesktop=false     stop tidying application icons away
+#
+# It is a file rather than a System Settings page because Plasma has no page to
+# put it on — these are behaviours Plasma does not have, so there is no existing
+# checkbox to hang them off. The file is checked every time round, so a change
+# takes effect within a couple of seconds with nothing to restart.
+# ==============================================================================
+def read_config() -> dict[str, bool]:
+    settings = {"ShowDrivesOnDesktop": True, "KeepAppIconsOffDesktop": True}
+    try:
+        with open(expand(CONFIG_PATH), encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                if key in settings:
+                    settings[key] = value.strip().lower() not in ("false", "no", "0", "off")
+    except OSError:
+        pass  # No file is the normal case: both switches stay on.
+    return settings
+
+
+def desktop_dir() -> str:
+    """Find this person's Desktop folder, in their language.
+
+    On a machine set up in French the folder is called "Bureau", not "Desktop".
+    The name is recorded in ~/.config/user-dirs.dirs, which is the standard
+    place every desktop on Linux agrees to look.
+      Source: https://www.freedesktop.org/wiki/Software/xdg-user-dirs/
+    """
+    path = None
+    try:
+        with open(expand("~/.config/user-dirs.dirs"), encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                line = line.strip()
+                if line.startswith("XDG_DESKTOP_DIR="):
+                    raw = line.split("=", 1)[1].strip().strip('"')
+                    path = os.path.expandvars(raw.replace("$HOME", "~"))
+                    path = expand(path)
+    except OSError:
+        pass
+
+    if not path:
+        path = expand("~/Desktop")
+
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+# ==============================================================================
+# READING THE LIST OF MOUNTED DRIVES
+# ==============================================================================
+def mount_table(path: str = "/proc/self/mountinfo") -> list[dict[str, str]]:
+    """Read /proc/self/mountinfo — the kernel's live list of what is mounted.
+
+    (`path` is only ever given a different value by the test suite, which feeds
+    it a saved copy of a real machine's mount table. Nothing else passes it.)
+
+    Each line looks like this, and the fields we want are marked:
+
+      36 35 98:0 / /run/media/system/Games rw,noatime - ntfs3 /dev/sda2 rw,uid=1000
+      |      |      |                              |         |
+      |      |      mount point (field 5)          |         source device
+      |      major:minor device number (field 3)   filesystem type
+      mount id
+
+    The awkward part of the format is that the number of fields is not fixed:
+    between the mount options and the filesystem type there can be any number of
+    extra tags, and a lone "-" marks where they stop. So we split on that.
+      Source: Linux kernel Documentation/filesystems/proc.rst, §3.5
+    """
+    rows: list[dict[str, str]] = []
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            content = handle.read()
+    except OSError as error:
+        log(f"could not read the list of mounted drives: {error}")
+        return rows
+
+    for line in content.splitlines():
+        if " - " not in line:
+            continue
+        left, _, right = line.partition(" - ")
+        left_fields = left.split()
+        right_fields = right.split()
+        if len(left_fields) < 5 or len(right_fields) < 2:
+            continue
+        rows.append(
+            {
+                "devnum": left_fields[2],
+                # Mount points are written with spaces escaped as \040.
+                "mountpoint": left_fields[4].replace("\\040", " ").replace("\\011", "\t"),
+                "fstype": right_fields[0],
+                "source": right_fields[1].replace("\\040", " "),
+            }
+        )
+    return rows
+
+
+def label_map() -> dict[str, str]:
+    """Build a "device file → the name the drive calls itself" lookup.
+
+    Linux keeps a folder of signposts, /dev/disk/by-label/, with one entry per
+    named drive pointing at that drive's device file. Reading the folder
+    backwards gives us every drive's own name in one go, with no extra programs
+    to run.
+    """
+    names: dict[str, str] = {}
+    for folder in ("/dev/disk/by-label", "/dev/disk/by-partlabel"):
+        try:
+            entries = os.listdir(folder)
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                target = os.path.realpath(os.path.join(folder, entry))
+            except OSError:
+                continue
+            # by-label wins over by-partlabel because the filesystem's own name
+            # is the one a person actually typed; a partition label is usually
+            # something a tool made up.
+            if target not in names or folder.endswith("by-label"):
+                names[target] = unescape_device_name(entry)
+    return names
+
+
+def unescape_device_name(name: str) -> str:
+    r"""Turn `Game\x20Drive` back into `Game Drive`.
+
+    The signposts in /dev/disk/by-label/ cannot have spaces or other awkward
+    characters in their names, so Linux writes those as `\x` followed by the
+    character's number. Undoing that has to be done on the raw BYTES rather than
+    on the text, because an accented letter is written as two of those codes and
+    only means anything once both are put back together.
+    """
+    data = re.sub(
+        rb"\\x([0-9a-fA-F]{2})",
+        lambda match: bytes([int(match.group(1), 16)]),
+        name.encode("utf-8", "surrogateescape"),
+    )
+    return data.decode("utf-8", "replace")
+
+
+def is_removable(source_device: str) -> bool:
+    """Is this drive one you can pull out — a card, a stick, an external disk?
+
+    Linux writes a 1 into a file called `removable` for such a device. The file
+    belongs to the whole DRIVE, not to a partition of it, so for /dev/sda1 we
+    have to walk up to /dev/sda first — which sysfs lets us do just by looking at
+    the folder above.
+      Source: Linux kernel Documentation/ABI/stable/sysfs-block
+    """
+    name = os.path.basename(source_device)
+    candidates = (
+        f"/sys/class/block/{name}/removable",
+        f"/sys/class/block/{name}/../removable",
+    )
+    for candidate in candidates:
+        try:
+            with open(candidate, encoding="ascii") as handle:
+                return handle.read().strip() == "1"
+        except OSError:
+            continue
+    return False
+
+
+def icon_for(mountpoint: str, fstype: str, source: str) -> str:
+    """Pick the picture for this drive.
+
+    Every name below is a real icon in Breeze, the icon set AquariusOS uses, so
+    none of these can come out as a blank square.
+      Source: KDE/breeze-icons, icons/devices/
+    """
+    if mountpoint == "/":
+        return "drive-harddisk-root"
+    if fstype in ("iso9660", "udf"):
+        return "media-optical"
+    if source.startswith("/dev/mmcblk"):
+        return "media-flash-sd-mmc"
+    if is_removable(source):
+        return "drive-removable-media-usb"
+    return "drive-harddisk"
+
+
+def drives(
+    rows: list[dict[str, str]] | None = None,
+    labels: dict[str, str] | None = None,
+) -> list[dict[str, str]]:
+    """The list of drives that should have an icon on the desktop right now.
+
+    (Both arguments exist so the test suite can hand this function a saved mount
+    table from a real machine instead of the one it is running on. In normal use
+    neither is passed and both are read live.)
+    """
+    if labels is None:
+        labels = label_map()
+    if rows is None:
+        rows = mount_table()
+    found: dict[str, dict[str, str]] = {}
+
+    for row in rows:
+        mountpoint = row["mountpoint"]
+        source = row["source"]
+        fstype = row["fstype"]
+
+        if not source.startswith("/dev/"):
+            continue
+        if fstype in NOT_A_DRIVE_FSTYPES:
+            continue
+
+        # "/" is the drive AquariusOS itself lives on. It is included on purpose:
+        # this is the "Macintosh HD" icon, and it is the one Royce specifically
+        # asked for.
+        is_root = mountpoint == "/"
+        if not is_root and not mountpoint.startswith(DRIVE_LOCATIONS):
+            continue
+
+        if is_root:
+            name = "AquariusOS"
+        else:
+            name = labels.get(os.path.realpath(source)) or os.path.basename(mountpoint)
+
+        # One icon per physical drive. The system drive in particular is mounted
+        # in several places at once on this kind of OS (at /, at /var, at
+        # /sysroot); only the first, shortest one earns an icon.
+        key = row["devnum"]
+        if key in found and len(found[key]["mountpoint"]) <= len(mountpoint):
+            continue
+
+        found[key] = {
+            "name": name.strip() or os.path.basename(mountpoint),
+            "mountpoint": mountpoint,
+            "icon": icon_for(mountpoint, fstype, source),
+        }
+
+    return sorted(found.values(), key=lambda drive: (drive["mountpoint"] != "/", drive["name"]))
+
+
+# ==============================================================================
+# WRITING (AND CLEANING UP) THE DESKTOP ICONS
+# ==============================================================================
+def shortcut_text(drive: dict[str, str]) -> str:
+    """The contents of one drive's shortcut file.
+
+    `[Desktop Entry]` is deliberately the very first line: the desktop-entry
+    standard requires that group to come first, and our explanation is put at the
+    bottom instead, where a comment is unambiguously allowed.
+      Source: https://specifications.freedesktop.org/desktop-entry-spec/
+
+    `quote()` on the mount point matters more than it looks. This line is read as
+    a web-style address, so a drive called "Rock & Roll" or one with a space in
+    its name would otherwise produce an address that stops at the first awkward
+    character and opens the wrong folder.
+    """
+    return (
+        "[Desktop Entry]\n"
+        "Type=Link\n"
+        f"Name={drive['name']}\n"
+        f"Icon={drive['icon']}\n"
+        f"URL=file://{quote(drive['mountpoint'])}\n"
+        f"{OUR_MARKER}\n"
+        f"X-Aquarius-Volume-MountPoint={drive['mountpoint']}\n"
+        "\n"
+        "# Written automatically by AquariusOS.\n"
+        "#   /usr/libexec/aquarius-desktop-volumes\n"
+        "# Deleting this file is fine — it comes back next time the drive is\n"
+        "# mounted. To stop drive icons appearing at all, put this one line in\n"
+        "# ~/.config/aquarius-desktop.conf:\n"
+        "#   ShowDrivesOnDesktop=false\n"
+    )
+
+
+def safe_filename(name: str) -> str:
+    """Turn a drive's name into something that can be a filename."""
+    cleaned = "".join("-" if character in "/\\\0" else character for character in name)
+    cleaned = cleaned.strip().lstrip(".").strip()
+    return f"{cleaned or 'Drive'}.desktop"
+
+
+def is_ours(path: str) -> bool:
+    """Did WE write this file?
+
+    This is the safety catch that the whole program leans on. Only a file
+    carrying our marker line is ever deleted or replaced, so there is no path
+    through this code that can touch one of somebody's own files. The reading is
+    capped at a sensible size so that pointing this at, say, a 4 GB video file
+    that happens to be sitting on the desktop cannot swallow all the memory.
+    """
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            return OUR_MARKER in handle.read(64_000)
+    except OSError:
+        return False
+
+
+def desktop_entry_type(path: str) -> str | None:
+    """Read the `Type=` line out of a shortcut file, if it has one."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                line = line.strip()
+                if line.startswith("Type="):
+                    return line.split("=", 1)[1].strip()
+    except OSError:
+        return None
+    return None
+
+
+def sync_drive_icons(desktop: str, enabled: bool) -> None:
+    """Make the desktop's drive icons match the drives that are actually there."""
+    wanted: dict[str, str] = {}
+    if enabled:
+        used: set[str] = set()
+        for drive in drives():
+            filename = safe_filename(drive["name"])
+            # Two drives really can share a name. Number the second one rather
+            # than letting one silently replace the other.
+            stem, extension = os.path.splitext(filename)
+            suffix = 2
+            while filename in used:
+                filename = f"{stem} ({suffix}){extension}"
+                suffix += 1
+            used.add(filename)
+            wanted[filename] = shortcut_text(drive)
+
+    try:
+        existing = os.listdir(desktop)
+    except OSError as error:
+        log(f"could not read the desktop folder: {error}")
+        return
+
+    # Remove the icons for drives that are no longer mounted. The `is_ours`
+    # check is the safety catch: a file we did not write is never touched, so
+    # there is no way for this to eat somebody's work.
+    for entry in existing:
+        if entry in wanted:
+            continue
+        path = os.path.join(desktop, entry)
+        if os.path.isfile(path) and is_ours(path):
+            try:
+                os.remove(path)
+                log(f"removed the desktop icon for a drive that is gone: {entry}")
+            except OSError as error:
+                log(f"could not remove {entry}: {error}")
+
+    # Add or refresh the icons for drives that are mounted. Files are only
+    # rewritten when their contents would actually change, so the desktop is not
+    # churning away rewriting the same five files forever.
+    for filename, text in wanted.items():
+        path = os.path.join(desktop, filename)
+        try:
+            with open(path, encoding="utf-8", errors="replace") as handle:
+                if handle.read() == text:
+                    continue
+        except OSError:
+            pass
+        try:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(text)
+            log(f"put a drive icon on the desktop: {filename}")
+        except OSError as error:
+            log(f"could not write {filename}: {error}")
+
+
+HOLDING_README = """\
+Application icons that were tidied off the desktop
+==================================================
+
+AquariusOS keeps the desktop for files and drives only, the way macOS does.
+When an application shortcut lands on your desktop it is moved in here instead.
+
+Nothing has been deleted, and the app itself is untouched — it is still in the
+app grid (click the AquariusOS logo in the top bar) and still in your dock.
+
+To put one back on the desktop for good, first turn this behaviour off by
+putting this single line in the file ~/.config/aquarius-desktop.conf:
+
+    KeepAppIconsOffDesktop=false
+
+...then drag the shortcut back out of this folder onto your desktop. The change
+takes effect within a couple of seconds; there is nothing to restart.
+"""
+
+
+def notify(title: str, body: str) -> None:
+    """Show a desktop notification, if this machine can.
+
+    Never allowed to be a problem: if notify-send is missing or the desktop is
+    not listening, we shrug and carry on.
+    """
+    if not shutil.which("notify-send"):
+        return
+    try:
+        subprocess.run(
+            ["notify-send", "--app-name=AquariusOS", "--icon=drive-harddisk", title, body],
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def tidy_app_icons(desktop: str) -> None:
+    """Move application shortcuts off the desktop into the holding folder.
+
+    Three kinds of file are deliberately left alone:
+      * anything that is not a `.desktop` shortcut — your actual files;
+      * our own drive icons (they carry the X-Aquarius-Volume marker);
+      * shortcuts to a PLACE rather than a program (`Type=Link`) — a bookmark to
+        a website or a folder is a file, not an app, and stays.
+    """
+    try:
+        entries = sorted(os.listdir(desktop))
+    except OSError:
+        return
+
+    moved: list[str] = []
+    for entry in entries:
+        if not entry.endswith(".desktop"):
+            continue
+        path = os.path.join(desktop, entry)
+        if not os.path.isfile(path) or is_ours(path):
+            continue
+        if desktop_entry_type(path) != "Application":
+            continue
+
+        holding = expand(HOLDING_DIR)
+        try:
+            os.makedirs(holding, exist_ok=True)
+            readme = os.path.join(holding, "README.txt")
+            if not os.path.exists(readme):
+                with open(readme, "w", encoding="utf-8") as handle:
+                    handle.write(HOLDING_README)
+
+            destination = os.path.join(holding, entry)
+            # Never overwrite something already in there.
+            stem, extension = os.path.splitext(entry)
+            suffix = 2
+            while os.path.exists(destination):
+                destination = os.path.join(holding, f"{stem} ({suffix}){extension}")
+                suffix += 1
+
+            shutil.move(path, destination)
+            moved.append(entry)
+            log(f"moved an app icon off the desktop: {entry} -> {destination}")
+        except OSError as error:
+            log(f"could not tidy {entry} off the desktop: {error}")
+
+    if moved:
+        names = ", ".join(name[: -len(".desktop")] for name in moved)
+        notify(
+            "The desktop is for files and drives",
+            f"{names} was moved to Home ▸ .local ▸ share ▸ aquarius ▸ "
+            f"desktop-app-icons. The app itself is untouched — it is still in "
+            f"the app grid. To keep app icons on the desktop instead, see the "
+            f"README in that folder.",
+        )
+
+
+# ==============================================================================
+# THE LOOP
+# ==============================================================================
+def run_once(desktop: str) -> None:
+    settings = read_config()
+    if settings["KeepAppIconsOffDesktop"]:
+        tidy_app_icons(desktop)
+    sync_drive_icons(desktop, settings["ShowDrivesOnDesktop"])
+
+
+def main(argv: list[str]) -> int:
+    desktop = desktop_dir()
+
+    if "--once" in argv:
+        run_once(desktop)
+        return 0
+
+    log(f"watching drives and the desktop folder at {desktop}")
+    run_once(desktop)
+    last_desktop_change = _mtime(desktop)
+
+    # ------------------------------------------------------------------
+    # HOW WE WAIT WITHOUT BURNING BATTERY
+    # ------------------------------------------------------------------
+    # /proc/self/mountinfo is a special file: the kernel will actually WAKE a
+    # program up the moment anything is mounted or unmounted, rather than making
+    # it ask over and over. `poll` is how you ask to be woken, and POLLPRI is
+    # the particular knock this file uses.
+    #   Source: Linux kernel Documentation/filesystems/proc.rst — "the mountinfo
+    #   file ... can be monitored with poll()/epoll(), which returns POLLPRI when
+    #   the mount table changes"
+    #
+    # The two-second timeout on the wait is not polling for drives — that part is
+    # genuinely event-driven. It is so that we also notice a NEW FILE appearing
+    # on the desktop, which is the other half of this program's job. All it does
+    # on each tick is ask the desktop folder "what time were you last changed?",
+    # which is a single, very cheap question, and only if the answer is new does
+    # it look any further.
+    # ------------------------------------------------------------------
+    try:
+        watcher = open("/proc/self/mountinfo", encoding="utf-8", errors="replace")
+    except OSError as error:
+        log(f"cannot watch for drives being mounted ({error}); giving up")
+        return 1
+
+    poller = select.poll()
+    poller.register(watcher.fileno(), select.POLLPRI | select.POLLERR)
+
+    try:
+        while True:
+            events = poller.poll(2000)
+
+            if events:
+                # Something was mounted or unmounted. Read the file to clear the
+                # kernel's "there is news" flag, then redo the icons.
+                watcher.seek(0)
+                watcher.read()
+                # A moment's pause: a drive being mounted is several steps, and
+                # waiting lets them finish so we read one settled answer instead
+                # of three half-finished ones.
+                time.sleep(0.4)
+                run_once(desktop)
+                last_desktop_change = _mtime(desktop)
+                continue
+
+            changed = _mtime(desktop)
+            if changed != last_desktop_change:
+                last_desktop_change = changed
+                run_once(desktop)
+    except KeyboardInterrupt:
+        return 0
+    finally:
+        watcher.close()
+
+
+def _mtime(path: str) -> float:
+    try:
+        return os.stat(path).st_mtime
+    except OSError:
+        return 0.0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

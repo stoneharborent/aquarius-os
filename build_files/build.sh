@@ -345,40 +345,62 @@ command -v heif-convert > /dev/null 2>&1 || echo "AQUARIUS NOTE: heif-convert no
 # ------------------------- end of the ingest helper ---------------------------
 
 # ==============================================================================
-# EVERY INTERNAL DATA DRIVE MOUNTS ITSELF AT BOOT
+# DRIVES THAT MOUNT THEMSELVES, AND DRIVES ON THE DESKTOP
 # ==============================================================================
-# Royce's decision, 2026-08-30. On AquariusOS every internal data drive is meant
-# to be sitting there ready the moment you log in — the Windows game drive on a
-# dual-boot gaming PC most of all.
+# Two behaviours Royce asked for on 2026-08-30, wired up here. The full
+# reasoning for both lives in the scripts' own comments and in
+# docs/drives-and-desktop-icons.md; this section is only the switching-on.
 #
-# Bazzite already mounts labelled ext4 and btrfs drives at boot and we do not
-# touch that. This picks up everything it walks past: NTFS, exFAT, XFS, F2FS,
-# FAT, and ext4/btrfs drives nobody bothered to name. It skips swap, the EFI boot
-# partition, Windows' recovery partition, encrypted volumes, anything /etc/fstab
-# already claims, and the disk we are booted from.
+#   1. EVERY INTERNAL DATA DRIVE MOUNTS ITSELF AT BOOT — the Windows game drive
+#      on a dual-boot machine especially. Bazzite's own automounter only handles
+#      labelled ext4 and btrfs; ours picks up everything it walks past (NTFS,
+#      exFAT, XFS, F2FS, FAT and unnamed drives), skipping swap, the EFI boot
+#      partition, Windows' recovery partition, anything /etc/fstab already
+#      claims, and the disk we are booted from.
+#        /usr/libexec/aquarius-internal-automount
+#        /usr/lib/systemd/system/aquarius-internal-automount.service
 #
-#   /usr/libexec/aquarius-internal-automount
-#   /usr/lib/systemd/system/aquarius-internal-automount.service
+#   2. MOUNTED DRIVES APPEAR ON THE DESKTOP, macOS-style, the system drive
+#      included and labelled "AquariusOS" — and application icons are kept off
+#      the desktop.
+#        /usr/libexec/aquarius-desktop-volumes
+#        /usr/lib/systemd/user/aquarius-desktop-volumes.service
 #
-# Both were copied into place by the system_files step at the top of this script.
-# The full reasoning — including why a boot service and not one of the four other
-# mechanisms, and why the ntfs3 driver by name — is in the script's own comments
-# and in docs/drives-and-desktop-icons.md.
+# Both files were copied into place by the system_files step at the top of this
+# script. All that is left is to mark them runnable and switch the two services
+# on.
 # ------------------------------------------------------------------------------
 
 chmod 0755 /usr/libexec/aquarius-internal-automount
+chmod 0755 /usr/libexec/aquarius-desktop-volumes
 
-# Prove it can at least start, inside the image, rather than finding out on
+# Prove they can at least start, inside the image, rather than finding out on
 # somebody's machine. `python3 -m py_compile` reads the whole file and fails the
 # build on a typo — which is the cheapest possible version of this check, since
-# the script cannot actually be RUN at build time (there are no disks to mount
-# inside a container).
+# neither script can actually be RUN at build time (there are no disks to mount
+# and no desktop to draw on inside a container).
 python3 -m py_compile /usr/libexec/aquarius-internal-automount
+python3 -m py_compile /usr/libexec/aquarius-desktop-volumes
 # py_compile leaves a __pycache__ folder next to the file. /usr/libexec is not a
 # place Python imports from, so those files would never be read again.
 rm -rf /usr/libexec/__pycache__
 
+# The boot-time drive mounter. An ordinary system service.
 systemctl enable aquarius-internal-automount.service
+
+# The desktop drive icons. This is a USER service — one copy per logged-in
+# person — so it is switched on with `--global`, which means "for every account
+# on this machine".
+#
+# ⚠️ `--global` is the important word and it is not interchangeable with
+# anything else here. It writes the enablement into /etc/systemd/user/, which
+# every account's own systemd reads. Without it we would be back to the problem
+# the desktop layout script has: a setting that only ever reaches a BRAND NEW
+# account. Royce's existing installs have to get this too.
+#   Source: systemctl(1) — "--global: When used with enable and disable, operate
+#   on the global user configuration directory, thus enabling or disabling a
+#   unit file globally for all future logins of all users."
+systemctl --global enable aquarius-desktop-volumes.service
 
 # ==============================================================================
 # AQUARIUSOS IDENTITY — make the OS call itself AquariusOS
