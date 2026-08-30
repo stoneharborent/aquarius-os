@@ -403,6 +403,57 @@ systemctl enable aquarius-internal-automount.service
 systemctl --global enable aquarius-desktop-volumes.service
 
 # ==============================================================================
+# HANDHELD-ONLY SETTINGS — kept on the handheld image, deleted from the others
+# ==============================================================================
+# A handheld needs a small number of KDE defaults that a desktop PC actively does
+# not want. Right now there is one of them and it is the important one: turn the
+# game controller into a mouse and keyboard on the desktop, which is the only way
+# to use an ROG Xbox Ally with nothing plugged into it. On a desktop PC the same
+# setting means a controller plugged in for a game starts shoving the mouse
+# pointer around, which nobody asked for.
+#
+#   /usr/share/aquarius/xdg-handheld/kwinrc   ← read that file; the reasoning,
+#                                               the button map and the sources
+#                                               are all inside it
+#
+# HOW "HANDHELD ONLY" IS DONE, and why it is done backwards
+#   The folder is copied onto EVERY image by the system_files step at the top of
+#   this script, and then deleted again here on the two desktop images. Shipping
+#   and un-shipping is deliberately the wrong way round from how it sounds,
+#   because it is the way that cannot fail quietly: the file is always in the
+#   repo, always reviewed, always in one place, and the only variant-specific
+#   thing in the whole arrangement is one `rm -rf`.
+#
+#   The other half of the switch is in the little script that puts our folders on
+#   KDE's search path, system_files/etc/xdg/plasma-workspace/env/zz-aquarius.sh.
+#   It adds this folder only `if [ -d ... ]`, so on a desktop image — where we
+#   have just deleted it — the folder simply is not part of the machine.
+#
+# ⚠️ NOTE ON THE HOUSE RULE. The Containerfile says there is no variant branching
+# in this script, and that adding one should be the last resort. This is that
+# last resort, and it is the same shape as the branch build_files/image-info.sh
+# already has to work out the edition name — `case "$IMAGE_NAME"`, matching on
+# the word "deck", which Bazzite's own handheld checks match on too. The rule the
+# Containerfile is really protecting is "do not let the three images drift", and
+# this is one folder that does not exist on two of them, tested by its absence.
+# ------------------------------------------------------------------------------
+
+case "${IMAGE_NAME}" in
+  *deck*)
+    echo "OK: '${IMAGE_NAME}' is the handheld image — keeping /usr/share/aquarius/xdg-handheld."
+    # Prove it is really there. A typo in the path above, or a file that quietly
+    # stopped being copied, would otherwise ship a handheld with no way to move
+    # the pointer — and nothing would go red.
+    test -f /usr/share/aquarius/xdg-handheld/kwinrc
+    grep -q '^gamecontrollerEnabled=true$' /usr/share/aquarius/xdg-handheld/kwinrc
+    ;;
+  *)
+    echo "NOTE: '${IMAGE_NAME}' is a desktop image — removing the handheld-only settings."
+    rm -rf /usr/share/aquarius/xdg-handheld
+    ;;
+esac
+
+# ==============================================================================
 # AQUARIUSOS IDENTITY — make the OS call itself AquariusOS
 # ==============================================================================
 # Everything above this point installs things. This last step renames things:
