@@ -139,6 +139,119 @@ HOLDING_DIR = "~/.local/share/aquarius/desktop-app-icons"
 # The line in our shortcut files that means "this one is ours".
 OUR_MARKER = "X-Aquarius-Volume=true"
 
+# Put this line in any shortcut on your desktop and the tidy-up will leave it
+# exactly where it is, forever. It is the per-file escape hatch, next to the
+# per-machine one in ~/.config/aquarius-desktop.conf.
+KEEP_MARKER = "X-Aquarius-Keep-On-Desktop=true"
+
+# ==============================================================================
+# THE SHORTCUTS THIS PROGRAM MUST NEVER MOVE  (added 2026-08-30)
+# ==============================================================================
+# This block exists because the first version of this program broke the single
+# most important thing about the handheld edition of AquariusOS, and it did it
+# within about two seconds of the owner logging in.
+#
+# HERE IS THE STORY, because the reasoning matters more than the list.
+#
+# On a handheld (our aquarius-os-deck image, built on bazzite-deck) the machine
+# normally starts straight into Steam's Game Mode. You leave Game Mode for the
+# ordinary desktop by choosing "Switch to Desktop" in Steam. That choice STICKS:
+# it is written into the automatic-login settings, and the machine keeps landing
+# on the desktop every time it is switched on until something writes those
+# settings back.
+#   Source: ublue-os/bazzite, /usr/libexec/bazzite-autologin — it writes
+#   /etc/sddm.conf.d/zz-holo-autologin.conf ONLY `if [[ ! -f ${HOLO_CONF} ]]`,
+#   so once another program has written that file, a reboot does not undo it.
+#
+# The one thing that writes it back is a shortcut sitting on the desktop called
+# "Return to Gaming Mode" (~/Desktop/Return.desktop). Bazzite puts it there and
+# puts it BACK if it goes missing.
+#   Source: ublue-os/bazzite, /usr/libexec/bazzite-user-setup —
+#   `if [[ $IMAGE_NAME =~ "deck" ]]` ... `cp /etc/skel/Desktop/Return.desktop`.
+#   The file itself comes from the steamdeck-kde-presets package and reads
+#   `Type=Application`, `Exec=/usr/bin/return-to-gamemode`.
+#
+# And `Type=Application` is exactly what the tidy-up below looks for. So we
+# picked up the one icon that leads home and filed it in a hidden folder. On a
+# handheld with no keyboard and no mouse attached, that is not an inconvenience —
+# it is a dead end. The machine looks, to its owner, like it has stopped booting
+# into Game Mode.
+#
+# So: a shortcut that CHANGES WHICH SESSION THE MACHINE STARTS IN is not an app
+# icon. It is part of how the computer works, it stays on the desktop, and if a
+# previous version of this program already moved one, we put it back (see
+# restore_protected_launchers below).
+# ------------------------------------------------------------------------------
+
+# Matched on the file name, case-insensitively. Bazzite's own scripts refer to
+# this file by name, so the name is the most stable thing about it.
+PROTECTED_LAUNCHER_FILENAMES = {
+    "return.desktop",
+}
+
+# Matched anywhere in a shortcut's `Exec=` line. These are the commands that
+# switch the machine between Game Mode and the desktop; every one of them was
+# read out of the bazzite-deck image rather than guessed at.
+#
+#   /usr/bin/return-to-gamemode        the Return icon's own command
+#   steamosctl switch-to-game-mode     what that command actually runs
+#   steamos-session-select             Valve's name for it, kept for Steam
+#   os-session-select                  Bazzite's copy of the same script
+#   org.kde.Shutdown.logout            the older Return icon shipped by Valve,
+#                                      which logs out and lets automatic login
+#                                      take you back to Game Mode
+SESSION_SWITCH_COMMANDS = (
+    "return-to-gamemode",
+    "steamosctl",
+    "steamos-session-select",
+    "os-session-select",
+    "org.kde.Shutdown.logout",
+)
+
+# ==============================================================================
+# WHICH SESSIONS THIS PROGRAM RUNS IN  (added 2026-08-30)
+# ==============================================================================
+# Same story as above, from the other end. This program draws icons on a Plasma
+# desktop. Game Mode is not a Plasma desktop — it is Steam running on its own
+# compositor, with no desktop folder, no icons and nothing for us to do.
+#
+# It is switched on for every account with `systemctl --global enable`, and a
+# handheld's Game Mode session does start the same `graphical-session.target`
+# that pulls us in, so without this check we would run there and quietly poke at
+# a Desktop folder nobody can see. Nothing good can come of that, so we don't.
+#
+# HOW THE CHECK IS WRITTEN, and why it leans the way it does: a session says
+# what it is in the XDG_CURRENT_DESKTOP environment variable, which Plasma sets
+# to "KDE" and Valve's Game Mode sets to "gamescope".
+#   Source: the desktop-entry specification, §"Registered OnlyShowIn
+#   Environments"; plasma-workspace startplasma sets XDG_CURRENT_DESKTOP=KDE and
+#   hands it to systemd with `dbus-update-activation-environment --systemd`.
+#
+# If that variable is EMPTY we run anyway. That is deliberate and it is the safe
+# direction to fail in: an empty answer means we could not tell, and the cost of
+# running where we should not is a couple of unread files, while the cost of NOT
+# running where we should is the feature silently doing nothing on a desktop PC.
+# ------------------------------------------------------------------------------
+DESKTOP_SESSION_NAMES = ("kde", "plasma")
+
+
+def session_is_a_desktop() -> tuple[bool, str]:
+    """Should this program run in the session it has been started in?
+
+    Returns the answer and a sentence saying why, so the journal explains itself.
+    """
+    current = (os.environ.get("XDG_CURRENT_DESKTOP") or "").strip()
+    if not current:
+        return True, "no session name was set, so we assume an ordinary desktop"
+    names = [part.strip().lower() for part in current.split(":") if part.strip()]
+    if any(any(known in name for known in DESKTOP_SESSION_NAMES) for name in names):
+        return True, f"this is a Plasma desktop session (XDG_CURRENT_DESKTOP={current})"
+    return False, (
+        f"this is not a desktop session (XDG_CURRENT_DESKTOP={current}) — on a "
+        f"handheld that means Game Mode, which has no desktop to draw on"
+    )
+
+
 # ------------------------------------------------------------------------------
 # WHICH MOUNTED THINGS COUNT AS "A DRIVE"
 # ------------------------------------------------------------------------------
@@ -501,6 +614,74 @@ def desktop_entry_type(path: str) -> str | None:
     return None
 
 
+def is_protected_launcher(path: str, filename: str | None = None) -> bool:
+    """Is this shortcut one that must stay on the desktop no matter what?
+
+    Three ways to qualify, any one of which is enough. See the long explanation
+    at the top of this file under "THE SHORTCUTS THIS PROGRAM MUST NEVER MOVE".
+
+      1. Its file name is one Bazzite's own scripts look for by name.
+      2. Its `Exec=` line runs one of the commands that switch the machine
+         between Game Mode and the desktop.
+      3. Somebody put our keep-me line in it by hand.
+
+    Anything we cannot read is treated as protected. Refusing to move a file we
+    could not open is the cautious answer, and it costs nothing.
+    """
+    if (filename or os.path.basename(path)).lower() in PROTECTED_LAUNCHER_FILENAMES:
+        return True
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            text = handle.read(64_000)
+    except OSError:
+        return True
+    if KEEP_MARKER in text:
+        return True
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("Exec="):
+            continue
+        command = line.split("=", 1)[1]
+        if any(known in command for known in SESSION_SWITCH_COMMANDS):
+            return True
+    return False
+
+
+def restore_protected_launchers(desktop: str) -> None:
+    """Put back anything an older version of this program should never have moved.
+
+    This is the repair half of the 2026-08-30 fix. A machine that already ran the
+    first version has its "Return to Gaming Mode" icon sitting in the holding
+    folder, and on a handheld with no keyboard that is the difference between
+    "my games are one tap away" and "I cannot get back". Updating the OS has to
+    FIX that, not merely stop doing it — so on every start we look in the holding
+    folder for anything protected and walk it back out.
+
+    A file already on the desktop is never overwritten; in that case the stashed
+    copy is simply left where it is for the owner to look at.
+    """
+    holding = expand(HOLDING_DIR)
+    try:
+        entries = sorted(os.listdir(holding))
+    except OSError:
+        return  # No holding folder is the normal, happy case.
+
+    for entry in entries:
+        if not entry.endswith(".desktop"):
+            continue
+        source = os.path.join(holding, entry)
+        if not os.path.isfile(source) or not is_protected_launcher(source, entry):
+            continue
+        destination = os.path.join(desktop, entry)
+        if os.path.exists(destination):
+            continue
+        try:
+            shutil.move(source, destination)
+            log(f"put a system shortcut back on the desktop: {entry}")
+        except OSError as error:
+            log(f"could not put {entry} back on the desktop: {error}")
+
+
 def sync_drive_icons(desktop: str, enabled: bool) -> None:
     """Make the desktop's drive icons match the drives that are actually there."""
     wanted: dict[str, str] = {}
@@ -598,11 +779,14 @@ def notify(title: str, body: str) -> None:
 def tidy_app_icons(desktop: str) -> None:
     """Move application shortcuts off the desktop into the holding folder.
 
-    Three kinds of file are deliberately left alone:
+    Four kinds of file are deliberately left alone:
       * anything that is not a `.desktop` shortcut — your actual files;
       * our own drive icons (they carry the X-Aquarius-Volume marker);
       * shortcuts to a PLACE rather than a program (`Type=Link`) — a bookmark to
-        a website or a folder is a file, not an app, and stays.
+        a website or a folder is a file, not an app, and stays;
+      * shortcuts that are part of how the machine works rather than apps —
+        above all "Return to Gaming Mode" on a handheld. See
+        is_protected_launcher() and the long note at the top of this file.
     """
     try:
         entries = sorted(os.listdir(desktop))
@@ -617,6 +801,8 @@ def tidy_app_icons(desktop: str) -> None:
         if not os.path.isfile(path) or is_ours(path):
             continue
         if desktop_entry_type(path) != "Application":
+            continue
+        if is_protected_launcher(path, entry):
             continue
 
         holding = expand(HOLDING_DIR)
@@ -663,13 +849,36 @@ def run_once(desktop: str) -> None:
 
 
 def main(argv: list[str]) -> int:
+    # --------------------------------------------------------------------------
+    # `--check-session` is what the service file asks BEFORE starting us, using
+    # systemd's ExecCondition=. Answering 0 means "yes, run"; answering 1 means
+    # "no, skip this one" — and systemd treats that as skipped rather than
+    # broken, so nothing turns red in `systemctl --user status`.
+    #   Source: systemd.service(5), ExecCondition= — "if an exit code other than
+    #   0 or 255 is returned ... the remaining commands are skipped and the unit
+    #   is *not* marked as failed."
+    # --------------------------------------------------------------------------
+    if "--check-session" in argv:
+        wanted, why = session_is_a_desktop()
+        log(f"{'running' if wanted else 'skipping'}: {why}")
+        return 0 if wanted else 1
+
+    # The same check again, for anybody who starts this program by hand. It is
+    # cheap and it means the answer cannot depend on which way you started it.
+    wanted, why = session_is_a_desktop()
+    if not wanted:
+        log(f"nothing to do: {why}")
+        return 0
+
     desktop = desktop_dir()
 
     if "--once" in argv:
+        restore_protected_launchers(desktop)
         run_once(desktop)
         return 0
 
     log(f"watching drives and the desktop folder at {desktop}")
+    restore_protected_launchers(desktop)
     run_once(desktop)
     last_desktop_change = _mtime(desktop)
 

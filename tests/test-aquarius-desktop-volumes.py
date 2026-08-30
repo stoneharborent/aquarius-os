@@ -300,6 +300,144 @@ def main(argv: list[str]) -> int:
         )
 
         # ---------------------------------------------------------------------
+        print("\nThe shortcuts that must NEVER be moved (the handheld way home)")
+        print("-" * 70)
+        # ---------------------------------------------------------------------
+        # This whole block exists because of a real regression on 2026-08-30:
+        # the tidy-up above swallowed Bazzite's "Return to Gaming Mode" icon on
+        # the handheld image, which is the only on-screen route from the desktop
+        # back to Game Mode. On a device with no keyboard and no mouse that is a
+        # dead end. See the long note at the top of the script.
+        RETURN_DESKTOP = (
+            "[Desktop Entry]\n"
+            "Name=Return to Gaming Mode\n"
+            "Exec=/usr/bin/return-to-gamemode\n"
+            "Icon=gaming-return\n"
+            "Terminal=false\n"
+            "Type=Application\n"
+            "StartupNotify=false\n"
+        )
+        write(os.path.join(desktop, "Return.desktop"), RETURN_DESKTOP)
+        # Valve's older wording for the same icon: a plain logout, which with
+        # automatic login lands you back in Game Mode.
+        write(
+            os.path.join(desktop, "Back To Games.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Back\n"
+            "Exec=qdbus org.kde.Shutdown /Shutdown org.kde.Shutdown.logout\n",
+        )
+        # Somebody's own app icon, marked by hand as "leave this alone".
+        write(
+            os.path.join(desktop, "keepme.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Keep me\nExec=keepme\n"
+            "X-Aquarius-Keep-On-Desktop=true\n",
+        )
+        # ...and an ordinary app icon, which must still be tidied away, or the
+        # protection has been written too widely.
+        write(
+            os.path.join(desktop, "gimp.desktop"),
+            "[Desktop Entry]\nType=Application\nName=GIMP\nExec=gimp\n",
+        )
+
+        module.tidy_app_icons(desktop)
+        after = set(os.listdir(desktop))
+        check(
+            "'Return to Gaming Mode' stays on the desktop — the way back to Game Mode",
+            "Return.desktop" in after,
+        )
+        check(
+            "...and so does the older logout-style version of the same icon",
+            "Back To Games.desktop" in after,
+        )
+        check(
+            "a shortcut marked X-Aquarius-Keep-On-Desktop stays put",
+            "keepme.desktop" in after,
+        )
+        check(
+            "...while an ordinary app icon is still tidied away as before",
+            "gimp.desktop" not in after,
+        )
+
+        # And the repair half: a machine that already ran the broken version has
+        # Return.desktop sitting in the holding folder. Updating must put it back.
+        os.remove(os.path.join(desktop, "Return.desktop"))
+        write(os.path.join(module.HOLDING_DIR, "Return.desktop"), RETURN_DESKTOP)
+        write(
+            os.path.join(module.HOLDING_DIR, "inkscape.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Inkscape\nExec=inkscape\n",
+        )
+        module.restore_protected_launchers(desktop)
+        after = set(os.listdir(desktop))
+        check(
+            "a Return icon an older version wrongly moved is put back on the desktop",
+            "Return.desktop" in after,
+        )
+        check(
+            "...and it is really gone from the holding folder, not copied",
+            not os.path.exists(os.path.join(module.HOLDING_DIR, "Return.desktop")),
+        )
+        check(
+            "...while an ordinary app left in the holding folder stays there",
+            os.path.isfile(os.path.join(module.HOLDING_DIR, "inkscape.desktop")),
+        )
+        check(
+            "an app icon in the holding folder is not put on the desktop",
+            "inkscape.desktop" not in after,
+        )
+
+        # Running the restore again must not fight with what is already there.
+        write(os.path.join(module.HOLDING_DIR, "Return.desktop"), RETURN_DESKTOP)
+        module.restore_protected_launchers(desktop)
+        check(
+            "a Return icon already on the desktop is never overwritten by a stashed one",
+            os.path.isfile(os.path.join(module.HOLDING_DIR, "Return.desktop")),
+        )
+        os.remove(os.path.join(module.HOLDING_DIR, "Return.desktop"))
+
+        # ---------------------------------------------------------------------
+        print("\nWhich sessions this program agrees to run in")
+        print("-" * 70)
+        # ---------------------------------------------------------------------
+        # Game Mode is not a desktop. Running there is what caused the trouble
+        # above, so the program now refuses.
+        saved_desktop_env = os.environ.get("XDG_CURRENT_DESKTOP")
+        try:
+            for value, expected, description in (
+                ("KDE", True, "a Plasma desktop session runs it"),
+                ("KDE:plasma", True, "...including a compound session name"),
+                ("gamescope", False, "Steam's Game Mode does not"),
+                ("gamescope:Steam", False, "...nor its compound spelling"),
+                ("GNOME", False, "some other desktop does not"),
+                ("", True, "an unknown session runs it — failing safe for desktops"),
+            ):
+                if value:
+                    os.environ["XDG_CURRENT_DESKTOP"] = value
+                else:
+                    os.environ.pop("XDG_CURRENT_DESKTOP", None)
+                answer, _why = module.session_is_a_desktop()
+                check(description, answer is expected)
+
+            # And the exit codes the service file actually depends on.
+            os.environ["XDG_CURRENT_DESKTOP"] = "KDE"
+            check(
+                "--check-session answers 0 (go ahead) on a desktop",
+                module.main(["--check-session"]) == 0,
+            )
+            os.environ["XDG_CURRENT_DESKTOP"] = "gamescope"
+            check(
+                "--check-session answers 1 (skip, not broken) in Game Mode",
+                module.main(["--check-session"]) == 1,
+            )
+            check(
+                "...and a normal start in Game Mode does nothing and succeeds",
+                module.main([]) == 0,
+            )
+        finally:
+            if saved_desktop_env is None:
+                os.environ.pop("XDG_CURRENT_DESKTOP", None)
+            else:
+                os.environ["XDG_CURRENT_DESKTOP"] = saved_desktop_env
+
+        # ---------------------------------------------------------------------
         print("\nThe two switches in ~/.config/aquarius-desktop.conf")
         print("-" * 70)
         # ---------------------------------------------------------------------

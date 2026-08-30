@@ -56,6 +56,25 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
+
+# ⚠️ THE GAME MODE GUARD. Do not remove this line. (Added 2026-08-30.)
+#
+# On the handheld edition of AquariusOS the machine normally starts into Steam's
+# Game Mode, which is not a desktop at all: no desktop folder, no icons, nothing
+# for this program to do. But Game Mode DOES reach graphical-session.target, so
+# without this line we would start there anyway and rummage around in a Desktop
+# folder nobody can see. That is how the first version of this service managed to
+# break the one thing a handheld exists for — the full story is written out at
+# the top of /usr/libexec/aquarius-desktop-volumes.
+#
+# ExecCondition runs the program with `--check-session` first. It answers 0 for
+# "this is a Plasma desktop, go ahead" and 1 for "this is not, skip it" — and
+# systemd treats a 1 as SKIPPED, not failed, so nothing shows up red.
+#   Source: systemd.service(5), ExecCondition= — "if an exit code other than 0
+#   or 255 is returned ... the remaining commands are skipped and the unit is
+#   *not* marked as failed."
+ExecCondition=/usr/libexec/aquarius-desktop-volumes --check-session
+
 ExecStart=/usr/libexec/aquarius-desktop-volumes
 
 # If it ever falls over, start it again after ten seconds. Losing your drive

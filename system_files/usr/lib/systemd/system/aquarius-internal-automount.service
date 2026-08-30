@@ -32,7 +32,13 @@ Documentation=https://github.com/stoneharborent/aquarius-os/blob/main/docs/drive
 # already had its turn, so by the time we look, anything fstab wanted is mounted
 # and we will correctly skip it.
 After=local-fs.target
-Requires=local-fs.target
+
+# ⚠️ There is deliberately no `Requires=local-fs.target` here, and there was
+# until 2026-08-30. After= is an ORDER ("go second"); Requires= is a DEMAND
+# ("and refuse to run at all if that failed"). We only ever wanted the order.
+# A hard demand on a target this early in the boot is the kind of line that
+# turns one sick disk into a machine that will not start, for no benefit — the
+# script copes perfectly well with a drive that is not there.
 
 # Bazzite ships an automounter of its own for labelled ext4 and btrfs drives.
 # Running after it means it gets first refusal on every drive it understands,
@@ -41,9 +47,29 @@ Requires=local-fs.target
 # nothing — After= on a unit that does not exist is not an error.
 After=ublue-os-media-automount.service
 
-# The desktop should be able to show these drives the moment somebody logs in,
-# so get in before the login screen rather than after it.
-Before=display-manager.service
+# ⚠️ THE LOGIN PATH IS NOT OURS TO STAND IN. Do not add
+# `Before=display-manager.service` here. It was here from 2026-08-30 until later
+# the same day, and it was a mistake — a small one on a desktop PC, a serious
+# one on a handheld.
+#
+# The idea was innocent: get the drives mounted before the login screen so their
+# icons are there the instant somebody logs in. It bought nothing, because the
+# desktop icons are drawn by a program that WATCHES for drives appearing and
+# redraws within a second of any mount, whenever that happens.
+#
+# What it cost was worse. On the handheld image, the thing that decides whether
+# the machine starts in Steam's Game Mode or on the desktop is another oneshot
+# service that also has to finish before the login screen —
+# bazzite-autologin.service, `Before=display-manager.service`, no other ordering
+# of any kind. Putting a second, slower, disk-touching oneshot in the same
+# position means the machine's most important boot decision is now sharing a
+# starting gate with our drive scan, which is allowed up to five minutes.
+#
+# Nothing about mounting a games drive is worth standing anywhere near that. So
+# this service now runs as an ordinary part of starting up, in parallel with the
+# login screen, and nothing waits for it.
+#   Source for the upstream unit: ublue-os/bazzite,
+#   system_files/deck/shared/usr/lib/systemd/system/bazzite-autologin.service
 
 [Service]
 Type=oneshot

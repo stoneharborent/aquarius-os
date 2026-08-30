@@ -103,3 +103,77 @@ jobs:
           fi
 
           exit "$fail"
+
+      # ----------------------------------------------------------------------
+      # THE GAME MODE GATE  (added 2026-08-30, after a real regression)
+      # ----------------------------------------------------------------------
+      # On 2026-08-30 these two services, both brand new, between them stopped
+      # the handheld image doing the one thing it exists to do: start into
+      # Steam's Game Mode. Two separate mistakes, both invisible on a desktop PC
+      # and both fatal on a handheld with no keyboard:
+      #
+      #   1. The desktop program swallowed Bazzite's "Return to Gaming Mode"
+      #      icon, which is the only on-screen way back from the desktop.
+      #   2. The boot-time mounter stood in the login path
+      #      (Before=display-manager.service), the same starting gate as the
+      #      service that decides which session the machine starts in.
+      #
+      # The tests above cover the first one properly. These four checks cover
+      # the parts that live in files a Python test cannot see. The whole story
+      # is in docs/game-mode-regression.md.
+      # ----------------------------------------------------------------------
+      - name: Nothing we ship can take the handheld out of Game Mode
+        run: |
+          set -euo pipefail
+          fail=0
+
+          unit_user=system_files/usr/lib/systemd/user/aquarius-desktop-volumes.service
+          unit_system=system_files/usr/lib/systemd/system/aquarius-internal-automount.service
+
+          # 1. The desktop service must ask "am I on a desktop?" before starting.
+          if ! grep -q '^ExecCondition=/usr/libexec/aquarius-desktop-volumes --check-session$' \
+                 "$unit_user"; then
+            echo "::error::${unit_user} has lost its ExecCondition= line. Without it"
+            echo "         the desktop drive-icon service runs inside Steam's Game"
+            echo "         Mode on the handheld image, where it has no business."
+            fail=1
+          fi
+
+          # 2. The boot-time mounter must stay out of the login path.
+          if grep -q '^Before=display-manager\.service' "$unit_system"; then
+            echo "::error::${unit_system} is ordered before the login screen again."
+            echo "         That puts our drive scan in the same starting gate as"
+            echo "         bazzite-autologin.service, which decides whether a"
+            echo "         handheld starts in Game Mode. Take the line out."
+            fail=1
+          fi
+
+          # 3. The list of shortcuts we refuse to move must still name the one
+          #    that matters. Bazzite calls it Return.desktop.
+          if ! grep -q '"return\.desktop"' \
+                 system_files/usr/libexec/aquarius-desktop-volumes; then
+            echo "::error::aquarius-desktop-volumes no longer protects Return.desktop,"
+            echo "         which is the handheld's only on-screen way back to Game"
+            echo "         Mode. See PROTECTED_LAUNCHER_FILENAMES in that file."
+            fail=1
+          fi
+
+          # 4. We are allowed to have opinions about how the login screen LOOKS.
+          #    We are never allowed to have an opinion about WHO it logs in or
+          #    WHICH session it starts — that is Bazzite's autologin, rewritten
+          #    on every boot, and it is what puts a handheld into Game Mode.
+          #    So: an SDDM file of ours may not carry an [Autologin] section, a
+          #    Session= key or a User= key.
+          while IFS= read -r sddm_file; do
+            [ -f "$sddm_file" ] || continue
+            if grep -Eqi '^\[Autologin\]|^[[:space:]]*(Session|User)[[:space:]]*=' \
+                 "$sddm_file"; then
+              echo "::error::${sddm_file} tries to set the login screen's session or"
+              echo "         user. AquariusOS must never do that — Bazzite's"
+              echo "         bazzite-autologin owns it, and it is what starts a"
+              echo "         handheld in Game Mode. Keep our SDDM files to looks."
+              fail=1
+            fi
+          done < <(find system_files -path '*sddm*' -type f)
+
+          exit "$fail"

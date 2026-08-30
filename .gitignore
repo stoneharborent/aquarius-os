@@ -8,3 +8,9 @@ _build-*/**
 # macOS / iCloud noise (this repo lives in an iCloud-synced folder)
 .DS_Store
 .iCloud*
+
+# Python leaves these behind whenever a test suite imports one of the scripts in
+# system_files/ or ingest/. They are machine-specific build junk, never shipped —
+# build.sh rebuilds them inside the image and deletes ours.
+__pycache__/
+*.pyc

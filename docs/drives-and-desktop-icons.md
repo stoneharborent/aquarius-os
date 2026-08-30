@@ -304,6 +304,17 @@ it did.
 - **Only application shortcuts are moved.** Documents, folders, website
   bookmarks (`Type=Link`) and our own drive icons are all left exactly alone.
   There are tests for every one of those.
+- **⚠️ And shortcuts that are part of how the machine works are never moved.**
+  This one was learned the hard way, later the same day. On the handheld image,
+  "Return to Gaming Mode" is an application shortcut sitting on the desktop —
+  and it is the only way back to Game Mode on a device with no keyboard. The
+  first version of this program filed it away, which stranded Royce's Ally on
+  the desktop. It is now protected by name, by what it runs, and by a
+  `X-Aquarius-Keep-On-Desktop=true` line anyone can add to a shortcut of their
+  own. If an older build already moved yours, updating puts it back for you.
+  Full story: `game-mode-regression.md`.
+- **It never runs in Game Mode at all.** The service asks "am I on a Plasma
+  desktop?" before it starts, and skips itself if not.
 - **It is one line to switch off.** Put this in `~/.config/aquarius-desktop.conf`:
 
   ```
