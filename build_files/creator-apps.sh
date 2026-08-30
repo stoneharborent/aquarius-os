@@ -616,12 +616,14 @@ SANDBOX="${APP_ROOT}/aquarius-editor/chrome-sandbox"
 if [ -e "$SANDBOX" ]; then
     mode="$(stat -c '%a' "$SANDBOX")"
     owner="$(stat -c '%U:%G' "$SANDBOX")"
-    [ "$mode" = "4755" ] && [ "$owner" = "root:root" ] || die \
-        "aquarius-editor: chrome-sandbox is ${owner} mode ${mode}, expected root:root mode 4755." \
-        "" \
-        "Electron aborts on startup with \"The SUID sandbox helper binary was found," \
-        "but is not configured correctly\" when this is wrong — and from the app grid" \
-        "that abort is completely silent."
+    if [ "$mode" != "4755" ] || [ "$owner" != "root:root" ]; then
+        die \
+            "aquarius-editor: chrome-sandbox is ${owner} mode ${mode}, expected root:root mode 4755." \
+            "" \
+            "Electron aborts on startup with \"The SUID sandbox helper binary was found," \
+            "but is not configured correctly\" when this is wrong — and from the app grid" \
+            "that abort is completely silent."
+    fi
     say "aquarius-editor: chrome-sandbox is root:root 4755."
 fi
 
