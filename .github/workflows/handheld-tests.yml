@@ -1,0 +1,142 @@
+---
+# Tests for the two things that make AquariusOS usable on a gaming handheld with
+# nothing plugged into it:
+#
+#   1. The controller drives the desktop pointer.
+#      system_files/usr/share/aquarius/xdg-handheld/kwinrc
+#   2. The login screen is not magnified off the edges of a 7-inch screen.
+#      system_files/usr/libexec/aquarius-greeter-scale
+#
+# WHY THIS IS ITS OWN WORKFLOW
+# Same reasoning as the drive tests and the launcher tests next door. Building
+# the OS image takes the best part of an hour; the questions worth asking here —
+# "would this machine get its login screen rewritten?", "is the one config line
+# still spelled correctly?" — are answered on a plain Ubuntu runner in seconds.
+#
+# Neither of these can be tested for real anywhere but on a handheld, and that is
+# stated plainly in docs/handheld-desktop-controls.md and
+# docs/login-screen-scaling.md. What CAN be checked without hardware is that the
+# decisions are right and that the pieces are still wired together, which is what
+# this workflow does.
+name: Handheld tests
+
+on:
+  pull_request:
+    paths:
+      - 'system_files/usr/libexec/aquarius-greeter-scale'
+      - 'system_files/usr/lib/systemd/system/aquarius-greeter-scale.service'
+      - 'system_files/usr/share/aquarius/greeter/**'
+      - 'system_files/usr/share/aquarius/xdg-handheld/**'
+      - 'system_files/etc/xdg/plasma-workspace/env/zz-aquarius.sh'
+      - 'tests/test-aquarius-greeter-scale.sh'
+      # This is where both of them get switched on.
+      - 'build_files/build.sh'
+      - '.github/workflows/handheld-tests.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'system_files/usr/libexec/aquarius-greeter-scale'
+      - 'system_files/usr/lib/systemd/system/aquarius-greeter-scale.service'
+      - 'system_files/usr/share/aquarius/greeter/**'
+      - 'system_files/usr/share/aquarius/xdg-handheld/**'
+      - 'system_files/etc/xdg/plasma-workspace/env/zz-aquarius.sh'
+      - 'tests/test-aquarius-greeter-scale.sh'
+      - 'build_files/build.sh'
+      - '.github/workflows/handheld-tests.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Controller on the desktop, and a login screen that fits
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Show tool versions
+        run: |
+          bash --version | head -1
+          shellcheck --version | grep version:
+
+      # ----------------------------------------------------------------------
+      # Static checks first — these read the scripts without running them.
+      # `just lint` looks for *.sh and so does not see aquarius-greeter-scale,
+      # which is a command with no extension. It is named here instead.
+      # ----------------------------------------------------------------------
+      - name: Shellcheck
+        run: |
+          shellcheck -x -P SCRIPTDIR \
+            system_files/usr/libexec/aquarius-greeter-scale \
+            system_files/etc/xdg/plasma-workspace/env/zz-aquarius.sh \
+            tests/test-aquarius-greeter-scale.sh
+
+      - name: Which machines get their login screen adjusted, and what is written
+        run: ./tests/test-aquarius-greeter-scale.sh
+
+      # ----------------------------------------------------------------------
+      # And the parts that live in files no test can reach into.
+      # ----------------------------------------------------------------------
+      - name: The handheld pieces are still wired together
+        run: |
+          set -euo pipefail
+          fail=0
+
+          handheld_kwinrc=system_files/usr/share/aquarius/xdg-handheld/kwinrc
+          env_script=system_files/etc/xdg/plasma-workspace/env/zz-aquarius.sh
+
+          # 1. The one line that lets a controller move the pointer. KWin builds
+          #    this setting's name in code (plugin id + "Enabled"), so a typo
+          #    here does nothing at all and looks exactly like a working setting.
+          if ! grep -q '^gamecontrollerEnabled=true$' "$handheld_kwinrc"; then
+            echo "::error::${handheld_kwinrc} no longer switches KDE's game"
+            echo "         controller plug-in on. Without it there is no way to"
+            echo "         move the pointer on an Ally with nothing plugged in."
+            fail=1
+          fi
+
+          # 2. That file is worth nothing unless its folder is on KDE's search
+          #    path, which is one `if [ -d ]` in one small script.
+          if ! grep -q 'xdg-handheld' "$env_script"; then
+            echo "::error::${env_script} no longer adds the handheld settings"
+            echo "         folder to XDG_CONFIG_DIRS, so nothing in it is read."
+            fail=1
+          fi
+
+          # 3. ...and the folder must be deleted again on the two desktop
+          #    images, or a controller plugged into a PC starts shoving the
+          #    mouse pointer around.
+          if ! grep -q 'rm -rf /usr/share/aquarius/xdg-handheld' build_files/build.sh; then
+            echo "::error::build.sh no longer removes the handheld-only settings"
+            echo "         from the desktop images."
+            fail=1
+          fi
+
+          # 4. ⚠️ The handheld base image ships its own /etc/xdg/kwinrc, and two
+          #    of its three lines are the on-screen keyboard on a device with no
+          #    keyboard. Our file sits ABOVE it, so a [Wayland] key here would
+          #    outrank those two without saying so.
+          if grep -q '^\[Wayland\]' "$handheld_kwinrc"; then
+            echo "::error::${handheld_kwinrc} has a [Wayland] section. That"
+            echo "         outranks the handheld base image's own kwinrc, whose"
+            echo "         [Wayland] keys ARE the on-screen keyboard. Take it out."
+            fail=1
+          fi
+
+          # 5. The login-screen fix must be switched on, and must stay decided by
+          #    the hardware rather than by which image was installed — a desktop
+          #    image on an Ally has the same small screen.
+          if ! grep -q '^systemctl enable aquarius-greeter-scale\.service$' \
+                 build_files/build.sh; then
+            echo "::error::build.sh no longer enables aquarius-greeter-scale.service,"
+            echo "         so the login screen stays oversized on a handheld."
+            fail=1
+          fi
+
+          exit "$fail"

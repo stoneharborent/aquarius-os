@@ -403,6 +403,53 @@ systemctl enable aquarius-internal-automount.service
 systemctl --global enable aquarius-desktop-volumes.service
 
 # ==============================================================================
+# THE LOGIN SCREEN, AT THE RIGHT SIZE ON A SMALL SCREEN
+# ==============================================================================
+# On Royce's 7-inch ROG Xbox Ally the login screen came up enormous and cut off
+# at the edges, while the desktop behind it was fine. That is not a bug in
+# anything — it is KWin working out how much to magnify a screen from its
+# physical size, taking its "phone screens" branch because a handheld has no
+# laptop lid, and landing on 210% for a 7-inch 1080p panel. The desktop escapes
+# it because your account has a saved answer; the login screen runs as a
+# different account with no saved answer, so it guesses afresh.
+#
+# The fix is to give the login screen a saved answer too. The whole explanation,
+# with the KWin source it was read out of, is at the top of the script:
+#
+#   /usr/libexec/aquarius-greeter-scale                        the script
+#   /usr/lib/systemd/system/aquarius-greeter-scale.service     when it runs
+#   /usr/share/aquarius/greeter/kwinoutputconfig.json          what it installs
+#
+# ⚠️ THIS IS NOT SCOPED TO THE HANDHELD IMAGE, and that is deliberate. Whether a
+# login screen is too big is a question about the SCREEN, not about which of our
+# three images somebody installed — a desktop image installed on an Ally has the
+# same problem, and the handheld image docked to a monitor does not. So the
+# script asks the hardware instead: Bazzite's own /usr/libexec/hwsupport/
+# needs-100-scale list first, plus the ROG Xbox Ally, which is missing from it.
+# On every other machine the service records itself as skipped and writes
+# nothing at all.
+# ------------------------------------------------------------------------------
+
+chmod 0755 /usr/libexec/aquarius-greeter-scale
+
+# Prove the pieces are really in the image before switching anything on. A
+# missing file here would be a service that silently does nothing forever.
+test -x /usr/libexec/aquarius-greeter-scale
+test -r /usr/share/aquarius/greeter/kwinoutputconfig.json
+python3 -c "import json; json.load(open('/usr/share/aquarius/greeter/kwinoutputconfig.json'))"
+
+# And prove the script's own decision works inside the image: a container has no
+# handheld hardware, so the honest answer here is "no, this machine does not need
+# it", and the script must say so rather than falling over.
+if /usr/libexec/aquarius-greeter-scale --check-device; then
+  echo "AQUARIUS NOTE: the build machine claims to need the login-screen fix."
+else
+  echo "OK: aquarius-greeter-scale correctly leaves an ordinary machine alone."
+fi
+
+systemctl enable aquarius-greeter-scale.service
+
+# ==============================================================================
 # HANDHELD-ONLY SETTINGS — kept on the handheld image, deleted from the others
 # ==============================================================================
 # A handheld needs a small number of KDE defaults that a desktop PC actively does
