@@ -20,6 +20,9 @@
 #      with nothing starting.
 #   3. Downloads the OS has caught up with get deleted (they are ~2 GB each).
 #   4. NOTHING is EVER deleted while the download is the newer one.
+#   5. Both app launchers actually ask this library the question. That last one
+#      is a read of the two files in system_files/usr/bin rather than a pretend
+#      world, and it is at the bottom of this file.
 #
 # HOW TO RUN IT
 #   ./tests/test-aquarius-overlay.sh
@@ -279,14 +282,68 @@ else
     fail "AQUARIUS_UPDATE_OVERLAY_DIR is '${AQUARIUS_UPDATE_OVERLAY_DIR:-}', expected '${OVERLAY}'"
 fi
 
+# ==============================================================================
+echo
+echo "== both launchers actually ask the question =="
+# Everything above ran the library directly, under the name "aquarius-editor",
+# because a test has to call the app something. The library itself is entirely
+# app-agnostic and there is nothing app-specific left to test about it.
+#
+# What is NOT automatic is that each app's launcher REMEMBERS TO ASK. A launcher
+# that quietly stopped reading the library in would look perfectly healthy: the
+# app would open, every time, from the copy built into the OS — and the update
+# sitting in the user's home folder would never start and never be mentioned.
+# There is no error to notice. That silence is the whole reason for checking.
+#
+# This is a plain READ of the two launcher files, not a run of them: they end in
+# `exec`, so running one would start an app. The launchers live next to the
+# library in the same /usr tree — beside it in the repo, and beside it in the
+# finished image — so they are found relative to whichever copy is under test.
+BIN_DIR="$(cd "$(dirname -- "$LIB")/../bin" 2>/dev/null && pwd)" || BIN_DIR=""
+
+check_launcher_wiring() {   # check_launcher_wiring <app-id>
+    local app="$1" file="${BIN_DIR}/$1" var
+
+    if [ -z "$BIN_DIR" ] || [ ! -r "$file" ]; then
+        fail "${app} — no launcher to read at '${BIN_DIR:-(no bin folder beside the library)}/${app}'"
+        return
+    fi
+
+    if grep -qE '^[[:space:]]*\.[[:space:]]+/usr/libexec/aquarius-app-overlay' "$file"; then
+        pass "${app} — reads in /usr/libexec/aquarius-app-overlay"
+    else
+        fail "${app} — never reads in /usr/libexec/aquarius-app-overlay, so a downloaded update would never be looked for"
+    fi
+
+    if grep -qE 'aq_overlay_prepare[[:space:]]' "$file"; then
+        pass "${app} — asks which copy should start"
+    else
+        fail "${app} — never calls aq_overlay_prepare, so nothing decides between the two copies"
+    fi
+
+    # The answer is only worth having if it is passed on. The shared launcher
+    # reads these two and nothing else; without them it starts the built-in copy
+    # no matter what the library worked out.
+    for var in AQUARIUS_INSTALL_ROOT AQUARIUS_LAUNCH_NOTES; do
+        if grep -qE "^[[:space:]]*export[[:space:]]+${var}=" "$file"; then
+            pass "${app} — hands ${var} to the shared launcher"
+        else
+            fail "${app} — does not export ${var}, so the shared launcher would ignore the decision"
+        fi
+    done
+}
+
+check_launcher_wiring aquarius-editor
+check_launcher_wiring aquarius-writer
+
 echo
 echo "--------------------------------------------------------------"
 printf '%d passed, %d failed\n' "$PASSED" "$FAILED"
 
 if [ "$FAILED" -ne 0 ]; then
     echo
-    echo "The launcher would start the wrong copy of Aquarius Editor, or delete"
-    echo "something it should not. Do not ship this."
+    echo "The launcher would start the wrong copy of the app, delete something it"
+    echo "should not, or stop looking for updates altogether. Do not ship this."
     exit 1
 fi
 

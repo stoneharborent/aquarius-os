@@ -384,8 +384,8 @@ jobs:
 
             # 7. the version stamp.
             #    /usr is read-only on this kind of OS, so a baked-in app cannot
-            #    update itself in place. Aquarius Editor instead downloads a
-            #    newer copy of itself into the user's home folder, and at every
+            #    update itself in place. Both apps instead download a
+            #    newer copy of themselves into the user's home folder, and at every
             #    launch the OS compares that download against this file to decide
             #    which one to start. No file, no comparison, and the app silently
             #    stops accepting updates — with no error anywhere. Hence checking
@@ -416,8 +416,8 @@ jobs:
 
           # --- the app-update library, on the FINAL image ----------------------
           # /usr/libexec/aquarius-app-overlay is what decides, at every launch,
-          # whether a copy of Aquarius Editor downloaded into the user's home
-          # folder is newer than the one built into the OS.
+          # whether a copy of Aquarius Editor or Aquarius Writer downloaded into
+          # the user's home folder is newer than the one built into the OS.
           #
           # Losing it does not break anything visibly: the launcher shrugs, starts
           # the built-in copy, and the app just quietly never takes an update
@@ -441,7 +441,7 @@ jobs:
               else bad "version comparison: $1 vs $2 gave '${got}', expected '$3'"; fi
             done
           else
-            bad "$ov is missing — Aquarius Editor would silently stop taking updates"
+            bad "$ov is missing — both Aquarius apps would silently stop taking updates"
           fi
 
           # --- our ujust recipes are actually in the menu ----------------------

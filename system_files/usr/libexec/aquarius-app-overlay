@@ -11,7 +11,8 @@
 # WHY THIS EXISTS, IN PLAIN ENGLISH
 # ------------------------------------------------------------------------------
 # AquariusOS is an immutable operating system. The whole of /usr — which is where
-# Aquarius Editor lives — is READ-ONLY while the machine is running. That is a
+# Aquarius Editor and Aquarius Writer live — is READ-ONLY while the machine is
+# running. That is a
 # feature: it is why the OS cannot be broken by a bad install and why you can
 # always roll back to yesterday's version.
 #
@@ -19,13 +20,14 @@
 # Normally that is fine — a new version of the app arrives with the next OS
 # update. But an OS update is a whole new image, it is downloaded in the
 # background, and it only takes effect after a reboot. If we shipped a bad bug in
-# Aquarius Editor on a Friday, everybody would live with it until they rebooted.
+# one of our apps on a Friday, everybody would live with it until they rebooted.
 #
-# So Aquarius Editor is also allowed to download a newer copy of ITSELF into the
+# So each of our apps is also allowed to download a newer copy of ITSELF into the
 # user's own home folder, where writing is allowed. This file is the OS half of
 # that arrangement: at launch it looks for that downloaded copy, works out
 # whether it is genuinely newer than the one baked into the OS, and says which
-# one should start.
+# one should start. It is written to know nothing about any particular app — the
+# app's name is handed to it — so both launchers share one copy of these rules.
 #
 # ------------------------------------------------------------------------------
 # THE AGREEMENT WITH THE APP  (do not change one side of this alone)
@@ -76,7 +78,8 @@
 #      Nothing is EVER deleted while the downloaded copy is the newer one.
 #
 # Read alongside: /usr/libexec/aquarius-app-launch (what actually starts the app)
-#                 /usr/bin/aquarius-editor          (the app-specific front door)
+#                 /usr/bin/aquarius-editor          (the app-specific front doors)
+#                 /usr/bin/aquarius-writer
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
@@ -275,10 +278,11 @@ aq__overlay_cleanup() {   # aq__overlay_cleanup <overlay-root> <built-in-version
 #
 # It never fails. Every problem it meets becomes a note and the built-in copy.
 #
-# TO USE THIS FOR AQUARIUS WRITER TOO, one day: nothing in this file needs to
-# change. Add the same four lines that /usr/bin/aquarius-editor has to
-# /usr/bin/aquarius-writer, and start writing a VERSION file for the Writer in
-# build_files/creator-apps.sh (which already does, for both apps).
+# BOTH OF OUR APPS USE THIS. /usr/bin/aquarius-editor and /usr/bin/aquarius-writer
+# each call it with their own name, and nothing in this file knows or cares which
+# is which. Adding a third app is the same four lines in its launcher plus a
+# VERSION file from build_files/creator-apps.sh (which writes one for every app in
+# its table already). The launcher wiring is checked by tests/test-aquarius-overlay.sh.
 aq_overlay_prepare() {
     local app_id="$1"
     local baked_root="${2:-/usr/lib/aquarius}"
@@ -372,7 +376,8 @@ aq_overlay_prepare() {
     fi
 
     # shellcheck disable=SC2034  # this is the whole output of the function: the
-    #                              caller (/usr/bin/aquarius-editor) reads it.
+    #                              caller (/usr/bin/aquarius-editor, or
+    #                              /usr/bin/aquarius-writer) reads it.
     AQ_INSTALL_ROOT="$target"
     aq__note "versions: AquariusOS has ${baked_version}, the downloaded update is ${overlay_version}. STARTING THE DOWNLOADED UPDATE from ${target}."
     return 0

@@ -298,8 +298,8 @@ bake_appimage() {
     #
     # WHY THE OPERATING SYSTEM NEEDS TO KNOW ITS OWN APP'S VERSION
     # /usr is read-only on AquariusOS, so a baked-in app can never update itself
-    # in place. Aquarius Editor is therefore allowed to download a newer copy of
-    # itself into the user's home folder, and at every launch the OS has to
+    # in place. Both apps are therefore allowed to download a newer copy of
+    # themselves into the user's home folder, and at every launch the OS has to
     # answer one question: is that download actually NEWER than what I already
     # have? It cannot answer that without knowing what it has. This file is the
     # answer. The launcher reads it — see /usr/libexec/aquarius-app-overlay.
@@ -630,8 +630,9 @@ fi
 # whether a copy of the app downloaded into the user's home folder is newer than
 # the one built into the OS. Two things are checked about it.
 #
-# FIRST, that it is there at all. It is sourced by /usr/bin/aquarius-editor, and
-# a missing file there does not crash anything — the launcher shrugs, starts the
+# FIRST, that it is there at all. It is sourced by both /usr/bin/aquarius-editor
+# and /usr/bin/aquarius-writer, and a missing file does not crash anything — each
+# launcher shrugs, starts the
 # built-in copy and carries on. That is the right behaviour at run time and a
 # terrible thing to ship, because the app would simply stop taking updates and
 # nobody would ever see an error. So it is caught here.
@@ -651,8 +652,8 @@ fi
 [ -r /usr/libexec/aquarius-app-overlay ] \
     || die "/usr/libexec/aquarius-app-overlay is missing." \
            "" \
-           "Aquarius Editor reads it at every launch to find out whether a newer" \
-           "copy has been downloaded. Without it the app silently stops updating."
+           "Both Aquarius apps read it at every launch to find out whether a newer" \
+           "copy has been downloaded. Without it they silently stop updating."
 
 for aq_test in test-aquarius-semver.sh test-aquarius-overlay.sh; do
     [ -x "/ctx/tests/${aq_test}" ] || die \

@@ -160,13 +160,15 @@ Here is a problem that only exists on an operating system like this one.
 
 AquariusOS keeps `/usr` **read-only** while the machine is running. That is a
 feature — it is why a bad install cannot break the OS and why you can always roll
-back to yesterday. But Aquarius Editor lives in `/usr`, and it means the app
-**cannot update itself in place**. Normally that is fine: a new Editor arrives
-with the next OS update. It stops being fine the day we ship a bad bug on a
-Friday, because then everybody lives with it until they reboot.
+back to yesterday. But Aquarius Editor and Aquarius Writer live in `/usr`, and it
+means neither app **can update itself in place**. Normally that is fine: a new
+version arrives with the next OS update. It stops being fine the day we ship a
+bad bug on a Friday, because then everybody lives with it until they reboot.
 
-So Aquarius Editor is allowed to keep a newer copy of itself in your home folder,
-where writing is allowed, and the OS decides which of the two to start.
+So each of the two apps is allowed to keep a newer copy of itself in your home
+folder, where writing is allowed, and the OS decides which of the two to start.
+Both go through the same machinery, with their own name in place of the other's —
+the examples below use the Editor, and the Writer works identically.
 
 **Where the newer copy lives.** In one folder, and it looks like this:
 
@@ -222,10 +224,15 @@ here, so you may manage your own updates this way") and
 have to agree about that folder, so if it ever moves, it moves in the app and in
 `system_files/usr/libexec/aquarius-app-overlay` on the same day.
 
-**Today this is Aquarius Editor only.** Aquarius Writer works exactly as it
-always has. Turning it on for the Writer is four lines copied into
-`system_files/usr/bin/aquarius-writer`; the build already writes a `VERSION` file
-for both apps.
+**Both apps are wired up for this.** `system_files/usr/libexec/aquarius-app-overlay`
+knows nothing about either one — it is handed the app's name — so each launcher
+asks it the same question and the two share one copy of the rules. Adding a third
+app one day is the same four lines in its launcher; the build already writes a
+`VERSION` file for every app in its table. That each launcher really does ask is
+itself checked, by `tests/test-aquarius-overlay.sh`, because a launcher that
+quietly stopped asking would look perfectly healthy: the app would open every
+time, from the built-in copy, and the update in your home folder would never
+start and never be mentioned.
 
 ---
 

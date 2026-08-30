@@ -18,6 +18,59 @@
 set -u
 
 APP_ID="aquarius-writer"
+APPDIR="/usr/lib/aquarius/${APP_ID}"
+
+# ------------------------------------------------------------------------------
+# IS THERE A NEWER COPY IN YOUR HOME FOLDER?
+# ------------------------------------------------------------------------------
+# AquariusOS keeps /usr read-only, so the copy of Aquarius Writer that ships with
+# the operating system can never update itself in place. A new Writer would
+# otherwise have to wait for a whole new OS image and a reboot.
+#
+# So Aquarius Writer is allowed to fetch a newer copy of ITSELF. The app does the
+# downloading — that half lives in the aquarius-writer repo, not here — and puts
+# what it downloads in the one place a program may write to:
+#
+#     ~/.local/share/aquarius/aquarius-writer/versions/0.1.3/
+#     ~/.local/share/aquarius/aquarius-writer/current -> versions/0.1.3
+#
+# This is where the OS decides which of the two copies to start.
+#
+# All the thinking lives in /usr/libexec/aquarius-app-overlay — read that file
+# for the whole arrangement. It knows nothing about the Writer in particular;
+# Aquarius Editor's launcher asks it the same question with a different name.
+# Four lines here:
+#
+#   AQ_INSTALL_ROOT   comes back as the folder to start the app from
+#   AQ_LAUNCH_NOTES   comes back as plain English about why, for the log file
+#
+# and it also sets the two environment variables that tell the app it is on an
+# OS-managed install and where it may write updates.
+#
+# Whichever copy wins, it is started through EXACTLY the same checks: the shared
+# launcher below is handed a folder and does not care where it came from, so a
+# downloaded copy gets the same "can this account really run these files" pass,
+# the same log file and the same error window as the built-in one. And if the
+# downloaded copy fails any of that, the shared launcher quietly goes back to the
+# built-in one — a bad download must never leave somebody with a dead icon.
+#
+# Nothing further down this file has to happen after this block or before it: the
+# graphics-driver settings below are true of Aquarius Writer whichever copy runs.
+# (Aquarius Editor's launcher does have such an ordering rule, for Electron's
+# sandbox helper. The Writer is a Tauri app and has no equivalent.)
+#
+# If the file is missing for any reason we simply carry on with the built-in
+# copy: no updates, but the app still starts, which is the important half.
+AQ_INSTALL_ROOT="$APPDIR"
+AQ_LAUNCH_NOTES=""
+if [ -r /usr/libexec/aquarius-app-overlay ]; then
+    # shellcheck source=../libexec/aquarius-app-overlay
+    . /usr/libexec/aquarius-app-overlay
+    aq_overlay_prepare "$APP_ID"
+    APPDIR="$AQ_INSTALL_ROOT"
+else
+    AQ_LAUNCH_NOTES="update overlay: /usr/libexec/aquarius-app-overlay is missing from this system, so no check for a downloaded update was made. Starting the copy built into AquariusOS."
+fi
 
 # ------------------------------------------------------------------------------
 # WHAT AQUARIUS WRITER ACTUALLY IS, MECHANICALLY
@@ -95,5 +148,17 @@ if [ "${AQUARIUS_DEBUG:-0}" = "1" ]; then
     export WEBKIT_DEBUG="${WEBKIT_DEBUG:-Compositing}"
     export G_MESSAGES_DEBUG="${G_MESSAGES_DEBUG:-all}"
 fi
+
+# ------------------------------------------------------------------------------
+# Everything else is the shared launcher's job.
+# ------------------------------------------------------------------------------
+# The two variables handed over are which folder to start (worked out at the top
+# of this file) and the plain-English story of that decision, which the shared
+# launcher writes into the first few lines of the app's log. That is where to
+# look to find out which copy actually started:
+#
+#     less ~/.local/state/aquarius/aquarius-writer.log
+export AQUARIUS_INSTALL_ROOT="$APPDIR"
+export AQUARIUS_LAUNCH_NOTES="$AQ_LAUNCH_NOTES"
 
 exec /usr/libexec/aquarius-app-launch "$APP_ID" "Aquarius Writer" "$@"
