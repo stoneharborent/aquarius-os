@@ -485,9 +485,14 @@ systemctl enable aquarius-greeter-scale.service
 # this is one folder that does not exist on two of them, tested by its absence.
 # ------------------------------------------------------------------------------
 
-case "${IMAGE_NAME}" in
+# `${IMAGE_NAME:-aquarius-os}` and not a bare `${IMAGE_NAME}` because this script
+# runs under `set -u`: an unset variable would abort the whole build here rather
+# than fall through to the sensible default. Same spelling as image-info.sh.
+AQ_IMAGE_NAME="${IMAGE_NAME:-aquarius-os}"
+
+case "${AQ_IMAGE_NAME}" in
   *deck*)
-    echo "OK: '${IMAGE_NAME}' is the handheld image — keeping /usr/share/aquarius/xdg-handheld."
+    echo "OK: '${AQ_IMAGE_NAME}' is the handheld image — keeping /usr/share/aquarius/xdg-handheld."
     # Prove it is really there. A typo in the path above, or a file that quietly
     # stopped being copied, would otherwise ship a handheld with no way to move
     # the pointer — and nothing would go red.
@@ -495,7 +500,7 @@ case "${IMAGE_NAME}" in
     grep -q '^gamecontrollerEnabled=true$' /usr/share/aquarius/xdg-handheld/kwinrc
     ;;
   *)
-    echo "NOTE: '${IMAGE_NAME}' is a desktop image — removing the handheld-only settings."
+    echo "NOTE: '${AQ_IMAGE_NAME}' is a desktop image — removing the handheld-only settings."
     rm -rf /usr/share/aquarius/xdg-handheld
     ;;
 esac
