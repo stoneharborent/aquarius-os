@@ -552,8 +552,104 @@ PlasmaCore.ToolTipArea {
         source: "TaskProgressOverlay.qml"
     }
 
+    // AQUARIUS DEVIATION — the running dot.
+    //
+    // A small round mark, centred under an app that is running. This is what the
+    // V2 design asks for (branding/design-system/AquariusOS Desktop Shell.html,
+    // the `.dock-ico i` rule: a 4px starlight circle).
+    //
+    // It is drawn HERE, in QML, because it cannot be drawn in the Plasma Style.
+    // The theme's tasks.svg explains that at length: Plasma stretches the middle
+    // pieces of a nine-piece frame to fill the tile, so a dot in the middle
+    // becomes a bar, and a dot in a corner stays in the corner. There is no
+    // piece that is both fixed-size and centred. A QML Rectangle has neither
+    // problem.
+    //
+    // The colour is taken from the colour scheme's highlight role rather than
+    // written as #8AB4FF, so the dot follows the scheme instead of fighting it.
+    // In the AquariusOS scheme that role IS starlight (#8AB4FF), so out of the
+    // box this matches the design exactly — and a user who switches to a
+    // different scheme gets a dot that still belongs.
+    //
+    // The dot deliberately does NOT lift with the icon on hover. In the design's
+    // HTML it does, but only because it is a CSS child of the tile and inherits
+    // the tile's transform. A running mark that jumps around reads as noise; the
+    // dock this design is modelled on keeps it still. FORK-NOTES.md records this
+    // as a judgement call.
+    //
+    // Only drawn on a horizontal (bottom) dock. AquariusOS ships exactly one
+    // dock and it is at the bottom — the same assumption the theme's tasks.svg
+    // makes. If the dock ever moves to a screen edge, this needs a side-aware
+    // anchor, and so does the theme.
+    Rectangle {
+        id: aqRunningDot
+
+        readonly property int diameter: Math.max(3, Kirigami.Units.smallSpacing)
+
+        visible: !task.inPopup
+                 && !task.tasksRoot.vertical
+                 && !task.model.IsLauncher
+                 && !task.model.IsStartup
+
+        width: diameter
+        height: diameter
+        radius: diameter / 2
+        color: Kirigami.Theme.highlightColor
+
+        anchors {
+            horizontalCenter: iconBox.horizontalCenter
+            bottom: frame.bottom
+            bottomMargin: Math.round(diameter / 2)
+        }
+    }
+
     Loader {
         id: iconBox
+
+        // AQUARIUS DEVIATION — the hover lift.
+        //
+        // The design lifts an icon when the pointer is over it:
+        //   transform: translateY(-4px) scale(1.08)
+        //   transition: transform 120ms cubic-bezier(.22, 1, .36, 1)
+        // (the `.dock-ico:hover` rule, using the --dur-fast and --ease-out
+        // tokens from branding/design-system/tokens/effects.css).
+        //
+        // The lift is applied to the ICON, not to the tile behind it. Moving the
+        // tile as well would drag the highlight off the dock's hairline border —
+        // the exact problem the theme's 4px artwork inset exists to prevent.
+        //
+        // Suppressed while dragging: during a drag the icon is being carried by
+        // the pointer, and a second animation fighting that just looks broken.
+        // Also suppressed inside the group popup, which is a list, not a dock.
+        //
+        // Tied to the stock `taskHoverEffect` setting, so turning hover effects
+        // off in the widget's own settings turns the lift off too.
+        readonly property bool aqLifted: task.highlighted
+                                         && Plasmoid.configuration.taskHoverEffect
+                                         && !task.inPopup
+                                         && !dragHandler.active
+
+        scale: aqLifted ? 1.08 : 1.0
+
+        Behavior on scale {
+            NumberAnimation {
+                duration: 120
+                easing.type: Easing.Bezier
+                easing.bezierCurve: [0.22, 1, 0.36, 1, 1, 1]
+            }
+        }
+
+        transform: Translate {
+            y: iconBox.aqLifted ? -4 : 0
+
+            Behavior on y {
+                NumberAnimation {
+                    duration: 120
+                    easing.type: Easing.Bezier
+                    easing.bezierCurve: [0.22, 1, 0.36, 1, 1, 1]
+                }
+            }
+        }
 
         anchors {
             left: parent.left
