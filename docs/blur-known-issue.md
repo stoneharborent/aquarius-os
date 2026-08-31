@@ -7,11 +7,16 @@ On AquariusOS (Bazzite 44 base, Plasma 6.7.4, KF 6.29), the compositor never dra
 content behind them stays sharp. After a full evening of systematic elimination on real
 hardware (Royce's RTX 4090 / Ryzen 9 9950X3D bench), **every layer we can inspect checks
 out healthy and the frost still does not render.** Royce's call, 2026-08-30: **ship without
-it.** The theme keeps requesting blur on every boot, so if a future Plasma update fixes the
-underlying issue, frost turns on by itself with no change on our side.
+it.**
 
-Nothing else is affected: translucency, the glass artwork, rounded corners, shadows,
-saturation settings and the whole V2 shell all work.
+> **⚠️ Updated later the same day.** Shipping without frost turned out to mean shipping
+> raw see-through surfaces, which read worse than either glass or solid. So Royce went
+> further: the transparency came out too, and the theme now ships fully opaque. That
+> means the sentence that used to follow here — "the theme keeps requesting blur on
+> every boot, so a future Plasma fix turns frost on by itself" — **is no longer true**.
+> The theme has stopped asking. See "Status of the shipped config" at the bottom.
+
+Nothing else was affected: rounded corners, shadows, and the whole V2 shell all work.
 
 ## What was eliminated, in order (the full chart)
 
@@ -46,8 +51,16 @@ picks up.
    `... activeEffects`, and the WAYLAND_DEBUG one-liner in the investigation notes below.
 2. `qdbus org.kde.KWin /KWin showDebugConsole` → Windows tab is the next diagnostic
    step nobody has taken yet (inspect the KRunner window's properties as KWin sees them).
-3. Retest after every Bazzite rebase that bumps Plasma (6.7.5+, 6.8): click the clock —
-   if the calendar popup frosts, delete this file's "accepted" status and celebrate.
+3. Retest after every Bazzite rebase that bumps Plasma (6.7.5+, 6.8). **The habit
+   stands, but the test has changed** now that the theme is opaque and asks for no
+   blur: our own popups can no longer frost, so clicking the clock proves nothing.
+   Test with a surface that still requests blur of its own — the quickest is to
+   temporarily set `[BlurBehindEffect] enabled=true` in
+   `/usr/share/plasma/desktoptheme/aquarius/plasmarc` on a live machine and open the
+   calendar; or use any app that asks for blur natively. If frost appears, delete
+   this file's "accepted" status, celebrate, and see "If the glass ever comes back"
+   in `docs/plasma-style.md` — restoring the look needs the theme's translucency put
+   back as well, not just the compositor fixed.
 4. An upstream bug report draft can be assembled from this file + the session transcript
    (2026-08-30): the version matrix, the elimination chart, and the protocol trace are
    exactly what kde.org triage asks for. Product: kwin, component: effects-various /
@@ -73,10 +86,23 @@ picks up.
   unloadEffect <name>` / `loadEffect <name>` apply live; a full reboot resets all
   compositor state.
 
-## Status of the shipped config (unchanged by this issue)
+## Status of the shipped config
 
-`/usr/share/aquarius/xdg/kwinrc` still disables stock blur and enables Better Blur DX +
-ShapeCorners as designed — the effects load and are harmless. Frost is invisible either
-way until the underlying issue is resolved; the Wave 2 shell work will revisit which blur
-effect the image should standardize on (see the "natively supports rounded corners"
-finding above — stock-only is now a live option).
+**Superseded later the same day (2026-08-30): the product decision makes this issue moot
+for shipping.** Royce removed the glass entirely — every surface in the Plasma Style is
+now opaque, the theme no longer requests blur, and Better Blur DX has been taken out of
+the image. Nothing on the AquariusOS desktop is translucent, so a blur that does not
+render costs us nothing visible. **This file is retained for history**, and the
+retest-per-rebase habit in "If anyone wants to revisit" still stands — click the clock
+after any Plasma bump. Note that frost coming back would now take **two** changes, not
+one: the compositor fixed upstream *and* the theme's translucency restored (plus the
+window effect re-added, per `docs/kwin-effects-layer.md`). See `docs/plasma-style.md`,
+"Glass removed", for the full decision.
+
+*The original status, as written before that decision:*
+
+> `/usr/share/aquarius/xdg/kwinrc` still disables stock blur and enables Better Blur DX +
+> ShapeCorners as designed — the effects load and are harmless. Frost is invisible either
+> way until the underlying issue is resolved; the Wave 2 shell work will revisit which blur
+> effect the image should standardize on (see the "natively supports rounded corners"
+> finding above — stock-only is now a live option).
