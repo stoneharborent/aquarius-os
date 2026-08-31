@@ -10,9 +10,15 @@
 #   1. Installs the two small packages the GNOME versions of our own tools need.
 #   2. Trims the handheld-only settings file off the images that are not the
 #      handheld.
-#   3. Puts the AquariusOS logo on the login screen.
-#   4. Compiles the settings defaults — WITHOUT this last step, every single
+#   3. Puts the AquariusOS logo on Settings > System > About.
+#   4. Puts the AquariusOS logo on the button in the top-left of the screen.
+#   5. Puts the AquariusOS logo on the login screen.
+#   6. Compiles the settings defaults — WITHOUT this last step, every single
 #      thing in our override files is a file nobody reads.
+#
+#   Steps 3 and 4 were added on 2026-08-31, after the first bench boot came up
+#   with Bazzite's logo in both places. Each one explains, where it happens, why
+#   the obvious thing (setting LOGO= in os-release) was not enough.
 #
 # HOW OUR DEFAULTS REACH THE DESKTOP, IN PLAIN ENGLISH
 #   GNOME keeps a compiled index of every setting on the machine at
@@ -47,6 +53,23 @@ BACKGROUND_XML="/usr/share/gnome-background-properties/aquarius.xml"
 NAUTILUS_EXT="/usr/share/nautilus-python/extensions/aquarius_editor_ready.py"
 HANDHELD_OVERRIDE="${SCHEMA_DIR}/zz1-aquarius-40-handheld.gschema.override"
 LOGO_PNG="/usr/share/aquarius/branding/aquarius-logo.png"
+
+# The one logo ICON on the machine. os-release's LOGO field names it (see
+# build_files/image-info.sh) and the top-bar button below points straight at it.
+LOGO_SVG="/usr/share/icons/hicolor/scalable/apps/aquarius-logo.svg"
+
+# The two pictures the About page shows, and the two places Fedora's copy of
+# gnome-control-center has been compiled to look for them. Step 3 explains.
+ABOUT_LOGO_SRC_LIGHT="/usr/share/aquarius/branding/aquarius-about-logo.png"
+ABOUT_LOGO_SRC_DARK="/usr/share/aquarius/branding/aquarius-about-logo-white.png"
+ABOUT_LOGO_DEST_LIGHT="/usr/share/pixmaps/fedora_logo_med.png"
+ABOUT_LOGO_DEST_DARK="/usr/share/pixmaps/fedora_whitelogo_med.png"
+CONTROL_CENTER="/usr/bin/gnome-control-center"
+
+# The top-bar logo button's settings, and the folder they live in.
+DISTRO_KEYFILE_DIR="/etc/dconf/db/distro.d"
+LOGOMENU_KEYFILE="${DISTRO_KEYFILE_DIR}/zz1-aquarius-logomenu"
+LOGOMENU_EXT="/usr/share/gnome-shell/extensions/logomenu@aryan_k"
 
 say() { echo; echo "=== $* ==="; }
 
@@ -106,7 +129,272 @@ case "${AQ_IMAGE_NAME}" in
 esac
 
 # ==============================================================================
-# 3 — The AquariusOS logo on the login screen
+# 3 — The AquariusOS logo on Settings > System > About
+# ==============================================================================
+# THE BUG THIS FIXES
+#   On the first bench boot of a GNOME image (2026-08-31) the About page showed
+#   a big BAZZITE wordmark, with the line "Operating System: AquariusOS" sitting
+#   right underneath it. So the name was ours and the picture was not.
+#
+# WHY SETTING LOGO= IN os-release WAS NOT ENOUGH
+#   Every write-up you will find says GNOME's About page reads the LOGO field
+#   out of os-release and looks up an icon by that name. That is true of GNOME's
+#   own source code — but only of the half that Fedora does not use.
+#
+#   The function is setup_os_logo() in
+#   gnome-control-center/panels/system/about/cc-about-page.c, and the whole thing
+#   is wrapped in a compile-time switch:
+#
+#       #ifdef DISTRIBUTOR_LOGO
+#           ... show that exact file, and RETURN ...
+#       #else
+#           ... the os-release LOGO lookup everybody writes about ...
+#       #endif
+#
+#   Fedora builds with the switch turned on. From its RPM recipe
+#   (src.fedoraproject.org/rpms/gnome-control-center, gnome-control-center.spec):
+#
+#       -Ddistributor_logo=%{_datadir}/pixmaps/fedora_logo_med.png
+#       -Ddark_mode_distributor_logo=%{_datadir}/pixmaps/fedora_whitelogo_med.png
+#
+#   Those two paths are baked into the program. On a Fedora-derived system the
+#   About page NEVER looks at os-release's LOGO at all, which is why our correct
+#   LOGO=aquarius-logo changed nothing there.
+#
+#   (The field is still right and still worth having: plenty of other things do
+#   read it — fastfetch, KDE's Info Centre, GNOME's own code on non-Fedora
+#   builds. It is simply not what this page uses.)
+#
+# WHAT WE DO INSTEAD, AND WHY IT IS THE HONEST FIX
+#   We replace the two files the program was told to open. That is not a hack we
+#   invented: it is exactly what Bazzite does — their repo ships replacements for
+#   the same four Fedora logo pixmaps under system_files/overrides/usr/share/
+#   pixmaps/ — and it is the only way to change this without rebuilding
+#   gnome-control-center ourselves. We are not going to fork a GNOME app to
+#   change a picture.
+#
+#   Two files because the About page picks a different one in dark mode. Both
+#   ship in this repo and are drawn by branding/render-about-logo.sh; the
+#   "-white" one is the white-ink version for dark backgrounds.
+#
+# WE DO NOT TRUST THE TWO PATHS — WE CHECK THEM
+#   They come from a spec file for a package we do not build, and a future
+#   Fedora could move them. So rather than assume, we read the compiled program
+#   itself: the paths are plain text inside the binary, so they can simply be
+#   looked for. If they are ever not there, this fails the build and prints
+#   every /usr/share/pixmaps path the program DOES mention, which is exactly the
+#   information the next person needs.
+# ------------------------------------------------------------------------------
+
+say "The About page logo"
+
+for f in "${ABOUT_LOGO_SRC_LIGHT}" "${ABOUT_LOGO_SRC_DARK}"; do
+    if [ ! -s "$f" ]; then
+        echo "AQUARIUS ERROR: ${f} is missing or empty." >&2
+        echo "                This is one of the two About-page logos. Re-draw them" >&2
+        echo "                with: bash branding/render-about-logo.sh" >&2
+        exit 1
+    fi
+done
+
+if [ ! -x "${CONTROL_CENTER}" ]; then
+    echo "AQUARIUS ERROR: ${CONTROL_CENTER} is not in this image, so there is no" >&2
+    echo "                Settings app and no About page. That should be impossible" >&2
+    echo "                on a GNOME image — something is very wrong." >&2
+    exit 1
+fi
+
+# The paths the Settings app was compiled to open. `grep -a` treats the binary
+# as text; `-o` prints just the matching path rather than a screenful of noise.
+echo "Paths under /usr/share/pixmaps named inside ${CONTROL_CENTER}:"
+CC_PIXMAP_PATHS="$(grep -a -o -E '/usr/share/pixmaps/[A-Za-z0-9._+-]+' "${CONTROL_CENTER}" | sort -u || true)"
+if [ -z "${CC_PIXMAP_PATHS}" ]; then
+    echo "  (none)"
+else
+    echo "${CC_PIXMAP_PATHS}" | sed 's/^/  /'
+fi
+
+for want in "${ABOUT_LOGO_DEST_LIGHT}" "${ABOUT_LOGO_DEST_DARK}"; do
+    if ! printf '%s\n' "${CC_PIXMAP_PATHS}" | grep -qx "${want}"; then
+        echo "AQUARIUS ERROR: this image's Settings app does not mention ${want}." >&2
+        echo "                That is the file we replace to brand the About page, so" >&2
+        echo "                replacing it would now do nothing and the page would keep" >&2
+        echo "                showing Bazzite's logo." >&2
+        echo "                Fedora has probably moved the picture. The paths this" >&2
+        echo "                build of Settings DOES name are listed above — pick the" >&2
+        echo "                light and dark ones and update the two DEST paths at the" >&2
+        echo "                top of this script." >&2
+        exit 1
+    fi
+done
+echo "OK: the Settings app really does read those two files."
+
+# Now put ours there. `install -D` creates /usr/share/pixmaps if this image
+# somehow did not have it, so a missing folder cannot fail the build.
+install -D -m 0644 "${ABOUT_LOGO_SRC_LIGHT}" "${ABOUT_LOGO_DEST_LIGHT}"
+install -D -m 0644 "${ABOUT_LOGO_SRC_DARK}" "${ABOUT_LOGO_DEST_DARK}"
+
+# And prove the copies landed, byte for byte. `cmp -s` is a stronger claim than
+# "the file exists": it says the file that is there is OUR file, which is the
+# thing that was wrong before.
+if cmp -s "${ABOUT_LOGO_SRC_LIGHT}" "${ABOUT_LOGO_DEST_LIGHT}" \
+    && cmp -s "${ABOUT_LOGO_SRC_DARK}" "${ABOUT_LOGO_DEST_DARK}"; then
+    echo "OK: the About page now shows the AquariusOS logo in both light and dark."
+else
+    echo "AQUARIUS ERROR: the About-page logos did not copy correctly." >&2
+    ls -l "${ABOUT_LOGO_DEST_LIGHT}" "${ABOUT_LOGO_DEST_DARK}" >&2 || true
+    exit 1
+fi
+
+# ==============================================================================
+# 4 — The AquariusOS logo on the button in the top-left corner
+# ==============================================================================
+# WHAT THAT BUTTON IS
+#   The small logo at the far left of GNOME's top bar, which opens a menu (App
+#   Grid, Files, Steam, Lutris, …). It is not part of GNOME. It comes from an
+#   extension called Logo Menu that Bazzite installs, that we keep, and that our
+#   own zz1-aquarius-20-shell.gschema.override switches on. On the first bench
+#   boot it was still showing Bazzite's purple logo.
+#
+# WHY THIS ONE NEEDS A DIFFERENT MECHANISM FROM EVERY OTHER SETTING WE CHANGE
+#   Our other GNOME defaults are .gschema.override files, which change what a
+#   setting's factory value is. That only works when the setting's description
+#   is installed system-wide in /usr/share/glib-2.0/schemas. Logo Menu keeps its
+#   description inside its own extension folder, so there is nothing there for
+#   an override to attach to — and section 6 below compiles our overrides with
+#   --strict, which turns "that setting does not exist" into a failed build.
+#
+#   The mechanism that does work is dconf, and it is the one Bazzite uses for
+#   this very extension: a plain text file in /etc/dconf/db/distro.d/, baked
+#   into a database by `dconf update`, read by every account underneath its own
+#   choices. Our file is system_files/etc/dconf/db/distro.d/zz1-aquarius-logomenu
+#   and its own header explains the setting in detail.
+#
+# THE ORDER RULE, AND WHY WE CHECK IT INSTEAD OF TRUSTING IT
+#   When two files in that folder set the same thing, the one that sorts LAST
+#   wins. Straight from dconf's own source (bin/dconf.c, read_directory):
+#   "FILES-PRECEDENCE: When a path is found in multiple files, value from the
+#   file lexicographically latest takes precedence."
+#
+#   Bazzite's files start 00-, 01- and 10-. Ours starts zz1-, so it wins today.
+#   A convention that quietly stops holding is exactly how branding breaks, so
+#   the check below compares the real filenames rather than believing the note.
+# ------------------------------------------------------------------------------
+
+say "The top-bar logo button"
+
+if [ ! -d "${LOGOMENU_EXT}" ]; then
+    echo "AQUARIUS ERROR: ${LOGOMENU_EXT} is missing, so there is no logo button" >&2
+    echo "                in the top bar for these settings to change. Our" >&2
+    echo "                enabled-extensions list still names it, which would leave" >&2
+    echo "                GNOME trying to load an extension that is not installed." >&2
+    exit 1
+fi
+
+if [ ! -r "${LOGOMENU_KEYFILE}" ]; then
+    echo "AQUARIUS ERROR: ${LOGOMENU_KEYFILE} is missing." >&2
+    echo "                It ships from system_files/etc/dconf/db/distro.d/ — check" >&2
+    echo "                the system_files copy at the top of build_files/build.sh." >&2
+    exit 1
+fi
+
+# The icon the file points at has to be a real file. If it is not, the extension
+# silently shows a generic grey icon and nothing anywhere says why.
+if ! grep -q "custom-icon-path='${LOGO_SVG}'" "${LOGOMENU_KEYFILE}"; then
+    echo "AQUARIUS ERROR: ${LOGOMENU_KEYFILE} does not point at ${LOGO_SVG}." >&2
+    echo "                The file says:" >&2
+    grep -E '^(use-custom-icon|custom-icon-path)' "${LOGOMENU_KEYFILE}" >&2 || true
+    echo "                Either the icon moved or the setting was edited. They must" >&2
+    echo "                name the same file." >&2
+    exit 1
+fi
+if [ ! -s "${LOGO_SVG}" ]; then
+    echo "AQUARIUS ERROR: ${LOGO_SVG} does not exist, so the top-bar button would" >&2
+    echo "                fall back to a generic grey icon — silently." >&2
+    exit 1
+fi
+
+# Ours must sort after everybody else's in that folder. Compared, not assumed.
+echo "Everything in ${DISTRO_KEYFILE_DIR}:"
+ls -l "${DISTRO_KEYFILE_DIR}"
+AQ_LAST_KEYFILE="$(find "${DISTRO_KEYFILE_DIR}" -maxdepth 1 -type f -printf '%f\n' | sort | tail -1)"
+if [ "${AQ_LAST_KEYFILE}" = "$(basename "${LOGOMENU_KEYFILE}")" ]; then
+    echo "OK: our settings file sorts last in that folder, so our answer wins."
+else
+    echo "AQUARIUS ERROR: '${AQ_LAST_KEYFILE}' sorts AFTER our file, so its answer" >&2
+    echo "                would win and the top bar would keep Bazzite's logo." >&2
+    echo "                Rename ours to sort last." >&2
+    exit 1
+fi
+
+# Everyone's settings reach an account through /etc/dconf/profile/user, which
+# Fedora's dconf package ships. Same defensive shape as the GDM profile below:
+# if it is there we leave it alone and only insist it really reads the database
+# our file goes into; if it is somehow missing we write the standard one.
+if [ -f /etc/dconf/profile/user ]; then
+    echo "OK: /etc/dconf/profile/user already exists — leaving it alone."
+    if ! grep -q '^system-db:distro$' /etc/dconf/profile/user; then
+        echo "AQUARIUS ERROR: /etc/dconf/profile/user does not read the 'distro'" >&2
+        echo "                database, so the setting above would never be seen." >&2
+        echo "                The file:" >&2
+        cat /etc/dconf/profile/user >&2
+        exit 1
+    fi
+else
+    echo "NOTE: writing /etc/dconf/profile/user (this image did not have one)."
+    install -d -m 0755 /etc/dconf/profile
+    cat > /etc/dconf/profile/user <<'EOF'
+# Written at build time by build_files/gnome-desktop.sh.
+# Fedora's own dconf package normally ships this file; this is a copy of it.
+# Read top to bottom: a person's own choices first, then the system defaults.
+user-db:user
+system-db:local
+system-db:site
+system-db:distro
+EOF
+fi
+
+if ! command -v dconf > /dev/null 2>&1; then
+    echo "AQUARIUS ERROR: the 'dconf' command is not in this image, so these" >&2
+    echo "                settings cannot be compiled." >&2
+    exit 1
+fi
+
+# A dry run into a throwaway database FIRST. `dconf compile` reads the same
+# folder and writes somewhere harmless, so a typo — a missing quote, a mangled
+# section header — becomes an error here, with the filename in it, instead of a
+# silently ignored file on somebody's machine.
+AQ_DCONF_TEST="$(mktemp -d)"
+if ! dconf compile "${AQ_DCONF_TEST}/distro" "${DISTRO_KEYFILE_DIR}"; then
+    echo "AQUARIUS ERROR: one of the files in ${DISTRO_KEYFILE_DIR} is not valid." >&2
+    echo "                Read the message above — it names the file." >&2
+    rm -rf "${AQ_DCONF_TEST}"
+    exit 1
+fi
+rm -rf "${AQ_DCONF_TEST}"
+echo "OK: every settings file in that folder is valid."
+
+# Now the real thing.
+dconf update
+
+if [ ! -s /etc/dconf/db/distro ]; then
+    echo "AQUARIUS ERROR: /etc/dconf/db/distro was not written, so the top bar" >&2
+    echo "                would keep Bazzite's logo." >&2
+    exit 1
+fi
+# Content, not just existence: the compiled database stores the text of the
+# setting, so the path we asked for can be read straight back out of it. This is
+# the check that would catch a database built before our file arrived.
+if grep -a -q "${LOGO_SVG}" /etc/dconf/db/distro; then
+    echo "OK: the compiled settings database points the top-bar button at our logo."
+else
+    echo "AQUARIUS ERROR: /etc/dconf/db/distro does not mention ${LOGO_SVG}," >&2
+    echo "                so it was built without our file." >&2
+    exit 1
+fi
+
+# ==============================================================================
+# 5 — The AquariusOS logo on the login screen
 # ==============================================================================
 # GDM is GNOME's login screen. It reads its settings from its OWN settings
 # database rather than from the one every other account uses — which makes
@@ -192,11 +480,24 @@ EOF
         echo "                would keep Bazzite's logo." >&2
         exit 1
     fi
+
+    # The whole chain, end to end, checked by content rather than by existence.
+    # There are four links — the profile, the text file, the compiled database
+    # and the picture itself — and a break in any one of them gives a login
+    # screen with a blank space and no error anywhere. Added 2026-08-31 after
+    # the bench boot showed how quietly this kind of thing fails elsewhere.
+    if grep -a -q "${LOGO_PNG}" /etc/dconf/db/gdm; then
+        echo "OK: the compiled login-screen database really names our logo."
+    else
+        echo "AQUARIUS ERROR: /etc/dconf/db/gdm does not mention ${LOGO_PNG}, so it" >&2
+        echo "                was built without our file." >&2
+        exit 1
+    fi
     ;;
 esac
 
 # ==============================================================================
-# 4 — Compile the settings defaults  (THE STEP EVERYTHING ELSE DEPENDS ON)
+# 6 — Compile the settings defaults  (THE STEP EVERYTHING ELSE DEPENDS ON)
 # ==============================================================================
 # This is the line that makes every override file real. It has to be last,
 # because anything installed after it that adds a settings description would not
@@ -272,7 +573,7 @@ fi
 echo "OK: the settings index was rebuilt."
 
 # ==============================================================================
-# 5 — Prove the rest of the GNOME layer really shipped
+# 7 — Prove the rest of the GNOME layer really shipped
 # ==============================================================================
 # Cheap checks on things whose absence is silent. Each one is a file that, if it
 # went missing, would produce a desktop that looks slightly wrong and says
