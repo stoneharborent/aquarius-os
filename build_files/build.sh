@@ -1,5 +1,5 @@
 #!/bin/bash
-# ==============================================================================
+# =======================================================================# ==============================================================================
 # AquariusOS build script
 # ==============================================================================
 # This is THE file you edit to change what's in AquariusOS.
@@ -603,6 +603,25 @@ if meta.get("KPackageStructure") != "Plasma/Applet":
     sys.exit("FAIL: the app-name widget is not declared as a Plasma/Applet.")
 print(f"OK: the app-name widget is installed as {plugin_id}.")
 PY
+
+# ==============================================================================
+# OUR OWN DESKTOP WIDGETS — check they are complete and their libraries are here
+# ==============================================================================
+# AquariusOS ships a Plasma widget of its own: the clock at the right-hand end of
+# the top bar, whose popup is the notifications panel. It was copied into place
+# by the system_files step at the top of this file, like everything else.
+#
+# QML is not compiled, so nothing has checked any of it yet. This step does the
+# two checks that are worth doing against the FINISHED image: every file the
+# widget needs is really here, and the two KDE QML libraries it imports are
+# really installed. The second one is the important one — it is what turns "a
+# Bazzite rebase quietly dropped a library" into a failed build instead of a
+# broken top bar on somebody's machine.
+#
+# Beginner-facing write-up: docs/clock-notifications-widget.md
+# ------------------------------------------------------------------------------
+
+/ctx/shell-widgets.sh
 
 # ==============================================================================
 # AQUARIUSOS IDENTITY — make the OS call itself AquariusOS

@@ -122,54 +122,44 @@ topBar.addWidget("org.kde.plasma.systemtray");
 // The clock, at the far right end of the bar.
 //
 // WHAT THE DESIGN ASKS FOR
-//   "Sat Aug 30 21:47" — the date first, then the time, on one line.
+//   "Sat Aug 30 21:47" — the date first, then the time, on one line, with the
+//   date drawn in the dimmer text colour. Click it and the notifications panel
+//   drops out of it.
 //
-// HOW THESE FOUR SETTINGS GET THERE
-//   showDate           show the date at all. It is on by default; we say it
-//                      anyway so the intent is written down.
-//   dateFormat         "custom" tells the clock to use our own format string
-//                      instead of the one the user's country supplies.
-//   customDateFormat   "ddd MMM d" is Qt's spelling for short-day, short-month,
-//                      day-without-a-leading-zero → "Sat Aug 30".
-//   dateDisplayFormat  0 = Adaptive (the clock decides), 1 = BesideTime,
-//                      2 = BelowTime. We want 1, side by side on one line.
+// THIS USED TO BE KDE'S CLOCK, WITH FIVE LINES OF SETTINGS
+//   Until Tier 2 this line added "org.kde.plasma.digitalclock" and then wrote
+//   showDate / dateFormat / customDateFormat / dateDisplayFormat onto it to get
+//   "Sat Aug 30 21:47" out of it. Two things that block of comments admitted it
+//   could NOT do are now done, because this is our own widget rather than a
+//   configured one:
 //
-//   Note the config group is "Appearance", not "General" like the launcher
-//   above. Each widget names its own groups and the clock uses that one; using
-//   the wrong name writes the settings into a place nothing reads.
+//     * the date is dimmer than the time. KDE's clock paints both labels the
+//       same colour with no setting to change it, which is honest gap #3 in
+//       docs/v2-shell-tier2-research.md. Our widget uses the colour scheme's
+//       own quiet-text colour, so it also follows somebody else's scheme.
+//     * clicking it opens the designed notifications panel instead of a
+//       calendar.
 //
-// WHY THE DATE LANDS ON THE LEFT
-//   This is the part worth checking rather than trusting. In the clock's own
-//   code, the beside-the-time layout anchors the date label's RIGHT edge to the
-//   LEFT edge of the time — "anchors.right: labelsGrid.left" — so the date is
-//   drawn before the time, which is the order the design wants. We are not
-//   fighting the widget; that is simply how it lays out.
+//   One decision carries over UNCHANGED, and deliberately so: the 12-hour vs
+//   24-hour choice still follows the user's country, not the design mock. The
+//   widget reads the locale's own short time format. A German install shows
+//   21:47 and an American one 9:47 PM, and both are correct for the person
+//   sitting there.
 //
-// SOURCES (KDE's own code — browsable at lxr.kde.org)
-//   plasma-workspace/applets/digital-clock/package/contents/config/main.xml
-//     — the setting names, the "Appearance" group, and the Adaptive /
-//       BesideTime / BelowTime list in that order.
-//   plasma-workspace/applets/digital-clock/package/contents/ui/DigitalClock.qml
-//     — the "oneLineDate" state, which is switched on by dateDisplayFormat 1
-//       and contains the anchor quoted above.
+//   The date format string carries over unchanged too — "ddd MMM d", short day,
+//   short month, no leading zero — it is just applied inside the widget now.
 //
-// WHAT WE CANNOT DO FROM A CONFIG FILE, HONESTLY STATED
-//   * The design draws the date in the dimmer secondary text colour and the
-//     time in the bright one. The clock paints both labels the same colour and
-//     offers no setting for it. Making the date dimmer needs a real theme or a
-//     replacement widget — that is Tier 2 work, not this file.
-//   * The design's mock shows a 24-hour clock (21:47). We do NOT force that
-//     here: the 12-vs-24-hour choice follows the country the user picked during
-//     setup, which is the right default for a person, and they can change it in
-//     the clock's own settings in two clicks. (If we ever did want to force it,
-//     the setting is use24hFormat and 2 means 24-hour.)
-var clock = topBar.addWidget("org.kde.plasma.digitalclock");
-clock.currentConfigGroup = ["Appearance"];
-clock.writeConfig("showDate", true);
-clock.writeConfig("dateFormat", "custom");
-clock.writeConfig("customDateFormat", "ddd MMM d");
-clock.writeConfig("dateDisplayFormat", 1);
-clock.reloadConfig();
+// WHERE THE WIDGET LIVES
+//   In this repo: system_files/usr/share/plasma/plasmoids/com.aquariusos.clock/
+//   In the OS:    /usr/share/plasma/plasmoids/com.aquariusos.clock/
+//
+//   The plain-English write-up, including what still needs testing on real
+//   hardware, is in docs/clock-notifications-widget.md. Every comment in the
+//   widget carries the KDE source file its behaviour was checked against.
+//
+//   It needs no settings written here: everything it does is either from the
+//   design or from the user's locale, so there is nothing left to configure.
+topBar.addWidget("com.aquariusos.clock");
 
 // -----------------------------------------------------------------------------
 // 2. THE DOCK

@@ -1,0 +1,20 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "Stone Harbor Entertainment"
+            }
+        ],
+        "Category": "Date and Time",
+        "Description": "The AquariusOS clock, with the notifications panel behind it",
+        "Icon": "preferences-system-time",
+        "Id": "com.aquariusos.clock",
+        "License": "GPL-2.0-or-later",
+        "Name": "AquariusOS Clock",
+        "Version": "1.0",
+        "Website": "https://github.com/stoneharborent/aquarius-os"
+    },
+    "X-KDE-ParentApp": "org.kde.plasmashell",
+    "X-Plasma-API-Minimum-Version": "6.0"
+}
