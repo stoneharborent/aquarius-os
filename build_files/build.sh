@@ -506,6 +506,17 @@ case "${AQ_IMAGE_NAME}" in
 esac
 
 # ==============================================================================
+# THE GLASS DESKTOP — give the Plasma style a fresh version number
+# ==============================================================================
+# One line, and it has to run on every build. Without it, people who update
+# AquariusOS keep seeing the OLD panel and popup artwork, because Plasma caches
+# the pictures it has already drawn and only rebuilds that cache when the theme's
+# version number changes. The reasoning is written out in full inside the script.
+# ------------------------------------------------------------------------------
+
+/ctx/plasma-style-version.sh
+
+# ==============================================================================
 # AQUARIUSOS IDENTITY — make the OS call itself AquariusOS
 # ==============================================================================
 # Everything above this point installs things. This last step renames things:
