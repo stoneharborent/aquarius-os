@@ -631,6 +631,103 @@ jobs:
             --entrypoint /usr/bin/bash \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" </tmp/verify-kwin-effects.sh
 
+      # ------------------------------------------------------------------------
+      # THE TOP BAR'S APP NAME — is our own widget really in this image?
+      # ------------------------------------------------------------------------
+      # The bold app name in the top bar ("Dolphin", "Firefox") comes from a
+      # small widget of ours at
+      #     /usr/share/plasma/plasmoids/com.aquariusos.appname/
+      # It is plain text files, so unlike the KWin effect above there is nothing
+      # to compile and no library to go missing.
+      #
+      # It is checked here anyway for the same reason as the steps above: this
+      # runs against the FINISHED, rechunked image that is about to be pushed,
+      # and "the file was there when we made it" is not the same claim as "the
+      # file is there in what we published".
+      #
+      # It matters because of HOW this fails. The desktop layout script asks for
+      # the widget by id. If the folder, the id or the layout line ever drift
+      # apart, KDE builds the top bar without an app name and reports nothing —
+      # no error, no log, no gap on screen. Nobody would notice for weeks.
+      #
+      # WHAT THIS CANNOT PROVE. A container has no desktop, so nothing here can
+      # start Plasma and watch the name appear and change. That last step is a
+      # human one, written down in docs/app-name-widget.md.
+      - name: Verify the top-bar app name widget
+        id: verify-appname-widget
+        run: |
+          set -euo pipefail
+          cat >/tmp/verify-appname-widget.sh <<'SCRIPT'
+          set -u
+
+          fails=0
+          bad() { echo "  FAIL $*"; fails=1; }
+          ok()  { echo "  OK   $*"; }
+
+          widget=/usr/share/plasma/plasmoids/com.aquariusos.appname
+          layout=/usr/share/plasma/look-and-feel/org.aquariusos.desktop/contents/layouts/org.kde.plasma.desktop-layout.js
+
+          echo "== what is actually in /usr/share/plasma/plasmoids =="
+          ls -l /usr/share/plasma/plasmoids || echo "(the folder does not exist!)"
+          echo "== checks =="
+
+          # 1. The widget's two files.
+          for f in "${widget}/metadata.json" "${widget}/contents/ui/main.qml"; do
+            if [ -r "$f" ]; then ok "$(basename "$f") is present and readable"
+            else bad "$f is missing — the top bar would have no app name"; fi
+          done
+
+          # 2. metadata.json is readable JSON, its id matches its folder, and it
+          #    declares itself a Plasma widget. KDE needs all three to be true
+          #    before it will even list the widget.
+          if [ -r "${widget}/metadata.json" ]; then
+            if python3 - "$widget" <<'PY'
+          import json, os, sys
+          folder = sys.argv[1]
+          meta = json.load(open(os.path.join(folder, "metadata.json")))
+          assert meta["KPlugin"]["Id"] == os.path.basename(folder), "Id does not match the folder name"
+          assert meta["KPackageStructure"] == "Plasma/Applet", "not declared as a Plasma/Applet"
+          assert meta["X-Plasma-API-Minimum-Version"] == "6.0", "missing the Plasma 6 marker"
+          PY
+            then ok "metadata.json is valid, and its id matches its folder"
+            else bad "metadata.json is broken, misnamed, or not marked as a Plasma 6 widget"; fi
+          fi
+
+          # 3. The layout script still asks for it. This is the pairing that
+          #    silently breaks: a widget nobody adds to the bar looks exactly
+          #    like a widget that failed to install.
+          if grep -q 'com\.aquariusos\.appname' "$layout" 2>/dev/null; then
+            ok "the desktop layout adds the app-name widget to the top bar"
+          else
+            bad "the layout script never adds com.aquariusos.appname — the widget would ship unused"
+          fi
+
+          # 4. The widget must sit BETWEEN the logo and the menus, which is the
+          #    order the V2 design draws. Line numbers are compared rather than
+          #    trusted, because getting this wrong looks like a design mistake
+          #    rather than a bug and would survive review.
+          if [ -r "$layout" ]; then
+            logo=$(grep -n 'addWidget("org\.kde\.plasma\.kickerdash")' "$layout" | head -1 | cut -d: -f1)
+            name=$(grep -n 'addWidget("com\.aquariusos\.appname")'     "$layout" | head -1 | cut -d: -f1)
+            menu=$(grep -n 'addWidget("org\.kde\.plasma\.appmenu")'    "$layout" | head -1 | cut -d: -f1)
+            if [ -n "$logo" ] && [ -n "$name" ] && [ -n "$menu" ] && [ "$logo" -lt "$name" ] && [ "$name" -lt "$menu" ]; then
+              ok "top bar order is logo, then app name, then menus"
+            else
+              bad "top bar order is wrong or a widget is missing (logo=$logo name=$name menus=$menu)"
+            fi
+          fi
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::The top-bar app name is not correct in this image — the bar would come up without it. See above."
+            exit 1
+          fi
+          echo "All app-name-widget checks passed."
+          SCRIPT
+
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" </tmp/verify-appname-widget.sh
+
       - name: Generate Build Tags
         id: gen-build-tags
         run: |
