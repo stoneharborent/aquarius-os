@@ -223,5 +223,93 @@ class ImageWiringTests(unittest.TestCase):
         self.assertIn("/usr/bin/aq-ingest --version", self.build)
 
 
+class NautilusExtensionTests(unittest.TestCase):
+    """The GNOME twin of the service menu, added 2026-08-31 with the GNOME line.
+
+    GNOME has no settings-file way to add a right-click menu item, so this one is a
+    small Python program instead of a .desktop file. Different shape, exactly the same
+    failure mode: every way of getting it wrong produces a menu that is simply missing,
+    with no error anywhere. So the same things get checked.
+
+    What can only be checked by right-clicking on a real GNOME machine: that the item
+    appears, and that clicking it starts the conversion. That is a bench step, written
+    down in docs/gnome-variants.md.
+    """
+
+    #: The one folder Files looks in for system-wide extensions. Anywhere else and
+    #: nothing loads, silently.
+    EXTENSION = REPO / "system_files/usr/share/nautilus-python/extensions/aquarius_editor_ready.py"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = cls.EXTENSION.read_text(encoding="utf-8")
+        cls.build = (REPO / "build_files/gnome-desktop.sh").read_text(encoding="utf-8")
+
+    def test_it_is_in_the_folder_files_actually_looks_in(self):
+        self.assertTrue(self.EXTENSION.is_file(), f"{self.EXTENSION} is missing")
+
+    def test_it_is_valid_python(self):
+        # A syntax error here is not a crash — Files logs nothing a user will read and
+        # the menu item just never appears.
+        compile(self.source, str(self.EXTENSION), "exec")
+
+    def test_it_asks_for_the_extension_interface_version_that_exists(self):
+        # "4.0" is the interface version, not the Nautilus version. It has been 4.0
+        # since Nautilus 43 and still is on Fedora 44. Any other number here and the
+        # extension does not load.
+        self.assertIn('gi.require_version("Nautilus", "4.0")', self.source)
+
+    def test_it_declares_itself_a_menu_provider(self):
+        # Without MenuProvider in the class's bases, nautilus-python imports the file,
+        # finds nothing it recognises, and moves on without a word.
+        self.assertIn("Nautilus.MenuProvider", self.source)
+
+    def test_it_handles_both_selecting_files_and_right_clicking_a_folder(self):
+        # Two different menus in Files, two different methods. Implementing only the
+        # first one is the easy mistake, and it loses the case people actually use:
+        # open the camera card, right-click the empty space, one click.
+        self.assertIn("def get_file_items(self, files)", self.source)
+        self.assertIn("def get_background_items(self, folder)", self.source)
+
+    def test_it_runs_the_same_command_as_the_kde_menu(self):
+        # The two menu items must do the same thing on both desktops. The KDE one's
+        # Exec line is checked further up this file; this compares against the real
+        # file rather than against a copy of the string.
+        kde_exec = parse_desktop(MENU_FILE)["Desktop Action makeEditorReady"]["Exec"]
+        self.assertEqual(kde_exec.split()[0], "aq-ingest")
+        self.assertIn("--notify", kde_exec)
+        self.assertIn('INGEST_COMMAND = "/usr/bin/aq-ingest"', self.source)
+        self.assertIn('INGEST_ARGS = ["--notify"]', self.source)
+
+    def test_it_offers_itself_on_the_same_things_the_kde_menu_does(self):
+        kde_mimes = set(
+            m for m in parse_desktop(MENU_FILE)["Desktop Entry"]["MimeType"].split(";") if m
+        )
+        for mime in kde_mimes:
+            if mime == "video/*":
+                self.assertIn('mime.startswith("video/")', self.source)
+            elif mime == "inode/directory":
+                self.assertIn('FOLDER_TYPE = "inode/directory"', self.source)
+            else:
+                self.assertIn(f'"{mime}"', self.source, f"{mime} is missing from the GNOME menu")
+
+    def test_it_never_blocks_the_file_manager(self):
+        # This code runs on the thread that draws the Files window. Waiting for the
+        # conversion would freeze the whole file manager for as long as it takes —
+        # up to twenty minutes on a full card, with no window and no way to cancel.
+        self.assertIn("subprocess.Popen", self.source)
+        self.assertNotIn("subprocess.run", self.source)
+        self.assertNotIn("check_call", self.source)
+        self.assertNotIn("check_output", self.source)
+        self.assertIn("start_new_session=True", self.source)
+
+    def test_the_build_installs_the_package_that_makes_it_work(self):
+        # Without nautilus-python this file is just text on a disk.
+        self.assertIn("nautilus-python", self.build)
+
+    def test_the_build_checks_the_extension_landed(self):
+        self.assertIn("aquarius_editor_ready.py", self.build)
+
+
 if __name__ == "__main__":
     unittest.main()

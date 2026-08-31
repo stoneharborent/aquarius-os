@@ -29,10 +29,11 @@ The full design: `../docs/ingest-helper-spec.md`.
 
 ## How to use it
 
-**The normal way: right-click.** In the Files app (Dolphin), right-click a camera card, a
-folder, or a selection of clips and choose **Make Editor-Ready**. No terminal, no window —
-it works in the background and tells you what it did with desktop notifications. The
-beginner walkthrough, with pictures of what each message means, is
+**The normal way: right-click.** In the Files app, right-click a camera card, a folder,
+or a selection of clips and choose **Make Editor-Ready**. No terminal, no window — it
+works in the background and tells you what it did with desktop notifications. This works
+the same way on both flavours of AquariusOS: in Dolphin on the KDE images and in Nautilus
+on the GNOME ones. The beginner walkthrough, with pictures of what each message means, is
 [`../docs/ingest-right-click.md`](../docs/ingest-right-click.md).
 
 **The terminal way**, which is the same tool with the same options:
@@ -137,6 +138,11 @@ A record of every run is kept at `~/.local/state/aquarius/ingest.log`.
 
 - The Dolphin menu item is `system_files/usr/share/kio/servicemenus/aquarius-make-editor-ready.desktop`
   — Plasma 6's folder, not Plasma 5's, and it has to stay executable or KDE ignores it.
+- The Nautilus menu item is `system_files/usr/share/nautilus-python/extensions/aquarius_editor_ready.py`.
+  GNOME has no settings-file way to add a menu item, so this one is a small Python program.
+  It needs the `nautilus-python` package, which `build_files/gnome-desktop.sh` installs on
+  the GNOME images. Both files ship on both images and each is ignored where it does not
+  belong; `tests/test_desktop.py` compares them so the two cannot drift apart.
 - `build_files/build.sh` installs `aq-ingest` to `/usr/bin/` and this package into Python's
   own `site-packages`, and fails the build if the command won't start. The Containerfile's
   `COPY ingest /ingest` line is what makes this folder visible to that step.
