@@ -61,9 +61,17 @@ AquariusOS is **dark first**. The dark palette is the real design; light is deri
 
 | Token | Hex | What it's for |
 |---|---|---|
-| `text-1` | `#EDEFF7` | Primary text. Headings, body, anything you must read. |
-| `text-2` | `#8A90A6` | Secondary text. Labels, captions, "last updated" lines. |
-| `text-3` | `#565C72` | Tertiary text. Disabled items, placeholder text, dividers-as-text. |
+| `text-1` | `#FFFFFF` | Primary text. Headings, body, anything you must read. |
+| `text-2` | `#B4BACD` | Secondary text. Labels, captions, "last updated" lines. |
+| `text-3` | `#848CA6` | Tertiary text. Disabled items, placeholder text, dividers-as-text. |
+
+> **Changed 2026-08-30** (design V2). These three were `#EDEFF7`, `#8A90A6` and
+> `#565C72`. The design brightened all three so text reads more easily against the
+> very dark backgrounds. Nothing else in this file changed.
+>
+> **Careful:** the two border values above are written as `rgba(237,239,247,…)`, and
+> 237,239,247 is the *old* `text-1` in decimal. The borders did **not** change. If you
+> are searching the repo for the old numbers, only text roles move.
 
 ### Status
 
@@ -225,9 +233,9 @@ For any web page, dashboard or HTML artifact about AquariusOS:
   --nebula:#5B4BE0;
   --ancient:#E6DDB8;
   --on-accent:#080B14;
-  --text-1:#EDEFF7;
-  --text-2:#8A90A6;
-  --text-3:#565C72;
+  --text-1:#FFFFFF;
+  --text-2:#B4BACD;
+  --text-3:#848CA6;
   --success:#55D6A5;
   --warning:#E6C069;
   --danger:#FF7A85;

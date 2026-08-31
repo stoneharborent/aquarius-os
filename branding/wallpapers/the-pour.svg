@@ -76,7 +76,13 @@
   </g>
 
   <!-- The mark, bottom right, barely there. Kept ~100 units clear of the right
-       edge so a 16:10 crop (which shaves ~96 units off each side) never cuts it. -->
+       edge so a 16:10 crop (which shaves ~96 units off each side) never cuts it.
+
+       The #EDEFF7 below is NOT the text colour, even though it used to be the
+       same number. It is the ink of a watermark drawn at 40% opacity, chosen
+       because it reads as "almost white" against the pour. Design V2 brightened
+       the text tokens on 2026-08-30 and deliberately left this artwork alone —
+       so if you are sweeping the repo for old text colours, skip this one. -->
   <g transform="translate(1688 892) scale(1.5)" opacity="0.4" fill="none"
      stroke="#EDEFF7" stroke-width="5" stroke-linecap="round">
     <path d="M14 54 30 12q1.4-3.6 4 0L50 54"/>

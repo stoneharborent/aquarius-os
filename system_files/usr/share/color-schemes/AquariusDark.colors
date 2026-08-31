@@ -11,12 +11,27 @@
 # it in tokens.md FIRST and then convert it here.
 #
 # Token cheat sheet (hex -> what KDE wants):
-#   void            #06070C -> 6,7,12          text-1   #EDEFF7 -> 237,239,247
-#   surface-1       #10121C -> 16,18,28        text-2   #8A90A6 -> 138,144,166
-#   surface-2       #161A29 -> 22,26,41        text-3   #565C72 -> 86,92,114
+#   void            #06070C -> 6,7,12          text-1   #FFFFFF -> 255,255,255
+#   surface-1       #10121C -> 16,18,28        text-2   #B4BACD -> 180,186,205
+#   surface-2       #161A29 -> 22,26,41        text-3   #848CA6 -> 132,140,166
 #   surface-3       #1D2236 -> 29,34,54        success  #55D6A5 -> 85,214,165
 #   starlight       #8AB4FF -> 138,180,255     warning  #E6C069 -> 230,192,105
 #   on-accent       #080B14 -> 8,11,20         danger   #FF7A85 -> 255,122,133
+#
+# WHICH KDE NAME MEANS WHICH TOKEN
+#   ForegroundNormal    = text-1. Ordinary readable text.
+#   ForegroundInactive  = text-2. Dimmer text — an unfocused panel, a subtitle.
+#   activeForeground /
+#   inactiveForeground  = text-1 / text-2, but for window title bars.
+#   text-3 is not written anywhere in this file, and that is correct: KDE works
+#     out "greyed out" text for itself from the [ColorEffects:Disabled] block
+#     near the top, rather than taking a colour we hand it.
+#   The dark numbers in [Colors:Selection] are NOT text tokens — they are
+#     on-accent and shades of it, because that text sits on bright blue.
+#
+# CHANGED 2026-08-30 (design V2): the three text tokens were brightened, so
+#   every ForegroundNormal went 237,239,247 -> 255,255,255 and every
+#   ForegroundInactive went 138,144,166 -> 180,186,205. Nothing else moved.
 #
 # Format reference: KDE's own BreezeDark.colors (KDE/breeze, colors/).
 # SPDX-License-Identifier: LGPL-2.0-or-later  (format inherited from Breeze)
@@ -49,11 +64,11 @@ BackgroundNormal=22,26,41
 DecorationFocus=138,180,255
 DecorationHover=138,180,255
 ForegroundActive=138,180,255
-ForegroundInactive=138,144,166
+ForegroundInactive=180,186,205
 ForegroundLink=138,180,255
 ForegroundNegative=255,122,133
 ForegroundNeutral=230,192,105
-ForegroundNormal=237,239,247
+ForegroundNormal=255,255,255
 ForegroundPositive=85,214,165
 ForegroundVisited=142,132,232
 
@@ -64,11 +79,11 @@ BackgroundNormal=6,7,12
 DecorationFocus=138,180,255
 DecorationHover=138,180,255
 ForegroundActive=138,180,255
-ForegroundInactive=138,144,166
+ForegroundInactive=180,186,205
 ForegroundLink=138,180,255
 ForegroundNegative=255,122,133
 ForegroundNeutral=230,192,105
-ForegroundNormal=237,239,247
+ForegroundNormal=255,255,255
 ForegroundPositive=85,214,165
 ForegroundVisited=142,132,232
 
@@ -79,11 +94,11 @@ BackgroundNormal=22,26,41
 DecorationFocus=138,180,255
 DecorationHover=138,180,255
 ForegroundActive=138,180,255
-ForegroundInactive=138,144,166
+ForegroundInactive=180,186,205
 ForegroundLink=138,180,255
 ForegroundNegative=255,122,133
 ForegroundNeutral=230,192,105
-ForegroundNormal=237,239,247
+ForegroundNormal=255,255,255
 ForegroundPositive=85,214,165
 ForegroundVisited=142,132,232
 
@@ -93,11 +108,11 @@ BackgroundNormal=16,18,28
 DecorationFocus=138,180,255
 DecorationHover=138,180,255
 ForegroundActive=138,180,255
-ForegroundInactive=138,144,166
+ForegroundInactive=180,186,205
 ForegroundLink=138,180,255
 ForegroundNegative=255,122,133
 ForegroundNeutral=230,192,105
-ForegroundNormal=237,239,247
+ForegroundNormal=255,255,255
 ForegroundPositive=85,214,165
 ForegroundVisited=142,132,232
 
@@ -125,11 +140,11 @@ BackgroundNormal=29,34,54
 DecorationFocus=138,180,255
 DecorationHover=138,180,255
 ForegroundActive=138,180,255
-ForegroundInactive=138,144,166
+ForegroundInactive=180,186,205
 ForegroundLink=138,180,255
 ForegroundNegative=255,122,133
 ForegroundNeutral=230,192,105
-ForegroundNormal=237,239,247
+ForegroundNormal=255,255,255
 ForegroundPositive=85,214,165
 ForegroundVisited=142,132,232
 
@@ -141,11 +156,11 @@ BackgroundNormal=6,7,12
 DecorationFocus=138,180,255
 DecorationHover=138,180,255
 ForegroundActive=138,180,255
-ForegroundInactive=138,144,166
+ForegroundInactive=180,186,205
 ForegroundLink=138,180,255
 ForegroundNegative=255,122,133
 ForegroundNeutral=230,192,105
-ForegroundNormal=237,239,247
+ForegroundNormal=255,255,255
 ForegroundPositive=85,214,165
 ForegroundVisited=142,132,232
 
@@ -156,11 +171,11 @@ BackgroundNormal=16,18,28
 DecorationFocus=138,180,255
 DecorationHover=138,180,255
 ForegroundActive=138,180,255
-ForegroundInactive=138,144,166
+ForegroundInactive=180,186,205
 ForegroundLink=138,180,255
 ForegroundNegative=255,122,133
 ForegroundNeutral=230,192,105
-ForegroundNormal=237,239,247
+ForegroundNormal=255,255,255
 ForegroundPositive=85,214,165
 ForegroundVisited=142,132,232
 
@@ -176,8 +191,8 @@ contrast=4
 # "lifted"; unfocused windows fall back to surface-1 and dimmer text.
 [WM]
 activeBackground=22,26,41
-activeBlend=237,239,247
-activeForeground=237,239,247
+activeBlend=255,255,255
+activeForeground=255,255,255
 inactiveBackground=16,18,28
-inactiveBlend=138,144,166
-inactiveForeground=138,144,166
+inactiveBlend=180,186,205
+inactiveForeground=180,186,205
