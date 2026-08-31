@@ -624,6 +624,30 @@ PY
 /ctx/shell-widgets.sh
 
 # ==============================================================================
+# QUICK SETTINGS — check the widget's KDE dependencies are really in the image
+# ==============================================================================
+# Our Quick Settings panel is built on KDE's own networking, Bluetooth,
+# notification, volume, brightness and battery plumbing. Several of those pieces
+# are marked `private` by KDE, which means they may be renamed or removed in any
+# release with no warning — and we do not control when Plasma moves, because it
+# arrives with Bazzite.
+#
+# The failure mode is silent: a widget that imports something missing does not
+# crash, it just does not load, and the panel opens with a dead tile nobody
+# notices. This script turns that into a red build on the day it happens.
+#
+# It reads the widget's own QML to work out what to check, so adding a tile
+# extends the check automatically and there is no list to forget to update.
+#
+# It runs HERE, after the system_files copy at the top of this file has put the
+# widget into /usr/share/plasma/plasmoids/ — it inspects the installed copy, not
+# the one in the repo, because only the installed one is what users get.
+# Beginner-facing write-up: docs/quick-settings-widget.md
+# ------------------------------------------------------------------------------
+
+/ctx/quick-settings-check.sh
+
+# ==============================================================================
 # AQUARIUSOS IDENTITY — make the OS call itself AquariusOS
 # ==============================================================================
 # Everything above this point installs things. This last step renames things:
