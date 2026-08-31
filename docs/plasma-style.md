@@ -30,6 +30,7 @@ Everything lives under `system_files/usr/share/plasma/desktoptheme/aquarius/`.
 | File | Controls |
 |---|---|
 | `widgets/panel-background.svg` | **The top bar and the dock.** One file, two looks — see below. |
+| `widgets/tasks.svg` | **The tile behind a dock icon.** The faint square under the pointer, the stronger one under the app you are using, the mark under a running app. Added after the first bench boot; see below. |
 | `dialogs/background.svg` | **Every popup.** Tray popups, the calendar, notifications, applet popups, and the search box (KRunner) all share this one drawing. Change it once and they all change. |
 | `widgets/tooltip.svg` | The small tooltip that follows the pointer. |
 | `widgets/background.svg` | A card: a widget placed on the desktop itself. Mostly solid, so it reads as an object lying on the wallpaper. |
@@ -265,11 +266,135 @@ glass can be seen.
    - **A maximised window.** With Adaptive transparency the panel should go
      solid behind it.
 
-## Open questions for the first hardware test
+## First bench findings — 2026-08-30
 
-- Does the dock's 16px corner line up with the icon spacing once the dock fork
-  (T2-F) changes icon size? The panel's content margins are set to 6px inside the
-  floating variant and may want tuning against real icons.
+The image booted on real x86 hardware for the first time. Four photographs came
+back: the whole desktop, a close-up of the dock, a close-up of a window corner,
+and the calendar popup. This is what they showed and what was done about it.
+
+**What was already right, and is not to be touched:** the theme is selected and
+loads, the cache version stamp works, the KWin effects compile and load, the
+settings cascade reaches KWin, and the clock reads correctly.
+
+### 1. The dock's active app was a bright light box
+
+The running, focused Steam icon sat in a glaring pale-blue rectangle that ran
+the full height of the dock and painted straight over its hairline border. The
+other icons looked washed out.
+
+Nothing was broken. The theme shipped **no `widgets/tasks.svg`**, so Plasma fell
+back to Breeze's, which paints those tiles in colours taken from the system
+colour scheme — checked in libplasma, Plasma/6.7,
+`src/desktoptheme/breeze/widgets/tasks.svg`:
+
+| Breeze tile | Colour it borrows | Opacity |
+|---|---|---|
+| `focus-center` (the app you are using) | `ColorScheme-ButtonFocus` | **45%** |
+| `normal-center` (running) | `ColorScheme-Text` | 15% |
+| `hover-center` | `ColorScheme-ButtonHover` | 34% |
+
+Our scheme sets the focus colour to starlight (`#8AB4FF`), a bright light blue.
+Bright light blue at 45%, filling the whole tile, is the box in the photograph.
+
+**Fixed** by writing our own `widgets/tasks.svg`. Its states, their names and
+the way Plasma chooses between them are all documented at length in the file
+itself; the short version is that the fills are literal design values instead of
+scheme colours, they run from 4% to 16% white with a starlight tint reserved for
+"this app is asking for you", and the artwork carries its own 4px inset so it
+can never paint over the dock's border again.
+
+Two things learned while doing it, both worth knowing before anyone touches that
+file:
+
+- **The task manager does not honour the panel's content margins.** It takes the
+  full panel thickness. That is why the inset had to go into the artwork.
+- **The design's centred 4px running dot cannot be drawn by a Plasma Style.**
+  Plasma stretches the middle three of the nine pieces, so anything drawn there
+  becomes as wide as the tile, and anything drawn in a corner piece keeps its
+  size but is pinned to that corner. There is no piece that is both fixed-size
+  and centred. (It is not drawn in code either — `Task.qml` in Plasma 6.7 has no
+  `Rectangle` and no `Canvas`; Breeze's own running mark is likewise just the
+  bottom edge of its `normal` frame.) Ours is a 2px starlight underline the
+  width of the tile. If the dot matters, it needs the dock fork (T2-F), not this
+  file.
+
+### 2. The dock's outline had notches, and dark blocks sat around its ends
+
+Two separate faults in `widgets/panel-background.svg`.
+
+**The notches.** At every point where a rounded end met a straight run, the
+hairline visibly changed thickness — a soft fat arc butting into a thin crisp
+line. The corner pieces drew their hairline as a 1px *stroke* along a curve; the
+edge pieces drew theirs as a 1px *filled rect* on whole-number coordinates. A
+stroke along a curve is anti-aliased on both sides and spreads over about two
+pixels of partial coverage, so the two never match. The top corners also carried
+the 7% sheen all the way round, doubling their thickness against the plain
+left and right edges they ran into.
+
+**Fixed** by drawing every hairline as a filled band between two arcs — outer
+radius 16, inner radius 15 — so corner and edge meet at the same whole-number
+coordinate with nothing left to round differently, and by fading the sheen out
+across the corner with a gradient, which is what the design's CSS `inset 0 1px 0`
+highlight does anyway.
+
+**The blocks.** All four *edge* pieces of the drop shadow faded the wrong way:
+clear next to the panel, 45% black at the far edge, ending in a hard cut against
+the wallpaper. The four *corner* pieces were correct. A correct corner meeting an
+inside-out edge is why it read as blocks at the ends rather than as one uniformly
+wrong shadow.
+
+**Fixed** by swapping the four gradients. The same fault was in all seven
+drawings in the theme, and all seven are fixed. The rule, written into each file:
+**the gradient's solid end points at the window.**
+
+**Content margins.** Icons were also crowding the glass. The floating variant's
+`hint-*-margin` markers were 6px all round; they are now 9px down and 13px
+across, which is the padding the V2 design actually draws on the dock
+(`branding/design-system/AquariusOS Desktop Shell.html`, `padding: 9px 13px`).
+
+### What was checked locally, and how
+
+Everything above was verified in a browser before committing, by assembling the
+nine pieces the way Plasma does — corners at natural size, edges stretched,
+centre stretched — reading each piece's rectangle from its own bounding box, the
+same measurement Plasma makes. Four assemblies:
+
+- the **floating** variant at real dock proportions (620×54) and again zoomed 6×
+  on each rounded end, which is what the square assembly used during the original
+  build had missed;
+- the **blur mask** over a red field — no red anywhere inside the corners, no
+  black overhang, so mask and glass still agree;
+- the **shadow** alone at 6×, confirming it now hugs the panel and fades outward
+  with no step where corner meets edge;
+- the **eight dock-tile states** side by side at a 54px dock height, confirming
+  the borders come out at 15px all round (i.e. the invisible bounding-box
+  rectangles are doing their job and the 4px inset survives).
+
+The harness is a throwaway; what it proved is above. As ever, **nothing here can
+be rendered by Plasma on macOS** — this checks geometry, not the real thing.
+
+### Still open after this pass
+
+- **How big the dock icons actually come out.** This is worth understanding
+  before anyone changes either number, because the two margins do different
+  jobs. The panel's 13px ends are visible — the dock is set to fit its content,
+  so they are the padding at each end of the pill, and they match the design.
+  The panel's 9px top and bottom are *not* what sizes the icons, because the
+  task manager ignores the panel's margins; the icon height comes from
+  `tasks.svg`'s own `normal-hint-*` markers instead. On the current 54px dock
+  that works out at 54 − 4 − 7 = 43px, which is within a pixel of the design's
+  44px icons. Confirm that on the bench with a ruler on a screenshot rather
+  than trusting the arithmetic.
+- Whether the 4px artwork inset in `tasks.svg` is the right amount at that icon
+  size, and whether the running underline wants to be thinner.
+- The dock's pinned icons — Files, Console, Settings — render as pale, flat
+  squares. The desktop-file ids in the layout script (`org.kde.dolphin.desktop`,
+  `org.kde.konsole.desktop`, `systemsettings.desktop`, `steam.desktop`) are all
+  correct and all five slots do resolve to an icon, so this is not a naming
+  problem. `kdeglobals` asks for `breeze-dark`. Whether that theme is actually
+  present in the image, and what it draws at dock size, needs a look at the
+  running machine — `ls /usr/share/icons` and the dock at 200% zoom. Not guessed
+  at here.
 - Is a 16px content inset right for KRunner, which draws its own padding on top of
   ours?
 - With blur switched off entirely (some handheld power profiles do this), the
