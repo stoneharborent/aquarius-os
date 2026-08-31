@@ -26,6 +26,12 @@
 #   logo depending on which they found first. Keeping the bitmap somewhere
 #   nothing searches means there is exactly one logo icon on the machine.
 #
+#   (Since 2026-08-31 the build DOES write two pictures into /usr/share/pixmaps/
+#   — the About-page logos, made by branding/render-about-logo.sh. That is not a
+#   contradiction: they are written over two of Fedora's OWN filenames, because
+#   the About page opens those exact paths. Nothing is called "aquarius-logo"
+#   there, so nothing competes with the icon. See that script's header.)
+#
 #   Which images use it: the two GNOME DESKTOP images. The GNOME handheld uses
 #   SDDM rather than GDM (build_files/gnome-desktop.sh explains), and the KDE
 #   line deletes this file entirely (build_files/build.sh).

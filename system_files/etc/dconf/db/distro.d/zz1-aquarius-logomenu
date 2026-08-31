@@ -1,0 +1,67 @@
+# ==============================================================================
+# AquariusOS — the logo in the top-left corner of the screen
+# ==============================================================================
+# WHAT THIS FILE CHANGES
+#   The little logo button at the far left of GNOME's top bar. Clicking it opens
+#   a menu (App Grid, Files, Steam, Lutris, …). It is not part of GNOME: it comes
+#   from an extension called Logo Menu, which Bazzite installs and switches on.
+#
+#   On the first bench boot of the GNOME line (2026-08-31) that button was still
+#   showing Bazzite's purple logo. This file is what makes it ours.
+#
+# HOW A FILE IN THIS FOLDER REACHES THE DESKTOP, IN PLAIN ENGLISH
+#   GNOME stores settings in a database called dconf. Files in
+#   /etc/dconf/db/distro.d/ are plain text, and `dconf update` bakes the whole
+#   folder into one database that every account on the machine reads underneath
+#   its own choices. Drop a file in here and run nothing and NOTHING happens,
+#   with no error anywhere — the same trap as the .gschema.override files, and
+#   the reason build_files/gnome-desktop.sh runs `dconf update` for us.
+#
+#   ⚠️ THIS IS A DIFFERENT MECHANISM FROM OUR OTHER GNOME DEFAULTS, and the
+#   difference is not a style choice. Everything else we set lives in
+#   /usr/share/glib-2.0/schemas/zz1-aquarius-*.gschema.override, which changes
+#   what a setting's FACTORY VALUE is. That only works for settings that have a
+#   published description (a "schema") installed system-wide. Logo Menu keeps
+#   its schema inside the extension folder instead, so there is nothing in
+#   /usr/share/glib-2.0/schemas for an override file to attach to — and a
+#   .gschema.override naming a setting that does not exist there is a build
+#   failure under --strict. dconf is the mechanism that works for this one, and
+#   it is the mechanism Bazzite itself uses for the same extension.
+#
+# WHY THE NAME STARTS WITH "zz1-"
+#   When two files in this folder set the same thing, THE ONE THAT SORTS LAST
+#   WINS. That is not folklore — it is written into dconf itself, in
+#   bin/dconf.c, as the comment "FILES-PRECEDENCE: When a path is found in
+#   multiple files, value from the file lexicographically latest takes
+#   precedence."
+#
+#   Bazzite's files here are called 00-bazzite-…, 01-bazzite-… and
+#   10-bazzite-deck-…-logomenu. "zz1-aquarius-logomenu" sorts after all of them,
+#   so our answer is the one that survives. It is the same prefix, for the same
+#   reason, as our .gschema.override files. build_files/gnome-desktop.sh checks
+#   that this is still true rather than trusting the convention, and so does CI.
+#
+# THE SETTING ITSELF
+#   Logo Menu decides which picture to show in this order (its display_module.js):
+#     1. use-custom-icon is on AND custom-icon-path is not empty → use that file
+#     2. otherwise, one of its own built-in distro logos, picked by number
+#   So turning the first one on is enough. We do not have to know, or keep in
+#   step with, which number Bazzite happens to be.
+#
+#   ⚠️ The path must point at a file that really exists. If it does not, the
+#   extension quietly falls back to a generic grey icon and says nothing.
+#   gnome-desktop.sh checks the file is there and fails the build if it is not.
+#
+#   The file named below is the SAME logo icon the rest of the OS uses — the one
+#   os-release's LOGO field names. There is deliberately only one logo icon on
+#   the machine; see branding/README.md.
+#
+# WHAT THIS DOES NOT DO
+#   It is not a lock. Anyone can open the extension's own settings and pick a
+#   different icon, and their choice wins from then on. Nothing here overwrites
+#   a choice somebody has made.
+# ==============================================================================
+
+[org/gnome/shell/extensions/Logo-menu]
+use-custom-icon=true
+custom-icon-path='/usr/share/icons/hicolor/scalable/apps/aquarius-logo.svg'

@@ -414,8 +414,24 @@ fi
 # and by absolutely nothing else. Writing it on a GNOME image would leave a KDE
 # settings file lying around that nothing reads, and — worse — would create a
 # second place the OS's name is written down that nobody would ever look at
-# again. GNOME's own About page (Settings > System > About) reads os-release
-# directly, which steps 2 and 3 above have already set correctly.
+# again.
+#
+# ⚠️ GNOME'S ABOUT PAGE IS NOT COVERED BY THIS SCRIPT, AND THAT IS NOT AN
+# OVERSIGHT — it is a correction. This comment used to say that GNOME's About
+# page "reads os-release directly, which steps 2 and 3 above have already set
+# correctly". The NAME on that page does. The big PICTURE does not, and the
+# first bench boot (2026-08-31) proved it: the page said "Operating System:
+# AquariusOS" underneath a large BAZZITE wordmark.
+#
+# On Fedora, gnome-control-center is compiled with two fixed picture paths baked
+# in (-Ddistributor_logo=…), and the LOGO field we set below is never consulted
+# by that page at all. Branding it means replacing the files at those paths,
+# which build_files/gnome-desktop.sh section 3 does. The full write-up is in
+# docs/gnome-variants.md under "First bench findings — branding".
+#
+# The LOGO field is still correct and still worth setting: fastfetch, KDE's Info
+# Centre and GNOME on non-Fedora builds all read it. It is simply not the thing
+# that page uses.
 
 KCM_RC="/etc/xdg/kcm-about-distrorc"
 

@@ -847,21 +847,40 @@ else
   rm -f /usr/share/nautilus-python/extensions/aquarius_editor_ready.py
   rm -f /usr/share/aquarius/branding/aquarius-logo.png
 
+  # The three files added on 2026-08-31 to brand GNOME's About page and its
+  # top-bar logo button. The two pictures are for a GNOME Settings page KDE does
+  # not have; the settings file is read by GNOME's dconf and by nothing in KDE.
+  rm -f /usr/share/aquarius/branding/aquarius-about-logo.png
+  rm -f /usr/share/aquarius/branding/aquarius-about-logo-white.png
+  rm -f /etc/dconf/db/distro.d/zz1-aquarius-logomenu
+
   # Tidy up folders we created and have now emptied — but ONLY if they really
   # are empty. --ignore-fail-on-non-empty is what makes that safe: if the base
   # image turns out to keep something of its own in one of these, it is left
-  # exactly as it was and nothing goes red.
+  # exactly as it was and nothing goes red. (/etc/dconf/db/distro.d is on this
+  # list for exactly that reason: Fedora's own dconf package owns /etc/dconf,
+  # so only the one folder we may have created is offered up.)
   rmdir --ignore-fail-on-non-empty \
     /usr/share/gnome-background-properties \
     /usr/share/nautilus-python/extensions \
     /usr/share/nautilus-python \
-    /usr/share/aquarius/branding 2>/dev/null || true
+    /usr/share/aquarius/branding \
+    /etc/dconf/db/distro.d 2>/dev/null || true
 
   # And prove the removal really happened. A leftover override file on a frozen
   # KDE image is exactly the kind of drift this whole arrangement exists to stop.
   if compgen -G "/usr/share/glib-2.0/schemas/zz1-aquarius-*" > /dev/null; then
     echo "AQUARIUS ERROR: AquariusOS GNOME settings are still on this KDE image."
     ls -l /usr/share/glib-2.0/schemas/zz1-aquarius-*
+    exit 1
+  fi
+  if [ -e /etc/dconf/db/distro.d/zz1-aquarius-logomenu ]; then
+    echo "AQUARIUS ERROR: the GNOME top-bar logo settings are still on this KDE image."
+    exit 1
+  fi
+  if compgen -G "/usr/share/aquarius/branding/aquarius-about-logo*" > /dev/null; then
+    echo "AQUARIUS ERROR: the GNOME About-page logos are still on this KDE image."
+    ls -l /usr/share/aquarius/branding/aquarius-about-logo*
     exit 1
   fi
   echo "OK: no GNOME-only files left on this KDE image."

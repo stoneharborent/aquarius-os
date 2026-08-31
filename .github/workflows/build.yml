@@ -1039,20 +1039,178 @@ jobs:
           # --- 9. the login screen logo ----------------------------------------
           # GDM on the desktop images, SDDM on the handheld — so which branch
           # runs is part of what is checked.
+          #
+          # This walks the WHOLE chain, because there are four links and a break
+          # in any one of them gives a login screen with a blank space and no
+          # error anywhere:
+          #   the profile  →  the text file  →  the compiled database  →  the PNG
           case "${EXPECTED_IMAGE_NAME}" in
             *deck*)
               ok "handheld image — no GDM settings expected (it uses SDDM)" ;;
             *)
               if [ -s /usr/share/aquarius/branding/aquarius-logo.png ]; then ok "the login-screen logo is installed"
               else bad "the login-screen logo PNG is missing — GDM would show a blank space"; fi
+
+              # Link 1: the profile, which is how GDM's own settings database
+              # gets read at all.
+              if grep -q '^system-db:gdm$' /etc/dconf/profile/gdm 2>/dev/null; then
+                ok "/etc/dconf/profile/gdm reads the gdm database"
+              else
+                bad "/etc/dconf/profile/gdm is missing or does not read the gdm database — our setting would never be seen"
+              fi
+
+              # Link 2: the text file, and link 4: the picture it names really
+              # exists. Reading the path back OUT of the file (rather than
+              # checking for a fixed string) is what catches a rename that
+              # updated one and not the other.
+              gdm_keyfile=/etc/dconf/db/gdm.d/01-aquarius-logo
+              gdm_logo="$(sed -n "s/^logo='\(.*\)'$/\1/p" "$gdm_keyfile" 2>/dev/null || true)"
+              if [ -n "$gdm_logo" ]; then
+                ok "the login screen is pointed at ${gdm_logo}"
+                if [ -s "$gdm_logo" ]; then ok "and that file really exists in this image"
+                else bad "${gdm_logo} does not exist — GDM would show a blank space"; fi
+              else
+                bad "${gdm_keyfile} has no logo= line"
+              fi
+
+              # Link 3: the compiled database, checked by content. An empty or
+              # stale database is what a skipped `dconf update` looks like.
               if [ -s /etc/dconf/db/gdm ]; then ok "the login screen settings were compiled"
               else bad "/etc/dconf/db/gdm is missing — the login screen would keep Bazzite's logo"; fi
-              if grep -q 'aquarius-logo.png' /etc/dconf/db/gdm.d/01-aquarius-logo 2>/dev/null; then
-                ok "the login screen is pointed at our logo"
+              if [ -n "$gdm_logo" ] && grep -a -q "$gdm_logo" /etc/dconf/db/gdm 2>/dev/null; then
+                ok "the compiled login-screen database really names our logo"
               else
-                bad "/etc/dconf/db/gdm.d/01-aquarius-logo does not name our logo"
+                bad "/etc/dconf/db/gdm does not name our logo — it was built without our file"
               fi ;;
           esac
+
+          # --- 9b. the About page logo -----------------------------------------
+          # Settings > System > About shows one big picture at the top. On a
+          # Fedora-derived system that picture does NOT come from os-release's
+          # LOGO field: Fedora compiles gnome-control-center with two fixed file
+          # paths baked in, and we replace the files at those paths.
+          # build_files/gnome-desktop.sh section 3 has the full explanation.
+          #
+          # The failure this catches is the one the first bench boot found: an
+          # About page that says "AquariusOS" in text and shows Bazzite's
+          # wordmark right above it.
+          cc=/usr/bin/gnome-control-center
+          about_light=/usr/share/pixmaps/fedora_logo_med.png
+          about_dark=/usr/share/pixmaps/fedora_whitelogo_med.png
+          ours_light=/usr/share/aquarius/branding/aquarius-about-logo.png
+          ours_dark=/usr/share/aquarius/branding/aquarius-about-logo-white.png
+
+          cc_paths="$(grep -a -o -E '/usr/share/pixmaps/[A-Za-z0-9._+-]+' "$cc" 2>/dev/null | sort -u || true)"
+          echo "== /usr/share/pixmaps paths compiled into ${cc} =="
+          if [ -n "$cc_paths" ]; then printf '%s\n' "$cc_paths" | sed 's/^/       /'; else echo "       (none)"; fi
+
+          for f in "$ours_light" "$ours_dark"; do
+            if [ -s "$f" ]; then ok "$(basename "$f") is installed ($(stat -c %s "$f") bytes)"
+            else bad "$f is missing — there is no AquariusOS artwork to put on the About page"; fi
+          done
+
+          # The paths must still be the ones the program was built to open. If
+          # Fedora ever moves them, replacing the old files becomes a silent
+          # no-op — so this is checked against the binary, not assumed.
+          for want in "$about_light" "$about_dark"; do
+            if printf '%s\n' "$cc_paths" | grep -qx "$want"; then
+              ok "the Settings app reads ${want}"
+            else
+              bad "${want} is not named inside ${cc} — replacing it would do nothing (Fedora has moved the About-page logo; see the list above)"
+            fi
+          done
+
+          # And the files at those paths must be OUR files, byte for byte. This
+          # is the check that actually proves the bug is fixed: "the file exists"
+          # was already true when the page said Bazzite.
+          if cmp -s "$ours_light" "$about_light"; then ok "the light-mode About logo is ours"
+          else bad "${about_light} is not our artwork — the About page would show Bazzite's logo in light mode"; fi
+          if cmp -s "$ours_dark" "$about_dark"; then ok "the dark-mode About logo is ours"
+          else bad "${about_dark} is not our artwork — the About page would show Bazzite's logo in dark mode"; fi
+
+          # --- 9c. the top-bar logo button -------------------------------------
+          # The logo at the far left of the top bar comes from the Logo Menu
+          # extension, and it is configured through dconf rather than through a
+          # .gschema.override, because the extension keeps its settings
+          # description inside its own folder. gnome-desktop.sh section 4 says
+          # why at length; the keyfile's own header says it again.
+          distro_d=/etc/dconf/db/distro.d
+          our_keyfile="${distro_d}/zz1-aquarius-logomenu"
+
+          echo "== ${distro_d} =="
+          ls -l "$distro_d" 2>/dev/null || echo "(the folder does not exist!)"
+
+          if [ -r "$our_keyfile" ]; then ok "our top-bar logo settings are installed"
+          else bad "$our_keyfile is missing — the top bar would keep Bazzite's logo"; fi
+
+          # When two files in that folder set the same thing, the one that sorts
+          # LAST wins — dconf's own source says so (bin/dconf.c, read_directory:
+          # "value from the file lexicographically latest takes precedence").
+          # Bazzite ships 00-, 01- and 10- files here. Compared, not assumed.
+          last_keyfile="$(find "$distro_d" -maxdepth 1 -type f -printf '%f\n' 2>/dev/null | sort | tail -1)"
+          if [ "$last_keyfile" = "zz1-aquarius-logomenu" ]; then
+            ok "our settings file sorts last in ${distro_d}, so our answer wins"
+          else
+            bad "'${last_keyfile}' sorts after ours in ${distro_d} — it would overwrite our logo"
+          fi
+
+          # The icon the setting points at has to be a real file, or the
+          # extension quietly falls back to a generic grey icon.
+          menu_icon="$(sed -n "s/^custom-icon-path='\(.*\)'$/\1/p" "$our_keyfile" 2>/dev/null || true)"
+          if [ -n "$menu_icon" ]; then
+            ok "the top-bar button is pointed at ${menu_icon}"
+            if [ -s "$menu_icon" ]; then ok "and that file really exists in this image"
+            else bad "${menu_icon} does not exist — the button would show a generic grey icon"; fi
+          else
+            bad "$our_keyfile has no custom-icon-path line"
+          fi
+          if grep -q '^use-custom-icon=true$' "$our_keyfile" 2>/dev/null; then
+            ok "the custom icon is switched on"
+          else
+            bad "use-custom-icon is not set to true — the extension would ignore the path above"
+          fi
+
+          # The extension itself, which all of the above configures. Our
+          # enabled-extensions list names it, so its absence would leave GNOME
+          # trying to load something that is not there.
+          if [ -r /usr/share/gnome-shell/extensions/logomenu@aryan_k/extension.js ]; then
+            ok "the Logo Menu extension is installed"
+          else
+            bad "the Logo Menu extension is missing — there would be no logo button at all"
+          fi
+
+          # Everyone's settings reach an account through this profile.
+          if grep -q '^system-db:distro$' /etc/dconf/profile/user 2>/dev/null; then
+            ok "/etc/dconf/profile/user reads the distro database"
+          else
+            bad "/etc/dconf/profile/user is missing or does not read the distro database — none of the above would be seen"
+          fi
+
+          # The compiled database, checked by content for the same reason as the
+          # login screen's: an empty or stale one is what a skipped
+          # `dconf update` looks like, and it fails completely silently.
+          if [ -s /etc/dconf/db/distro ]; then ok "the distro settings database was compiled"
+          else bad "/etc/dconf/db/distro is missing — the top bar would keep Bazzite's logo"; fi
+          if [ -n "$menu_icon" ] && grep -a -q "$menu_icon" /etc/dconf/db/distro 2>/dev/null; then
+            ok "the compiled database really names our logo"
+          else
+            bad "/etc/dconf/db/distro does not name our logo — it was built without our file"
+          fi
+
+          # Finally, compile the whole folder again into a throwaway file. This
+          # is a syntax check: a mangled section header or a missing quote in any
+          # keyfile becomes an error here, with the filename in it, instead of a
+          # file the system silently ignores.
+          if command -v dconf >/dev/null 2>&1; then
+            if dconf compile /tmp/aq-distro-test "$distro_d" 2>/tmp/aq-dconf-err; then
+              ok "every settings file in ${distro_d} is valid"
+            else
+              bad "a file in ${distro_d} is not valid:"; sed 's/^/       /' /tmp/aq-dconf-err
+            fi
+            rm -f /tmp/aq-distro-test /tmp/aq-dconf-err
+          else
+            echo "  NOTE dconf is not in this image, so the keyfiles could not be re-compiled."
+          fi
 
           # --- 10. NONE of the KDE build steps ran ------------------------------
           # This is the other half of the gating in build_files/build.sh. A GNOME
