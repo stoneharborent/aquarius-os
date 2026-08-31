@@ -110,27 +110,45 @@
       <stop offset="0.75" stop-color="#000000" stop-opacity="0.0405"/>
       <stop offset="1" stop-color="#000000" stop-opacity="0"/>
     </radialGradient>
+    <!-- The 7% top sheen, tapering to nothing as it turns a corner.
+         The V2 design draws the sheen as a CSS `inset 0 1px 0` highlight, and
+         that kind of highlight wraps the top of a rounded box and fades out
+         down the sides. Painting it at full strength all the way round a
+         corner is what made the corner read thicker than the straight edge it
+         ran into; painting it not at all made the sheen start with a step.
+         These two fade it out instead. -->
+    <linearGradient id="aq-sheen-in" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#EDEFF7" stop-opacity="0"/>
+      <stop offset="1" stop-color="#EDEFF7" stop-opacity="0.07"/>
+    </linearGradient>
+    <linearGradient id="aq-sheen-out" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#EDEFF7" stop-opacity="0.07"/>
+      <stop offset="1" stop-color="#EDEFF7" stop-opacity="0"/>
+    </linearGradient>
   </defs>
 
   <!-- ===== BAND 1 — the top bar (plain names) ===== -->
+  <!-- On every hairline below: it is a FILLED band, never a stroke. See
+       "why the hairlines are fills" in the header comment of this band's
+       twin, BAND 3. -->
   <g id="aq-frame">
     <g id="topleft">
       <path d="M 0,16 A 16,16 0 0 1 16,0 L 16,16 Z" fill="#06070C" fill-opacity="0.62"/>
-      <path d="M 0.5,16 A 15.5,15.5 0 0 1 16,0.5" fill="none" stroke="#EDEFF7" stroke-opacity="0.1" stroke-width="1"/>
-      <path d="M 1.5,16 A 14.5,14.5 0 0 1 16,1.5" fill="none" stroke="#EDEFF7" stroke-opacity="0.07" stroke-width="1"/>
+      <path d="M 0,16 A 16,16 0 0 1 16,0 L 16,1 A 15,15 0 0 0 1,16 Z" fill="#EDEFF7" fill-opacity="0.1"/>
+      <path d="M 1,16 A 15,15 0 0 1 16,1 L 16,2 A 14,14 0 0 0 2,16 Z" fill="url(#aq-sheen-in)"/>
     </g>
     <g id="topright">
       <path d="M 32,0 A 16,16 0 0 1 48,16 L 32,16 Z" fill="#06070C" fill-opacity="0.62"/>
-      <path d="M 32,0.5 A 15.5,15.5 0 0 1 47.5,16" fill="none" stroke="#EDEFF7" stroke-opacity="0.1" stroke-width="1"/>
-      <path d="M 32,1.5 A 14.5,14.5 0 0 1 46.5,16" fill="none" stroke="#EDEFF7" stroke-opacity="0.07" stroke-width="1"/>
+      <path d="M 32,0 A 16,16 0 0 1 48,16 L 47,16 A 15,15 0 0 0 32,1 Z" fill="#EDEFF7" fill-opacity="0.1"/>
+      <path d="M 32,1 A 15,15 0 0 1 47,16 L 46,16 A 14,14 0 0 0 32,2 Z" fill="url(#aq-sheen-out)"/>
     </g>
     <g id="bottomleft">
       <path d="M 16,48 A 16,16 0 0 1 0,32 L 16,32 Z" fill="#06070C" fill-opacity="0.62"/>
-      <path d="M 16,47.5 A 15.5,15.5 0 0 1 0.5,32" fill="none" stroke="#EDEFF7" stroke-opacity="0.1" stroke-width="1"/>
+      <path d="M 16,48 A 16,16 0 0 1 0,32 L 1,32 A 15,15 0 0 0 16,47 Z" fill="#EDEFF7" fill-opacity="0.1"/>
     </g>
     <g id="bottomright">
       <path d="M 48,32 A 16,16 0 0 1 32,48 L 32,32 Z" fill="#06070C" fill-opacity="0.62"/>
-      <path d="M 47.5,32 A 15.5,15.5 0 0 1 32,47.5" fill="none" stroke="#EDEFF7" stroke-opacity="0.1" stroke-width="1"/>
+      <path d="M 48,32 A 16,16 0 0 1 32,48 L 32,47 A 15,15 0 0 0 47,32 Z" fill="#EDEFF7" fill-opacity="0.1"/>
     </g>
     <g id="top">
       <rect x="16" y="0" width="16" height="16" fill="#06070C" fill-opacity="0.62"/>
@@ -181,25 +199,46 @@
     <rect id="mask-center" x="16" y="72" width="16" height="16" fill="#000000"/>
   </g>
 
-  <!-- ===== BAND 3 — the dock (floating-* names) ===== -->
+  <!-- ===== BAND 3 — the dock (floating-* names) =====
+       WHY THE HAIRLINES ARE FILLS AND NOT STROKES  (changed 2026-08-30, after
+       the first hardware boot showed the fault)
+       ...................................................................
+       Plasma paints the nine pieces one at a time and butts them together.
+       A hairline drawn as a 1-pixel STROKE along a curve is anti-aliased on
+       both sides, so it spreads over roughly two pixels of partial coverage;
+       a hairline drawn as a 1-pixel FILLED rect on whole-number coordinates
+       lands on exactly one pixel. Put one of each next to the other and the
+       joint shows as a step — which is what the bench photo of the dock
+       shows at all four corner-to-edge joints: a thick soft arc meeting a
+       thin crisp line.
+
+       So every hairline in this file is now a filled band between two arcs
+       (outer radius 16, inner radius 15) or a filled 1-pixel rect. The two
+       always meet at the same whole-number coordinate, so there is nothing
+       left to round differently.
+
+       The 7% sheen is also gone from the corner pieces and now lives only on
+       the straight `top` / `floating-top` piece. It is a top-edge highlight;
+       carrying it around a corner made the corner twice as thick as the
+       side it ran into, which was the other half of the same step. -->
   <g id="aq-frame-floating">
     <g id="floating-topleft">
       <path d="M 120,16 A 16,16 0 0 1 136,0 L 136,16 Z" fill="#06070C" fill-opacity="0.62"/>
-      <path d="M 120.5,16 A 15.5,15.5 0 0 1 136,0.5" fill="none" stroke="#EDEFF7" stroke-opacity="0.14" stroke-width="1"/>
-      <path d="M 121.5,16 A 14.5,14.5 0 0 1 136,1.5" fill="none" stroke="#EDEFF7" stroke-opacity="0.07" stroke-width="1"/>
+      <path d="M 120,16 A 16,16 0 0 1 136,0 L 136,1 A 15,15 0 0 0 121,16 Z" fill="#EDEFF7" fill-opacity="0.14"/>
+      <path d="M 121,16 A 15,15 0 0 1 136,1 L 136,2 A 14,14 0 0 0 122,16 Z" fill="url(#aq-sheen-in)"/>
     </g>
     <g id="floating-topright">
       <path d="M 152,0 A 16,16 0 0 1 168,16 L 152,16 Z" fill="#06070C" fill-opacity="0.62"/>
-      <path d="M 152,0.5 A 15.5,15.5 0 0 1 167.5,16" fill="none" stroke="#EDEFF7" stroke-opacity="0.14" stroke-width="1"/>
-      <path d="M 152,1.5 A 14.5,14.5 0 0 1 166.5,16" fill="none" stroke="#EDEFF7" stroke-opacity="0.07" stroke-width="1"/>
+      <path d="M 152,0 A 16,16 0 0 1 168,16 L 167,16 A 15,15 0 0 0 152,1 Z" fill="#EDEFF7" fill-opacity="0.14"/>
+      <path d="M 152,1 A 15,15 0 0 1 167,16 L 166,16 A 14,14 0 0 0 152,2 Z" fill="url(#aq-sheen-out)"/>
     </g>
     <g id="floating-bottomleft">
       <path d="M 136,48 A 16,16 0 0 1 120,32 L 136,32 Z" fill="#06070C" fill-opacity="0.62"/>
-      <path d="M 136,47.5 A 15.5,15.5 0 0 1 120.5,32" fill="none" stroke="#EDEFF7" stroke-opacity="0.14" stroke-width="1"/>
+      <path d="M 136,48 A 16,16 0 0 1 120,32 L 121,32 A 15,15 0 0 0 136,47 Z" fill="#EDEFF7" fill-opacity="0.14"/>
     </g>
     <g id="floating-bottomright">
       <path d="M 168,32 A 16,16 0 0 1 152,48 L 152,32 Z" fill="#06070C" fill-opacity="0.62"/>
-      <path d="M 167.5,32 A 15.5,15.5 0 0 1 152,47.5" fill="none" stroke="#EDEFF7" stroke-opacity="0.14" stroke-width="1"/>
+      <path d="M 168,32 A 16,16 0 0 1 152,48 L 152,47 A 15,15 0 0 0 167,32 Z" fill="#EDEFF7" fill-opacity="0.14"/>
     </g>
     <g id="floating-top">
       <rect x="136" y="0" width="16" height="16" fill="#06070C" fill-opacity="0.62"/>
