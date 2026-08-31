@@ -1,9 +1,16 @@
 # ==============================================================================
 # AquariusOS Plasma Style — the theme's own settings
 # ==============================================================================
-# The SVG files next to this one say what the glass LOOKS like. This file says
-# how the glass should BEHAVE — mainly, what it asks the compositor (KWin) to
-# do behind it.
+# The SVG files next to this one say what the panels and popups LOOK like. This
+# file says how they should BEHAVE — mainly, what they ask the compositor (KWin)
+# to do behind them.
+#
+# ⚠️ THE SHORT VERSION, AS OF 2026-08-30: they now ask for nothing. Royce
+# removed the glass; every surface in this theme is fully opaque, so there is
+# nothing see-through left for the compositor to work on. Most of this file is
+# therefore a record of settings that are switched off or have nothing to do,
+# each explained in place. That is deliberate — a setting silently missing is
+# harder to understand later than a setting written down and explained.
 #
 # Format: a section name in [brackets], then key=value lines under it. KDE reads
 # a fixed list of sections here; anything else is ignored.
@@ -22,25 +29,59 @@
 [Settings]
 FallbackTheme=default
 
-# --- Blur behind the glass ------------------------------------------------------
-# This is the setting that makes the theme a GLASS theme rather than just a
-# see-through one. When it is on, Plasma tells KWin "blur the wallpaper behind
-# this panel/popup", handing it the black mask-* shapes out of our SVGs so the
-# blur stops exactly at our rounded corners.
+# --- Blur behind the panels: OFF, because there is nothing to blur -------------
+# This line used to say `enabled=true`, and it was described here as the single
+# most load-bearing setting in the theme. It is now `false`, and this is the
+# story, because a flipped boolean with no explanation is exactly the kind of
+# thing that gets "helpfully" flipped back.
 #
-# KDE's default for this is already "on", so writing it out changes nothing
-# today. It is written anyway because it is the single most load-bearing
-# behaviour in the whole theme, and a future KDE that flipped the default would
-# quietly turn our desktop into flat grey rectangles.
+# WHAT IT DOES. When it is on, Plasma tells KWin "blur the wallpaper behind this
+# panel or popup", handing over the black mask-* shapes from our SVGs so the
+# blur would stop at our rounded corners.
+#
+# WHY IT IS OFF NOW. Two reasons, and either on its own would be enough.
+#
+#   1. THE BLUR NEVER ARRIVED. On Bazzite 44 / Plasma 6.7, KWin does not draw
+#      the frost, however correctly it is asked. A full evening of elimination
+#      on real hardware cleared every layer we can inspect — our theme, our
+#      effects, our whole config cascade, the driver, HDR, scaling — and a
+#      Wayland protocol trace shows the request going out and being accepted.
+#      The whole investigation is in `docs/blur-known-issue.md` in the repo
+#      root. It is not our bug and we cannot fix it from here.
+#
+#   2. THERE IS NOTHING TRANSLUCENT LEFT ANYWAY. Royce removed the glass on
+#      2026-08-30; every surface in this theme is now fully opaque. Blurring
+#      behind an opaque panel produces a blurred image that is then completely
+#      covered up. It is work the graphics chip does for nobody — which costs
+#      real battery on a handheld and buys exactly zero pixels of difference.
+#
+# So we stop asking. Switching it off is not giving up on frost; it is not
+# ordering something we would immediately throw away.
+#
+# ⚠️ IF YOU EVER WANT THE GLASS BACK, this line alone will not do it. Frost
+# needs BOTH the translucent artwork restored in the SVGs AND this set back to
+# true — and the underlying KWin problem fixed upstream. In that order of
+# difficulty, the last one first. See `docs/plasma-style.md`, "Glass removed".
 [BlurBehindEffect]
-enabled=true
+enabled=false
 
-# --- Colour punch behind the glass ----------------------------------------------
-# The design asks for `saturate(1.3)` behind the panels: colours behind the glass
-# stay lively instead of going muddy when they are blurred.
+# --- Colour punch behind the glass: MOOT TWICE OVER -----------------------------
+# The design asked for `saturate(1.3)` behind the panels: colours behind the
+# glass staying lively instead of going muddy when they are blurred.
 #
-# ⚠️ HONEST NOTE, VERIFIED 2026-08-30 AGAINST KDE SOURCE — THIS SECTION CURRENTLY
-# DOES NOTHING ON PLASMA 6.7, AND THAT IS FINE.
+# ⚠️ AS OF 2026-08-30 THIS SECTION IS DEAD FOR TWO SEPARATE REASONS. It is kept,
+# with its correct values, because it costs nothing and because the reasoning
+# below is worth not having to work out again.
+#
+#   REASON ONE — Plasma stopped reading it (see the source note below).
+#   REASON TWO — there is no longer anything behind our surfaces to saturate.
+#     Royce removed the glass; every panel and popup in this theme is fully
+#     opaque. Even if KDE restored per-theme control tomorrow, a saturation
+#     applied to what is behind an opaque panel is applied to pixels nobody
+#     will ever see. This section would only start mattering again if the
+#     translucent artwork came back.
+#
+# The original note, still accurate on its own terms:
 #   KDE used to have a separate "background contrast" effect that read these
 #   numbers per theme. In Plasma 6.5 it was folded into the blur effect, and by
 #   6.7 the separate effect is gone: there is no `contrast` plugin left in KWin,
@@ -65,20 +106,27 @@ contrast=1.0
 intensity=1.0
 saturation=1.3
 
-# --- Let the transparency slider actually work ----------------------------------
+# --- Let the transparency choice keep working ------------------------------------
 # Panel settings offer three choices: Adaptive, Translucent, Opaque. "Adaptive"
 # means the panel goes solid on its own when a window is maximised behind it, so
-# text stays readable.
+# text stays readable. Plasma only offers that behaviour if the theme opts in
+# here; leave this out and the choice appears in the menu, the person clicks it,
+# and nothing happens.
 #
-# Plasma only offers that behaviour if the theme opts in here. Leave this out and
-# the panel is permanently see-through: the setting still appears in the menu,
-# the person still clicks it, and nothing happens. Our house rule is that we set
-# good defaults but never take a choice away — a setting that silently does
-# nothing breaks that rule just as badly as forcing a value would.
+# ⚠️ HONEST NOTE, 2026-08-30: this setting now has nothing visible to do.
+# Adaptive's whole job is to swap a see-through panel for a solid one when a
+# window is maximised behind it — and since the glass was removed, our panel is
+# solid all the time, so the swap is from solid to solid. Nobody will ever see
+# it happen.
 #
-# The other half of the promise is the solid/ folder beside this file. When
-# somebody picks Opaque, Plasma loads the panel and popup artwork from there
-# instead. We ship our own opaque artwork so the design survives that choice;
-# without it, their panel would abruptly turn into stock KDE Breeze.
+# It is kept at `true` on purpose, for two small reasons:
+#   * Our house rule is that we set good defaults and never quietly take a
+#     choice away. Removing this would make the menu entry a dead button.
+#   * The three settings still pick different artwork folders, and every one of
+#     them now leads somewhere of ours: Translucent and Adaptive use the root
+#     drawings, Opaque uses the solid/ folder beside this file — which is now a
+#     byte-identical copy of the root artwork, precisely because there is no
+#     difference left to express. Ship nothing in solid/ and "Opaque" would drop
+#     the person into stock KDE Breeze.
 [AdaptiveTransparency]
 enabled=true
