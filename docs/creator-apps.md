@@ -65,13 +65,22 @@ knowing:
 
   ```
   AQUARIUS_APPS=(
-      "aquarius-editor stoneharborent/aquarius-editor v0.3.0"
-      "aquarius-writer stoneharborent/aquarius-writer v0.1.0"
+      "aquarius-editor stoneharborent/aquarius-editor v0.6.0"
+      "aquarius-writer stoneharborent/aquarius-writer v0.2.0"
   )
   ```
 
   Change the version tag, push, and the next build picks up the new release.
   Nothing else needs touching.
+
+* **Aquarius Editor is big, on purpose.** It went from a 571 MB download to a
+  1.9 GB one between v0.3.0 and v0.6.0 (baked in on 31 August 2026). That is not
+  bloat: from v0.5.0 the Editor carries its speech-recognition and
+  footage-analysis models inside itself, so a machine with no internet
+  connection can still transcribe and analyse footage. Unpacked it is roughly
+  2.5 GB, which makes it the largest single thing AquariusOS adds on top of
+  Bazzite. Worth knowing before anyone wonders why the download for an OS update
+  grew.
 
 ### Unpacking an app means owning its permissions
 

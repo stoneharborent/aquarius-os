@@ -58,13 +58,28 @@ set -euo pipefail
 #    what happened — the release is not published yet. Nothing here needs
 #    changing; just re-run the build once it is.
 #
+# ⚠️ HOW BIG THESE ARE, AND WHY IT IS WRITTEN DOWN  (2026-08-31)
+#    Aquarius Editor grew from a 571 MB download to a 1.9 GB one between v0.3.0
+#    and v0.6.0. Nothing went wrong: since v0.5.0 the Editor carries its speech
+#    recognition and footage-analysis models INSIDE the app, so that a machine
+#    with no internet connection can still transcribe and analyse. Unpacked it
+#    lands at roughly 2.5 GB, which makes it comfortably the largest single
+#    thing AquariusOS adds on top of Bazzite.
+#
+#    That is a deliberate trade and it is fine, but it is worth knowing before
+#    anybody wonders why the image grew, and before anybody adds a THIRD baked
+#    app without thinking about it. The build log prints the free space on the
+#    build machine either side of each bake (see bake_appimage below) so that an
+#    out-of-space failure reads as an out-of-space failure instead of as a
+#    mystery.
+#
 # TODO (Phase 2, deliberate): nothing else gets baked in this way yet. Every
 # other creator app is a Flatpak, on purpose — Flatpaks update on their own
 # schedule and a broken one can never stop the OS from booting.
 # ------------------------------------------------------------------------------
 
 AQUARIUS_APPS=(
-    "aquarius-editor stoneharborent/aquarius-editor v0.3.0"
+    "aquarius-editor stoneharborent/aquarius-editor v0.6.0"
     "aquarius-writer stoneharborent/aquarius-writer v0.2.0"
 )
 
@@ -173,10 +188,31 @@ bake_appimage() {
 
     say "  file:     ${file}"
     say "  expected: ${sum}"
+    say "  free space here before the download: $(df -h --output=avail "$work" | tail -1 | tr -d ' ')"
 
-    if ! curl --retry 3 --retry-delay 5 -fL --progress-bar -o "$work/app.AppImage" "${base}/${url_file}"; then
+    # --- the download itself ---------------------------------------------------
+    # ⚠️ --speed-limit / --speed-time are NOT decoration, and they were added on
+    # 2026-08-31 with the Editor's jump from 571 MB to 1.9 GB. `--retry` only
+    # ever fires on a connection that FAILS. A connection that goes quiet — which
+    # is a normal way for a large transfer over a shared runner to end — never
+    # fails, so curl would sit and wait on it, and the whole GitHub job would
+    # then burn its six-hour ceiling before anybody was told anything.
+    #
+    # These two words say: "if less than 1 KB has moved in the last 60 seconds,
+    # give up on this attempt." That turns a silent hang into an ordinary error,
+    # which --retry then retries properly. 1 KB/s is far below any real transfer
+    # and far above zero, so a merely slow runner is never punished by it.
+    if ! curl --retry 3 --retry-delay 5 \
+              --speed-limit 1024 --speed-time 60 \
+              -fL --progress-bar -o "$work/app.AppImage" "${base}/${url_file}"; then
         die "Could not download ${file} from ${repo} ${tag}." \
-            "  Tried: ${base}/${url_file}"
+            "  Tried: ${base}/${url_file}" \
+            "" \
+            "This file is large (Aquarius Editor is about 1.9 GB), so the two" \
+            "likeliest causes are a transfer that stalled — curl gives up on any" \
+            "attempt that moves less than 1 KB in 60 seconds — or a build machine" \
+            "that has run out of disk space. The free space at the moment before" \
+            "the download started is printed just above."
     fi
 
     # --- verify before we trust it -------------------------------------------
@@ -487,8 +523,15 @@ bake_appimage() {
     fi
 
     # --- tidy up and report ---------------------------------------------------
+    # The downloaded AppImage is deleted here, not left to the end. It is 1.9 GB
+    # for the Editor and it has already been unpacked, so keeping it around would
+    # mean carrying two copies of the same app through the rest of the build for
+    # no reason at all. (It never reaches the finished image either way — the
+    # whole build is one Containerfile RUN, so anything deleted before that RUN
+    # ends is never written into a layer.)
     rm -rf "$work"
     say "  installed size: $(du -sh "${APP_ROOT}/${name}" | cut -f1) at ${APP_ROOT}/${name}"
+    say "  free space here after the bake: $(df -h --output=avail "$APP_ROOT" | tail -1 | tr -d ' ')"
 }
 
 for entry in "${AQUARIUS_APPS[@]}"; do
