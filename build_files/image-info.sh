@@ -118,6 +118,12 @@ LOGO_COLOR="0;38;2;138;180;255"
 IMAGE_NAME="${IMAGE_NAME:-aquarius-os}"
 IMAGE_VENDOR="${IMAGE_VENDOR:-stoneharborent}"
 
+# Which desktop this image wears — "kde" or "gnome". It arrives the same way the
+# two above do: set on the RUN line in the Containerfile, inherited by build.sh,
+# inherited again by this script. Only ONE step in this file cares (step 4, KDE's
+# About page), and the reasoning is written out there.
+AQ_DESKTOP="${AQ_DESKTOP:-kde}"
+
 # The "edition" line, printed under the name on KDE's About page. This is the
 # one identity field that genuinely differs between our images, so it is worked
 # out from the image name rather than typed three times. Bazzite words its own
@@ -138,11 +144,25 @@ IMAGE_VENDOR="${IMAGE_VENDOR:-stoneharborent}"
 # "Verify OS identity" step of .github/workflows/build.yml too, or the build
 # goes red on a name it has never heard of. That is deliberate: an unrecognised
 # edition means somebody added an image and only half-wired it.
+#
+# ⚠️ SIX EDITIONS SINCE 2026-08-31, NOT THREE. While the KDE line and the GNOME
+# line are both being published, "Desktop Edition" on its own is ambiguous — two
+# different images would print it. So the GNOME ones say so: "GNOME Desktop
+# Edition", "GNOME NVIDIA Edition", "GNOME Handheld Edition". The three KDE
+# strings are deliberately UNCHANGED, because the KDE line is frozen and an
+# installed machine's About page should not start saying something new.
+#
+# When the KDE line finally retires, the word GNOME comes back out of these and
+# they go back to being three.
 case "$IMAGE_NAME" in
 *-deck*) IMAGE_VARIANT="Handheld Edition" ;;
 *-nvidia*) IMAGE_VARIANT="NVIDIA Edition" ;;
 *) IMAGE_VARIANT="Desktop Edition" ;;
 esac
+
+if [ "$AQ_DESKTOP" = "gnome" ]; then
+  IMAGE_VARIANT="GNOME ${IMAGE_VARIANT}"
+fi
 
 # Where AquariusOS lives on the internet. There is no website yet, so the GitHub
 # repo is the honest answer — and it is definitely better than the old value,
@@ -389,11 +409,21 @@ fi
 # We deliberately do NOT set LogoPath. Leaving it out means KDE falls back to
 # os-release's LOGO — which we set a few lines above — so the logo has exactly
 # one home in this script instead of two that can drift apart.
+#
+# ⚠️ KDE IMAGES ONLY, since 2026-08-31. This file is read by KDE's Info Centre
+# and by absolutely nothing else. Writing it on a GNOME image would leave a KDE
+# settings file lying around that nothing reads, and — worse — would create a
+# second place the OS's name is written down that nobody would ever look at
+# again. GNOME's own About page (Settings > System > About) reads os-release
+# directly, which steps 2 and 3 above have already set correctly.
 
 KCM_RC="/etc/xdg/kcm-about-distrorc"
 
 # The logo has to actually exist, or the About page shows a blank square and
 # nobody notices for a month. Fail the build instead.
+#
+# This check runs on BOTH desktops, because the thing it is really guarding is
+# the LOGO= field in os-release that step 2 wrote — GNOME reads that too.
 LOGO_FILE="/usr/share/icons/hicolor/scalable/apps/${LOGO_ICON}.svg"
 if [ ! -f "$LOGO_FILE" ]; then
   echo "ERROR: LOGO is set to '${LOGO_ICON}' but ${LOGO_FILE} does not exist." >&2
@@ -401,8 +431,9 @@ if [ ! -f "$LOGO_FILE" ]; then
   exit 1
 fi
 
-mkdir -p "$(dirname "$KCM_RC")"
-cat >"$KCM_RC" <<EOF
+if [ "$AQ_DESKTOP" = "kde" ]; then
+  mkdir -p "$(dirname "$KCM_RC")"
+  cat >"$KCM_RC" <<EOF
 # Written at build time by build_files/image-info.sh — do not edit by hand.
 # KDE's About This System page reads this file BEFORE /etc/os-release, and
 # anything set here wins. LogoPath is left out on purpose so the logo comes from
@@ -412,6 +443,9 @@ Name=${IMAGE_PRETTY_NAME}
 Variant=${IMAGE_VARIANT}
 Website=${HOME_URL}
 EOF
+else
+  echo "NOTE: GNOME image — not writing ${KCM_RC} (only KDE's Info Centre reads it)."
+fi
 
 # ------------------------------------------------------------------------------
 # Step 5 — the last hard-coded "bazzite" hostname
@@ -483,17 +517,23 @@ for f in "$OS_RELEASE" "$ETC_OS_RELEASE"; do
   must_contain "$f" '^ID=bazzite$' "${f}: ID left as bazzite (deliberate)"
 done
 
-# KDE's About page.
-must_contain "$KCM_RC" '^Name=AquariusOS$' "${KCM_RC}: Name"
-must_contain "$KCM_RC" "^Variant=${IMAGE_VARIANT}$" "${KCM_RC}: Variant"
-must_contain "$KCM_RC" '^Website=https://github\.com/' "${KCM_RC}: Website"
+# KDE's About page — only on the images that have one.
+if [ "$AQ_DESKTOP" = "kde" ]; then
+  must_contain "$KCM_RC" '^Name=AquariusOS$' "${KCM_RC}: Name"
+  must_contain "$KCM_RC" "^Variant=${IMAGE_VARIANT}$" "${KCM_RC}: Variant"
+  must_contain "$KCM_RC" '^Website=https://github\.com/' "${KCM_RC}: Website"
+else
+  echo "  OK   no KDE About-page override written (correct for a GNOME image)"
+fi
 
 if [ "$BRANDING_OK" -ne 1 ]; then
   echo "ERROR: the AquariusOS identity did not fully apply. Files as they stand:" >&2
   echo "--- ${OS_RELEASE} ---" >&2
   cat "$OS_RELEASE" >&2
-  echo "--- ${KCM_RC} ---" >&2
-  cat "$KCM_RC" >&2
+  if [ "$AQ_DESKTOP" = "kde" ]; then
+    echo "--- ${KCM_RC} ---" >&2
+    cat "$KCM_RC" >&2
+  fi
   exit 1
 fi
 
@@ -503,5 +543,7 @@ echo "=== AquariusOS identity applied. ${OS_RELEASE} is now: ==="
 cat "$OS_RELEASE"
 echo "=== ${ETC_OS_RELEASE} points at: ==="
 ls -l "$ETC_OS_RELEASE"
-echo "=== ${KCM_RC} is now: ==="
-cat "$KCM_RC"
+if [ "$AQ_DESKTOP" = "kde" ]; then
+  echo "=== ${KCM_RC} is now: ==="
+  cat "$KCM_RC"
+fi
