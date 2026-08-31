@@ -212,6 +212,45 @@ while read -r aq_uri; do
 done <<< "${AQ_MODULES}"
 
 # ==============================================================================
+# STEP 2b — the one dependency that is not an import
+# ==============================================================================
+# Everything above is found by reading import lines. This one cannot be, and it
+# is worth its own block because of how it fails.
+#
+# The widget runs two commands: `systemsettings` for the "All settings" link,
+# and Bazzite's return-to-gamemode on a handheld. Both go through
+# `org.kde.plasma.plasma5support`, whose DataSource asks for an "engine" by
+# name — here, "executable". That engine is a SEPARATE plug-in file, loaded at
+# runtime by a string.
+#
+# So the QML module can be perfectly present, the import succeeds, the widget
+# loads, and clicking "All settings" does nothing at all — because the engine
+# behind the name is not installed. No import check could ever catch that,
+# which is exactly why it is spelled out here.
+
+say ""
+say "=== The 'executable' data engine (needed to launch anything) ==="
+
+aq_engine_found=""
+for aq_root in "/usr/lib64/qt6/plugins" "/usr/lib/qt6/plugins"; do
+    if [ -f "${aq_root}/plasma5support/dataengine/plasma_engine_executable.so" ]; then
+        aq_engine_found="${aq_root}/plasma5support/dataengine/plasma_engine_executable.so"
+        break
+    fi
+done
+
+if [ -n "${aq_engine_found}" ]; then
+    say "  OK  ${aq_engine_found}"
+else
+    echo "  MISSING  the plasma5support 'executable' data engine"
+    echo "           looked for plasma5support/dataengine/plasma_engine_executable.so"
+    echo "           under /usr/lib64/qt6/plugins and /usr/lib/qt6/plugins"
+    echo "           Provided by the 'plasma5support' package, which is normally"
+    echo "           pulled in because plasma-desktop requires it."
+    aq_missing=$((aq_missing + 1))
+fi
+
+# ==============================================================================
 # STEP 3 — the verdict
 # ==============================================================================
 
