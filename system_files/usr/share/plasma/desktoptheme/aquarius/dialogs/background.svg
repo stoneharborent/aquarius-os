@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  AquariusOS Plasma Style — the glass behind every POPUP.
+
+  This one file is the background of: system-tray popups, the calendar, the
+  notification pop-ups, applet popups and the search box (KRunner). Change the
+  colour here and all of them change together.
+
+  Design values (branding/design-system, "AquariusOS Desktop Shell"):
+    fill      #0D0F18 at 76% opacity
+    hairline  #EDEFF7 at 14% opacity, 1 pixel
+    top sheen #EDEFF7 at 7% opacity, 1 pixel, just inside the top edge
+    corners   16 pixels
+    shadow    a big soft pool, heavier below than above
+
+  HOW TO READ THIS FILE (you do not need to know SVG)
+  ...................................................
+  Plasma does not show this picture as-is. It hunts through it for shapes with
+  particular id="..." names and uses each one as a tile:
+
+      topleft   top      topright
+      left      center   right
+      bottomleft bottom  bottomright
+
+  It paints the four corners at their real size, stretches the four edges along
+  the sides, and stretches "center" to fill the middle. That is how one small
+  drawing becomes a panel of any size.
+
+  There are then three more sets of the same nine names:
+
+    mask-*     A solid black copy of the shape. KWin blurs the wallpaper ONLY
+               where this black shape is. If it does not match the visible
+               shape exactly, blur leaks past the rounded corners as pale
+               squares. Change one, change the other.
+    shadow-*   The soft drop shadow. It is drawn OUTSIDE the window, by the
+               compositor, so it can be bigger than the window itself.
+    hint-*     Invisible markers. Their size is the value; nothing is painted.
+
+  Everything is laid out in labelled bands below so you can find things.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="300" viewBox="0 0 200 300">
+  <defs>
+    <!-- Edge gradients. "aq-sh-down" means: solid at the top of the tile,
+         fading to nothing at the bottom. -->
+    <linearGradient id="aq-sh-down" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.55"/>
+      <stop offset="0.25" stop-color="#000000" stop-opacity="0.3025"/>
+      <stop offset="0.5" stop-color="#000000" stop-opacity="0.143"/>
+      <stop offset="0.75" stop-color="#000000" stop-opacity="0.0495"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="aq-sh-up" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.55"/>
+      <stop offset="0.25" stop-color="#000000" stop-opacity="0.3025"/>
+      <stop offset="0.5" stop-color="#000000" stop-opacity="0.143"/>
+      <stop offset="0.75" stop-color="#000000" stop-opacity="0.0495"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="aq-sh-rightward" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.55"/>
+      <stop offset="0.25" stop-color="#000000" stop-opacity="0.3025"/>
+      <stop offset="0.5" stop-color="#000000" stop-opacity="0.143"/>
+      <stop offset="0.75" stop-color="#000000" stop-opacity="0.0495"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="aq-sh-leftward" x1="1" y1="0" x2="0" y2="0">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.55"/>
+      <stop offset="0.25" stop-color="#000000" stop-opacity="0.3025"/>
+      <stop offset="0.5" stop-color="#000000" stop-opacity="0.143"/>
+      <stop offset="0.75" stop-color="#000000" stop-opacity="0.0495"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </linearGradient>
+    <!-- Corner gradients. Each is centred on the corner of the tile that touches
+         the window, and because the units are "fraction of this tile" the circle
+         is squashed into an ellipse that exactly matches the two edge tiles it
+         sits between. That is why there is no seam. -->
+    <radialGradient id="aq-sh-corner-br" cx="1" cy="1" r="1">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.55"/>
+      <stop offset="0.25" stop-color="#000000" stop-opacity="0.3025"/>
+      <stop offset="0.5" stop-color="#000000" stop-opacity="0.143"/>
+      <stop offset="0.75" stop-color="#000000" stop-opacity="0.0495"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="aq-sh-corner-bl" cx="0" cy="1" r="1">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.55"/>
+      <stop offset="0.25" stop-color="#000000" stop-opacity="0.3025"/>
+      <stop offset="0.5" stop-color="#000000" stop-opacity="0.143"/>
+      <stop offset="0.75" stop-color="#000000" stop-opacity="0.0495"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="aq-sh-corner-tr" cx="1" cy="0" r="1">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.55"/>
+      <stop offset="0.25" stop-color="#000000" stop-opacity="0.3025"/>
+      <stop offset="0.5" stop-color="#000000" stop-opacity="0.143"/>
+      <stop offset="0.75" stop-color="#000000" stop-opacity="0.0495"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="aq-sh-corner-tl" cx="0" cy="0" r="1">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.55"/>
+      <stop offset="0.25" stop-color="#000000" stop-opacity="0.3025"/>
+      <stop offset="0.5" stop-color="#000000" stop-opacity="0.143"/>
+      <stop offset="0.75" stop-color="#000000" stop-opacity="0.0495"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- ===== BAND 1 — the visible frame ===== -->
+  <g id="aq-frame">
+    <g id="topleft">
+      <path d="M 0,16 A 16,16 0 0 1 16,0 L 16,16 Z" fill="#0D0F18" fill-opacity="0.76"/>
+      <path d="M 0.5,16 A 15.5,15.5 0 0 1 16,0.5" fill="none" stroke="#EDEFF7" stroke-opacity="0.14" stroke-width="1"/>
+      <path d="M 1.5,16 A 14.5,14.5 0 0 1 16,1.5" fill="none" stroke="#EDEFF7" stroke-opacity="0.07" stroke-width="1"/>
+    </g>
+    <g id="topright">
+      <path d="M 32,0 A 16,16 0 0 1 48,16 L 32,16 Z" fill="#0D0F18" fill-opacity="0.76"/>
+      <path d="M 32,0.5 A 15.5,15.5 0 0 1 47.5,16" fill="none" stroke="#EDEFF7" stroke-opacity="0.14" stroke-width="1"/>
+      <path d="M 32,1.5 A 14.5,14.5 0 0 1 46.5,16" fill="none" stroke="#EDEFF7" stroke-opacity="0.07" stroke-width="1"/>
+    </g>
+    <g id="bottomleft">
+      <path d="M 16,48 A 16,16 0 0 1 0,32 L 16,32 Z" fill="#0D0F18" fill-opacity="0.76"/>
+      <path d="M 16,47.5 A 15.5,15.5 0 0 1 0.5,32" fill="none" stroke="#EDEFF7" stroke-opacity="0.14" stroke-width="1"/>
+    </g>
+    <g id="bottomright">
+      <path d="M 48,32 A 16,16 0 0 1 32,48 L 32,32 Z" fill="#0D0F18" fill-opacity="0.76"/>
+      <path d="M 47.5,32 A 15.5,15.5 0 0 1 32,47.5" fill="none" stroke="#EDEFF7" stroke-opacity="0.14" stroke-width="1"/>
+    </g>
+    <g id="top">
+      <rect x="16" y="0" width="16" height="16" fill="#0D0F18" fill-opacity="0.76"/>
+      <rect x="16" y="0" width="16" height="1" fill="#EDEFF7" fill-opacity="0.14"/>
+      <rect x="16" y="1" width="16" height="1" fill="#EDEFF7" fill-opacity="0.07"/>
+    </g>
+    <g id="bottom">
+      <rect x="16" y="32" width="16" height="16" fill="#0D0F18" fill-opacity="0.76"/>
+      <rect x="16" y="47" width="16" height="1" fill="#EDEFF7" fill-opacity="0.14"/>
+    </g>
+    <g id="left">
+      <rect x="0" y="16" width="16" height="16" fill="#0D0F18" fill-opacity="0.76"/>
+      <rect x="0" y="16" width="1" height="16" fill="#EDEFF7" fill-opacity="0.14"/>
+    </g>
+    <g id="right">
+      <rect x="32" y="16" width="16" height="16" fill="#0D0F18" fill-opacity="0.76"/>
+      <rect x="47" y="16" width="1" height="16" fill="#EDEFF7" fill-opacity="0.14"/>
+    </g>
+    <rect id="center" x="16" y="16" width="16" height="16" fill="#0D0F18" fill-opacity="0.76"/>
+  </g>
+
+  <!-- ===== BAND 2 — how far content is inset (8 pixels on every side) =====
+       Nothing is painted here; only the SIZE of each marker is read. -->
+    <rect id="hint-top-margin" x="0" y="56" width="4" height="8" fill="none"/>
+    <rect id="hint-bottom-margin" x="8" y="56" width="4" height="8" fill="none"/>
+    <rect id="hint-left-margin" x="16" y="56" width="8" height="4" fill="none"/>
+    <rect id="hint-right-margin" x="16" y="64" width="8" height="4" fill="none"/>
+
+  <!-- ===== BAND 3 — the blur cut-out =====
+       Same 16px corners as band 1. If these ever disagree, blur leaks. -->
+  <g id="aq-mask">
+    <g id="mask-topleft">
+      <path d="M 0,96 A 16,16 0 0 1 16,80 L 16,96 Z" fill="#000000"/>
+    </g>
+    <g id="mask-topright">
+      <path d="M 32,80 A 16,16 0 0 1 48,96 L 32,96 Z" fill="#000000"/>
+    </g>
+    <g id="mask-bottomleft">
+      <path d="M 16,128 A 16,16 0 0 1 0,112 L 16,112 Z" fill="#000000"/>
+    </g>
+    <g id="mask-bottomright">
+      <path d="M 48,112 A 16,16 0 0 1 32,128 L 32,112 Z" fill="#000000"/>
+    </g>
+    <g id="mask-top">
+      <rect x="16" y="80" width="16" height="16" fill="#000000"/>
+    </g>
+    <g id="mask-bottom">
+      <rect x="16" y="112" width="16" height="16" fill="#000000"/>
+    </g>
+    <g id="mask-left">
+      <rect x="0" y="96" width="16" height="16" fill="#000000"/>
+    </g>
+    <g id="mask-right">
+      <rect x="32" y="96" width="16" height="16" fill="#000000"/>
+    </g>
+    <rect id="mask-center" x="16" y="96" width="16" height="16" fill="#000000"/>
+  </g>
+
+  <!-- ===== BAND 4 — the drop shadow ===== -->
+    <rect id="shadow-topleft" x="0" y="136" width="34" height="18" fill="url(#aq-sh-corner-br)"/>
+    <rect id="shadow-top" x="34" y="136" width="16" height="18" fill="url(#aq-sh-down)"/>
+    <rect id="shadow-topright" x="50" y="136" width="34" height="18" fill="url(#aq-sh-corner-bl)"/>
+    <rect id="shadow-left" x="0" y="154" width="34" height="16" fill="url(#aq-sh-rightward)"/>
+    <rect id="shadow-center" x="34" y="154" width="16" height="16" fill="none"/>
+    <rect id="shadow-right" x="50" y="154" width="34" height="16" fill="url(#aq-sh-leftward)"/>
+    <rect id="shadow-bottomleft" x="0" y="170" width="34" height="50" fill="url(#aq-sh-corner-tr)"/>
+    <rect id="shadow-bottom" x="34" y="170" width="16" height="50" fill="url(#aq-sh-up)"/>
+    <rect id="shadow-bottomright" x="50" y="170" width="34" height="50" fill="url(#aq-sh-corner-tl)"/>
+    <rect id="shadow-hint-top-margin" x="0" y="228" width="2" height="18" fill="none"/>
+    <rect id="shadow-hint-bottom-margin" x="8" y="228" width="2" height="50" fill="none"/>
+    <rect id="shadow-hint-left-margin" x="16" y="228" width="34" height="2" fill="none"/>
+    <rect id="shadow-hint-right-margin" x="58" y="228" width="34" height="2" fill="none"/>
+</svg>
