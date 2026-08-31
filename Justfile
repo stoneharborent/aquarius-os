@@ -87,6 +87,12 @@ sudoif command *args:
 #   $img_base - The image to build ON TOP OF (default: $base_image, i.e. the
 #               AMD/Intel Bazzite). Pass $nvidia_base_image to build the NVIDIA
 #               version. See aquarius-os.env.
+#   $desktop  - "kde" or "gnome" — which desktop the image you named in
+#               $img_base actually has. Defaults to "kde", which is what every
+#               AquariusOS image was before 2026-08-31, so an old command line
+#               that does not pass it still builds exactly what it used to.
+#               `just variant-desktop <variant>` is the recipe that works this
+#               out; the GitHub build calls that and passes the answer here.
 #
 # The script constructs the version string using the tag and the current date.
 # If the git working directory is clean, it also includes the short SHA of the current HEAD.
@@ -100,16 +106,28 @@ sudoif command *args:
 #
 
 # Build the image using the specified parameters
-build $target_image=image_name $tag=default_tag $img_base=base_image:
+build $target_image=image_name $tag=default_tag $img_base=base_image $desktop="kde":
     #!/usr/bin/env bash
 
     set -euox pipefail
+
+    # Catch a typo here rather than half way through a twenty-minute build. Only
+    # these two words mean anything to build_files/build.sh.
+    case "${desktop}" in
+        kde | gnome) : ;;
+        *)
+            echo "just build: desktop must be 'kde' or 'gnome', not '${desktop}'." >&2
+            exit 1
+            ;;
+    esac
 
     BUILD_ARGS=()
     # Which Bazzite we start from. The Containerfile has the same default, so
     # this only ever *confirms* it for the normal image — and switches it for the
     # NVIDIA one.
     BUILD_ARGS+=("--build-arg" "BASE_IMAGE=${img_base}")
+    # Which desktop that Bazzite has. See the recipe's header above.
+    BUILD_ARGS+=("--build-arg" "AQ_DESKTOP=${desktop}")
     # Which of our two images this is, and who publishes it. The build script
     # writes these into the OS so the finished system knows its own name and
     # where its updates come from. `target_image` is the first argument to this
@@ -267,25 +285,38 @@ image_name $target_image=image_name:
 
     echo "${image_name}"
 
-# Which of the three AquariusOS images a variant means.
+# Which of the six AquariusOS images a variant means.
 #
-# "base"   -> aquarius-os         (AMD / Intel graphics, desktop)
-# "nvidia" -> aquarius-os-nvidia  (NVIDIA graphics, desktop)
-# "deck"   -> aquarius-os-deck    (gaming handhelds — boots into Game Mode)
+# The KDE line (FROZEN — no new features, still built and published):
+#   "base"         -> aquarius-os               AMD / Intel graphics, desktop
+#   "nvidia"       -> aquarius-os-nvidia        NVIDIA graphics, desktop
+#   "deck"         -> aquarius-os-deck          handhelds — boots into Game Mode
 #
-# The GitHub Actions build asks these two recipes instead of hardcoding names, so
-# aquarius-os.env stays the one place image names live.
+# The GNOME line (where all new work goes, from 2026-08-31):
+#   "gnome"        -> aquarius-os-gnome         AMD / Intel graphics, desktop
+#   "gnome-nvidia" -> aquarius-os-gnome-nvidia  NVIDIA graphics, desktop
+#   "gnome-deck"   -> aquarius-os-gnome-deck    handhelds — boots into Game Mode
+#
+# The GitHub Actions build asks these three recipes instead of hardcoding names,
+# so aquarius-os.env stays the one place image names live.
+#
+# ⚠️ All three recipes below must know all six words. A variant that only half
+# the recipes recognise fails the build on the first one that has not heard of
+# it, which is the intended behaviour — the Justfile is the list of record.
 [group('Utility')]
 variant-image-name variant="base":
     #!/usr/bin/env bash
     set -euo pipefail
 
     case "{{ variant }}" in
-        base)   echo "${IMAGE_NAME}" ;;
+        base) echo "${IMAGE_NAME}" ;;
         nvidia) echo "${NVIDIA_IMAGE_NAME}" ;;
-        deck)   echo "${DECK_IMAGE_NAME}" ;;
+        deck) echo "${DECK_IMAGE_NAME}" ;;
+        gnome) echo "${GNOME_IMAGE_NAME}" ;;
+        gnome-nvidia) echo "${GNOME_NVIDIA_IMAGE_NAME}" ;;
+        gnome-deck) echo "${GNOME_DECK_IMAGE_NAME}" ;;
         *)
-            echo "Unknown variant '{{ variant }}' — expected 'base', 'nvidia' or 'deck'." >&2
+            echo "Unknown variant '{{ variant }}' — expected base, nvidia, deck, gnome, gnome-nvidia or gnome-deck." >&2
             exit 1
             ;;
     esac
@@ -297,11 +328,39 @@ variant-base-image variant="base":
     set -euo pipefail
 
     case "{{ variant }}" in
-        base)   echo "${BASE_IMAGE}" ;;
+        base) echo "${BASE_IMAGE}" ;;
         nvidia) echo "${NVIDIA_BASE_IMAGE}" ;;
-        deck)   echo "${DECK_BASE_IMAGE}" ;;
+        deck) echo "${DECK_BASE_IMAGE}" ;;
+        gnome) echo "${GNOME_BASE_IMAGE}" ;;
+        gnome-nvidia) echo "${GNOME_NVIDIA_BASE_IMAGE}" ;;
+        gnome-deck) echo "${GNOME_DECK_BASE_IMAGE}" ;;
         *)
-            echo "Unknown variant '{{ variant }}' — expected 'base', 'nvidia' or 'deck'." >&2
+            echo "Unknown variant '{{ variant }}' — expected base, nvidia, deck, gnome, gnome-nvidia or gnome-deck." >&2
+            exit 1
+            ;;
+    esac
+
+# Which DESKTOP a variant wears — "kde" or "gnome".
+#
+# This is the one knob that makes the two lines different. The build script reads
+# it and skips the steps that only make sense on one desktop: there is no KWin on
+# a GNOME image to compile a KWin effect against, and no GNOME Shell on a KDE
+# image to hand a gschema override to.
+#
+# It is worked out from the variant name rather than listed a fourth time in
+# aquarius-os.env, so a new GNOME variant cannot be added and then forgotten
+# here — anything that does not start with "gnome" is KDE, which is also the
+# safe default (it is what every image did before 2026-08-31).
+[group('Utility')]
+variant-desktop variant="base":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    case "{{ variant }}" in
+        base | nvidia | deck) echo "kde" ;;
+        gnome | gnome-nvidia | gnome-deck) echo "gnome" ;;
+        *)
+            echo "Unknown variant '{{ variant }}' — expected base, nvidia, deck, gnome, gnome-nvidia or gnome-deck." >&2
             exit 1
             ;;
     esac

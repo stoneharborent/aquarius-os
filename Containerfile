@@ -8,31 +8,45 @@
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
-# WE BUILD THREE VERSIONS OF AQUARIUSOS FROM THIS ONE FILE
+# WE BUILD SIX VERSIONS OF AQUARIUSOS FROM THIS ONE FILE
 # ------------------------------------------------------------------------------
-#   aquarius-os          for AMD and Intel graphics  → ghcr.io/ublue-os/bazzite:stable
-#   aquarius-os-nvidia   for NVIDIA graphics         → ghcr.io/ublue-os/bazzite-nvidia-open:stable
-#   aquarius-os-deck     for gaming handhelds        → ghcr.io/ublue-os/bazzite-deck:stable
+# The KDE line — FROZEN at its Wave-2 capstone. Still built and published so
+# installed machines keep updating, but no new features land on it:
+#   aquarius-os                for AMD and Intel graphics  → ghcr.io/ublue-os/bazzite:stable
+#   aquarius-os-nvidia         for NVIDIA graphics         → ghcr.io/ublue-os/bazzite-nvidia-open:stable
+#   aquarius-os-deck           for gaming handhelds        → ghcr.io/ublue-os/bazzite-deck:stable
 #
-# They are identical apart from that starting point, so there is deliberately only
-# ONE recipe: the starting point is a knob (`BASE_IMAGE`) instead of a fixed line,
-# and GitHub Actions builds this file once per value. The default below is the
-# AMD/Intel one, so a plain `podman build .` with no extra arguments still
-# produces exactly what it always did.
+# The GNOME line — added 2026-08-31, where all new work goes:
+#   aquarius-os-gnome          for AMD and Intel graphics  → ghcr.io/ublue-os/bazzite-gnome:stable
+#   aquarius-os-gnome-nvidia   for NVIDIA graphics         → ghcr.io/ublue-os/bazzite-gnome-nvidia-open:stable
+#   aquarius-os-gnome-deck     for gaming handhelds        → ghcr.io/ublue-os/bazzite-deck-gnome:stable
 #
-# ⚠️ "Identical apart from the starting point" is a rule, not an accident. There
-# is NO variant branching in this file or in build_files/build.sh, and adding one
-# should be the last resort — every branch is a code path that only one of the
-# three images ever exercises. The handheld build was checked against this rule
-# when it was added (2026-08-28) and needed no branch at all: everything that
-# makes a handheld a handheld is inside bazzite-deck, and everything we layer on
-# top is desktop-session-scoped and simply does not run in Game Mode. The
-# reasoning is written out in docs/deck-variant-research.md, §"Do our layers
-# conflict?".
+# All six come out of ONE recipe. The starting point is a knob (`BASE_IMAGE`)
+# instead of a fixed line, and GitHub Actions builds this file once per value.
+# The default below is the AMD/Intel KDE one, so a plain `podman build .` with no
+# extra arguments still produces exactly what it always did.
+#
+# ⚠️ THE HOUSE RULE ON BRANCHING, AND HOW THE GNOME LINE FITS IT
+# The rule this file has always carried is "no variant branching" — every branch
+# is a code path only some images exercise, so it is the thing that lets the
+# images drift apart without anyone noticing. That rule is still in force, and
+# the handheld build (2026-08-28) genuinely needed no branch at all
+# (docs/deck-variant-research.md, §"Do our layers conflict?").
+#
+# The GNOME line is the one place a branch was unavoidable, and it is one branch,
+# on one word. A GNOME image has no KWin, so a step that compiles a KWin plug-in
+# does not "do nothing" there — it fails the build. A KDE image has no GNOME
+# Shell, so a GNOME default has nothing to apply to. So there is exactly ONE new
+# knob, `AQ_DESKTOP` below, it holds exactly one of two words, and every place it
+# is read says out loud why that step belongs to one desktop and not the other.
+# Do not add a second knob. Do not branch on the image name for desktop
+# questions — that is what this one is for.
 #
 # The real list of image names lives in aquarius-os.env — change it there, not
 # here. Why -nvidia-open and not -nvidia: docs/nvidia-variant-research.md.
-# Why -deck and not -deck-gnome: docs/deck-variant-research.md.
+# Why the handheld image name must keep the word "deck" in it, on BOTH lines:
+# docs/deck-variant-research.md and build_files/image-info.sh, step 1b.
+# What the GNOME line ships and why: docs/gnome-variants.md.
 #
 # ⚠️ This line MUST stay above the first FROM. An ARG written after a FROM belongs
 # to that one build stage only, and would not be visible to the FROM further down
@@ -58,11 +72,11 @@ COPY tests /tests
 # ------------------------------------------------------------------------------
 # Base Image — what AquariusOS is built on top of
 # ------------------------------------------------------------------------------
-# Bazzite stable, KDE desktop. This is the gaming layer we inherit for free:
-# Steam, Game Mode, GPU drivers, controller support, handheld support.
-# (`bazzite:stable` is the KDE desktop variant. The GNOME variant is
-# `bazzite-gnome:stable` and we do not use it; handhelds use
-# `bazzite-deck:stable`, which is the third variant we build — Phase 2G.)
+# Bazzite stable. This is the gaming layer we inherit for free: Steam, Game
+# Mode, GPU drivers, controller support, handheld support. Every one of the six
+# bases listed at the top of this file carries it — the GNOME editions inherit
+# exactly the same gaming layer as the KDE ones, so nothing about gaming changes
+# between the two lines.
 #
 # Which Bazzite this actually is comes from the BASE_IMAGE argument declared at
 # the very top of this file, above the first FROM. That placement is what makes
@@ -107,18 +121,36 @@ FROM ${BASE_IMAGE}
 ARG IMAGE_NAME=aquarius-os
 ARG IMAGE_VENDOR=stoneharborent
 
+### WHICH DESKTOP AM I WEARING?
+## "kde" or "gnome" — nothing else is a valid answer, and build_files/build.sh
+## stops the build on anything else.
+##
+## This is the ONE branch in the whole build (see the long note at the top of
+## this file). It exists because a handful of steps are not merely pointless on
+## the other desktop, they are impossible there: you cannot compile a KWin
+## plug-in on an image with no KWin, and you cannot hand a GNOME Shell setting to
+## an image with no GNOME Shell.
+##
+## The default is "kde" on purpose. That is what every AquariusOS image was
+## before 2026-08-31, so a plain `podman build .` with no arguments — and every
+## older command line anybody has written down — still produces exactly the image
+## it always produced.
+ARG AQ_DESKTOP=kde
+
 ### MODIFICATIONS
 ## make modifications desired in your image and install packages by modifying the build.sh script
 ## the following RUN directive does all the things required to run "build.sh" as recommended.
 ##
-## The two NAME=value words in front of /ctx/build.sh hand those knobs to the
-## build script as ordinary variables it can read.
+## The three NAME=value words in front of /ctx/build.sh hand those knobs to the
+## build script as ordinary variables it can read. They are inherited by the
+## smaller scripts build.sh calls in turn (image-info.sh, gnome-desktop.sh and
+## the rest), which is how those read AQ_DESKTOP without being passed it again.
 
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     --mount=type=tmpfs,dst=/tmp \
-    IMAGE_NAME="${IMAGE_NAME}" IMAGE_VENDOR="${IMAGE_VENDOR}" /ctx/build.sh
+    IMAGE_NAME="${IMAGE_NAME}" IMAGE_VENDOR="${IMAGE_VENDOR}" AQ_DESKTOP="${AQ_DESKTOP}" /ctx/build.sh
 
 ### LINTING
 ## Verify final image and contents are correct.

@@ -2,15 +2,23 @@
 # Builds the AquariusOS container images and publishes them to GitHub Container
 # Registry.
 #
-# It builds THREE images from the same recipe, side by side, every run:
+# It builds SIX images from the same recipe, side by side, every run.
 #
-#   aquarius-os          for AMD and Intel graphics  (the default AquariusOS)
-#   aquarius-os-nvidia   for NVIDIA graphics cards
-#   aquarius-os-deck     for gaming handhelds — boots into Game Mode
+# The KDE line — FROZEN, still published so installed machines keep updating:
+#   aquarius-os                for AMD and Intel graphics
+#   aquarius-os-nvidia         for NVIDIA graphics cards
+#   aquarius-os-deck           for gaming handhelds — boots into Game Mode
+#
+# The GNOME line — added 2026-08-31, where all new work goes:
+#   aquarius-os-gnome          for AMD and Intel graphics
+#   aquarius-os-gnome-nvidia   for NVIDIA graphics cards
+#   aquarius-os-gnome-deck     for gaming handhelds — boots into Game Mode
 #
 # That is what the "matrix" below is: one job definition, run once per variant.
 # If one goes red the others still finish (fail-fast is off), so a problem with
-# the handheld build can never stop the normal image from shipping.
+# the handheld build can never stop the normal image from shipping — and, since
+# 2026-08-31, a problem in the new GNOME line can never stop the frozen KDE
+# images from shipping either.
 #
 # Neither image name nor base image is hardcoded here — both come from
 # aquarius-os.env, which the Justfile reads. One place, used everywhere.
@@ -37,10 +45,12 @@ env:
 # out — so pushing twice in a row doesn't leave a stale build running.
 #
 # No variant in the group name here, and that's correct: unlike the ISO and disk
-# workflows, ONE run of this builds ALL THREE variants together (that's the
-# matrix below), so there is no second run for it to cancel by mistake. Adding a
-# variant to the matrix therefore needs no change here — checked again when the
-# deck variant was added, 2026-08-28.
+# workflows, ONE run of this builds ALL SIX variants together (that's the matrix
+# below), so there is no second run for it to cancel by mistake. Adding a variant
+# to the matrix therefore needs no change here — checked when the deck variant
+# was added (2026-08-28) and again when the three GNOME variants were added
+# (2026-08-31). Per-variant scoping still matters in build-iso.yml, which really
+# does run once per variant; that one has the variant in its group name.
 #
 # This used to also tack on inputs.brand_name and inputs.stream_name. Those
 # inputs don't exist in this workflow — they were leftovers from the upstream
@@ -60,10 +70,11 @@ jobs:
       fail-fast: false
       matrix:
         # These are the names the Justfile understands
-        # (`just variant-image-name` / `just variant-base-image`). Adding one
-        # here without adding it there fails the "Image Name" step immediately,
-        # which is the intended behaviour — the Justfile is the list of record.
-        variant: [base, nvidia, deck]
+        # (`just variant-image-name` / `just variant-base-image` /
+        # `just variant-desktop`). Adding one here without adding it there fails
+        # the "Image Name" step immediately, which is the intended behaviour —
+        # the Justfile is the list of record.
+        variant: [base, nvidia, deck, gnome, gnome-nvidia, gnome-deck]
 
     permissions:
       contents: read
@@ -106,6 +117,17 @@ jobs:
 
           echo "VARIANT_BASE_IMAGE=${VARIANT_BASE_IMAGE}" >> $GITHUB_ENV
 
+      # Which desktop this variant wears — "kde" or "gnome". Every step below
+      # that belongs to only one desktop is switched on and off by this one
+      # value, and nothing else. See the long note at the top of the
+      # Containerfile for why this single branch exists at all.
+      - name: Desktop
+        id: desktop
+        run: |
+          AQ_DESKTOP=$(just variant-desktop ${{ matrix.variant }})
+
+          echo "AQ_DESKTOP=${AQ_DESKTOP}" >> $GITHUB_ENV
+
       - name: Default Tag
         id: gen-default-tag
         run: |
@@ -126,7 +148,8 @@ jobs:
           just build \
             ${IMAGE_NAME} \
             ${DEFAULT_TAG} \
-            ${VARIANT_BASE_IMAGE}
+            ${VARIANT_BASE_IMAGE} \
+            ${AQ_DESKTOP}
 
       # This is optional, this provides smaller delta updates
       - name: Rechunk with rpm-ostree
@@ -176,8 +199,11 @@ jobs:
           cat /usr/lib/os-release
           echo "== /etc/os-release =="
           ls -l /etc/os-release
-          echo "== /etc/xdg/kcm-about-distrorc =="
-          cat /etc/xdg/kcm-about-distrorc || echo "(missing!)"
+          echo "== this image wears the ${EXPECTED_DESKTOP} desktop =="
+          if [ "${EXPECTED_DESKTOP}" = "kde" ]; then
+            echo "== /etc/xdg/kcm-about-distrorc =="
+            cat /etc/xdg/kcm-about-distrorc || echo "(missing!)"
+          fi
           echo "== checks =="
 
           # The two os-release files must BOTH say AquariusOS. On Fedora the
@@ -192,15 +218,33 @@ jobs:
           # The edition line. This list must match the `case` in
           # build_files/image-info.sh — a new image whose edition is not named in
           # BOTH places is a half-wired image, and this is where that gets caught.
-          check "VARIANT is an AquariusOS edition" '^VARIANT="(NVIDIA|Desktop|Handheld) Edition"$' /etc/os-release
+          # The three KDE editions are the originals and are unchanged; the GNOME
+          # line adds three more, spelled out so the About page can tell the two
+          # lines apart while both exist.
+          check "VARIANT is an AquariusOS edition" '^VARIANT="(GNOME )?(NVIDIA|Desktop|Handheld) Edition"$' /etc/os-release
 
           # ID stays "bazzite" deliberately — Bazzite's tooling and our Anaconda
           # installer profile both key off it. Checked so nobody "tidies" it away.
           check "ID deliberately left as bazzite" '^ID=bazzite$'          /etc/os-release
 
           # KDE's About page override. This is the file that caused the bug.
-          check "About page name"               '^Name=AquariusOS$'       /etc/xdg/kcm-about-distrorc
-          check "About page website"            '^Website=https://github\.com/' /etc/xdg/kcm-about-distrorc
+          #
+          # ⚠️ KDE ONLY. The file is read by KDE's Info Centre and by nothing
+          # else, so build_files/image-info.sh only writes it on the KDE images
+          # and there is nothing to check on a GNOME one. GNOME's own About page
+          # (Settings > System > About) reads os-release directly, which the
+          # checks above have already proved.
+          if [ "${EXPECTED_DESKTOP}" = "kde" ]; then
+            check "About page name"               '^Name=AquariusOS$'       /etc/xdg/kcm-about-distrorc
+            check "About page website"            '^Website=https://github\.com/' /etc/xdg/kcm-about-distrorc
+          else
+            if [ -e /etc/xdg/kcm-about-distrorc ]; then
+              echo "  NOTE /etc/xdg/kcm-about-distrorc exists on a GNOME image."
+              echo "       Harmless (nothing on GNOME reads it), but we do not write it."
+            else
+              echo "  OK   no KDE About-page override on a GNOME image (correct)"
+            fi
+          fi
 
           # --- the file Bazzite's own boot scripts read -----------------------
           # /usr/share/ublue-os/image-info.json is not a label. Bazzite's
@@ -281,13 +325,15 @@ jobs:
           echo "All identity checks passed."
           SCRIPT
 
-          # EXPECTED_IMAGE_NAME is handed IN to the container rather than baked
-          # into the script above: the heredoc is quoted ('SCRIPT') so that
-          # nothing in it is expanded out here on the runner, which is what keeps
-          # all the grep patterns readable and free of escaping.
+          # EXPECTED_IMAGE_NAME and EXPECTED_DESKTOP are handed IN to the
+          # container rather than baked into the script above: the heredoc is
+          # quoted ('SCRIPT') so that nothing in it is expanded out here on the
+          # runner, which is what keeps all the grep patterns readable and free
+          # of escaping.
           podman run --rm --pull=never -i \
             --entrypoint /usr/bin/bash \
             -e EXPECTED_IMAGE_NAME="${IMAGE_NAME}" \
+            -e EXPECTED_DESKTOP="${AQ_DESKTOP}" \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" </tmp/verify-identity.sh
 
       # If you are feeling adventurous, use the new distro agnostic rechunker
@@ -517,8 +563,15 @@ jobs:
       # docs/kwin-effects-layer.md: on a booted machine,
       #     qdbus org.kde.KWin /Effects loadedEffects
       # should list kwin4_effect_shapecorners.
+      #
+      # ⚠️ KDE IMAGES ONLY. A GNOME image has no KWin, so build_files/build.sh
+      # never runs kwin-effects.sh there and there is no plug-in to look for.
+      # The GNOME line's equivalent check is the "Verify the GNOME desktop
+      # layer" step further down, which asserts among other things that this
+      # compile really did NOT happen.
       - name: Verify KWin effects
         id: verify-kwin-effects
+        if: env.AQ_DESKTOP == 'kde'
         run: |
           set -euo pipefail
           cat >/tmp/verify-kwin-effects.sh <<'SCRIPT'
@@ -653,8 +706,15 @@ jobs:
       # WHAT THIS CANNOT PROVE. A container has no desktop, so nothing here can
       # start Plasma and watch the name appear and change. That last step is a
       # human one, written down in docs/app-name-widget.md.
+      #
+      # ⚠️ KDE IMAGES ONLY. This widget is a Plasma applet and the layout script
+      # that places it is a Plasma layout. Both still SHIP on the GNOME images
+      # (they are plain text files, nothing deletes them, and nothing on GNOME
+      # reads them) — they are simply not part of what a GNOME image is, so
+      # nothing about them is asserted there.
       - name: Verify the top-bar app name widget
         id: verify-appname-widget
+        if: env.AQ_DESKTOP == 'kde'
         run: |
           set -euo pipefail
           cat >/tmp/verify-appname-widget.sh <<'SCRIPT'
