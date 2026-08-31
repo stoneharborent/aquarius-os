@@ -1,0 +1,33 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Email": "hein@kde.org",
+                "Name": "Eike Hein"
+            },
+            {
+                "Email": "royce@stoneharborentertainment.com",
+                "Name": "Royce Adkins"
+            }
+        ],
+        "BugReportUrl": "https://github.com/royceadkins/aquarius-os/issues",
+        "Category": "Windows and Tasks",
+        "Description": "The AquariusOS dock: pinned and running apps as a single row of icons, with a hover lift, a running-app dot, and a tile for adding apps",
+        "EnabledByDefault": true,
+        "Icon": "preferences-system-windows",
+        "Id": "com.aquariusos.dock",
+        "License": "GPL-2.0+",
+        "Name": "Aquarius Dock",
+        "Version": "1.0",
+        "Website": "https://github.com/royceadkins/aquarius-os"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0",
+    "X-Plasma-Provides": [
+        "org.kde.plasma.multitasking"
+    ],
+    "X-AquariusOS-Fork-Upstream": "plasma-desktop applets/taskmanager",
+    "X-AquariusOS-Fork-Branch": "Plasma/6.7",
+    "X-AquariusOS-Fork-Commit": "fda2a22c081b5baad4c8348eaf3693af0d6cc6ce",
+    "X-AquariusOS-Fork-Notes": "See FORK-NOTES.md in this directory, and docs/aquarius-dock.md in the os-image repo."
+}
