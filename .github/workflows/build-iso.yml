@@ -69,7 +69,11 @@ on:
   workflow_dispatch:
     inputs:
       variant:
-        description: "Which AquariusOS? Handheld (Ally / Steam Deck) -> deck. NVIDIA graphics card -> nvidia. AMD or Intel PC -> base."
+        description: "Which AquariusOS? KDE line (frozen): base / nvidia / deck. GNOME line (current): gnome / gnome-nvidia / gnome-deck. Handheld = Ally or Steam Deck; nvidia = any RTX card; base = AMD or Intel PC."
+        # Still "base" on purpose. The GNOME images have not been published to
+        # ghcr.io yet at the time this choice was added, and an ISO can only be
+        # built from an image that already exists there. Flipping this default to
+        # "gnome" is part of the G3 cut-over, not of adding the variants.
         required: true
         default: base
         type: choice
@@ -77,6 +81,9 @@ on:
           - base
           - nvidia
           - deck
+          - gnome
+          - gnome-nvidia
+          - gnome-deck
       image-ref:
         description: "Advanced: a specific image to INSTALL instead. Leave BLANK to use the choice above."
         required: false
@@ -167,20 +174,25 @@ jobs:
         run: |
           set -euo pipefail
           # If nobody typed a specific image, work it out from the variant they
-          # picked. These three names must match IMAGE_NAME, NVIDIA_IMAGE_NAME
-          # and DECK_IMAGE_NAME in aquarius-os.env — `just` isn't installed on
+          # picked. These six names must match IMAGE_NAME, NVIDIA_IMAGE_NAME,
+          # DECK_IMAGE_NAME, GNOME_IMAGE_NAME, GNOME_NVIDIA_IMAGE_NAME and
+          # GNOME_DECK_IMAGE_NAME in aquarius-os.env — `just` isn't installed on
           # this runner, so this is the one other place they appear. Change both
           # together.
           #
           # IMAGE_REF is what gets INSTALLED onto the machine.
-          DESKTOP_IMAGE_NAME="aquarius-os"
+          KDE_DESKTOP_IMAGE_NAME="aquarius-os"
+          GNOME_DESKTOP_IMAGE_NAME="aquarius-os-gnome"
           if [[ -z "${IMAGE_REF}" ]]; then
             case "${VARIANT}" in
-              base)   IMAGE_NAME="${DESKTOP_IMAGE_NAME}" ;;
-              nvidia) IMAGE_NAME="aquarius-os-nvidia" ;;
-              deck)   IMAGE_NAME="aquarius-os-deck" ;;
+              base)         IMAGE_NAME="${KDE_DESKTOP_IMAGE_NAME}" ;;
+              nvidia)       IMAGE_NAME="aquarius-os-nvidia" ;;
+              deck)         IMAGE_NAME="aquarius-os-deck" ;;
+              gnome)        IMAGE_NAME="${GNOME_DESKTOP_IMAGE_NAME}" ;;
+              gnome-nvidia) IMAGE_NAME="aquarius-os-gnome-nvidia" ;;
+              gnome-deck)   IMAGE_NAME="aquarius-os-gnome-deck" ;;
               *)
-                echo "::error::Unknown variant '${VARIANT}' — expected 'base', 'nvidia' or 'deck'."
+                echo "::error::Unknown variant '${VARIANT}' — expected base, nvidia, deck, gnome, gnome-nvidia or gnome-deck."
                 exit 1
                 ;;
             esac
@@ -201,13 +213,37 @@ jobs:
           # This is decided from the image NAME, not from the variant input, so
           # that the "Advanced" image-ref box gets the same treatment: type a
           # -deck image in there by hand and you still get a usable installer.
-          if [[ "${IMAGE_REF}" == *"-deck"* ]]; then
-            LIVE_IMAGE_REF="ghcr.io/${OWNER}/${DESKTOP_IMAGE_NAME}:latest"
+          #
+          # ⚠️ There are now TWO handheld images and they must each borrow their
+          # OWN line's desktop image for the live session. Lending the KDE
+          # desktop image to the GNOME handheld would work, in the sense that
+          # the installer would run — but the person installing AquariusOS with
+          # GNOME would spend the whole install looking at Plasma, which is a
+          # confusing first impression and would make any live-session polish we
+          # do for GNOME invisible. The `-gnome` test has to come FIRST, because
+          # "aquarius-os-gnome-deck" contains both words.
+          if [[ "${IMAGE_REF}" == *"-gnome-deck"* ]]; then
+            LIVE_IMAGE_REF="ghcr.io/${OWNER}/${GNOME_DESKTOP_IMAGE_NAME}:latest"
+            LIVE_IMAGE_REF="${LIVE_IMAGE_REF,,}"
+            echo "GNOME handheld image detected. The live session will be the GNOME desktop image."
+          elif [[ "${IMAGE_REF}" == *"-deck"* ]]; then
+            LIVE_IMAGE_REF="ghcr.io/${OWNER}/${KDE_DESKTOP_IMAGE_NAME}:latest"
             LIVE_IMAGE_REF="${LIVE_IMAGE_REF,,}"
             echo "Handheld image detected. The live session will be the desktop image."
           else
             LIVE_IMAGE_REF="${IMAGE_REF}"
           fi
+
+          # ⚠️ TODO (G2) — THE GNOME LIVE SESSION HAS NOT BEEN LOOKED AT YET.
+          # installer/titanoboa_hook_postrootfs.sh dresses the live USB session,
+          # and parts of it are written for Plasma: it appends a virtual-keyboard
+          # setting to /etc/xdg/kwinrc for the handheld live session, and pins
+          # things the KDE way. On a GNOME live image those lines write a file
+          # nothing reads — harmless, but it means a GNOME handheld's live
+          # session has NO on-screen keyboard, which on a device with no keyboard
+          # attached is the difference between "installable" and "not". Nobody
+          # has booted a GNOME ISO yet, so this is written down rather than
+          # guessed at. Fix it in G2, on the bench, with a real ISO.
 
           echo "This ISO will INSTALL:   ${IMAGE_REF}"
           echo "Its live session runs:   ${LIVE_IMAGE_REF}"

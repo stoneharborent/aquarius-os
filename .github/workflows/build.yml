@@ -2,15 +2,23 @@
 # Builds the AquariusOS container images and publishes them to GitHub Container
 # Registry.
 #
-# It builds THREE images from the same recipe, side by side, every run:
+# It builds SIX images from the same recipe, side by side, every run.
 #
-#   aquarius-os          for AMD and Intel graphics  (the default AquariusOS)
-#   aquarius-os-nvidia   for NVIDIA graphics cards
-#   aquarius-os-deck     for gaming handhelds — boots into Game Mode
+# The KDE line — FROZEN, still published so installed machines keep updating:
+#   aquarius-os                for AMD and Intel graphics
+#   aquarius-os-nvidia         for NVIDIA graphics cards
+#   aquarius-os-deck           for gaming handhelds — boots into Game Mode
+#
+# The GNOME line — added 2026-08-31, where all new work goes:
+#   aquarius-os-gnome          for AMD and Intel graphics
+#   aquarius-os-gnome-nvidia   for NVIDIA graphics cards
+#   aquarius-os-gnome-deck     for gaming handhelds — boots into Game Mode
 #
 # That is what the "matrix" below is: one job definition, run once per variant.
 # If one goes red the others still finish (fail-fast is off), so a problem with
-# the handheld build can never stop the normal image from shipping.
+# the handheld build can never stop the normal image from shipping — and, since
+# 2026-08-31, a problem in the new GNOME line can never stop the frozen KDE
+# images from shipping either.
 #
 # Neither image name nor base image is hardcoded here — both come from
 # aquarius-os.env, which the Justfile reads. One place, used everywhere.
@@ -37,10 +45,12 @@ env:
 # out — so pushing twice in a row doesn't leave a stale build running.
 #
 # No variant in the group name here, and that's correct: unlike the ISO and disk
-# workflows, ONE run of this builds ALL THREE variants together (that's the
-# matrix below), so there is no second run for it to cancel by mistake. Adding a
-# variant to the matrix therefore needs no change here — checked again when the
-# deck variant was added, 2026-08-28.
+# workflows, ONE run of this builds ALL SIX variants together (that's the matrix
+# below), so there is no second run for it to cancel by mistake. Adding a variant
+# to the matrix therefore needs no change here — checked when the deck variant
+# was added (2026-08-28) and again when the three GNOME variants were added
+# (2026-08-31). Per-variant scoping still matters in build-iso.yml, which really
+# does run once per variant; that one has the variant in its group name.
 #
 # This used to also tack on inputs.brand_name and inputs.stream_name. Those
 # inputs don't exist in this workflow — they were leftovers from the upstream
@@ -60,10 +70,11 @@ jobs:
       fail-fast: false
       matrix:
         # These are the names the Justfile understands
-        # (`just variant-image-name` / `just variant-base-image`). Adding one
-        # here without adding it there fails the "Image Name" step immediately,
-        # which is the intended behaviour — the Justfile is the list of record.
-        variant: [base, nvidia, deck]
+        # (`just variant-image-name` / `just variant-base-image` /
+        # `just variant-desktop`). Adding one here without adding it there fails
+        # the "Image Name" step immediately, which is the intended behaviour —
+        # the Justfile is the list of record.
+        variant: [base, nvidia, deck, gnome, gnome-nvidia, gnome-deck]
 
     permissions:
       contents: read
@@ -106,6 +117,17 @@ jobs:
 
           echo "VARIANT_BASE_IMAGE=${VARIANT_BASE_IMAGE}" >> $GITHUB_ENV
 
+      # Which desktop this variant wears — "kde" or "gnome". Every step below
+      # that belongs to only one desktop is switched on and off by this one
+      # value, and nothing else. See the long note at the top of the
+      # Containerfile for why this single branch exists at all.
+      - name: Desktop
+        id: desktop
+        run: |
+          AQ_DESKTOP=$(just variant-desktop ${{ matrix.variant }})
+
+          echo "AQ_DESKTOP=${AQ_DESKTOP}" >> $GITHUB_ENV
+
       - name: Default Tag
         id: gen-default-tag
         run: |
@@ -126,7 +148,8 @@ jobs:
           just build \
             ${IMAGE_NAME} \
             ${DEFAULT_TAG} \
-            ${VARIANT_BASE_IMAGE}
+            ${VARIANT_BASE_IMAGE} \
+            ${AQ_DESKTOP}
 
       # This is optional, this provides smaller delta updates
       - name: Rechunk with rpm-ostree
@@ -176,8 +199,11 @@ jobs:
           cat /usr/lib/os-release
           echo "== /etc/os-release =="
           ls -l /etc/os-release
-          echo "== /etc/xdg/kcm-about-distrorc =="
-          cat /etc/xdg/kcm-about-distrorc || echo "(missing!)"
+          echo "== this image wears the ${EXPECTED_DESKTOP} desktop =="
+          if [ "${EXPECTED_DESKTOP}" = "kde" ]; then
+            echo "== /etc/xdg/kcm-about-distrorc =="
+            cat /etc/xdg/kcm-about-distrorc || echo "(missing!)"
+          fi
           echo "== checks =="
 
           # The two os-release files must BOTH say AquariusOS. On Fedora the
@@ -192,15 +218,33 @@ jobs:
           # The edition line. This list must match the `case` in
           # build_files/image-info.sh — a new image whose edition is not named in
           # BOTH places is a half-wired image, and this is where that gets caught.
-          check "VARIANT is an AquariusOS edition" '^VARIANT="(NVIDIA|Desktop|Handheld) Edition"$' /etc/os-release
+          # The three KDE editions are the originals and are unchanged; the GNOME
+          # line adds three more, spelled out so the About page can tell the two
+          # lines apart while both exist.
+          check "VARIANT is an AquariusOS edition" '^VARIANT="(GNOME )?(NVIDIA|Desktop|Handheld) Edition"$' /etc/os-release
 
           # ID stays "bazzite" deliberately — Bazzite's tooling and our Anaconda
           # installer profile both key off it. Checked so nobody "tidies" it away.
           check "ID deliberately left as bazzite" '^ID=bazzite$'          /etc/os-release
 
           # KDE's About page override. This is the file that caused the bug.
-          check "About page name"               '^Name=AquariusOS$'       /etc/xdg/kcm-about-distrorc
-          check "About page website"            '^Website=https://github\.com/' /etc/xdg/kcm-about-distrorc
+          #
+          # ⚠️ KDE ONLY. The file is read by KDE's Info Centre and by nothing
+          # else, so build_files/image-info.sh only writes it on the KDE images
+          # and there is nothing to check on a GNOME one. GNOME's own About page
+          # (Settings > System > About) reads os-release directly, which the
+          # checks above have already proved.
+          if [ "${EXPECTED_DESKTOP}" = "kde" ]; then
+            check "About page name"               '^Name=AquariusOS$'       /etc/xdg/kcm-about-distrorc
+            check "About page website"            '^Website=https://github\.com/' /etc/xdg/kcm-about-distrorc
+          else
+            if [ -e /etc/xdg/kcm-about-distrorc ]; then
+              echo "  NOTE /etc/xdg/kcm-about-distrorc exists on a GNOME image."
+              echo "       Harmless (nothing on GNOME reads it), but we do not write it."
+            else
+              echo "  OK   no KDE About-page override on a GNOME image (correct)"
+            fi
+          fi
 
           # --- the file Bazzite's own boot scripts read -----------------------
           # /usr/share/ublue-os/image-info.json is not a label. Bazzite's
@@ -281,13 +325,15 @@ jobs:
           echo "All identity checks passed."
           SCRIPT
 
-          # EXPECTED_IMAGE_NAME is handed IN to the container rather than baked
-          # into the script above: the heredoc is quoted ('SCRIPT') so that
-          # nothing in it is expanded out here on the runner, which is what keeps
-          # all the grep patterns readable and free of escaping.
+          # EXPECTED_IMAGE_NAME and EXPECTED_DESKTOP are handed IN to the
+          # container rather than baked into the script above: the heredoc is
+          # quoted ('SCRIPT') so that nothing in it is expanded out here on the
+          # runner, which is what keeps all the grep patterns readable and free
+          # of escaping.
           podman run --rm --pull=never -i \
             --entrypoint /usr/bin/bash \
             -e EXPECTED_IMAGE_NAME="${IMAGE_NAME}" \
+            -e EXPECTED_DESKTOP="${AQ_DESKTOP}" \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" </tmp/verify-identity.sh
 
       # If you are feeling adventurous, use the new distro agnostic rechunker
@@ -517,8 +563,15 @@ jobs:
       # docs/kwin-effects-layer.md: on a booted machine,
       #     qdbus org.kde.KWin /Effects loadedEffects
       # should list kwin4_effect_shapecorners.
+      #
+      # ⚠️ KDE IMAGES ONLY. A GNOME image has no KWin, so build_files/build.sh
+      # never runs kwin-effects.sh there and there is no plug-in to look for.
+      # The GNOME line's equivalent check is the "Verify the GNOME desktop
+      # layer" step further down, which asserts among other things that this
+      # compile really did NOT happen.
       - name: Verify KWin effects
         id: verify-kwin-effects
+        if: env.AQ_DESKTOP == 'kde'
         run: |
           set -euo pipefail
           cat >/tmp/verify-kwin-effects.sh <<'SCRIPT'
@@ -653,8 +706,15 @@ jobs:
       # WHAT THIS CANNOT PROVE. A container has no desktop, so nothing here can
       # start Plasma and watch the name appear and change. That last step is a
       # human one, written down in docs/app-name-widget.md.
+      #
+      # ⚠️ KDE IMAGES ONLY. This widget is a Plasma applet and the layout script
+      # that places it is a Plasma layout. Both still SHIP on the GNOME images
+      # (they are plain text files, nothing deletes them, and nothing on GNOME
+      # reads them) — they are simply not part of what a GNOME image is, so
+      # nothing about them is asserted there.
       - name: Verify the top-bar app name widget
         id: verify-appname-widget
+        if: env.AQ_DESKTOP == 'kde'
         run: |
           set -euo pipefail
           cat >/tmp/verify-appname-widget.sh <<'SCRIPT'
@@ -727,6 +787,300 @@ jobs:
           podman run --rm --pull=never -i \
             --entrypoint /usr/bin/bash \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" </tmp/verify-appname-widget.sh
+
+      # ------------------------------------------------------------------------
+      # THE GNOME DESKTOP LAYER — is it really in this image?
+      # ------------------------------------------------------------------------
+      # Plain English: this starts the finished GNOME image, looks inside it, and
+      # fails the build if the AquariusOS look and behaviour did not make it in.
+      #
+      # WHY IT EXISTS, AND WHY IT IS THIS LONG
+      # Almost nothing in the GNOME layer fails loudly. A settings file with a
+      # typo in it is ignored. A settings index that was not rebuilt means every
+      # default is quietly the stock one. An extension that does not list this
+      # GNOME is simply not loaded. A wallpaper path pointing at nothing gives a
+      # flat coloured desktop. In every one of those cases the build is green,
+      # the image boots, and the only symptom is that it looks like plain
+      # Bazzite — which is exactly the failure nobody notices for a month.
+      #
+      # So each of those is asked about here, on the FINISHED, rechunked image
+      # that is about to be pushed. The build scripts already check their own
+      # work; this asks the same questions again of what actually gets published,
+      # because "the file was there when we made it" is not the same claim as
+      # "the file is there in what we published". Same reasoning as the KDE steps
+      # above.
+      #
+      # WHAT THIS CANNOT PROVE. There is no desktop and nobody logged in inside a
+      # container, so nothing here can start GNOME Shell and watch the dock
+      # appear. The bench checklist for that is in docs/gnome-variants.md.
+      - name: Verify the GNOME desktop layer
+        id: verify-gnome-layer
+        if: env.AQ_DESKTOP == 'gnome'
+        run: |
+          set -euo pipefail
+          cat >/tmp/verify-gnome-layer.sh <<'SCRIPT'
+          set -u
+
+          fails=0
+          bad() { echo "  FAIL $*"; fails=1; }
+          ok()  { echo "  OK   $*"; }
+
+          SCHEMAS=/usr/share/glib-2.0/schemas
+          D2D=/usr/share/gnome-shell/extensions/dash-to-dock@micxgx.gmail.com
+          BACKGROUNDS=/usr/share/backgrounds/aquarius
+
+          echo "== our settings files in ${SCHEMAS} =="
+          ls -l "${SCHEMAS}"/zz1-aquarius-* || echo "(none!)"
+          echo "== checks =="
+
+          # --- 1. the settings files themselves --------------------------------
+          for f in zz1-aquarius-10-look zz1-aquarius-20-shell zz1-aquarius-30-dash-to-dock; do
+            if [ -r "${SCHEMAS}/${f}.gschema.override" ]; then ok "${f} is installed"
+            else bad "${SCHEMAS}/${f}.gschema.override is missing"; fi
+          done
+
+          # The handheld extras belong on the handheld image and NOWHERE else.
+          # Which branch runs is itself part of what is being checked.
+          handheld="${SCHEMAS}/zz1-aquarius-40-handheld.gschema.override"
+          case "${EXPECTED_IMAGE_NAME}" in
+            *deck*)
+              if [ -r "$handheld" ]; then ok "the handheld settings are on the handheld image"
+              else bad "this is the handheld image but the handheld settings are missing"; fi ;;
+            *)
+              if [ -e "$handheld" ]; then bad "handheld-only settings are on a desktop image"
+              else ok "no handheld-only settings on this desktop image (correct)"; fi ;;
+          esac
+
+          # --- 2. they must sort AFTER Bazzite's ------------------------------
+          # Bazzite ships its own defaults in files starting "zz0-", and the LAST
+          # file to mention a setting wins. If ours ever stopped sorting after
+          # theirs, every AquariusOS default would be silently overwritten by a
+          # Bazzite one. Rather than trust the naming convention, compare.
+          last_ours="$(ls "${SCHEMAS}"/zz1-aquarius-*.gschema.override 2>/dev/null | sort | tail -1)"
+          first_ours="$(ls "${SCHEMAS}"/zz1-aquarius-*.gschema.override 2>/dev/null | sort | head -1)"
+          last_theirs="$(ls "${SCHEMAS}"/*.gschema.override 2>/dev/null | grep -v 'zz1-aquarius' | sort | tail -1)"
+          if [ -n "$first_ours" ] && [ -n "$last_theirs" ]; then
+            if [ "$(printf '%s\n%s\n' "$(basename "$last_theirs")" "$(basename "$first_ours")" | sort | tail -1)" = "$(basename "$first_ours")" ]; then
+              ok "our settings sort after everyone else's (last theirs: $(basename "$last_theirs"))"
+            else
+              bad "$(basename "$last_theirs") sorts AFTER $(basename "$first_ours") — it would overwrite our defaults"
+            fi
+          fi
+
+          # --- 3. the index was actually rebuilt -------------------------------
+          # This is the step that makes every file above real, and skipping it
+          # is completely silent. The index has to exist AND be newer than the
+          # newest settings file, or it was built before ours arrived.
+          index="${SCHEMAS}/gschemas.compiled"
+          if [ ! -s "$index" ]; then
+            bad "${index} does not exist — every AquariusOS default would be ignored"
+          elif [ -n "$last_ours" ] && [ "$index" -nt "$last_ours" ]; then
+            ok "the settings index was rebuilt after our files were installed"
+          else
+            bad "${index} is older than $(basename "$last_ours") — it was built before our settings arrived"
+            ls -l --time-style=full-iso "$index" "$last_ours"
+          fi
+
+          # --- 4. and it really contains OUR answers ---------------------------
+          # The strongest check available in a container: ask the settings system
+          # what the factory value of a setting is now. GSETTINGS_BACKEND=memory
+          # means "do not look for anybody's saved answer", so what comes back is
+          # exactly what the index says the default is — which is what a
+          # brand-new account would get.
+          if command -v gsettings >/dev/null 2>&1; then
+            want() {  # want <schema> <key> <expected>
+              got="$(GSETTINGS_BACKEND=memory gsettings get "$1" "$2" 2>/dev/null || echo '<error>')"
+              if [ "$got" = "$3" ]; then ok "$1 $2 = $got"
+              else bad "$1 $2 is $got, expected $3"; fi
+            }
+            # The four that ARE the AquariusOS look. If these are right, the
+            # override mechanism is working end to end.
+            want org.gnome.desktop.interface color-scheme "'default'"
+            want org.gnome.desktop.interface accent-color "'blue'"
+            want org.gnome.desktop.interface font-name "'Inter 11'"
+            want org.gnome.desktop.interface monospace-font-name "'JetBrains Mono 10'"
+            # And the dock, which is the one whose schema comes from the
+            # extension we baked in rather than from GNOME itself.
+            want org.gnome.shell.extensions.dash-to-dock dock-position "'BOTTOM'"
+            want org.gnome.shell.extensions.dash-to-dock dock-fixed "true"
+
+            echo "  ---- for the log: the wallpaper and the dock's apps ----"
+            GSETTINGS_BACKEND=memory gsettings get org.gnome.desktop.background picture-uri || true
+            GSETTINGS_BACKEND=memory gsettings get org.gnome.desktop.background picture-uri-dark || true
+            GSETTINGS_BACKEND=memory gsettings get org.gnome.shell favorite-apps || true
+            GSETTINGS_BACKEND=memory gsettings get org.gnome.shell enabled-extensions || true
+          else
+            echo "  NOTE gsettings is not in this image, so the values could not be read back."
+            echo "       The files and the index were still checked above."
+          fi
+
+          # --- 5. the dock ------------------------------------------------------
+          echo "== ${D2D} =="
+          ls -l "$D2D" || echo "(the folder does not exist!)"
+
+          if [ -r "${D2D}/extension.js" ] && [ -r "${D2D}/metadata.json" ]; then
+            ok "Dash to Dock is installed"
+          else
+            bad "Dash to Dock is missing — there would be no dock on the desktop"
+          fi
+
+          # It must declare support for the GNOME in THIS image, or GNOME refuses
+          # to load it and the dock silently never appears. Fedora 44 ships GNOME
+          # 50; both numbers are printed so a future bump is obvious in the log.
+          if [ -r "${D2D}/metadata.json" ] && command -v gnome-shell >/dev/null 2>&1; then
+            shell_major="$(gnome-shell --version | awk '{print $3}' | cut -d. -f1)"
+            if python3 - "${D2D}/metadata.json" "$shell_major" <<'PY'
+          import json, sys
+          meta = json.load(open(sys.argv[1]))
+          versions = [str(v) for v in meta["shell-version"]]
+          print(f"       Dash to Dock {meta['version']} supports GNOME Shell {', '.join(versions)}")
+          sys.exit(0 if sys.argv[2] in versions else 1)
+          PY
+            then ok "Dash to Dock supports this image's GNOME Shell ${shell_major}"
+            else bad "Dash to Dock does not list GNOME Shell ${shell_major} — GNOME would not load it"; fi
+          fi
+
+          # ⚠️ The check that protects every dock default we ship. If the
+          # extension keeps a private compiled copy of its settings, GNOME reads
+          # THAT and ignores our system-wide defaults completely — the dock comes
+          # up stock and nothing says why. build_files/gnome-extensions.sh has
+          # the long explanation.
+          if [ -e "${D2D}/schemas/gschemas.compiled" ]; then
+            bad "${D2D}/schemas/gschemas.compiled exists — it would override every AquariusOS dock default"
+          else
+            ok "the dock has no private settings copy (correct — ours win)"
+          fi
+          if [ -r "${SCHEMAS}/org.gnome.shell.extensions.dash-to-dock.gschema.xml" ]; then
+            ok "the dock's settings description is installed system-wide"
+          else
+            bad "the dock's settings description is not in ${SCHEMAS} — our dock defaults have nothing to apply to"
+          fi
+
+          # --- 6. the extension list is the one we meant ------------------------
+          # enabled-extensions REPLACES Bazzite's list rather than adding to it,
+          # so what is left OUT matters as much as what is in. blur-my-shell is
+          # the one we most want to stay out: it is against the whole posture of
+          # this line, and the KDE line already lost days to window blur that
+          # never rendered (docs/blur-known-issue.md).
+          shell_override="${SCHEMAS}/zz1-aquarius-20-shell.gschema.override"
+          for want_ext in dash-to-dock@micxgx.gmail.com \
+                          appindicatorsupport@rgcjonas.gmail.com \
+                          gsconnect@andyholmes.github.io \
+                          caffeine@patapon.info \
+                          hotedge@jonathan.jdoda.ca; do
+            if grep -q "'${want_ext}'" "$shell_override" 2>/dev/null; then ok "enabled: ${want_ext}"
+            else bad "${want_ext} is not in our enabled-extensions list"; fi
+          done
+          for unwanted in blur-my-shell@aunetx \
+                          burn-my-windows@schneegans.github.com \
+                          desktop-cube@schneegans.github.com \
+                          compiz-alike-magic-lamp-effect@hermes83.github.com \
+                          compiz-windows-effect@hermes83.github.com; do
+            if grep -q "'${unwanted}'" "$shell_override" 2>/dev/null; then
+              bad "${unwanted} is switched on — it is deliberately excluded"
+            else ok "not enabled: ${unwanted} (correct)"; fi
+          done
+
+          # The handheld's list is a full copy of the desktop's plus one name.
+          # Copies drift; this is what stops them.
+          if [ -r "$handheld" ]; then
+            if python3 - "$shell_override" "$handheld" <<'PY'
+          import ast, re, sys
+          def read(path):
+              text = open(path).read()
+              match = re.search(r"^enabled-extensions=(\[.*?\])\s*$", text, re.M | re.S)
+              assert match, f"no enabled-extensions line in {path}"
+              return ast.literal_eval(match.group(1))
+          desktop, handheld = read(sys.argv[1]), read(sys.argv[2])
+          extra = [e for e in handheld if e not in desktop]
+          missing = [e for e in desktop if e not in handheld]
+          print(f"       the handheld adds: {extra or 'nothing'}")
+          if missing:
+              sys.exit(f"       the handheld is MISSING: {missing}")
+          if extra != ["block-caribou-36@lxylxy123456.ercli.dev"]:
+              sys.exit(f"       the handheld adds something unexpected: {extra}")
+          PY
+            then ok "the handheld list is the desktop list plus block-caribou, and nothing else"
+            else bad "the two extension lists have drifted apart"; fi
+          fi
+
+          # --- 7. the wallpapers ------------------------------------------------
+          for f in "${BACKGROUNDS}/the-pour-ice-3840x2160.png" \
+                   "${BACKGROUNDS}/the-pour-midnight-3840x2160.png"; do
+            if [ -s "$f" ]; then ok "$(basename "$f") is installed ($(stat -c %s "$f") bytes)"
+            else bad "$f is missing — the desktop would come up a flat colour"; fi
+          done
+          if [ -r /usr/share/gnome-background-properties/aquarius.xml ]; then
+            ok "our wallpaper is listed in Settings > Appearance"
+          else
+            bad "/usr/share/gnome-background-properties/aquarius.xml is missing"
+          fi
+
+          # --- 8. the GNOME-side tools our own scripts need ---------------------
+          if command -v zenity >/dev/null 2>&1; then ok "zenity is installed"
+          else bad "zenity is missing — the first-login creator-apps window would never appear"; fi
+
+          if [ -r /usr/share/nautilus-python/extensions/aquarius_editor_ready.py ]; then
+            ok "the 'Make Editor-Ready' menu item is installed"
+          else
+            bad "the Nautilus ingest extension is missing — no right-click ingest on GNOME"
+          fi
+          if rpm -q nautilus-python >/dev/null 2>&1; then
+            ok "nautilus-python is installed ($(rpm -q nautilus-python))"
+          else
+            bad "nautilus-python is not installed — that extension file would never be read"
+          fi
+
+          # --- 9. the login screen logo ----------------------------------------
+          # GDM on the desktop images, SDDM on the handheld — so which branch
+          # runs is part of what is checked.
+          case "${EXPECTED_IMAGE_NAME}" in
+            *deck*)
+              ok "handheld image — no GDM settings expected (it uses SDDM)" ;;
+            *)
+              if [ -s /usr/share/aquarius/branding/aquarius-logo.png ]; then ok "the login-screen logo is installed"
+              else bad "the login-screen logo PNG is missing — GDM would show a blank space"; fi
+              if [ -s /etc/dconf/db/gdm ]; then ok "the login screen settings were compiled"
+              else bad "/etc/dconf/db/gdm is missing — the login screen would keep Bazzite's logo"; fi
+              if grep -q 'aquarius-logo.png' /etc/dconf/db/gdm.d/01-aquarius-logo 2>/dev/null; then
+                ok "the login screen is pointed at our logo"
+              else
+                bad "/etc/dconf/db/gdm.d/01-aquarius-logo does not name our logo"
+              fi ;;
+          esac
+
+          # --- 10. NONE of the KDE build steps ran ------------------------------
+          # This is the other half of the gating in build_files/build.sh. A GNOME
+          # image that somehow compiled a KWin plug-in would mean the AQ_DESKTOP
+          # knob is not doing its job — and it would have shipped hundreds of
+          # megabytes of development tools to do it.
+          if [ -e /usr/lib64/qt6/plugins/kwin/effects/plugins/kwin4_effect_shapecorners.so ]; then
+            bad "a compiled KWin effect is in this GNOME image — the KDE-only build steps ran"
+          else
+            ok "no compiled KWin effects (correct — nothing on GNOME would load them)"
+          fi
+          if [ -e /usr/share/kwin/shaders/shapecorners.frag ]; then
+            bad "KWin effect shaders are in this GNOME image — the KDE-only build steps ran"
+          else
+            ok "no KWin effect shaders (correct)"
+          fi
+          if rpm -q kwin-devel >/dev/null 2>&1; then
+            bad "kwin-devel is installed — development tools were left in a GNOME image"
+          else
+            ok "no KWin development packages in the image (correct)"
+          fi
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::The GNOME desktop layer is not correct in this image — it would boot looking like plain Bazzite. See above."
+            exit 1
+          fi
+          echo "All GNOME-layer checks passed."
+          SCRIPT
+
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            -e EXPECTED_IMAGE_NAME="${IMAGE_NAME}" \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" </tmp/verify-gnome-layer.sh
 
       - name: Generate Build Tags
         id: gen-build-tags

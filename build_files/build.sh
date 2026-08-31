@@ -20,6 +20,64 @@ set -ouex pipefail
 cp -avf "/ctx/system_files"/. /
 
 # ==============================================================================
+# WHICH DESKTOP IS THIS IMAGE WEARING?
+# ==============================================================================
+# "kde" or "gnome". It comes in from the Containerfile, which gets it from the
+# Justfile, which works it out from the variant name. The whole chain is
+# explained at the top of the Containerfile.
+#
+# ⚠️ WHY THIS EXISTS AT ALL. This file's house rule is "no variant branching",
+# and it is a good rule. But a few steps below do not merely have nothing to do
+# on the other desktop — they cannot run there at all. Compiling a KWin plug-in
+# needs a KWin to compile against, and a GNOME image has none: that step would
+# not be a harmless no-op, it would be a red build. So there is ONE knob, it
+# holds one of two words, and every place it is read says out loud why the step
+# it guards belongs to one desktop and not the other.
+#
+# The `:-kde` fallback is the same spelling as AQ_IMAGE_NAME further down, and
+# for the same reason: this script runs under `set -u`, so an unset variable
+# would abort the build here rather than fall through to the sensible default.
+# "kde" is the sensible default because it is what every AquariusOS image was
+# before 2026-08-31.
+AQ_DESKTOP="${AQ_DESKTOP:-kde}"
+
+case "${AQ_DESKTOP}" in
+  kde | gnome)
+    echo "OK: building the ${AQ_DESKTOP} flavour of AquariusOS."
+    ;;
+  *)
+    echo "AQUARIUS ERROR: AQ_DESKTOP is '${AQ_DESKTOP}'. It must be 'kde' or 'gnome'."
+    echo "                Nothing else means anything to this script, and guessing"
+    echo "                would produce an image with half a desktop's settings on it."
+    exit 1
+    ;;
+esac
+
+# Belt and braces: prove the word matches the image we are actually standing in.
+# Getting this pair wrong is the one mistake that would be invisible until
+# somebody booted the result — a GNOME image built as "kde" would come out with
+# no AquariusOS look on it at all, and a completely green build.
+#
+# ⚠️ NOTE THE ASYMMETRY, IT IS DELIBERATE. The GNOME case stops the build; the
+# KDE case only warns. The KDE line is frozen and its images must keep building
+# no matter what, so nothing new is allowed to become a way for them to fail. A
+# wrong-looking KDE build says so loudly in the log and carries on. A wrong
+# GNOME build stops, because everything the GNOME layer does after this point
+# depends on GNOME actually being here.
+if [ "${AQ_DESKTOP}" = "gnome" ] && ! command -v gnome-shell > /dev/null 2>&1; then
+  echo "AQUARIUS ERROR: AQ_DESKTOP=gnome but this image has no gnome-shell command."
+  echo "                It was almost certainly built on a KDE Bazzite base by mistake."
+  echo "                Check the BASE_IMAGE and AQ_DESKTOP build arguments agree."
+  exit 1
+fi
+if [ "${AQ_DESKTOP}" = "kde" ] && ! command -v plasmashell > /dev/null 2>&1; then
+  echo "AQUARIUS WARNING: AQ_DESKTOP=kde but this image has no plasmashell command."
+  echo "                  If that is a surprise, the BASE_IMAGE and AQ_DESKTOP build"
+  echo "                  arguments probably do not agree. Carrying on regardless —"
+  echo "                  the KDE line is frozen and must keep building."
+fi
+
+# ==============================================================================
 # PHASE 1 — "It boots and it's ours"  (current phase)
 # ==============================================================================
 # Deliberately minimal. The only job of Phase 1 is to prove the pipeline works:
@@ -96,9 +154,18 @@ fc-cache --system-only --force --verbose
 #   The widget's real name is org.kde.plasma.kickerdash. Which package provides
 #   it: https://invent.kde.org/plasma/kdeplasma-addons/-/tree/master/applets/kickerdash
 #   Why the launcher changed at all: docs/gnome-flow-behavior-layer.md
+#
+# ⚠️ KDE IMAGES ONLY. On a GNOME image this would install a bag of Plasma
+# widgets — and the chunk of KDE it drags behind them — for a desktop that will
+# never draw a single one of them. GNOME's own full-screen app grid is the
+# Activities overview, which is already there and needs nothing installed.
 # ------------------------------------------------------------------------------
 
-dnf5 install -y kdeplasma-addons
+if [ "${AQ_DESKTOP}" = "kde" ]; then
+  dnf5 install -y kdeplasma-addons
+else
+  echo "NOTE: GNOME image — skipping kdeplasma-addons (its app grid is built in)."
+fi
 
 # ==============================================================================
 # PHASE 2, TRACK B — THE CODEC LAYER
@@ -489,16 +556,31 @@ systemctl enable aquarius-greeter-scale.service
 # `${IMAGE_NAME:-aquarius-os}` and not a bare `${IMAGE_NAME}` because this script
 # runs under `set -u`: an unset variable would abort the whole build here rather
 # than fall through to the sensible default. Same spelling as image-info.sh.
+# ⚠️ SECOND CONDITION, ADDED WITH THE GNOME LINE. The file this folder holds is
+# a `kwinrc` — a KWin settings file. KWin is KDE's window manager, and a GNOME
+# image does not have one, so on the GNOME handheld this folder is not "the
+# handheld settings", it is a file nothing will ever read. It is therefore
+# removed from every GNOME image, handheld included.
+#
+# The GNOME handheld still needs an answer to the same question — how do you
+# drive a desktop with only a game controller — and it does not have one yet.
+# That is a G2 item, written down in docs/gnome-variants.md rather than bodged
+# here. Do not "fix" this by keeping the kwinrc; it would not work.
 AQ_IMAGE_NAME="${IMAGE_NAME:-aquarius-os}"
 
-case "${AQ_IMAGE_NAME}" in
-  *deck*)
-    echo "OK: '${AQ_IMAGE_NAME}' is the handheld image — keeping /usr/share/aquarius/xdg-handheld."
+case "${AQ_DESKTOP}:${AQ_IMAGE_NAME}" in
+  kde:*deck*)
+    echo "OK: '${AQ_IMAGE_NAME}' is the KDE handheld image — keeping /usr/share/aquarius/xdg-handheld."
     # Prove it is really there. A typo in the path above, or a file that quietly
     # stopped being copied, would otherwise ship a handheld with no way to move
     # the pointer — and nothing would go red.
     test -f /usr/share/aquarius/xdg-handheld/kwinrc
     grep -q '^gamecontrollerEnabled=true$' /usr/share/aquarius/xdg-handheld/kwinrc
+    ;;
+  gnome:*)
+    echo "NOTE: '${AQ_IMAGE_NAME}' is a GNOME image — removing the KWin-only handheld settings."
+    echo "      Controller-as-mouse on the GNOME handheld is a G2 item (docs/gnome-variants.md)."
+    rm -rf /usr/share/aquarius/xdg-handheld
     ;;
   *)
     echo "NOTE: '${AQ_IMAGE_NAME}' is a desktop image — removing the handheld-only settings."
@@ -538,9 +620,22 @@ esac
 # It runs HERE, after the handheld folder has been trimmed above, so its check
 # of the handheld file only happens on the image that actually keeps it.
 # Beginner-facing write-up: docs/kwin-effects-layer.md
+#
+# ⚠️ KDE IMAGES ONLY, AND THIS IS THE ONE THAT REALLY MATTERS. Everything else
+# guarded by AQ_DESKTOP would merely be pointless on the other desktop. This one
+# would be FATAL: the script installs kwin-devel and compiles a plug-in against
+# this image's KWin headers, and a GNOME image has no KWin and no such package.
+# Running it there does not produce a plain-looking desktop, it produces a red
+# build and no image at all. GNOME draws its own rounded window corners, so
+# there is nothing to replace it with — that is the whole point of the "work with
+# GNOME's grain" posture (docs/gnome-variants.md).
 # ------------------------------------------------------------------------------
 
-/ctx/kwin-effects.sh
+if [ "${AQ_DESKTOP}" = "kde" ]; then
+  /ctx/kwin-effects.sh
+else
+  echo "NOTE: GNOME image — skipping the KWin effects layer (GNOME rounds its own corners)."
+fi
 
 # ==============================================================================
 # THE GLASS DESKTOP — give the Plasma style a fresh version number
@@ -549,9 +644,16 @@ esac
 # AquariusOS keep seeing the OLD panel and popup artwork, because Plasma caches
 # the pictures it has already drawn and only rebuilds that cache when the theme's
 # version number changes. The reasoning is written out in full inside the script.
+#
+# ⚠️ KDE IMAGES ONLY. The thing being version-stamped is a Plasma style — the
+# panel and popup artwork. GNOME has no such object and reads none of it.
 # ------------------------------------------------------------------------------
 
-/ctx/plasma-style-version.sh
+if [ "${AQ_DESKTOP}" = "kde" ]; then
+  /ctx/plasma-style-version.sh
+else
+  echo "NOTE: GNOME image — skipping the Plasma style version stamp (no Plasma style to stamp)."
+fi
 
 # ==============================================================================
 # THE TOP BAR'S APP NAME — check our own widget really landed
@@ -571,7 +673,14 @@ esac
 # WHAT THIS CANNOT PROVE. There is no desktop and no logged-in person inside a
 # build container, so nothing here can start Plasma and watch it draw the
 # widget. The bench checklist for that is in docs/app-name-widget.md.
+#
+# ⚠️ KDE IMAGES ONLY. The widget is a Plasma applet. Its files still SHIP on the
+# GNOME images — they are plain text, nothing deletes them, and nothing on GNOME
+# reads them — so there is nothing to break and nothing to check. GNOME puts the
+# running app's name in its own top bar without being asked.
 # ------------------------------------------------------------------------------
+
+if [ "${AQ_DESKTOP}" = "kde" ]; then
 
 APPNAME_DIR=/usr/share/plasma/plasmoids/com.aquariusos.appname
 
@@ -604,6 +713,10 @@ if meta.get("KPackageStructure") != "Plasma/Applet":
 print(f"OK: the app-name widget is installed as {plugin_id}.")
 PY
 
+else
+  echo "NOTE: GNOME image — not checking the Plasma app-name widget (GNOME has its own)."
+fi
+
 # ==============================================================================
 # OUR OWN DESKTOP WIDGETS — check they are complete and their libraries are here
 # ==============================================================================
@@ -619,9 +732,18 @@ PY
 # broken top bar on somebody's machine.
 #
 # Beginner-facing write-up: docs/clock-notifications-widget.md
+#
+# ⚠️ KDE IMAGES ONLY. This script looks for KDE QML libraries. On a GNOME image
+# they are genuinely not installed, so it would fail the build over the absence
+# of something a GNOME image is not supposed to have. GNOME's top bar already
+# carries a clock whose popup is the notifications list.
 # ------------------------------------------------------------------------------
 
-/ctx/shell-widgets.sh
+if [ "${AQ_DESKTOP}" = "kde" ]; then
+  /ctx/shell-widgets.sh
+else
+  echo "NOTE: GNOME image — skipping the Plasma clock/notifications widget checks."
+fi
 
 # ==============================================================================
 # QUICK SETTINGS — check the widget's KDE dependencies are really in the image
@@ -643,9 +765,17 @@ PY
 # widget into /usr/share/plasma/plasmoids/ — it inspects the installed copy, not
 # the one in the repo, because only the installed one is what users get.
 # Beginner-facing write-up: docs/quick-settings-widget.md
+#
+# ⚠️ KDE IMAGES ONLY, for the same reason as the step above: what it checks for
+# is KDE's own plumbing, which a GNOME image does not have. GNOME's Quick
+# Settings menu is part of GNOME Shell.
 # ------------------------------------------------------------------------------
 
-/ctx/quick-settings-check.sh
+if [ "${AQ_DESKTOP}" = "kde" ]; then
+  /ctx/quick-settings-check.sh
+else
+  echo "NOTE: GNOME image — skipping the Plasma Quick Settings checks (GNOME has its own menu)."
+fi
 
 # ==============================================================================
 # THE DOCK — check our own widget will actually load
@@ -660,9 +790,82 @@ PY
 # anywhere saying why. This one line turns that into a failed build instead.
 #
 # Full reasoning: the header of dock-check.sh, and docs/aquarius-dock.md
+#
+# ⚠️ KDE IMAGES ONLY. Our dock is a fork of KDE's task manager and needs Plasma
+# to load it. The GNOME line has a dock too — Dash to Dock, baked in by
+# build_files/gnome-extensions.sh — and it is checked by that script instead.
 # ------------------------------------------------------------------------------
 
-/ctx/dock-check.sh
+if [ "${AQ_DESKTOP}" = "kde" ]; then
+  /ctx/dock-check.sh
+else
+  echo "NOTE: GNOME image — skipping the Plasma dock checks (its dock is Dash to Dock)."
+fi
+
+# ==============================================================================
+# THE GNOME DESKTOP LAYER  (the GNOME line, from 2026-08-31)
+# ==============================================================================
+# Everything above this point is shared by both lines. This block is the whole
+# of what makes a GNOME image an AquariusOS GNOME image, and the whole of what
+# makes a KDE image not carry any of it.
+#
+# Two scripts, in this order, and the order matters:
+#
+#   gnome-extensions.sh   installs the dock (Dash to Dock), which puts a new
+#                         settings description into /usr/share/glib-2.0/schemas
+#   gnome-desktop.sh      installs the GNOME-side packages, brands the login
+#                         screen, and — LAST — compiles that folder, which is
+#                         what makes every AquariusOS default real
+#
+# Compile before install and the dock's own settings are not in the index. Hence
+# the order. gnome-desktop.sh says so at length in its own header.
+#
+# THE OTHER HALF OF THE SWITCH — the `else` below
+# Everything the GNOME layer needs is copied onto EVERY image by the system_files
+# step at the top of this script, and then removed again from the KDE images
+# here. Shipping and un-shipping is deliberately the wrong way round from how it
+# sounds, because it is the way that cannot fail quietly: the files are always in
+# the repo, always reviewed, always in one place, and the only image-specific
+# thing is one `rm`. This is the same arrangement the handheld settings folder
+# has used since 2026-08-28.
+#
+# Would leaving them on the KDE images actually hurt? Almost certainly not —
+# nothing on a KDE machine reads a GNOME settings override or a GNOME wallpaper
+# listing. But the KDE line is FROZEN, and "frozen" has to mean something: a
+# frozen image should keep containing exactly what it contained yesterday. Not
+# "a few harmless extra files". So they come off.
+# ------------------------------------------------------------------------------
+
+if [ "${AQ_DESKTOP}" = "gnome" ]; then
+  /ctx/gnome-extensions.sh
+  /ctx/gnome-desktop.sh
+else
+  echo "NOTE: KDE image — removing the GNOME-only files that shipped with system_files."
+  rm -f /usr/share/glib-2.0/schemas/zz1-aquarius-*.gschema.override
+  rm -rf /usr/share/backgrounds/aquarius
+  rm -f /usr/share/gnome-background-properties/aquarius.xml
+  rm -f /usr/share/nautilus-python/extensions/aquarius_editor_ready.py
+  rm -f /usr/share/aquarius/branding/aquarius-logo.png
+
+  # Tidy up folders we created and have now emptied — but ONLY if they really
+  # are empty. --ignore-fail-on-non-empty is what makes that safe: if the base
+  # image turns out to keep something of its own in one of these, it is left
+  # exactly as it was and nothing goes red.
+  rmdir --ignore-fail-on-non-empty \
+    /usr/share/gnome-background-properties \
+    /usr/share/nautilus-python/extensions \
+    /usr/share/nautilus-python \
+    /usr/share/aquarius/branding 2>/dev/null || true
+
+  # And prove the removal really happened. A leftover override file on a frozen
+  # KDE image is exactly the kind of drift this whole arrangement exists to stop.
+  if compgen -G "/usr/share/glib-2.0/schemas/zz1-aquarius-*" > /dev/null; then
+    echo "AQUARIUS ERROR: AquariusOS GNOME settings are still on this KDE image."
+    ls -l /usr/share/glib-2.0/schemas/zz1-aquarius-*
+    exit 1
+  fi
+  echo "OK: no GNOME-only files left on this KDE image."
+fi
 
 # ==============================================================================
 # AQUARIUSOS IDENTITY — make the OS call itself AquariusOS

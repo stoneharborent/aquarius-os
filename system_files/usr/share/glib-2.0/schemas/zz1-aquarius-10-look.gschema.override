@@ -1,0 +1,164 @@
+# ==============================================================================
+# AquariusOS on GNOME — how the desktop looks out of the box
+# ==============================================================================
+# WHAT THIS FILE IS, IN PLAIN ENGLISH
+#
+# GNOME keeps its settings in a database called dconf. Every setting has a
+# factory value, and a file like this one changes what that factory value is.
+# It does NOT change anybody's settings — it changes what "never touched"
+# means. The moment a person moves a slider or picks a different wallpaper,
+# their answer is written into their own dconf and it wins over this file
+# forever after. Nothing here is a lock.
+#
+# That is the whole reason we use this mechanism instead of writing into
+# people's home folders: it reaches everybody including existing accounts, it
+# survives an OS update, and it never argues with a choice somebody made.
+#
+# WHY THE NAME STARTS WITH "zz1"
+#
+# All the files in this folder are read in alphabetical order and the LAST one
+# to mention a setting wins. Bazzite ships its own defaults in files starting
+# "zz0-" (zz0-00, zz0-01, … zz0-20). "zz1" sorts after every one of those, so
+# AquariusOS gets the last word on the handful of things we care about, and
+# Bazzite keeps the last word on everything we do not mention. That is
+# deliberate: their file is full of good gaming decisions we have no reason to
+# re-make.
+#
+#   ⚠️ Do NOT rename these files to sort before Bazzite's. Everything in them
+#   would silently stop working, with no error anywhere.
+#
+# HOW TO CHANGE SOMETHING HERE
+#
+# Find the setting's real name first — do not guess. On a booted machine:
+#     gsettings list-recursively org.gnome.desktop.interface
+# shows every setting in that group with its current value. The group name in
+# square brackets below is exactly that "org.gnome.desktop.interface" text.
+#
+# Values follow GNOME's own spelling: text in 'single quotes', true/false for
+# yes/no, numbers plain.
+#
+# Where the colours come from: branding/tokens.md and the Ice palette recorded
+# in docs/custom-de/ice-theme-tokens.md on the research/custom-de branch.
+# The whole GNOME story: docs/gnome-variants.md.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# The interface: colour, accent, and the three AquariusOS typefaces
+# ------------------------------------------------------------------------------
+[org.gnome.desktop.interface]
+
+# LIGHT, NOT DARK — and this is the single most visible decision in the file.
+#
+# AquariusOS's colour identity is "Ice": a cool, azure-tinted light theme with
+# deep-navy text, taken from Aquarius Writer. Its dark twin is called
+# "Midnight". Royce chose Ice as the main theme on 2026-08-31, which makes
+# AquariusOS a LIGHT-first desktop — genuinely unusual, and the point.
+#
+# 'default' is GNOME's word for the light appearance. ('prefer-dark' is what
+# Bazzite sets, and this line is what overrides it.) Anyone who wants dark
+# flips one switch in Settings > Appearance and gets Midnight; the dark
+# wallpaper further down is already waiting for them.
+color-scheme='default'
+
+# The accent colour — the blue on selected text, focused fields and switches.
+#
+# ⚠️ GNOME DOES NOT ACCEPT A HEX COLOUR HERE. This setting takes one of nine
+# fixed words (blue, teal, green, yellow, orange, red, pink, purple, slate) and
+# nothing else. There is no way to hand it #2C8FC4, which is the Aquarius Blue
+# the design asks for, short of patching libadwaita itself — and patching
+# libadwaita is explicitly off the table (it would mean owning a fork of the
+# library every GTK app on the machine draws itself with, forever).
+#
+# So: 'blue', which is #3584e4. It is the nearest of the nine to Aquarius Blue
+# and it is a good match. Bazzite's default is 'purple'; this line replaces it.
+accent-color='blue'
+
+# The three AquariusOS typefaces. All three already ship in the image —
+# build_files/build.sh installs Inter and JetBrains Mono as packages and copies
+# Sora in by hand, then rebuilds the font index so all three are findable.
+#
+#   Inter           everything you read in the interface
+#   JetBrains Mono  the terminal and anything showing code
+#   Sora            headlines — a display face, not an interface face, which is
+#                   why it is deliberately NOT set here. GNOME has no "display
+#                   font" setting; Sora belongs in artwork and in our own apps.
+#
+# The number after each name is the size in points. 11 and 10 are GNOME's own
+# defaults for these two slots and they suit Inter well.
+font-name='Inter 11'
+document-font-name='Inter 11'
+monospace-font-name='JetBrains Mono 10'
+
+# ------------------------------------------------------------------------------
+# The wallpaper
+# ------------------------------------------------------------------------------
+# "The Pour" is the AquariusOS wallpaper. It ships in two colourways and GNOME
+# switches between them by itself when somebody changes between the light and
+# dark appearance:
+#
+#   picture-uri        the LIGHT one   — Ice: pale azure paper, navy ink
+#   picture-uri-dark   the DARK one    — Midnight: deep-ocean navy, ice-blue ink
+#
+# Both are rendered from SVG sources in branding/wallpapers/ by
+# branding/render-wallpaper.sh. Never hand-edit the PNGs.
+#
+# The paths must start with "file://" — this is a URI, not a filename.
+#
+# picture-options='zoom' means "fill the screen, crop what doesn't fit" rather
+# than stretching the picture out of shape. The artwork is drawn to run past
+# the edge of its frame on purpose so that cropping never leaves a blank strip.
+#
+# primary-color is the flat colour GNOME paints for the fraction of a second
+# before the picture is loaded, and behind it if the file is ever missing.
+# Matching it to the wallpaper's own ground means that moment is invisible
+# instead of a white flash.
+[org.gnome.desktop.background]
+picture-uri='file:///usr/share/backgrounds/aquarius/the-pour-ice-3840x2160.png'
+picture-uri-dark='file:///usr/share/backgrounds/aquarius/the-pour-midnight-3840x2160.png'
+picture-options='zoom'
+color-shading-type='solid'
+primary-color='#EAF1F8'
+secondary-color='#DFEAF4'
+
+# The lock screen. It is a separate setting with the same shape, and it only
+# has ONE picture — there is no picture-uri-dark for the lock screen, because
+# the lock screen does not follow the light/dark appearance. The Midnight one
+# is the right choice here: a lock screen is usually seen in a dark room, and
+# a full-brightness pale screen at 2am is nobody's friend.
+[org.gnome.desktop.screensaver]
+picture-uri='file:///usr/share/backgrounds/aquarius/the-pour-midnight-3840x2160.png'
+picture-options='zoom'
+color-shading-type='solid'
+primary-color='#0B1220'
+secondary-color='#111A2B'
+
+# ==============================================================================
+# THINGS WE DELIBERATELY DO NOT SET, AND WHY
+# ==============================================================================
+# Every setting NOT mentioned above keeps whatever Bazzite chose for it. That is
+# the point of sorting after them. The ones worth naming, so nobody wonders
+# whether they were forgotten:
+#
+#   enable-hot-corners (false)   Bazzite turns GNOME's top-left hot corner off
+#                                and ships the "hotedge" extension instead,
+#                                which puts the same gesture along the BOTTOM
+#                                edge of the screen. That is a better fit for a
+#                                machine with a dock at the bottom, which ours
+#                                has, so it stays exactly as they set it.
+#
+#   button-layout                Bazzite adds minimise and maximise buttons to
+#                                every title bar (stock GNOME has only a close
+#                                button). Royce is coming from KDE, where those
+#                                buttons are always there. Left alone.
+#
+#   sound theme-name ('steam')   Bazzite's gaming sound theme. Not our call to
+#                                make and not worth a fight.
+#
+#   any GTK or GNOME Shell THEME No shell theme, no GTK theme, no icon-theme
+#                                override. The whole posture of the GNOME line
+#                                is to work WITH GNOME's grain rather than
+#                                repaint it: accent, wallpaper, fonts and a
+#                                small set of extensions, and then stop. Every
+#                                theme we do not ship is a theme that cannot
+#                                break on the next GNOME release.
+#                                Full reasoning: docs/gnome-variants.md.

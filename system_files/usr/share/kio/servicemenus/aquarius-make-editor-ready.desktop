@@ -11,6 +11,15 @@
 # Putting it in the old folder on Plasma 6 makes the menu item silently never
 # appear, with no error anywhere. See docs/ingest-right-click.md.
 #
+# ⚠️ THIS FILE HAS A GNOME TWIN, AND THE TWO MUST STAY IN STEP
+#   /usr/share/nautilus-python/extensions/aquarius_editor_ready.py
+# GNOME has no settings-file way to add a menu item, so its version is a small
+# Python program instead. Both files ship on both images — neither desktop reads
+# the other's, so each is simply ignored where it does not belong. If you change
+# the Exec line below, or the list of things this can be right-clicked on,
+# change them there too. ingest/tests/test_desktop.py compares the two and fails
+# if they drift apart.
+#
 # THINGS THAT LOOK WRONG BUT ARE NOT
 #   Type=Service          Correct for a right-click menu (a normal app would be
 #                         Type=Application). `desktop-file-validate` does not

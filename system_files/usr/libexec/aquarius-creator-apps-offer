@@ -16,13 +16,26 @@
 # again: nobody is allowed to ship it, so all we can offer is to walk you
 # through installing it.
 #
-# WHY kdialog AND NOT SOMETHING PRETTIER
-# kdialog is part of Plasma, so it is guaranteed to be on every AquariusOS
-# machine — no new dependency, nothing to compile, nothing to maintain. Its
-# tick-box list is plain, so the plainness is dealt with in the writing: each
-# line carries its own short "what is this for", which is the thing a beginner
-# actually needs. A custom window would look nicer and would be one more program
-# to keep working across a decade of Plasma releases. Not worth it.
+# WHY kdialog / zenity AND NOT SOMETHING PRETTIER
+# kdialog is part of Plasma and zenity is the same idea for GNOME, so one or the
+# other is guaranteed to be on every AquariusOS machine — no new dependency,
+# nothing to compile, nothing to maintain. Their tick-box lists are plain, so
+# the plainness is dealt with in the writing: each line carries its own short
+# "what is this for", which is the thing a beginner actually needs. A custom
+# window would look nicer and would be one more program to keep working across a
+# decade of desktop releases. Not worth it.
+#
+# TWO DESKTOPS, ONE SCRIPT  (added 2026-08-31 with the GNOME line)
+# AquariusOS is built in two flavours, KDE and GNOME, and this one file runs on
+# both. It works out which it is standing in AT RUN TIME rather than being
+# built two ways, because that is the honest description of the situation: the
+# window it needs to draw depends on the desktop the person is looking at, not
+# on which image was installed. (They are nearly always the same thing. Nearly.)
+#
+# Everything below is written so that the answer to "which tool do I have" can
+# be either, or both, or — on some future desktop nobody has thought of —
+# neither, in which case the script says nothing at all rather than failing in
+# front of a new user.
 #
 # THE RULES THIS FOLLOWS, WHICH MATTER MORE THAN THE FEATURE
 #   * It asks ONCE, ever, per user. The answer is recorded either way.
@@ -45,10 +58,46 @@ MODE="${1:-autostart}"
 STAMP_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/aquarius"
 STAMP_FILE="${STAMP_DIR}/creator-apps-offered"
 
+# ------------------------------------------------------------------------------
+# Which desktop are we actually looking at?
+# ------------------------------------------------------------------------------
+# XDG_CURRENT_DESKTOP is the standard answer to that question and every desktop
+# sets it. It can hold more than one word separated by colons (GNOME sessions
+# often say "GNOME" or "ubuntu:GNOME"), so this looks for the word rather than
+# comparing the whole thing.
+#
+# This is only ever used to decide which of two equally good tools to REACH FOR
+# FIRST. Every place it is used falls back to the other one if the preferred
+# tool is missing, so a wrong or empty answer here costs nothing.
+on_gnome() {
+    case ":${XDG_CURRENT_DESKTOP:-}:" in
+        *:GNOME:* | *GNOME*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # Small helper: a desktop notification that does not steal focus or need
-# clicking away. kdialog again, so still no new dependencies.
+# clicking away.
+#
+#   notify-send  the standard way, and it works on both desktops. It comes from
+#                libnotify, which build_files/build.sh installs deliberately for
+#                the ingest tool, so it is always here.
+#   kdialog      KDE's own version, kept as the fallback because it was what
+#                this script used before GNOME existed and it is known to work.
+#
+# The second argument is how long the message stays up, in seconds. notify-send
+# counts in thousandths of a second, hence the multiplication.
 notify() {
-    kdialog --title "AquariusOS" --passivepopup "$1" "${2:-8}" >/dev/null 2>&1 || :
+    local seconds="${2:-8}"
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send --app-name="AquariusOS" --expire-time="$(( seconds * 1000 ))" \
+            "AquariusOS" "$1" >/dev/null 2>&1 && return
+    fi
+    if command -v kdialog >/dev/null 2>&1; then
+        kdialog --title "AquariusOS" --passivepopup "$1" "${seconds}" >/dev/null 2>&1 && return
+    fi
+    # No way to say it on screen. Say it into the log instead of losing it.
+    printf 'AquariusOS: %s\n' "$1" >&2
 }
 
 remember() {
@@ -69,11 +118,25 @@ if [ "$MODE" != "--again" ]; then
     [ "$(id -un)" = "liveuser" ] && exit 0
 fi
 
-# kdialog is how KDE asks questions from a script. It is part of Plasma, so it
-# is always here. If it somehow is not, say nothing at all rather than failing
-# in front of the user — and do NOT record an answer, so the question can still
-# be asked on a later login.
-command -v kdialog >/dev/null 2>&1 || exit 0
+# kdialog and zenity are how a script asks a question with a window — kdialog on
+# KDE, zenity on GNOME. One of them is always here (build_files/build.sh installs
+# zenity on the GNOME images for exactly this reason; kdialog is part of Plasma).
+#
+# If NEITHER is here, say nothing at all rather than failing in front of the
+# user — and do NOT record an answer, so the question can still be asked on a
+# later login, on a machine where the tool has come back.
+#
+# ASK_WITH is decided once, here, and used by the one place that draws a window.
+# The preference follows the desktop; the fallback is whichever tool exists.
+if on_gnome && command -v zenity >/dev/null 2>&1; then
+    ASK_WITH="zenity"
+elif command -v kdialog >/dev/null 2>&1; then
+    ASK_WITH="kdialog"
+elif command -v zenity >/dev/null 2>&1; then
+    ASK_WITH="zenity"
+else
+    exit 0
+fi
 
 if [ "$MODE" != "--again" ]; then
     # Popping a window up while the panel and wallpaper are still appearing
@@ -101,35 +164,94 @@ state_for() { if "$@"; then echo off; else echo on; fi; }
 # ------------------------------------------------------------------------------
 # The window
 # ------------------------------------------------------------------------------
-# kdialog's tick-box list takes its items in threes: a short tag it hands back
-# to us, the words the user reads, and whether it starts ticked.
-#
-# --separate-output is what makes this safe to read: without it kdialog returns
-# every choice on ONE line wrapped in quotes, which a script then has to unpick.
-# With it, we get one plain tag per line and can just read them.
+# The same four apps, the same words, the same starting tick-boxes — drawn by
+# whichever of the two tools this desktop has. The two commands look different
+# because the tools take their arguments differently, and there is no way round
+# that; what matters is that both produce ONE tag per line on standard output
+# and both exit 0 for OK and 1 for Cancel, which is what the code after them
+# reads.
 #
 # The tags are the real Flathub app IDs, except "resolve", which is not an app
 # we can install — it is a request to start the guided setup further down.
-ITEMS=(
-    com.obsproject.Studio      "OBS Studio  —  record your screen and stream live"                    "$(state_for have_flatpak com.obsproject.Studio)"
-    org.audacityteam.Audacity  "Audacity  —  record and tidy up audio and voiceovers"                 "$(state_for have_flatpak org.audacityteam.Audacity)"
-    org.blender.Blender        "Blender  —  3D modelling, animation and visual effects (about 3 GB)"  "$(state_for have_flatpak org.blender.Blender)"
-    resolve                    "DaVinci Resolve  —  professional editing and colour (guided setup)"   "$(state_for have_resolve)"
+#
+# The three facts each app needs, kept together so the two versions below cannot
+# drift apart: the tag, the words, and whether it starts ticked.
+TAGS=(com.obsproject.Studio org.audacityteam.Audacity org.blender.Blender resolve)
+LABELS=(
+    "OBS Studio  —  record your screen and stream live"
+    "Audacity  —  record and tidy up audio and voiceovers"
+    "Blender  —  3D modelling, animation and visual effects (about 3 GB)"
+    "DaVinci Resolve  —  professional editing and colour (guided setup)"
+)
+STATES=(
+    "$(state_for have_flatpak com.obsproject.Studio)"
+    "$(state_for have_flatpak org.audacityteam.Audacity)"
+    "$(state_for have_flatpak org.blender.Blender)"
+    "$(state_for have_resolve)"
 )
 
-# kdialog exits 0 for OK and 1 for Cancel, so the `if !` below IS the
-# "did they say no" test. Written this way round on purpose: reading the exit
-# code out of $? on a later line is the classic way to lose it to some
-# harmless-looking command that ran in between.
-if ! CHOICES="$(kdialog \
-    --title "Set up your creator apps" \
-    --separate-output \
-    --checklist "AquariusOS can set these up for you now. They are the apps most people doing this kind of work end up wanting, and they are all ticked — clicking OK is the whole job.
+BLURB="AquariusOS can set these up for you now. They are the apps most people doing this kind of work end up wanting, and they are all ticked — clicking OK is the whole job.
 
 Untick anything you do not want. You can come back to this window any time: look for \"Install Creator Apps\" in your apps.
 
-You may be asked for your password once. That is normal — it is how Linux installs software for everybody who uses this computer." \
-    "${ITEMS[@]}" 2>/dev/null)"; then
+You may be asked for your password once. That is normal — it is how Linux installs software for everybody who uses this computer."
+
+ask_kdialog() {
+    # kdialog's tick-box list takes its items in threes: a short tag it hands
+    # back to us, the words the user reads, and whether it starts ticked.
+    #
+    # --separate-output is what makes this safe to read: without it kdialog
+    # returns every choice on ONE line wrapped in quotes, which a script then
+    # has to unpick. With it, we get one plain tag per line.
+    local items=() i
+    for i in "${!TAGS[@]}"; do
+        items+=("${TAGS[$i]}" "${LABELS[$i]}" "${STATES[$i]}")
+    done
+    kdialog \
+        --title "Set up your creator apps" \
+        --separate-output \
+        --checklist "$BLURB" \
+        "${items[@]}" 2>/dev/null
+}
+
+ask_zenity() {
+    # zenity's tick-box list is a TABLE, so it takes its items in threes too,
+    # but in a different order and shape:
+    #
+    #   --column ""      the tick-box column. zenity requires the first column
+    #                    of a --checklist to be the boolean one, and it must be
+    #                    the word TRUE or FALSE — not kdialog's on/off.
+    #   --column "Tag"   our tag. Hidden from the user and printed back to us,
+    #                    which is what --hide-column and --print-column do.
+    #   --column "App"   the words the user reads.
+    #
+    # --separator is set to a newline so the output is one tag per line, exactly
+    # like kdialog's --separate-output. Without it zenity joins them with "|"
+    # and the loop that reads them would see one long tag and match nothing.
+    #
+    # ⚠️ Do not "simplify" --print-column=2 away. Without it zenity prints the
+    # first column, which is the word TRUE — four times.
+    local items=() i state
+    for i in "${!TAGS[@]}"; do
+        # on/off above, TRUE/FALSE here. Translated in one place.
+        if [ "${STATES[$i]}" = "on" ]; then state="TRUE"; else state="FALSE"; fi
+        items+=("$state" "${TAGS[$i]}" "${LABELS[$i]}")
+    done
+    zenity --list --checklist \
+        --title="Set up your creator apps" \
+        --text="$BLURB" \
+        --column="" --column="Tag" --column="App" \
+        --hide-column=2 --print-column=2 \
+        --separator=$'\n' \
+        --width=760 --height=460 \
+        "${items[@]}" 2>/dev/null
+}
+
+# Both tools exit 0 for OK and 1 for Cancel, so the `if !` below IS the
+# "did they say no" test. Written this way round on purpose: reading the exit
+# code out of $? on a later line is the classic way to lose it to some
+# harmless-looking command that ran in between.
+if ! CHOICES="$(if [ "$ASK_WITH" = "zenity" ]; then ask_zenity; else ask_kdialog; fi)"; then
     # Cancel, or the window was closed. Never ask again.
     remember "declined"
     exit 0
@@ -225,17 +347,48 @@ if [ "$WANT_RESOLVE" -eq 1 ]; then
     # because the tester had not had a chance to download anything yet. A first
     # login must not depend on winning a name collision, so it does not.
     # Full explanation: the header of 96-aquarius-creator.just.
-    if command -v konsole >/dev/null 2>&1; then
-        konsole --noclose -e /usr/libexec/aquarius-install-resolve >/dev/null 2>&1 &
-    elif command -v xdg-terminal-exec >/dev/null 2>&1; then
-        xdg-terminal-exec /usr/libexec/aquarius-install-resolve >/dev/null 2>&1 &
-    else
+    # WHICH TERMINAL. The order matters and it follows the desktop, because the
+    # right answer is "the one this desktop actually ships":
+    #
+    #   xdg-terminal-exec   the standard, desktop-agnostic "open the user's
+    #                       terminal" command. Tried FIRST on GNOME, where it is
+    #                       present and correctly points at Ptyxis (which is the
+    #                       terminal Bazzite's GNOME images ship).
+    #   konsole             KDE's terminal. Tried first on KDE, where it is
+    #                       always there, and kept as a fallback everywhere else.
+    #
+    # --noclose is a konsole-only flag meaning "leave the window open when the
+    # command finishes", which matters because the last thing the Resolve setup
+    # prints is what you are supposed to do next. xdg-terminal-exec has no
+    # equivalent; the setup script pauses at the end for that reason.
+    aq_open_terminal() {
+        if on_gnome && command -v xdg-terminal-exec >/dev/null 2>&1; then
+            xdg-terminal-exec /usr/libexec/aquarius-install-resolve >/dev/null 2>&1 &
+            return 0
+        fi
+        if command -v konsole >/dev/null 2>&1; then
+            konsole --noclose -e /usr/libexec/aquarius-install-resolve >/dev/null 2>&1 &
+            return 0
+        fi
+        if command -v xdg-terminal-exec >/dev/null 2>&1; then
+            xdg-terminal-exec /usr/libexec/aquarius-install-resolve >/dev/null 2>&1 &
+            return 0
+        fi
+        return 1
+    }
+
+    if ! aq_open_terminal; then
         # No terminal we recognise. Tell the truth and point at the app-grid
         # entry, which does exactly the same thing.
-        kdialog --title "Set up DaVinci Resolve" --msgbox \
-            "AquariusOS could not open a terminal window automatically.
+        msg="AquariusOS could not open a terminal window automatically.
 
-Open your apps and click \"Install DaVinci Resolve\" to carry on." >/dev/null 2>&1 || :
+Open your apps and click \"Install DaVinci Resolve\" to carry on."
+        if [ "$ASK_WITH" = "zenity" ]; then
+            zenity --info --title="Set up DaVinci Resolve" --width=520 \
+                --text="$msg" >/dev/null 2>&1 || :
+        else
+            kdialog --title "Set up DaVinci Resolve" --msgbox "$msg" >/dev/null 2>&1 || :
+        fi
     fi
 fi
 
