@@ -1,0 +1,19 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "X-Plasma-API-Minimum-Version": "6.0",
+    "KPlugin": {
+        "Id": "com.aquariusos.quicksettings",
+        "Name": "Quick Settings",
+        "Description": "Wi-Fi, Bluetooth, Focus and Game Mode, with sound and brightness sliders, in one panel.",
+        "Icon": "configure",
+        "Category": "System Information",
+        "License": "GPL-3.0-or-later",
+        "Version": "1.0",
+        "Website": "https://github.com/royceadkins/aquarius-os",
+        "Authors": [
+            {
+                "Name": "AquariusOS"
+            }
+        ]
+    }
+}
