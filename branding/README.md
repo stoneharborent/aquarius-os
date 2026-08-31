@@ -23,7 +23,15 @@ the build can use.
 | `logo-mono.svg` | The same mark in a single colour, for icons and watermarks. |
 | `wallpapers/the-pour.svg` | The default wallpaper, as editable artwork. |
 | `render-wallpaper.sh` | Turns that artwork into the picture files the OS actually ships. |
+| `render-logo-png.sh` | Makes the bitmap copy of the mark that GNOME's **login screen** needs. |
+| `render-about-logo.sh` | Makes the two wide "mark + AquariusOS" pictures for GNOME's **Settings > About** page — one for light mode, one for dark. |
 | `README.md` | This file. |
+
+> **Why the About page needs its own pictures.** It does not look the logo up by name like
+> everything else does: on Fedora, `gnome-control-center` is compiled with two fixed file
+> paths under `/usr/share/pixmaps/`, and the only way to change that picture is to replace
+> the files at those paths. The full explanation is in `docs/gnome-variants.md` under
+> "First bench findings — branding", and in the header of `render-about-logo.sh`.
 
 ---
 
