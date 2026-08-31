@@ -183,7 +183,20 @@ dock.height = 2 * Math.ceil(unit * 3 / 2);
 
 // An icons-only task manager: pinned apps and running apps as a single row of
 // icons, no text labels.
-var tasks = dock.addWidget("org.kde.plasma.icontasks");
+//
+// This is our own widget, not KDE's. It is KDE's, copied — the same code, with
+// three things added that the design asks for and KDE has no setting for: the
+// icon lifts when you point at it, a dot sits under an app that is running, and
+// a dashed "+" tile at the end opens the full-screen app grid. It reads and
+// writes the SAME settings under the same names, including the launcher list
+// below, so nothing else on this page had to change.
+//
+// It lives in the image at
+//   /usr/share/plasma/plasmoids/com.aquariusos.dock/
+// and that folder's FORK-NOTES.md lists every line we changed and why.
+// The longer story — including what we gave up by doing it this way — is in
+// `docs/aquarius-dock.md` in this repo.
+var tasks = dock.addWidget("com.aquariusos.dock");
 tasks.currentConfigGroup = ["General"];
 
 // The apps pinned in the dock out of the box.
