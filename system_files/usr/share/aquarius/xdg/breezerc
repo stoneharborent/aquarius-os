@@ -1,0 +1,131 @@
+# ==============================================================================
+# AquariusOS — system-wide window-frame defaults
+# ==============================================================================
+# WHAT THIS FILE IS
+#   Factory settings for Breeze, the thing that draws the frame around every
+#   window: the titlebar, the close/minimise/maximise buttons, the thin border,
+#   and — the reason this file exists — the SHADOW the window casts on whatever
+#   is behind it.
+#
+#   Like `kwinrc` and `kdeglobals` beside it, everything here is a DEFAULT and
+#   never a forced value. Change any of it in System Settings → Colours &
+#   Themes → Window Decorations → Configure Breeze, and your choice goes into
+#   your own ~/.config/breezerc, which sits above this file in KDE's search
+#   order and wins from then on, permanently.
+#
+#   If the "we add a level, we never edit theirs" arrangement is new to you,
+#   read the top of `kdeglobals` in this same folder first. It explains the
+#   whole search order, and the tiny script that makes this folder count for
+#   anything at all.
+#
+# WHY THE SHADOW IS HERE AND NOT IN kwinrc
+#   Because a window's shadow is drawn by its DECORATION, not by the compositor.
+#   Breeze hands KWin a finished shadow image and KWin composites it; there is
+#   no shadow setting anywhere in kwinrc to reach for. So the AquariusOS glass
+#   ends up tuned across two files by nature, not by choice:
+#
+#     kwinrc    the blur, and the 16px rounded corners
+#     breezerc  the shadow those rounded corners are wrapped in   ← this file
+#
+#   The two are joined by one line in kwinrc's [Round-Corners] section,
+#   `UseNativeDecorationShadows=true`, which tells the rounded-corners effect to
+#   re-shape the shadow Breeze made here instead of drawing a second one of its
+#   own. Change the size below and the glass changes; change that line and this
+#   file stops mattering. Read them together.
+#
+# WHY BREEZE AT ALL
+#   The AquariusOS design wants a translucent titlebar, and Breeze has no
+#   setting for one — it is opaque and that is that. Rather than fork it for one
+#   property, the blur effect is told to blur behind the decoration as well
+#   (`BlurDecorations=true` in kwinrc), which gets the same look from the other
+#   direction. Alternative decorations that do support translucency exist, and
+#   they are on the same recompile-every-Plasma-release treadmill as the effects
+#   themselves; that is a trade worth making once, not twice.
+#
+# WHERE EVERY NAME BELOW CAME FROM
+#   KDE/breeze, Plasma/6.7 branch, kdecoration/breezesettingsdata.kcfg. The file
+#   opens with <kcfgfile name="breezerc"/> — that is what makes this file's name
+#   correct — and the three keys below are the first three entries inside
+#   <group name="Common">, which is what makes the section name below correct.
+#   Both were checked in the Plasma/6.7 branch specifically, not in "master",
+#   because Plasma/6.7 is what Bazzite ships.
+# ==============================================================================
+
+[Common]
+
+# ------------------------------------------------------------------------------
+# THE BIG SOFT SHADOW
+# ------------------------------------------------------------------------------
+# The design asks for a shadow like `0 24px 80px` — offset well below the
+# window, and very wide and soft. Breeze does not take numbers; it takes one of
+# five sizes, and the largest is the one we want.
+#
+# The five, and what they really are in pixels, read from the table Breeze
+# builds them from (KDE/breeze, Plasma/6.7, kdecoration/breezedecoration.cpp,
+# `s_shadowParams`). Each size is two overlapping shadows — a wide soft one and
+# a tighter darker one — described as (offset, blur radius, opacity):
+#
+#     ShadowNone       nothing
+#     ShadowSmall      down 4,   16px @ 100%  +  up 2,   8px @ 40%
+#     ShadowMedium     down 8,   32px @  90%  +  up 4,  16px @ 30%
+#     ShadowLarge      down 12,  48px @  80%  +  up 6,  24px @ 20%   ← KDE default
+#     ShadowVeryLarge  down 16,  64px @  70%  +  up 8,  32px @ 10%   ← ours
+#
+# So the biggest shadow KDE can draw is 64px wide, offset 16px down. The design
+# asked for 80px offset 24px. There is no sixth size and no way to type a
+# number — Breeze would have to be forked to get the last 16px, which is a lot
+# of ongoing maintenance for a difference nobody can see without a ruler. The
+# rounded-corners effect softens the shape a little further on top. This is a
+# known and accepted gap, recorded in docs/kwin-effects-layer.md rather than
+# quietly pretended away.
+#
+# (Breeze's own default is ShadowLarge.)
+ShadowSize=ShadowVeryLarge
+
+# HOW DARK THAT SHADOW IS. 25–255, where 255 is the full opacity of the table
+# above. 153 is 60% of full — the design's shadow is deep but not a hard black
+# edge, and at 255 a window sitting on a dark wallpaper looks like it is cut out
+# of the screen rather than floating above it.
+#
+# The range starts at 25, not 0: there is no way to ask Breeze for "no shadow at
+# all" here, only for a faint one. Switching it off entirely is what
+# ShadowSize=ShadowNone above is for.
+#
+# (Breeze's own default is 255.)
+ShadowStrength=153
+
+# THE COLOUR OF THE SHADOW. Plain black — a shadow is an absence of light, and
+# tinting it towards the accent colour is the kind of idea that looks clever in
+# a mock-up and muddy on a real screen.
+#
+# The three numbers are red, green and blue, which is how KDE stores a colour in
+# a settings file. This repeats Breeze's own default ("0, 0, 0" in the .kcfg)
+# and is written out on purpose, so that all three parts of one visual decision
+# — size, darkness, colour — are visible together in one place instead of two
+# being here and the third being somewhere a reader has to know to look.
+ShadowColor=0,0,0
+
+# ------------------------------------------------------------------------------
+# Deliberately NOT set here
+# ------------------------------------------------------------------------------
+# RoundedCorners — Breeze's own corner rounding, for the titlebar. It is already
+#   true by default, and it is NOT what gives AquariusOS its 16px corners: this
+#   setting only rounds the top two corners of the frame, at whatever radius
+#   Breeze feels like, and cannot be given a number. All four corners at exactly
+#   16px come from the KDE-Rounded-Corners effect, configured in kwinrc's
+#   [Round-Corners] section. Leaving Breeze's own rounding on is harmless — the
+#   effect draws over the top of it — and turning it off would only make the
+#   window look wrong for the fraction of a second before the effect runs.
+#
+# OutlineEnabled and OutlineCloseButton — the thin line around the frame, and
+#   the ring around the close button on hover. Both left at Breeze's defaults.
+#   The hairline border in the AquariusOS design is drawn by the rounded-corners
+#   effect's outline layer, which follows the 16px shape; Breeze's follows the
+#   old square one and the two would fight. Whether the effect's outline needs
+#   tuning is an eyes-on-a-screen question recorded in
+#   ../../../../../docs/kwin-effects-layer.md.
+#
+# [Windeco] — the whole second group in Breeze's settings: border thickness,
+#   title alignment, button size. All of it is taste, none of it is the glass,
+#   and every line written here is a line a user has to undo if they disagree.
+#   Left alone on purpose.

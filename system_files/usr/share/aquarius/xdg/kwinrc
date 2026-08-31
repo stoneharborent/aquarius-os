@@ -38,11 +38,26 @@
 #     main() lines 66, 72, 87.
 #
 # WHAT THIS FILE SHIPS
-#   The behaviour half of the "GNOME flow on KDE" work: a hot corner that opens
-#   the Overview, and a strip of four workspaces for it to show. The full
-#   plain-English write-up — including the one piece that could NOT be done from
-#   this file, and why — is in:
-#     ../../../../../docs/gnome-flow-behavior-layer.md
+#   Two things, in two halves.
+#
+#   1. The behaviour half of the "GNOME flow on KDE" work: a hot corner that
+#      opens the Overview, and a strip of four workspaces for it to show. The
+#      full plain-English write-up — including the one piece that could NOT be
+#      done from this file, and why — is in:
+#        ../../../../../docs/gnome-flow-behavior-layer.md
+#
+#   2. The glass: frosted, 16px-rounded application windows, switched on and
+#      tuned in the three sections added lower down. Those depend on two
+#      add-ons that are COMPILED INTO THIS IMAGE by
+#      ../../../../../build_files/kwin-effects.sh — settings alone cannot
+#      produce them, because KDE on its own will not blur behind a window that
+#      did not ask. Why they are compiled here rather than installed as a
+#      package, and how to bump their versions:
+#        ../../../../../docs/kwin-effects-layer.md
+#
+#   The window SHADOW that goes with the glass is not set here. Shadows belong
+#   to the window decoration, not the compositor, so they live one file over:
+#   `breezerc`, next to this one.
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
@@ -99,6 +114,283 @@ Rows=1
 #   kwin/src/plugins/overview/overviewconfig.kcfg (Plasma/6.7).
 [Effect-overview]
 BorderActivate=7
+
+# ==============================================================================
+# THE GLASS — which desktop effects run
+# ==============================================================================
+# This is the switchboard for the AquariusOS look: frosted-glass application
+# windows with 16px rounded corners. Three switches, and the reason all three
+# are needed is that we are REPLACING one of KDE's own effects rather than
+# adding to it.
+#
+# HOW THE NAME OF A SWITCH IS WORKED OUT — it is not written down anywhere as a
+# word, it is assembled in code, exactly like `gamecontrollerEnabled` in the
+# handheld file next door. KWin reads this `[Plugins]` group and, for every
+# effect it can find, looks for a key made of that effect's id with the word
+# "Enabled" stuck on the end:
+#
+#     const QString key = effectName + QStringLiteral("Enabled");
+#
+#   Source: KDE/kwin, Plasma/6.7, src/effect/effectloader.cpp,
+#   AbstractEffectLoader::readConfig(), lines 52–57. The effectName handed to it
+#   is `effect.pluginId()` — same file, line 396.
+#
+# And an effect's id is simply the name of its plug-in FILE without the ".so".
+# KWin finds those files by scanning one folder,
+# /usr/lib64/qt6/plugins/kwin/effects/plugins/ (src/effect/effectloader.cpp,
+# PluginEffectLoader::findAllEffects()).
+#
+# ⚠️ A misspelled key here does NOTHING and looks exactly like a key that works.
+# Every one of the three below was read out of the project's own build file
+# rather than copied off a forum, and the working is shown. It should still be
+# confirmed once on a real machine — see the note at the end of this section.
+#
+# ------------------------------------------------------------------------------
+[Plugins]
+
+# 1. TURN OFF KDE's OWN BLUR.
+#    Better Blur DX is a fork of this effect, not a companion to it. Upstream's
+#    README is blunt about running both: "Some windows might get double blurred
+#    and look off". So KDE's goes off and ours goes on, in that order.
+#
+#    id `blur`, from KDE/kwin, Plasma/6.7, src/plugins/blur/CMakeLists.txt —
+#    `kwin_add_builtin_effect(blur ${blur_SOURCES})`.
+#
+#    This line is doing real work: KDE ships blur switched ON
+#    (src/plugins/blur/metadata.json, "EnabledByDefault": true), so without it
+#    both effects would run at once.
+blurEnabled=false
+
+# 2. TURN ON BETTER BLUR DX — the glass itself.
+#    Stock KWin will never blur behind an application window unless the
+#    application asks for it, and almost none do. This one can blur behind
+#    everything, which is the difference between glass and cheap transparency.
+#
+#    id `better_blur_dx`, from the plug-in file better_blur_dx.so. That name
+#    comes from xarblu/kwin-effects-better-blur-dx v2.5.1, src/CMakeLists.txt —
+#    `add_library(better_blur_dx MODULE ${better_blur_dx_SOURCES})` — and there
+#    is no "lib" on the front of it because KDE's shared CMake rules strip the
+#    prefix off plug-ins: extra-cmake-modules, kde-modules/KDECMakeSettings.cmake,
+#    `set(CMAKE_SHARED_MODULE_PREFIX "")` under the comment "in KDE plugins
+#    don't have a prefix".
+#
+#    Confirmed a second way, from outside the source: upstream issue #105 quotes
+#    a packager's build log naming the file
+#    …/qt6/plugins/kwin-x11/effects/plugins/better_blur_dx.so (that is their X11
+#    build; ours is the kwin/ folder — the file name is the same).
+#
+#    The effect ships switched OFF ("EnabledByDefault": false in its
+#    src/metadata.json), so this line is what starts it.
+better_blur_dxEnabled=true
+
+# 3. TURN ON ROUNDED CORNERS.
+#    id `kwin4_effect_shapecorners`, from matinlotfali/KDE-Rounded-Corners
+#    v0.10.0, src/CMakeLists.txt —
+#    `kcoreaddons_add_plugin(kwin4_effect_shapecorners …)`. The project's own
+#    Fedora packaging lists the same file name literally, in
+#    .copr/kwin-effect-roundcorners.spec:
+#      %{_kf6_qtplugindir}/kwin/effects/plugins/kwin4_effect_shapecorners.so
+#
+#    This project DOES ship itself switched on ("EnabledByDefault": true), so
+#    strictly this line changes nothing today. It is written anyway, for the
+#    same reason the hot corner above is: it states our intent where a person
+#    can read it, and it pins the behaviour if upstream ever changes its mind.
+kwin4_effect_shapecornersEnabled=true
+
+# ⚠️ STILL TO CONFIRM ON A REAL MACHINE (both ids above). The derivation is
+# sound and doubly sourced, but the honest test is one command on a booted
+# AquariusOS, which will list every effect KWin actually loaded:
+#
+#     qdbus org.kde.KWin /Effects loadedEffects
+#
+# `better_blur_dx` and `kwin4_effect_shapecorners` should both appear, and
+# `blur` should not. If an id turns out to differ, correct it here — do not
+# "work around" it by enabling things by hand in System Settings, because that
+# writes into the user's own file and hides the problem from everybody else.
+
+# ------------------------------------------------------------------------------
+# THE BLUR ITSELF — Better Blur DX settings
+# ------------------------------------------------------------------------------
+# WHERE THIS SECTION NAME COMES FROM. It is not "Effect-better_blur_dx" (the
+# id with underscores) and it is not something we chose. The project spells it
+# out, hyphens and all, in its settings description file:
+#     <group name="Effect-better-blur-dx">
+#   Source: xarblu/kwin-effects-better-blur-dx v2.5.1, src/blur.kcfg.
+#
+# And the file those settings are read FROM is this one, kwinrc:
+#   src/blur.cpp line 131      — BlurConfig::instance(effects->config())
+#                                (KWin's own config, which is kwinrc)
+#   src/kcm/blur_config.cpp:27 — BlurConfig::instance("kwinrc")
+#                                (the System Settings page, spelled out)
+#
+# Every default quoted below is from that same blur.kcfg, so it is always clear
+# which of these lines is actually changing something.
+[Effect-better-blur-dx]
+
+# HOW STRONG THE BLUR IS. 1–15. Not a pixel radius: it is the number of steps in
+# a repeated shrink-and-grow ("Kawase") blur, so each step roughly doubles the
+# softness and the scale is nothing like CSS's blur(20px). 11 is the setting
+# that reads closest to the design's 20–24px frosted glass. Tuned by eye, on
+# purpose — there is no honest arithmetic that converts between the two.
+# (Upstream default: 15, which is the maximum and softer than we want.)
+BlurStrength=11
+
+# GRAIN, OFF. This adds fine noise over the blurred area to hide the banding
+# that smooth gradients can show. Our design's surfaces are flat colour over
+# blur with no long gradients, so the grain has nothing to hide and only makes
+# text look slightly dirty. (Upstream default: 5.)
+NoiseStrength=0
+
+# COLOUR LIFT. The design asks for saturate(1.3) behind glass — the wallpaper
+# showing through stays vivid instead of going grey. 130 is that 1.3, written
+# as a percentage. (Upstream default: 150, which is stronger than the design.)
+Saturation=130
+
+# ROUND THE BLUR TO MATCH THE WINDOW. Without this the blur is drawn as a plain
+# rectangle and its square corners poke out past the window's rounded ones —
+# upstream calls this the "korners" bug by name. 16 matches the 16px corner
+# radius set for the windows themselves further down this file, and the two
+# numbers must be changed together or the corners stop lining up.
+# (Upstream default: 0, i.e. square.)
+CornerRadius=16
+
+# BLUR BEHIND THE TITLEBAR AND BORDERS TOO. The window frame is drawn by Breeze,
+# which has no transparency setting of its own; without this line the glass
+# stops at the titlebar and every window wears an opaque hat.
+# (Upstream default: false.)
+BlurDecorations=true
+
+# MENUS AND PANELS COUNT AS WINDOWS. Both are excluded from blurring by default.
+# "Docks" here means panels — our top bar and dock — and their glass is the
+# single most visible surface in the design, so both are switched on.
+# (Upstream defaults: both false.)
+#
+# Read upstream's own note before assuming these do more than they do: they only
+# ALLOW these window types to be blurred. What actually decides it is the
+# matching rule immediately below. (docs/configuration.md, "Blur menus / Blur
+# docks".)
+BlurMenus=true
+BlurDocks=true
+
+# ------------------------------------------------------------------------------
+# "BLUR EVERY WINDOW" — and how to read this switch, because it is backwards
+# ------------------------------------------------------------------------------
+# Better Blur DX keeps a list of window classes and one switch that decides what
+# the list MEANS. In System Settings the switch is a pair of radio buttons:
+#
+#     ( ) Blur only matching        ← kcfg_BlurMatching
+#     ( ) Blur all except matching  ← kcfg_BlurNonMatching
+#
+#   Source: src/kcm/blur_config.ui, the two QRadioButtons in "Force blur".
+#
+# So "blur everything" is the SECOND one, with an empty list: blur all windows
+# except the ones named, and name none. Which means the line that does the work
+# is `BlurMatching=false` — a false that switches something ON. It is worth
+# reading twice.
+#
+# THE POLARITY, TRACED THROUGH THE SOURCE rather than assumed
+# (src/window_manager.cpp, v2.5.1):
+#
+#   reconfigure(), lines 145–149:
+#       if (config->blurMatching()) m_windowClassMatchMode = Whitelist;
+#       else                        m_windowClassMatchMode = Blacklist;
+#
+#   shouldForceBlurWindowClass(), lines 249–267 — the full truth table:
+#       window IS in the list  + Whitelist → blur it
+#       window IS in the list  + Blacklist → do not blur it
+#       window NOT in the list + Whitelist → do not blur it
+#       window NOT in the list + Blacklist → BLUR IT      ← what we want
+#
+# Note that only `BlurMatching` is ever read by the effect; `BlurNonMatching`
+# appears nowhere in the effect's code. It exists so the second radio button has
+# a setting of its own to bind to. It is written below anyway, so that a user
+# opening the settings page sees the correct button already selected instead of
+# neither.
+BlurMatching=false
+BlurNonMatching=true
+
+# The list itself: empty, so nothing is excluded.
+#
+# It has to be written out as an empty value rather than left out, because a
+# missing key means "use the upstream default" — and upstream's default is the
+# placeholder text `class1 / class2 / class3`. (Harmless either way in this
+# mode: three imaginary applications would be excluded from blurring. Written
+# properly regardless, so the settings page shows an empty box.)
+WindowClasses=
+
+# DELIBERATELY NOT SET: ForceContrastParams.
+#   Turning it on would make the Saturation above apply to Plasma's own surfaces
+#   — the top bar, the dock, popups — overriding the values our Plasma Style
+#   sets for each of them individually in its plasmarc. Those per-surface values
+#   are the more precise answer and they are the Plasma Style's job, so this
+#   effect is left respecting them, which is its default.
+#     Source: docs/configuration.md, "Force Contrast Parameters", which points
+#     at libplasma's own per-theme plasmarc as the thing being respected.
+#
+# DELIBERATELY NOT SET: the whole Refraction group (RefractionStrength and
+#   friends). It is a glass-edge distortion effect, it costs GPU time, and it is
+#   not in the AquariusOS design. Off is upstream's default.
+
+# ------------------------------------------------------------------------------
+# ROUNDED CORNERS — KDE-Rounded-Corners settings
+# ------------------------------------------------------------------------------
+# Section name and config file both read out of the project's own settings
+# description: src/kcm/options.kcfg has <kcfgfile name="kwinrc"/> at the top and
+# <group name="Round-Corners"> around everything below it.
+#   Source: matinlotfali/KDE-Rounded-Corners v0.10.0.
+[Round-Corners]
+
+# 16px corners on the focused window and on every other one. Two keys because
+# the effect can round the inactive window differently; the design does not, so
+# they are the same number. Both must match the CornerRadius set for the blur
+# above. (Upstream defaults: 20 and 20.)
+Size=16
+InactiveCornerRadius=16
+
+# A TRUE CIRCLE, NOT AN APPLE-STYLE SQUIRCLE. Upstream defaults to the squircle
+# — the continuous-curvature shape iOS uses — and it is a real, visible
+# difference. The AquariusOS design's 16px radius is drawn as a plain rounded
+# rectangle, and the window corners have to agree with the panel and popup
+# corners the Plasma Style draws, which are also plain. (Upstream default: true.)
+UseSquircleShape=false
+
+# ------------------------------------------------------------------------------
+# SHADOWS — one shadow, not two
+# ------------------------------------------------------------------------------
+# The obvious trap with two effects that can both draw a shadow is drawing both,
+# which gives every window a dark halo twice as heavy as intended.
+#
+# This one line avoids it. With it on, KDE-Rounded-Corners does NOT draw a
+# shadow of its own: it takes the shadow the window's decoration already has —
+# Breeze's, whose size and strength we set next door in `breezerc` — and
+# re-shapes it to follow the rounded corners.
+#
+# It is one or the other, never both, and the shader says so plainly:
+#     if (!isDrawingShadows())      … no shadow
+#     else if (usesNativeShadows)   return getNativeShadow(…);
+#     else                          return getCustomShadow(…);
+#   Source: src/shaders/shapecorners_shadows.glsl, getShadow().
+#
+# True is also upstream's default; it is written out because it is the load-
+# bearing half of a decision that spans two files, and a future reader changing
+# breezerc needs to find this line.
+UseNativeDecorationShadows=true
+
+# DELIBERATELY NOT SET: this effect's OWN shadow settings — ShadowSize,
+#   ShadowColor, ActiveShadowAlpha, InactiveShadowSize and the rest. Every one
+#   of them is ignored while UseNativeDecorationShadows is true (see the shader
+#   above), so writing them would be writing lines that do nothing, which is
+#   worse than leaving them out. The window shadow is tuned in ONE place:
+#   ../xdg/breezerc.
+#
+# DELIBERATELY NOT SET YET: the outline settings (OutlineThickness,
+#   SecondOutlineThickness and their colours). Upstream draws a 1px black
+#   outline plus a 1px white inner line at 33% opacity on every window by
+#   default, which is close to — but not the same as — the hairline border and
+#   inner top highlight the AquariusOS design asks for. Numbers guessed here
+#   would be numbers nobody had looked at, so this is left at upstream's
+#   defaults on the first test image and is written down in
+#   docs/kwin-effects-layer.md as something to judge with eyes on a screen.
 
 # ------------------------------------------------------------------------------
 # Deliberately NOT set here
