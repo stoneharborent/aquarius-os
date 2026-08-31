@@ -874,12 +874,17 @@ jobs:
           index="${SCHEMAS}/gschemas.compiled"
           if [ ! -s "$index" ]; then
             bad "${index} does not exist — every AquariusOS default would be ignored"
-          elif [ -n "$last_ours" ] && [ "$index" -nt "$last_ours" ]; then
-            ok "the settings index was rebuilt after our files were installed"
           else
-            bad "${index} is older than $(basename "$last_ours") — it was built before our settings arrived"
-            ls -l --time-style=full-iso "$index" "$last_ours"
+            ok "the compiled settings index exists"
           fi
+          # NO timestamp comparison here, deliberately. This image format
+          # flattens every file's clock to the same instant when it packs the
+          # image, so "was the index rebuilt AFTER our files arrived?" cannot be
+          # asked with timestamps — the first six-variant run (33424319065)
+          # failed on exactly that. The question is answered properly by check 4
+          # below, which READS our values back out of the compiled index: stale
+          # index = wrong answers = loud failure. (Same lesson as the KDE theme
+          # cache: on this OS, trust content, never mtimes.)
 
           # --- 4. and it really contains OUR answers ---------------------------
           # The strongest check available in a container: ask the settings system
