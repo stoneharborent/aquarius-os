@@ -1,0 +1,285 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  AquariusOS Plasma Style — the glass behind the TOP BAR and the DOCK.
+
+  Both bars come from this one file. Plasma picks which set of shapes to use:
+
+    plain names  (top, center, ...)            the top bar, which is bolted to
+                                               the top edge of the screen
+    floating-*   (floating-top, ...)           the dock, which hovers with a gap
+                                               around it
+
+  Because the top bar is bolted down, Plasma switches OFF its top, left and
+  right edges — so its rounded corners are simply never drawn and it reads as a
+  flat full-width strip, exactly like the design. The dock has all four edges
+  switched on, so it gets all four 16px corners.
+
+  Design values (branding/design-system, "AquariusOS Desktop Shell"):
+    fill        #06070C at 62% opacity  (both bars)
+    hairline    #EDEFF7 at 10% for the top bar, 14% for the dock
+    top sheen   #EDEFF7 at 7%, 1 pixel
+    dock corner 16 pixels
+    shadow      0 12px 40px black — softer than the popups'
+
+  HOW TO READ THIS FILE (you do not need to know SVG)
+  ...................................................
+  Plasma does not show this picture as-is. It hunts through it for shapes with
+  particular id="..." names and uses each one as a tile:
+
+      topleft   top      topright
+      left      center   right
+      bottomleft bottom  bottomright
+
+  It paints the four corners at their real size, stretches the four edges along
+  the sides, and stretches "center" to fill the middle. That is how one small
+  drawing becomes a panel of any size.
+
+  There are then three more sets of the same nine names:
+
+    mask-*     A solid black copy of the shape. KWin blurs the wallpaper ONLY
+               where this black shape is. If it does not match the visible
+               shape exactly, blur leaks past the rounded corners as pale
+               squares. Change one, change the other.
+    shadow-*   The soft drop shadow. It is drawn OUTSIDE the window, by the
+               compositor, so it can be bigger than the window itself.
+    hint-*     Invisible markers. Their size is the value; nothing is painted.
+
+  Everything is laid out in labelled bands below so you can find things.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240" viewBox="0 0 320 240">
+  <defs>
+    <!-- Edge gradients. "aq-sh-down" means: solid at the top of the tile,
+         fading to nothing at the bottom. -->
+    <linearGradient id="aq-sh-down" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.45"/>
+      <stop offset="0.25" stop-color="#000000" stop-opacity="0.2475"/>
+      <stop offset="0.5" stop-color="#000000" stop-opacity="0.117"/>
+      <stop offset="0.75" stop-color="#000000" stop-opacity="0.0405"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="aq-sh-up" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.45"/>
+      <stop offset="0.25" stop-color="#000000" stop-opacity="0.2475"/>
+      <stop offset="0.5" stop-color="#000000" stop-opacity="0.117"/>
+      <stop offset="0.75" stop-color="#000000" stop-opacity="0.0405"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="aq-sh-rightward" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.45"/>
+      <stop offset="0.25" stop-color="#000000" stop-opacity="0.2475"/>
+      <stop offset="0.5" stop-color="#000000" stop-opacity="0.117"/>
+      <stop offset="0.75" stop-color="#000000" stop-opacity="0.0405"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="aq-sh-leftward" x1="1" y1="0" x2="0" y2="0">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.45"/>
+      <stop offset="0.25" stop-color="#000000" stop-opacity="0.2475"/>
+      <stop offset="0.5" stop-color="#000000" stop-opacity="0.117"/>
+      <stop offset="0.75" stop-color="#000000" stop-opacity="0.0405"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </linearGradient>
+    <!-- Corner gradients. Each is centred on the corner of the tile that touches
+         the window, and because the units are "fraction of this tile" the circle
+         is squashed into an ellipse that exactly matches the two edge tiles it
+         sits between. That is why there is no seam. -->
+    <radialGradient id="aq-sh-corner-br" cx="1" cy="1" r="1">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.45"/>
+      <stop offset="0.25" stop-color="#000000" stop-opacity="0.2475"/>
+      <stop offset="0.5" stop-color="#000000" stop-opacity="0.117"/>
+      <stop offset="0.75" stop-color="#000000" stop-opacity="0.0405"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="aq-sh-corner-bl" cx="0" cy="1" r="1">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.45"/>
+      <stop offset="0.25" stop-color="#000000" stop-opacity="0.2475"/>
+      <stop offset="0.5" stop-color="#000000" stop-opacity="0.117"/>
+      <stop offset="0.75" stop-color="#000000" stop-opacity="0.0405"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="aq-sh-corner-tr" cx="1" cy="0" r="1">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.45"/>
+      <stop offset="0.25" stop-color="#000000" stop-opacity="0.2475"/>
+      <stop offset="0.5" stop-color="#000000" stop-opacity="0.117"/>
+      <stop offset="0.75" stop-color="#000000" stop-opacity="0.0405"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="aq-sh-corner-tl" cx="0" cy="0" r="1">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.45"/>
+      <stop offset="0.25" stop-color="#000000" stop-opacity="0.2475"/>
+      <stop offset="0.5" stop-color="#000000" stop-opacity="0.117"/>
+      <stop offset="0.75" stop-color="#000000" stop-opacity="0.0405"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- ===== BAND 1 — the top bar (plain names) ===== -->
+  <g id="aq-frame">
+    <g id="topleft">
+      <path d="M 0,16 A 16,16 0 0 1 16,0 L 16,16 Z" fill="#06070C" fill-opacity="0.62"/>
+      <path d="M 0.5,16 A 15.5,15.5 0 0 1 16,0.5" fill="none" stroke="#EDEFF7" stroke-opacity="0.1" stroke-width="1"/>
+      <path d="M 1.5,16 A 14.5,14.5 0 0 1 16,1.5" fill="none" stroke="#EDEFF7" stroke-opacity="0.07" stroke-width="1"/>
+    </g>
+    <g id="topright">
+      <path d="M 32,0 A 16,16 0 0 1 48,16 L 32,16 Z" fill="#06070C" fill-opacity="0.62"/>
+      <path d="M 32,0.5 A 15.5,15.5 0 0 1 47.5,16" fill="none" stroke="#EDEFF7" stroke-opacity="0.1" stroke-width="1"/>
+      <path d="M 32,1.5 A 14.5,14.5 0 0 1 46.5,16" fill="none" stroke="#EDEFF7" stroke-opacity="0.07" stroke-width="1"/>
+    </g>
+    <g id="bottomleft">
+      <path d="M 16,48 A 16,16 0 0 1 0,32 L 16,32 Z" fill="#06070C" fill-opacity="0.62"/>
+      <path d="M 16,47.5 A 15.5,15.5 0 0 1 0.5,32" fill="none" stroke="#EDEFF7" stroke-opacity="0.1" stroke-width="1"/>
+    </g>
+    <g id="bottomright">
+      <path d="M 48,32 A 16,16 0 0 1 32,48 L 32,32 Z" fill="#06070C" fill-opacity="0.62"/>
+      <path d="M 47.5,32 A 15.5,15.5 0 0 1 32,47.5" fill="none" stroke="#EDEFF7" stroke-opacity="0.1" stroke-width="1"/>
+    </g>
+    <g id="top">
+      <rect x="16" y="0" width="16" height="16" fill="#06070C" fill-opacity="0.62"/>
+      <rect x="16" y="0" width="16" height="1" fill="#EDEFF7" fill-opacity="0.1"/>
+      <rect x="16" y="1" width="16" height="1" fill="#EDEFF7" fill-opacity="0.07"/>
+    </g>
+    <g id="bottom">
+      <rect x="16" y="32" width="16" height="16" fill="#06070C" fill-opacity="0.62"/>
+      <rect x="16" y="47" width="16" height="1" fill="#EDEFF7" fill-opacity="0.1"/>
+    </g>
+    <g id="left">
+      <rect x="0" y="16" width="16" height="16" fill="#06070C" fill-opacity="0.62"/>
+      <rect x="0" y="16" width="1" height="16" fill="#EDEFF7" fill-opacity="0.1"/>
+    </g>
+    <g id="right">
+      <rect x="32" y="16" width="16" height="16" fill="#06070C" fill-opacity="0.62"/>
+      <rect x="47" y="16" width="1" height="16" fill="#EDEFF7" fill-opacity="0.1"/>
+    </g>
+    <rect id="center" x="16" y="16" width="16" height="16" fill="#06070C" fill-opacity="0.62"/>
+  </g>
+
+  <!-- ===== BAND 2 — the top bar's blur cut-out ===== -->
+  <g id="aq-mask">
+    <g id="mask-topleft">
+      <path d="M 0,72 A 16,16 0 0 1 16,56 L 16,72 Z" fill="#000000"/>
+    </g>
+    <g id="mask-topright">
+      <path d="M 32,56 A 16,16 0 0 1 48,72 L 32,72 Z" fill="#000000"/>
+    </g>
+    <g id="mask-bottomleft">
+      <path d="M 16,104 A 16,16 0 0 1 0,88 L 16,88 Z" fill="#000000"/>
+    </g>
+    <g id="mask-bottomright">
+      <path d="M 48,88 A 16,16 0 0 1 32,104 L 32,88 Z" fill="#000000"/>
+    </g>
+    <g id="mask-top">
+      <rect x="16" y="56" width="16" height="16" fill="#000000"/>
+    </g>
+    <g id="mask-bottom">
+      <rect x="16" y="88" width="16" height="16" fill="#000000"/>
+    </g>
+    <g id="mask-left">
+      <rect x="0" y="72" width="16" height="16" fill="#000000"/>
+    </g>
+    <g id="mask-right">
+      <rect x="32" y="72" width="16" height="16" fill="#000000"/>
+    </g>
+    <rect id="mask-center" x="16" y="72" width="16" height="16" fill="#000000"/>
+  </g>
+
+  <!-- ===== BAND 3 — the dock (floating-* names) ===== -->
+  <g id="aq-frame-floating">
+    <g id="floating-topleft">
+      <path d="M 120,16 A 16,16 0 0 1 136,0 L 136,16 Z" fill="#06070C" fill-opacity="0.62"/>
+      <path d="M 120.5,16 A 15.5,15.5 0 0 1 136,0.5" fill="none" stroke="#EDEFF7" stroke-opacity="0.14" stroke-width="1"/>
+      <path d="M 121.5,16 A 14.5,14.5 0 0 1 136,1.5" fill="none" stroke="#EDEFF7" stroke-opacity="0.07" stroke-width="1"/>
+    </g>
+    <g id="floating-topright">
+      <path d="M 152,0 A 16,16 0 0 1 168,16 L 152,16 Z" fill="#06070C" fill-opacity="0.62"/>
+      <path d="M 152,0.5 A 15.5,15.5 0 0 1 167.5,16" fill="none" stroke="#EDEFF7" stroke-opacity="0.14" stroke-width="1"/>
+      <path d="M 152,1.5 A 14.5,14.5 0 0 1 166.5,16" fill="none" stroke="#EDEFF7" stroke-opacity="0.07" stroke-width="1"/>
+    </g>
+    <g id="floating-bottomleft">
+      <path d="M 136,48 A 16,16 0 0 1 120,32 L 136,32 Z" fill="#06070C" fill-opacity="0.62"/>
+      <path d="M 136,47.5 A 15.5,15.5 0 0 1 120.5,32" fill="none" stroke="#EDEFF7" stroke-opacity="0.14" stroke-width="1"/>
+    </g>
+    <g id="floating-bottomright">
+      <path d="M 168,32 A 16,16 0 0 1 152,48 L 152,32 Z" fill="#06070C" fill-opacity="0.62"/>
+      <path d="M 167.5,32 A 15.5,15.5 0 0 1 152,47.5" fill="none" stroke="#EDEFF7" stroke-opacity="0.14" stroke-width="1"/>
+    </g>
+    <g id="floating-top">
+      <rect x="136" y="0" width="16" height="16" fill="#06070C" fill-opacity="0.62"/>
+      <rect x="136" y="0" width="16" height="1" fill="#EDEFF7" fill-opacity="0.14"/>
+      <rect x="136" y="1" width="16" height="1" fill="#EDEFF7" fill-opacity="0.07"/>
+    </g>
+    <g id="floating-bottom">
+      <rect x="136" y="32" width="16" height="16" fill="#06070C" fill-opacity="0.62"/>
+      <rect x="136" y="47" width="16" height="1" fill="#EDEFF7" fill-opacity="0.14"/>
+    </g>
+    <g id="floating-left">
+      <rect x="120" y="16" width="16" height="16" fill="#06070C" fill-opacity="0.62"/>
+      <rect x="120" y="16" width="1" height="16" fill="#EDEFF7" fill-opacity="0.14"/>
+    </g>
+    <g id="floating-right">
+      <rect x="152" y="16" width="16" height="16" fill="#06070C" fill-opacity="0.62"/>
+      <rect x="167" y="16" width="1" height="16" fill="#EDEFF7" fill-opacity="0.14"/>
+    </g>
+    <rect id="floating-center" x="136" y="16" width="16" height="16" fill="#06070C" fill-opacity="0.62"/>
+  </g>
+
+  <!-- ===== BAND 4 — the dock's blur cut-out ===== -->
+  <g id="aq-mask-floating">
+    <g id="mask-floating-topleft">
+      <path d="M 120,72 A 16,16 0 0 1 136,56 L 136,72 Z" fill="#000000"/>
+    </g>
+    <g id="mask-floating-topright">
+      <path d="M 152,56 A 16,16 0 0 1 168,72 L 152,72 Z" fill="#000000"/>
+    </g>
+    <g id="mask-floating-bottomleft">
+      <path d="M 136,104 A 16,16 0 0 1 120,88 L 136,88 Z" fill="#000000"/>
+    </g>
+    <g id="mask-floating-bottomright">
+      <path d="M 168,88 A 16,16 0 0 1 152,104 L 152,88 Z" fill="#000000"/>
+    </g>
+    <g id="mask-floating-top">
+      <rect x="136" y="56" width="16" height="16" fill="#000000"/>
+    </g>
+    <g id="mask-floating-bottom">
+      <rect x="136" y="88" width="16" height="16" fill="#000000"/>
+    </g>
+    <g id="mask-floating-left">
+      <rect x="120" y="72" width="16" height="16" fill="#000000"/>
+    </g>
+    <g id="mask-floating-right">
+      <rect x="152" y="72" width="16" height="16" fill="#000000"/>
+    </g>
+    <rect id="mask-floating-center" x="136" y="72" width="16" height="16" fill="#000000"/>
+  </g>
+
+  <!-- ===== BAND 5 — content inset markers =====
+       top bar 4px, dock 6px, 'thick' panels 8px -->
+    <rect id="hint-top-margin" x="200" y="56" width="4" height="4" fill="none"/>
+    <rect id="hint-bottom-margin" x="208" y="56" width="4" height="4" fill="none"/>
+    <rect id="hint-left-margin" x="216" y="56" width="4" height="4" fill="none"/>
+    <rect id="hint-right-margin" x="216" y="64" width="4" height="4" fill="none"/>
+    <rect id="floating-hint-top-margin" x="200" y="72" width="4" height="6" fill="none"/>
+    <rect id="floating-hint-bottom-margin" x="208" y="72" width="4" height="6" fill="none"/>
+    <rect id="floating-hint-left-margin" x="216" y="72" width="6" height="4" fill="none"/>
+    <rect id="floating-hint-right-margin" x="216" y="80" width="6" height="4" fill="none"/>
+    <rect id="thick-hint-top-margin" x="240" y="88" width="4" height="8" fill="none"/>
+    <rect id="thick-hint-bottom-margin" x="248" y="88" width="4" height="8" fill="none"/>
+    <rect id="thick-hint-left-margin" x="256" y="88" width="8" height="4" fill="none"/>
+    <rect id="thick-hint-right-margin" x="256" y="96" width="8" height="4" fill="none"/>
+  <rect id="thick-center" x="280" y="56" width="16" height="16" fill="#06070C" fill-opacity="0.62"/>
+
+  <!-- ===== BAND 6 — the drop shadow =====
+       Shared by both bars. The top bar only ever
+       shows its bottom tile, because that is its only switched-on edge. -->
+    <rect id="shadow-topleft" x="0" y="120" width="20" height="10" fill="url(#aq-sh-corner-br)"/>
+    <rect id="shadow-top" x="20" y="120" width="16" height="10" fill="url(#aq-sh-down)"/>
+    <rect id="shadow-topright" x="36" y="120" width="20" height="10" fill="url(#aq-sh-corner-bl)"/>
+    <rect id="shadow-left" x="0" y="130" width="20" height="16" fill="url(#aq-sh-rightward)"/>
+    <rect id="shadow-center" x="20" y="130" width="16" height="16" fill="none"/>
+    <rect id="shadow-right" x="36" y="130" width="20" height="16" fill="url(#aq-sh-leftward)"/>
+    <rect id="shadow-bottomleft" x="0" y="146" width="20" height="30" fill="url(#aq-sh-corner-tr)"/>
+    <rect id="shadow-bottom" x="20" y="146" width="16" height="30" fill="url(#aq-sh-up)"/>
+    <rect id="shadow-bottomright" x="36" y="146" width="20" height="30" fill="url(#aq-sh-corner-tl)"/>
+    <rect id="shadow-hint-top-margin" x="0" y="184" width="2" height="10" fill="none"/>
+    <rect id="shadow-hint-bottom-margin" x="8" y="184" width="2" height="30" fill="none"/>
+    <rect id="shadow-hint-left-margin" x="16" y="184" width="20" height="2" fill="none"/>
+    <rect id="shadow-hint-right-margin" x="44" y="184" width="20" height="2" fill="none"/>
+</svg>

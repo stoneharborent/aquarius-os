@@ -84,10 +84,22 @@ widgetStyle=Breeze
 [kdeglobals][Icons]
 Theme=breeze-dark
 
-# The Plasma "style" is the look of the panels and popups. "default" is Breeze's,
-# which — same as the widget style — follows our colour scheme.
+# The Plasma "style" is the look of the panels and popups — the glass. "aquarius"
+# is the folder name under /usr/share/plasma/desktoptheme/, and it is ours: the
+# smoked top bar, the floating dock, and the popups that drop out of them.
+# (It used to say "default", which is Breeze's.)
+#
+# Our theme deliberately ships NO colours of its own, so — same as the widget
+# style above — it follows the AquariusDark scheme set at the top of this file.
+# Change the palette in one place and the panels change with it.
+#
+# This one line is the only place the glass is switched on, and like everything
+# else here it is a DEFAULT, not a forced value: anyone who picks a different
+# Plasma Style in Settings keeps their choice.
+#
+# What is in the theme, and how to test it: docs/plasma-style.md
 [plasmarc][Theme]
-name=default
+name=aquarius
 
 # Deliberately NOT set here: the mouse cursor theme, the window decoration and
 # the boot/login splash screen. Those are inherited from Bazzite untouched. If
