@@ -1,0 +1,119 @@
+# ==============================================================================
+# AquariusOS on GNOME — the dock's apps, and which extensions are switched on
+# ==============================================================================
+# Read the header of zz1-aquarius-10-look.gschema.override first. It explains
+# what an override file is, why these are only DEFAULTS that a user always
+# beats, and why the name has to start with "zz1".
+#
+# This file holds the two GNOME Shell settings that decide what the desktop is
+# actually made of.
+# ==============================================================================
+
+[org.gnome.shell]
+
+# ------------------------------------------------------------------------------
+# The apps pinned to the dock on a brand-new account
+# ------------------------------------------------------------------------------
+# Each entry is the file name of an app's "desktop entry" — the little file that
+# tells Linux an app exists. To find one, run:
+#     ls /usr/share/applications | grep -i <the app>
+# and use the file name exactly as it appears, .desktop and all. A typo here is
+# silent: the icon simply does not appear and nothing says why.
+#
+# The six, and why each earns a slot:
+#
+#   Files       every other job on this computer starts with footage on a card
+#   Firefox     the browser the OS preinstalls (a Flatpak, hence the long id)
+#   Steam       this is a gaming OS as much as a creator one
+#   Editor      ours
+#   Writer      ours
+#   Settings    a brand-new user needs to find it, and GNOME buries it
+#
+# Bazzite's own list is longer (Lutris, Bazaar, Ptyxis, yafti). We are not
+# deleting those apps — they are all still in the app grid, one Super-key press
+# away. This is only about which six get a permanent seat, and a short dock is
+# a readable dock.
+favorite-apps=['org.gnome.Nautilus.desktop', 'org.mozilla.firefox.desktop', 'steam.desktop', 'aquarius-editor.desktop', 'aquarius-writer.desktop', 'org.gnome.Settings.desktop']
+
+# ------------------------------------------------------------------------------
+# The GNOME Shell extensions that are switched on
+# ------------------------------------------------------------------------------
+# ⚠️ READ THIS BEFORE EDITING THE LINE BELOW.
+#
+# This setting is a complete list, not an addition. Whatever is written here
+# REPLACES Bazzite's list entirely — anything of theirs left out of it is
+# switched off, and anything of ours left out is switched off too. There is no
+# "inherit and add". So the list has to be written out deliberately every time,
+# and every name on it has to be spelled exactly right (they are the
+# extension's own id, which always looks like an email address).
+#
+# WHAT WE KEEP FROM BAZZITE, AND WHY
+#
+#   appindicatorsupport   Lets old-fashioned apps put an icon in the top bar.
+#                         Without it, several creator tools — Steam among them —
+#                         lose their tray icon completely.
+#   gsconnect             Phone pairing: notifications, file send, clipboard.
+#                         Genuinely useful and hard to replace.
+#   caffeine              Stops the screen sleeping. On a machine that renders
+#                         and exports video for an hour at a time, this is not a
+#                         nicety.
+#   hotedge               Moves GNOME's "throw the pointer at the corner" gesture
+#                         down to the bottom EDGE of the screen. Bazzite turns
+#                         the corner off and enables this instead, and it suits a
+#                         desktop with a dock at the bottom, which ours has.
+#   logomenu              The distro menu at the top-left. It shows the OS logo,
+#                         which on our images is the AquariusOS logo.
+#   add-to-steam          Right-click any app, add it to your Steam library.
+#                         Pure Bazzite gaming value; costs us nothing.
+#   restartto             Restart straight into another operating system or the
+#                         BIOS from the power menu. The dual-boot machine this
+#                         OS is aimed at wants this.
+#   bazaar-integration    Wires GNOME Shell up to Bazaar, the app store Bazzite
+#                         ships. Removing it would leave the store half-connected.
+#
+# WHAT WE ADD
+#
+#   dash-to-dock          The dock itself: always visible, along the bottom, in
+#                         the middle. GNOME's own dash only exists inside the
+#                         Activities overview, and Royce wants a dock on the
+#                         desktop the way macOS and our KDE line have one.
+#                         Bazzite does NOT ship this extension, so we bake it
+#                         into the image ourselves — build_files/gnome-extensions.sh
+#                         downloads a pinned, checksummed release and installs
+#                         it. Its own settings are in the next file,
+#                         zz1-aquarius-30-dash-to-dock.gschema.override.
+#
+# WHAT WE DELIBERATELY LEAVE OFF (all four are still INSTALLED — just not on)
+#
+#   blur-my-shell         Frosted-glass panels and popups. Off for two reasons.
+#                         First, the posture: AquariusOS on GNOME works with
+#                         GNOME's grain, and heavy compositing effects are the
+#                         opposite of that. Second, history — we already spent
+#                         days on window blur on the KDE line, it never rendered
+#                         correctly, and the whole design's transparency was
+#                         removed on 2026-08-30 because of it
+#                         (docs/blur-known-issue.md). We are not walking back
+#                         into that.
+#   compiz-alike-magic-lamp-effect
+#                         The "genie" minimise animation. A novelty effect that
+#                         costs frames on every minimise. GNOME's own animation
+#                         is fine.
+#   burn-my-windows       Window open/close special effects. Same reasoning.
+#                         (Bazzite installs it but does not switch it on either.)
+#   desktop-cube          Spinning 3D workspace switcher. Same reasoning.
+#                         (Also installed-not-enabled upstream.)
+#   user-theme            This one is not an effect — it is the switch that lets
+#                         a custom GNOME SHELL theme be applied, and Bazzite uses
+#                         it to apply a shell theme of their own. We ship no
+#                         shell theme and do not intend to: a shell theme is a
+#                         thing that breaks on every GNOME release and has to be
+#                         chased forever. With this off, the shell is stock
+#                         Adwaita, wearing our accent and our wallpaper, which is
+#                         exactly the look we want. Anyone who wants a shell
+#                         theme can switch this back on in the Extensions app.
+#
+# ⚠️ HANDHELDS GET ONE MORE. The GNOME handheld image needs "block-caribou",
+# which stops GNOME's on-screen keyboard fighting Steam's. It is added by
+# zz1-aquarius-40-handheld.gschema.override, which sorts after this file and
+# only ships on that one image.
+enabled-extensions=['appindicatorsupport@rgcjonas.gmail.com', 'gsconnect@andyholmes.github.io', 'caffeine@patapon.info', 'hotedge@jonathan.jdoda.ca', 'logomenu@aryan_k', 'add-to-steam@pupper.space', 'restartto@tiagoporsch.github.io', 'bazaar-integration@kolunmi.github.io', 'dash-to-dock@micxgx.gmail.com']

@@ -803,6 +803,71 @@ else
 fi
 
 # ==============================================================================
+# THE GNOME DESKTOP LAYER  (the GNOME line, from 2026-08-31)
+# ==============================================================================
+# Everything above this point is shared by both lines. This block is the whole
+# of what makes a GNOME image an AquariusOS GNOME image, and the whole of what
+# makes a KDE image not carry any of it.
+#
+# Two scripts, in this order, and the order matters:
+#
+#   gnome-extensions.sh   installs the dock (Dash to Dock), which puts a new
+#                         settings description into /usr/share/glib-2.0/schemas
+#   gnome-desktop.sh      installs the GNOME-side packages, brands the login
+#                         screen, and — LAST — compiles that folder, which is
+#                         what makes every AquariusOS default real
+#
+# Compile before install and the dock's own settings are not in the index. Hence
+# the order. gnome-desktop.sh says so at length in its own header.
+#
+# THE OTHER HALF OF THE SWITCH — the `else` below
+# Everything the GNOME layer needs is copied onto EVERY image by the system_files
+# step at the top of this script, and then removed again from the KDE images
+# here. Shipping and un-shipping is deliberately the wrong way round from how it
+# sounds, because it is the way that cannot fail quietly: the files are always in
+# the repo, always reviewed, always in one place, and the only image-specific
+# thing is one `rm`. This is the same arrangement the handheld settings folder
+# has used since 2026-08-28.
+#
+# Would leaving them on the KDE images actually hurt? Almost certainly not —
+# nothing on a KDE machine reads a GNOME settings override or a GNOME wallpaper
+# listing. But the KDE line is FROZEN, and "frozen" has to mean something: a
+# frozen image should keep containing exactly what it contained yesterday. Not
+# "a few harmless extra files". So they come off.
+# ------------------------------------------------------------------------------
+
+if [ "${AQ_DESKTOP}" = "gnome" ]; then
+  /ctx/gnome-extensions.sh
+  /ctx/gnome-desktop.sh
+else
+  echo "NOTE: KDE image — removing the GNOME-only files that shipped with system_files."
+  rm -f /usr/share/glib-2.0/schemas/zz1-aquarius-*.gschema.override
+  rm -rf /usr/share/backgrounds/aquarius
+  rm -f /usr/share/gnome-background-properties/aquarius.xml
+  rm -f /usr/share/nautilus-python/extensions/aquarius_editor_ready.py
+  rm -f /usr/share/aquarius/branding/aquarius-logo.png
+
+  # Tidy up folders we created and have now emptied — but ONLY if they really
+  # are empty. --ignore-fail-on-non-empty is what makes that safe: if the base
+  # image turns out to keep something of its own in one of these, it is left
+  # exactly as it was and nothing goes red.
+  rmdir --ignore-fail-on-non-empty \
+    /usr/share/gnome-background-properties \
+    /usr/share/nautilus-python/extensions \
+    /usr/share/nautilus-python \
+    /usr/share/aquarius/branding 2>/dev/null || true
+
+  # And prove the removal really happened. A leftover override file on a frozen
+  # KDE image is exactly the kind of drift this whole arrangement exists to stop.
+  if compgen -G "/usr/share/glib-2.0/schemas/zz1-aquarius-*" > /dev/null; then
+    echo "AQUARIUS ERROR: AquariusOS GNOME settings are still on this KDE image."
+    ls -l /usr/share/glib-2.0/schemas/zz1-aquarius-*
+    exit 1
+  fi
+  echo "OK: no GNOME-only files left on this KDE image."
+fi
+
+# ==============================================================================
 # AQUARIUSOS IDENTITY — make the OS call itself AquariusOS
 # ==============================================================================
 # Everything above this point installs things. This last step renames things:

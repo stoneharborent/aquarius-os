@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  AquariusOS default wallpaper — "The Pour", MIDNIGHT colourway (DARK)
+  For the GNOME line's dark mode. Design source of truth: branding/tokens.md,
+  plus the Midnight palette in docs/custom-de/ice-theme-tokens.md.
+
+  This is the SOURCE file. The PNG that ships with the OS is rendered from it:
+      bash branding/render-wallpaper.sh gnome
+  Edit this file, re-render, commit both. Never hand-edit the PNG.
+
+  WHY THIS IS NOT THE SAME AS the-pour.svg, WHICH IS ALSO DARK
+  the-pour.svg is the KDE line's wallpaper and belongs to the older "Flow State"
+  identity: a near-black void (#06070C) with Starlight blue (#8AB4FF) and a
+  purple nebula. Midnight is Ice's designed dark twin from the Aquarius Writer
+  palette, and it is a different dark: deep-ocean NAVY (#0B1220) rather than
+  near-black, with the electric aquas reading like light under water. They are
+  two different colour identities, not two renders of one.
+
+  The KDE file is deliberately left exactly as it was. That line is frozen.
+
+  WHAT MOVED, RELATIVE TO Ice
+  Same composition again — same canvas, same three ribbons, same watermark.
+  Going from the Ice version to this one:
+    * The ground drops from pale paper to deep-ocean navy, and the corner glow
+      goes back to being LIGHTER than the ground, which is what a glow does in
+      a dark room.
+    * Ribbon opacities come back down. A translucent colour gains contrast over
+      a dark ground, so the numbers that were right on paper would be a stripe
+      here.
+    * The accents swap to their dark halves: Deep Sky Blue #00BFFF for Aquarius
+      Blue, Turquoise #40E0D0 for its Ice-side #0E9AA0.
+    * The warm thread goes back to ancient gold #E6DDB8, which is lighter than
+      this ground and therefore visible again.
+    * The watermark goes back to ice-blue ink (#DCE9F4) — one step lighter than
+      its ground, the mirror of what the Ice version does with navy.
+
+  Authored at 1920x1080. preserveAspectRatio="xMidYMid slice" means it crops
+  gracefully to 16:10 and other shapes instead of letterboxing, because every
+  ribbon runs past the edge of the frame on purpose.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080"
+     viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <!-- Base: a faint lift off the top-right corner, falling into deep-ocean
+         navy. Same geometry as the original; the values are Midnight's
+         surfaceAlt, bgSoft and bg read from most-lifted to least. -->
+    <radialGradient id="sky" gradientUnits="userSpaceOnUse"
+                    cx="1497.6" cy="-108" r="2688"
+                    gradientTransform="translate(1497.6,-108) scale(1,0.401786) translate(-1497.6,108)">
+      <stop offset="0"    stop-color="#1B2940"/>
+      <stop offset="0.55" stop-color="#111A2B"/>
+      <stop offset="1"    stop-color="#0B1220"/>
+    </radialGradient>
+
+    <!-- Ribbon 1 — the main pour. Deep Sky Blue through the thick of it, with
+         Aquarius Blue behind and a turquoise tail. These are the Midnight-side
+         halves of the same theme-aware accent pairs the Ice file uses. -->
+    <linearGradient id="r1" gradientUnits="objectBoundingBox" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0"    stop-color="#00BFFF" stop-opacity="0"/>
+      <stop offset="0.25" stop-color="#2C8FC4" stop-opacity="0.36"/>
+      <stop offset="0.55" stop-color="#00BFFF" stop-opacity="0.44"/>
+      <stop offset="0.80" stop-color="#40E0D0" stop-opacity="0.14"/>
+      <stop offset="1"    stop-color="#00BFFF" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Ribbon 2 — the thin "ancient" gold thread. Rare by design. -->
+    <linearGradient id="r2" gradientUnits="objectBoundingBox" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0"    stop-color="#E6DDB8" stop-opacity="0"/>
+      <stop offset="0.45" stop-color="#E6DDB8" stop-opacity="0.2"/>
+      <stop offset="0.85" stop-color="#E6DDB8" stop-opacity="0"/>
+      <stop offset="1"    stop-color="#E6DDB8" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Ribbon 3 — a deep undertow, low and quiet. Turquoise, well under. -->
+    <linearGradient id="r3" gradientUnits="objectBoundingBox" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0"    stop-color="#40E0D0" stop-opacity="0"/>
+      <stop offset="0.15" stop-color="#40E0D0" stop-opacity="0"/>
+      <stop offset="0.50" stop-color="#40E0D0" stop-opacity="0.13"/>
+      <stop offset="1"    stop-color="#40E0D0" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Blur amounts are stdDeviation in these 1920x1080 units, so they scale
+         with the render resolution automatically. Unchanged from the original. -->
+    <filter id="b1" x="-50%" y="-50%" width="200%" height="200%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="23.6"/>
+    </filter>
+    <filter id="b2" x="-50%" y="-50%" width="200%" height="200%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="13.8"/>
+    </filter>
+    <filter id="b3" x="-50%" y="-50%" width="200%" height="200%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="26"/>
+    </filter>
+  </defs>
+
+  <rect x="0" y="0" width="1920" height="1080" fill="url(#sky)"/>
+
+  <!-- Every ribbon is drawn wider than the canvas so the rotation never shows a
+       cut end. Rotation is about the centre of the frame. -->
+  <g transform="rotate(-13 960 540)">
+    <rect x="-560" y="237.6" width="3040" height="313.2" fill="url(#r1)" filter="url(#b1)"/>
+  </g>
+  <g transform="rotate(-13 960 540)">
+    <rect x="-560" y="432" width="3040" height="64.8" fill="url(#r2)" filter="url(#b2)"/>
+  </g>
+  <g transform="rotate(-11 960 540)">
+    <rect x="-560" y="604.8" width="3040" height="183.6" fill="url(#r3)" filter="url(#b3)"/>
+  </g>
+
+  <!-- The mark, bottom right, barely there. Kept ~100 units clear of the right
+       edge so a 16:10 crop (which shaves ~96 units off each side) never cuts it.
+       #DCE9F4 is Midnight's ink — ice blue, not white. -->
+  <g transform="translate(1688 892) scale(1.5)" opacity="0.4" fill="none"
+     stroke="#DCE9F4" stroke-width="5" stroke-linecap="round">
+    <path d="M14 54 30 12q1.4-3.6 4 0L50 54"/>
+    <path d="M20 40q6-6 12 0t12 0"/>
+  </g>
+</svg>

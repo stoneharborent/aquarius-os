@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  AquariusOS — put "The Pour" in GNOME's wallpaper picker
+  =============================================================================
+  WHAT THIS FILE IS FOR, IN PLAIN ENGLISH
+
+  Two completely separate things have to be true for a wallpaper to work
+  properly, and it is easy to do one and forget the other:
+
+    1. IT IS THE WALLPAPER ON A NEW MACHINE.
+       That is settled elsewhere, in
+       /usr/share/glib-2.0/schemas/zz1-aquarius-10-look.gschema.override.
+
+    2. IT IS IN THE LIST when somebody opens Settings > Appearance.
+       That is this file, and nothing else does it.
+
+  Without this file the wallpaper still appears on a fresh install — but the
+  moment somebody browses the picker to look at the other options, ours is not
+  among them, and there is no way back to it except knowing the file path. That
+  is a small thing that feels broken.
+
+  =============================================================================
+  THE PIECES
+
+  <filename>       the LIGHT picture. GNOME shows this while the desktop is in
+                   its light appearance, which on AquariusOS is the default —
+                   the Ice colourway.
+  <filename-dark>  the DARK picture, shown when somebody switches to dark. This
+                   pairing is what makes one entry in the picker follow the
+                   light/dark switch instead of being two separate wallpapers.
+  <options>zoom    fill the screen and crop what does not fit, rather than
+                   stretching the picture out of shape.
+  <pcolor>         the flat colour painted behind the picture for the fraction
+                   of a second before it loads. Matched to the wallpaper's own
+                   ground so that moment is invisible.
+
+  ⚠️ THE TWO PATHS BELOW MUST MATCH the ones in zz1-aquarius-10-look.gschema.override.
+  They are the same two files named in two places, and a rename that only
+  updates one of them gives a desktop that comes up a flat colour with no error.
+  build_files/gnome-desktop.sh compares them and fails the build if they have
+  drifted apart, so this is checked rather than remembered.
+
+  The pictures themselves are rendered from SVG sources in branding/wallpapers/
+  by branding/render-wallpaper.sh. Never hand-edit the PNGs.
+  =============================================================================
+-->
+<wallpapers>
+  <wallpaper deleted="false">
+    <name>The Pour</name>
+    <filename>/usr/share/backgrounds/aquarius/the-pour-ice-3840x2160.png</filename>
+    <filename-dark>/usr/share/backgrounds/aquarius/the-pour-midnight-3840x2160.png</filename-dark>
+    <options>zoom</options>
+    <shade_type>solid</shade_type>
+    <pcolor>#EAF1F8</pcolor>
+    <scolor>#DFEAF4</scolor>
+  </wallpaper>
+</wallpapers>
