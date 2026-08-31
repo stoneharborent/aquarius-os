@@ -73,6 +73,20 @@ topBar.height = 2 * Math.ceil(unit * 1.6 / 2);
 //   asks to be drawn full-screen. That is why it is spelled "kickerdash" and
 //   not "kickoffdash". It ships in the `kdeplasma-addons` package, which
 //   build.sh asks for by name so this line can never point at nothing.
+//
+// ⚠️ WE ARE DELIBERATELY DIFFERENT FROM THE DESIGN HERE
+//   The V2 desktop design (branding/design-system/AquariusOS Desktop Shell.html)
+//   removed the launcher and marks this logo as decoration you cannot click.
+//   AquariusOS keeps the click. Why:
+//     - it looks exactly the same either way — same mark, same size, same spot,
+//       so nothing about the design is visibly broken;
+//     - on 2026-08-26 we decided the desktop should behave like GNOME, and a
+//       full-screen app grid is how GNOME lets you find an app you have not
+//       pinned to the dock. Taking it away leaves nothing in its place until
+//       the designed search overlay actually exists;
+//     - deleting this later is one line, so nothing is being locked in.
+//   If Royce would rather match the design exactly, delete the four lines below
+//   and add a plain icon widget in their place.
 var launcher = topBar.addWidget("org.kde.plasma.kickerdash");
 launcher.currentConfigGroup = ["General"];
 launcher.writeConfig("icon", "aquarius-logo");
@@ -91,7 +105,58 @@ topSpacer.writeConfig("expanding", true);
 topSpacer.reloadConfig();
 
 topBar.addWidget("org.kde.plasma.systemtray");
-topBar.addWidget("org.kde.plasma.digitalclock");
+
+// The clock, at the far right end of the bar.
+//
+// WHAT THE DESIGN ASKS FOR
+//   "Sat Aug 30 21:47" — the date first, then the time, on one line.
+//
+// HOW THESE FOUR SETTINGS GET THERE
+//   showDate           show the date at all. It is on by default; we say it
+//                      anyway so the intent is written down.
+//   dateFormat         "custom" tells the clock to use our own format string
+//                      instead of the one the user's country supplies.
+//   customDateFormat   "ddd MMM d" is Qt's spelling for short-day, short-month,
+//                      day-without-a-leading-zero → "Sat Aug 30".
+//   dateDisplayFormat  0 = Adaptive (the clock decides), 1 = BesideTime,
+//                      2 = BelowTime. We want 1, side by side on one line.
+//
+//   Note the config group is "Appearance", not "General" like the launcher
+//   above. Each widget names its own groups and the clock uses that one; using
+//   the wrong name writes the settings into a place nothing reads.
+//
+// WHY THE DATE LANDS ON THE LEFT
+//   This is the part worth checking rather than trusting. In the clock's own
+//   code, the beside-the-time layout anchors the date label's RIGHT edge to the
+//   LEFT edge of the time — "anchors.right: labelsGrid.left" — so the date is
+//   drawn before the time, which is the order the design wants. We are not
+//   fighting the widget; that is simply how it lays out.
+//
+// SOURCES (KDE's own code — browsable at lxr.kde.org)
+//   plasma-workspace/applets/digital-clock/package/contents/config/main.xml
+//     — the setting names, the "Appearance" group, and the Adaptive /
+//       BesideTime / BelowTime list in that order.
+//   plasma-workspace/applets/digital-clock/package/contents/ui/DigitalClock.qml
+//     — the "oneLineDate" state, which is switched on by dateDisplayFormat 1
+//       and contains the anchor quoted above.
+//
+// WHAT WE CANNOT DO FROM A CONFIG FILE, HONESTLY STATED
+//   * The design draws the date in the dimmer secondary text colour and the
+//     time in the bright one. The clock paints both labels the same colour and
+//     offers no setting for it. Making the date dimmer needs a real theme or a
+//     replacement widget — that is Tier 2 work, not this file.
+//   * The design's mock shows a 24-hour clock (21:47). We do NOT force that
+//     here: the 12-vs-24-hour choice follows the country the user picked during
+//     setup, which is the right default for a person, and they can change it in
+//     the clock's own settings in two clicks. (If we ever did want to force it,
+//     the setting is use24hFormat and 2 means 24-hour.)
+var clock = topBar.addWidget("org.kde.plasma.digitalclock");
+clock.currentConfigGroup = ["Appearance"];
+clock.writeConfig("showDate", true);
+clock.writeConfig("dateFormat", "custom");
+clock.writeConfig("customDateFormat", "ddd MMM d");
+clock.writeConfig("dateDisplayFormat", 1);
+clock.reloadConfig();
 
 // -----------------------------------------------------------------------------
 // 2. THE DOCK
