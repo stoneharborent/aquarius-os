@@ -382,15 +382,128 @@ UseNativeDecorationShadows=true
 #   above), so writing them would be writing lines that do nothing, which is
 #   worse than leaving them out. The window shadow is tuned in ONE place:
 #   ../xdg/breezerc.
+
+# ------------------------------------------------------------------------------
+# WINDOW OUTLINES — judged on a screen, 2026-08-30, and changed
+# ------------------------------------------------------------------------------
+# Until the first hardware boot these were left at upstream's defaults, on the
+# honest grounds that numbers picked without looking at a screen are numbers
+# nobody has checked. They have now been looked at, and they are wrong for us.
 #
-# DELIBERATELY NOT SET YET: the outline settings (OutlineThickness,
-#   SecondOutlineThickness and their colours). Upstream draws a 1px black
-#   outline plus a 1px white inner line at 33% opacity on every window by
-#   default, which is close to — but not the same as — the hairline border and
-#   inner top highlight the AquariusOS design asks for. Numbers guessed here
-#   would be numbers nobody had looked at, so this is left at upstream's
-#   defaults on the first test image and is written down in
-#   docs/kwin-effects-layer.md as something to judge with eyes on a screen.
+# WHAT UPSTREAM DRAWS BY DEFAULT, and what it looked like
+#   Two rings around every window: a 1px BLACK one on the frame edge, and a 1px
+#   WHITE one just inside it at a third opacity. Against the AquariusOS
+#   wallpaper the black one all but disappears and the white one reads as a
+#   cream hairline tracing every window — brighter than anything else on the
+#   screen and completely unlike the design's near-invisible border.
+#
+# WHERE THE DEFAULTS COME FROM — matinlotfali/KDE-Rounded-Corners v0.10.0,
+# src/kcm/options.kcfg (the file this whole [Round-Corners] group is described
+# by; it carries <kcfgfile name="kwinrc"/> and <group name="Round-Corners">):
+#
+#   <entry name="OutlineThickness" type="Double"><default>1</default>
+#                                   <min>0</min><max>20</max></entry>
+#   <entry name="OutlineColor" type="Color"><default>black</default></entry>
+#   <entry name="ActiveOutlineAlpha" type="Int"><default>255</default>
+#                                   <min>0</min><max>255</max></entry>
+#   <entry name="SecondOutlineThickness" type="Double"><default>1</default>
+#                                   <min>0</min><max>20</max></entry>
+#   <entry name="SecondOutlineColor" type="Color"><default>white</default></entry>
+#   <entry name="ActiveSecondOutlineAlpha" type="Int"><default>85</default>
+#                                   <min>0</min><max>255</max></entry>
+#
+# 85 out of 255 is the "33%" — there is no 0.33 anywhere in the project; the
+# opacity is always a whole number out of 255.
+#
+# HOW COLOUR AND OPACITY ARE WRITTEN, because it is not what you would guess
+#   The colour keys hold RGB only. Whatever alpha you write into them is read
+#   and then thrown away, and replaced by the separate Alpha key:
+#
+#     color.setAlpha(alpha);      // src/WindowConfig.cpp, resolveColor()
+#
+#   So `OutlineColor=237,239,247,36` would NOT give you a 14% line — it would
+#   give you a solid one. The opacity has to go in ActiveOutlineAlpha.
+#
+#   The other trap: ACTIVE has no prefix and INACTIVE does, but only on some of
+#   them. `OutlineColor` is the active colour; `InactiveOutlineColor` is the
+#   inactive one; there is no such key as `ActiveOutlineColor`. The alphas, by
+#   contrast, are BOTH prefixed. Every key below was copied out of the kcfg
+#   rather than guessed for exactly this reason.
+#
+# WHAT WE SHIP
+#   One ring, at the design's hairline. `border-2` in branding/tokens.md is
+#   rgba(237,239,247,.14) — the same line the dock is drawn with — and 14% of
+#   255 is 35.7, which rounds to 36. Inactive windows drop to the top bar's
+#   quieter 10%, which is 25.5 → 26; a window you are not using should recede.
+OutlineThickness=1
+InactiveOutlineThickness=1
+OutlineColor=237,239,247
+InactiveOutlineColor=237,239,247
+ActiveOutlineAlpha=36
+InactiveOutlineAlpha=26
+
+#   And no second ring at all. The design's 7% inner highlight is a TOP-edge
+#   sheen — the Plasma Style draws it that way and fades it out round the
+#   corners — but this effect can only draw its inner line as a complete ring.
+#   A 7% ring all the way round is not the design; it is a different, quieter
+#   version of the cream line we are removing. Off is the honest answer.
+#
+#   Zero really does switch it off rather than draw a hairline-thin one; the
+#   shader guards every outline pass on it:
+#     bool hasSecondOutline() { return secondOutlineColor1.a > 0.0
+#                                   && secondOutlineThickness > 0.0; }
+#     Source: v0.10.0, src/shaders/variables.glsl.
+#   And <min>0</min> on the entry means 0 is a legal value, not a clamped one.
+SecondOutlineThickness=0
+InactiveSecondOutlineThickness=0
+
+# DELIBERATELY NOT SET: OuterOutlineThickness / InactiveOuterOutlineThickness.
+#   This is a THIRD ring, drawn outside the window into the shadow margin.
+#   Upstream ships it at 0 — off — which is what we want, and repeating a
+#   default that is already correct is noise.
+#
+# ⚠️ STILL OPEN: the dark line that runs past the top-left corner.
+#   The bench photo shows, at the top-left corner of a window, a straight dark
+#   1px line carrying on upwards past the point where the rounded corner
+#   curves away, ending abruptly against the wallpaper. Changing the outline
+#   colour above may or may not remove it, and it is worth writing down why
+#   the two possibilities are hard to tell apart from a photograph.
+#
+#   It could be this outline drawn on the square frame rather than the rounded
+#   one. Against that: the effect computes the outline and the window edge from
+#   the same rounded distance field (shapeCorner() in src/shaders/
+#   shapecorners.glsl), so a mismatch would show at every corner in both
+#   directions — and the photo has a vertical stub with no horizontal twin.
+#
+#   The likelier answer is the corner reconstruction that comes with
+#   UseNativeDecorationShadows=true, set above. In that mode the effect does
+#   not draw a shadow; it rebuilds what should sit behind the corner it just
+#   rounded off, by sampling the window texture about three pixels OUTSIDE the
+#   frame on each side and blending the two samples across the corner
+#   (getNativeShadow(), src/shaders/shapecorners_shadows.glsl). Three pixels
+#   outside the frame is where the window decoration paints its own dark
+#   border, so that dark pixel gets smeared along the corner — and because the
+#   sampled region starts two pixels outside the frame, the smear genuinely
+#   extends past the window edge onto the wallpaper, exactly as photographed.
+#
+#   Upstream agrees. Issue #252, "Remnant of outline despite it being disabled
+#   in the settings" — reporter has BOTH outlines switched off and still sees
+#   a stub at the top-left; the maintainer's reply is "Actually, it is not the
+#   outline, but the shadow", and adds that it appears on Wayland and not on
+#   X11. Issue #378 is the same artefact at 125% display scaling.
+#
+#   CONCLUSION: it is most likely the shadow reconstruction, not the outline.
+#   It is NOT being changed here, because the fix — UseNativeDecorationShadows
+#   =false — undoes the deliberate one-shadow decision above and would let this
+#   effect draw its own shadow alongside Breeze's. That trade needs a screen,
+#   not a guess. THE NEXT BENCH TEST, in order:
+#     1. Look again with the outline colour changed above. If the stub is gone,
+#        it was the outline and there is nothing left to do.
+#     2. If it is still there, try UseNativeDecorationShadows=false together
+#        with ShadowSize / ActiveShadowAlpha tuned to match breezerc, and check
+#        the window shadow has not doubled.
+#     3. Check the display scaling. If it is 125% or 150%, try 100% once — #378
+#        says the sample offsets land wrong at fractional scales.
 
 # ------------------------------------------------------------------------------
 # Deliberately NOT set here
