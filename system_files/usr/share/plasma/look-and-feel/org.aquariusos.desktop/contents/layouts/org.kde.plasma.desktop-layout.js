@@ -92,6 +92,19 @@ launcher.currentConfigGroup = ["General"];
 launcher.writeConfig("icon", "aquarius-logo");
 launcher.reloadConfig();
 
+// The name of the app you are using right now, in bold — "Files", "Firefox",
+// "Steam". It sits between the logo and the menus, exactly where a Mac puts it,
+// and it is the label that tells you which app those File / Edit / View menus
+// belong to.
+//
+// This one is ours. KDE ships no widget that does this, so the image carries a
+// small one of its own:
+//     system_files/usr/share/plasma/plasmoids/com.aquariusos.appname/
+// Nothing to configure — it has no settings. Beginner-facing write-up, including
+// what it reads and what it does when no window is focused:
+//     docs/app-name-widget.md
+topBar.addWidget("com.aquariusos.appname");
+
 // The current application's menus (File, Edit, View…), shown in the bar instead
 // of inside the window. This is the piece that makes the top bar feel like a
 // Mac menu bar rather than a Windows taskbar.
@@ -297,17 +310,16 @@ for (var i = 0; i < allDesktops.length; i++) {
 // =============================================================================
 // TODO — what is deliberately NOT here yet
 // =============================================================================
-// The genuine macOS top bar also carries the focused window's TITLE and its
-// close / minimise / maximise BUTTONS, on the left of the bar.
+// The genuine macOS top bar also carries the focused window's close / minimise /
+// maximise BUTTONS, on the left of the bar.
 //
-// KDE Plasma 6 does not ship widgets for either of those. The only options are
-// third-party add-ons, and the good one for the window buttons is written in C++
-// and would need a compiler stage added to this repo's build. That is a real
-// piece of work with real maintenance attached, so it is not being smuggled into
-// a first pass.
+// (The app NAME used to be on this list too. It is now shipped — see the
+// com.aquariusos.appname line up in the top bar section.)
 //
-// The top bar is therefore honestly "launcher + app menus + tray + clock"
-// today. When we do want the full treatment, the candidates are:
-//   - antroids/application-title-bar  (written in QML — could simply be copied
-//     into /usr/share/plasma/plasmoids/ by this image, no compiler needed)
+// KDE Plasma 6 does not ship a widget for the window buttons. The only options
+// are third-party add-ons, and the good one is written in C++ and would need a
+// compiler stage added to this repo's build. That is a real piece of work with
+// real maintenance attached, so it is not being smuggled into a first pass.
+//
+// When we do want them, the candidate is:
 //   - IF-tiger/applet-window-buttons6 (written in C++ — needs a build stage)

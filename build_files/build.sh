@@ -554,6 +554,57 @@ esac
 /ctx/plasma-style-version.sh
 
 # ==============================================================================
+# THE TOP BAR'S APP NAME — check our own widget really landed
+# ==============================================================================
+# The bold "Dolphin" / "Firefox" in the top bar is a small widget of our own,
+# copied into the image by the system_files step at the top of this script. It
+# needs no packages and nothing compiled, so there is nothing to install here —
+# only something to check.
+#
+# WHY CHECK AT ALL. The desktop layout script asks for this widget by its id,
+# `com.aquariusos.appname`. If the folder is missing, or the id inside
+# metadata.json stops matching the folder name, KDE's answer is to build the top
+# bar WITHOUT an app name and say nothing. There is no error, no log line and no
+# gap on screen — the bar just quietly looks like the old one. That is the worst
+# kind of failure, so it gets caught here instead.
+#
+# WHAT THIS CANNOT PROVE. There is no desktop and no logged-in person inside a
+# build container, so nothing here can start Plasma and watch it draw the
+# widget. The bench checklist for that is in docs/app-name-widget.md.
+# ------------------------------------------------------------------------------
+
+APPNAME_DIR=/usr/share/plasma/plasmoids/com.aquariusos.appname
+
+# The two files the widget is made of.
+test -d "${APPNAME_DIR}"
+test -r "${APPNAME_DIR}/metadata.json"
+test -r "${APPNAME_DIR}/contents/ui/main.qml"
+
+# metadata.json must still be readable JSON. A stray comma here means KDE cannot
+# read the widget at all, which is the silent failure described above.
+python3 -c "import json; json.load(open('${APPNAME_DIR}/metadata.json'))"
+
+# And the id inside it must match the folder it lives in, because that pair is
+# what the layout script's `topBar.addWidget("com.aquariusos.appname")` line
+# resolves against.
+python3 - "${APPNAME_DIR}" <<'PY'
+import json, os, sys
+folder = sys.argv[1]
+meta = json.load(open(os.path.join(folder, "metadata.json")))
+plugin_id = meta["KPlugin"]["Id"]
+expected = os.path.basename(folder)
+if plugin_id != expected:
+    sys.exit(
+        f"FAIL: the app-name widget's Id is '{plugin_id}' but its folder is "
+        f"'{expected}'. KDE matches those two, so the top bar would come up "
+        f"with no app name and no error. Make them agree."
+    )
+if meta.get("KPackageStructure") != "Plasma/Applet":
+    sys.exit("FAIL: the app-name widget is not declared as a Plasma/Applet.")
+print(f"OK: the app-name widget is installed as {plugin_id}.")
+PY
+
+# ==============================================================================
 # AQUARIUSOS IDENTITY — make the OS call itself AquariusOS
 # ==============================================================================
 # Everything above this point installs things. This last step renames things:
