@@ -204,17 +204,21 @@ esac
 #
 # It is done in two passes, and the first one is the important one:
 #
-#   PASS 1, in a throwaway copy, with --strict.
+#   PASS 1, in a throwaway copy, with --strict, and with ONLY OUR OVERRIDES.
 #     --strict turns warnings into errors. In particular it turns "this override
 #     mentions a setting that does not exist" — a typo in one of our files, or a
 #     setting GNOME renamed in a new release — from a warning nobody reads into
-#     a failed build. We cannot use --strict on the real folder: the base image
-#     brings its own overrides from several packages and one of those emitting a
-#     warning is not our business and must not stop AquariusOS shipping. So the
-#     strict pass happens on a copy, where a failure is unambiguously ours.
+#     a failed build.
 #
-#   PASS 2, for real, without --strict.
-#     Writes the index the machine actually uses.
+#     ⚠️ The copy contains every schema in the image but ONLY the zz1-aquarius-*
+#     override files, and that scoping is the whole point. Bazzite and several
+#     Fedora packages ship overrides of their own; one of THOSE emitting a
+#     warning is not our business and must not be able to stop AquariusOS
+#     shipping. Copying only ours means a failure here is unambiguously ours,
+#     and points at a file we can fix. Do not "simplify" this to copy them all.
+#
+#   PASS 2, for real, on the real folder, without --strict.
+#     Writes the index the machine actually uses, from everybody's overrides.
 #
 # The `rm` first is not superstition. glib-compile-schemas will refuse to
 # overwrite an index it thinks is newer than its inputs, and in a container
@@ -237,10 +241,12 @@ if ! command -v glib-compile-schemas > /dev/null 2>&1; then
 fi
 
 AQ_SCHEMA_TEST="$(mktemp -d)"
+# Every schema description, so the overrides have something to attach to...
 cp "${SCHEMA_DIR}"/*.gschema.xml "${AQ_SCHEMA_TEST}/"
-cp "${SCHEMA_DIR}"/*.gschema.override "${AQ_SCHEMA_TEST}/"
+# ...but only OUR overrides. See the note above.
+cp "${SCHEMA_DIR}"/zz1-aquarius-*.gschema.override "${AQ_SCHEMA_TEST}/"
 if ! glib-compile-schemas --strict "${AQ_SCHEMA_TEST}"; then
-    echo "AQUARIUS ERROR: one of the settings override files is wrong." >&2
+    echo "AQUARIUS ERROR: one of the AquariusOS settings override files is wrong." >&2
     echo "                Read the message above: it names the file, the setting and" >&2
     echo "                the problem. The usual cause is a misspelled setting name," >&2
     echo "                or a setting that this version of GNOME has renamed." >&2

@@ -107,15 +107,19 @@ say() { echo; echo "=== $* ==="; }
 # ------------------------------------------------------------------------------
 # The build tools, borrowed and given back
 # ------------------------------------------------------------------------------
-# Three tools are needed to install this, and none of them belongs on a finished
+# Four tools are needed to install this, and none of them belongs on a finished
 # AquariusOS machine:
 #
+#   make               runs the project's own installer.
 #   sassc              turns the extension's stylesheet source into real CSS.
 #                      Without it the dock loads but is completely unstyled.
 #   gettext (msgfmt)   compiles the translations, so the dock's settings window
 #                      is not English-only.
-#   glib2-devel        provides glib-compile-schemas on images that do not
-#                      already have it.
+#   glib2-devel        would provide glib-compile-schemas on an image that did
+#                      not already have it. On Fedora it is in the main glib2
+#                      package, so in practice this one is always already here
+#                      and nothing gets installed or removed for it. It is named
+#                      anyway so that an image that ever lacks it still builds.
 #
 # We record which ones we actually had to install, and remove exactly those
 # again at the end — so a base image that already carries one keeps it, and we
@@ -134,16 +138,35 @@ borrow() {   # borrow <command> <package that provides it>
 }
 
 give_back() {
-    if [ "${#AQ_BORROWED_PACKAGES[@]}" -gt 0 ]; then
-        say "Removing the build tools again: ${AQ_BORROWED_PACKAGES[*]}"
-        dnf5 remove -y "${AQ_BORROWED_PACKAGES[@]}"
-    else
+    if [ "${#AQ_BORROWED_PACKAGES[@]}" -eq 0 ]; then
         echo "Nothing to remove — every tool used was already in the image."
+        return
     fi
+
+    say "Removing the build tools again: ${AQ_BORROWED_PACKAGES[*]}"
+    dnf5 remove -y "${AQ_BORROWED_PACKAGES[@]}"
+
+    # ⚠️ AND THEN CHECK WE DID NOT TAKE THE DESKTOP WITH THEM.
+    # `dnf5 remove` removes anything that DEPENDS on what you named, not just
+    # what you named. If some future base image turns out to have a real package
+    # depending on one of these, this line would quietly delete it and the image
+    # would still build. Naming the pieces the OS cannot live without turns that
+    # into a red build instead of a desktop that does not start.
+    for aq_essential in gnome-shell gsettings glib-compile-schemas; do
+        if ! command -v "${aq_essential}" > /dev/null 2>&1; then
+            echo "AQUARIUS ERROR: '${aq_essential}' disappeared when the build tools were removed." >&2
+            echo "                Something in this image depended on one of:" >&2
+            echo "                ${AQ_BORROWED_PACKAGES[*]}" >&2
+            echo "                Do not ship this. Work out which, and stop borrowing it." >&2
+            exit 1
+        fi
+    done
+    echo "OK: the desktop survived the cleanup."
 }
 
 say "Dash to Dock ${D2D_TAG} (commit ${D2D_COMMIT})"
 
+borrow make make
 borrow sassc sassc
 borrow msgfmt gettext
 borrow glib-compile-schemas glib2-devel
