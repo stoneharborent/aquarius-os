@@ -1,8 +1,11 @@
 # The GNOME line — what changed, what ships, and what is still to come
 
-*Written 2026-08-31, when the three GNOME images were added. Nothing here has been booted
-yet; the "what still needs a real machine" section at the end says so honestly and lists
-what has to be checked when one is available.*
+*Written 2026-08-31, when the three GNOME images were added.*
+
+*Updated later the same day, after the first boot on real hardware. Most of this document
+still describes the images as they were designed rather than as they have been seen —
+"First bench findings — branding" near the end is the part written from an actual desktop,
+and "What still needs a real machine" lists what is still unchecked.*
 
 ---
 
@@ -251,6 +254,10 @@ GNOME images say "GNOME Desktop Edition", "GNOME NVIDIA Edition" and "GNOME Hand
 Edition". The three KDE strings are unchanged, because an installed machine's About page
 should not start saying something new.
 
+That is the *text* on the page. The *picture* at the top of it turned out to work in a
+completely different way, and did not become ours until 2026-08-31 — see "First bench
+findings — branding" below.
+
 ---
 
 ## How the two lines stay apart in one recipe
@@ -292,13 +299,186 @@ the GNOME line starts.
 
 ---
 
+## First bench findings — branding (2026-08-31)
+
+*The first GNOME image was booted on real hardware on 2026-08-31. This section records what
+that boot found, what was changed in response, and what is still unanswered. Everything
+above this line was written before anybody had seen the desktop.*
+
+Royce's summary was short: **"the Aquarius logo didn't transfer anywhere."** Two places were
+still showing Bazzite's logo, and they turned out to have two completely different causes.
+
+### Finding 1 — the About page ignores os-release
+
+Settings → System → About showed a large **BAZZITE** wordmark, with the line
+"Operating System: AquariusOS" directly underneath it. So the *name* was ours and the
+*picture* was not, on the same page.
+
+This was surprising, because `os-release` was demonstrably correct — the name on that page
+comes from it, and CI already checks the file contains `LOGO=aquarius-logo`.
+
+**The cause.** Every guide you will find says GNOME's About page reads `LOGO=` from
+os-release and looks up an icon by that name. That is true of GNOME's source code, but only
+of the half Fedora does not use. The function is `setup_os_logo()` in
+`gnome-control-center/panels/system/about/cc-about-page.c`, and the whole thing is wrapped
+in a compile-time switch:
+
+```c
+#ifdef DISTRIBUTOR_LOGO
+    ... show that exact file, and RETURN ...
+#else
+    ... the os-release LOGO lookup everybody writes about ...
+#endif
+```
+
+Fedora turns that switch on. From `gnome-control-center.spec` in Fedora's package sources
+(`src.fedoraproject.org/rpms/gnome-control-center`):
+
+```
+-Ddistributor_logo=%{_datadir}/pixmaps/fedora_logo_med.png
+-Ddark_mode_distributor_logo=%{_datadir}/pixmaps/fedora_whitelogo_med.png
+```
+
+Those two paths are **baked into the compiled program**. On any Fedora-derived system the
+About page never consults os-release's `LOGO` at all. The `-text` / `-text-dark` icon-name
+convention that the `#else` branch uses is simply dead code here.
+
+**What Bazzite does, and what we now do.** Bazzite brands that page by replacing the files
+at those paths — their repo ships replacements for the same Fedora logo pixmaps under
+`system_files/overrides/usr/share/pixmaps/`. We do the same, in
+`build_files/gnome-desktop.sh` section 3. It is the least-forked fix available: the
+alternative is rebuilding gnome-control-center ourselves to change a picture, which we are
+not going to do.
+
+**The two pictures.** `branding/render-about-logo.sh` draws a horizontal lockup — the mark
+plus the word "AquariusOS" in Sora — in two versions, because the page picks a different
+file in dark mode:
+
+| Ships as | Ink | Shown when |
+|---|---|---|
+| `aquarius-about-logo.png` | near-black text, light-theme blues | light mode |
+| `aquarius-about-logo-white.png` | white text, dark-theme blues | dark mode |
+
+Both are **279 × 80 pixels, exactly matching the file being replaced**. That is deliberate
+and the script explains it at length: GNOME builds the About logo as
+`Picture { can-shrink: false }`, which makes the picture's pixel size a *minimum* size for
+the Settings window — so a larger, sharper file would stop Settings narrowing to phone
+width. The picture is therefore no crisper on a 4K screen than Fedora's or Bazzite's are.
+That is a limit of the About page, not of the artwork.
+
+**We do not trust those two paths.** They come from a spec file for a package we do not
+build. Both the build script and CI read the compiled `gnome-control-center` binary and
+assert the paths are still named inside it, printing every `/usr/share/pixmaps` path it
+*does* mention when they are not. If Fedora ever moves the logo, the build goes red with the
+answer in the log instead of quietly shipping Bazzite's wordmark again.
+
+### Finding 2 — the top-bar logo button needs dconf, not a schema override
+
+The button at the far left of the top bar was still Bazzite's purple logo. That button is
+not part of GNOME: it comes from the **Logo Menu** extension, which Bazzite installs and
+which our own `zz1-aquarius-20-shell.gschema.override` switches on.
+
+It could not be fixed the way we fix every other GNOME default. A `.gschema.override` only
+works when the setting's description is installed system-wide in
+`/usr/share/glib-2.0/schemas`; Logo Menu keeps its description inside its own extension
+folder, so there is nothing there for an override to attach to — and our build compiles our
+overrides with `--strict`, which turns "that setting does not exist" into a failed build.
+
+The mechanism that does work is **dconf**, and it is the one Bazzite uses for this same
+extension. We ship `system_files/etc/dconf/db/distro.d/zz1-aquarius-logomenu`:
+
+```
+[org/gnome/shell/extensions/Logo-menu]
+use-custom-icon=true
+custom-icon-path='/usr/share/icons/hicolor/scalable/apps/aquarius-logo.svg'
+```
+
+Two keys, both read out of the extension's own schema and its `display_module.js`. The
+extension checks `use-custom-icon` **first**, before the built-in distro-logo list — so we
+never have to know or track which numbered logo Bazzite happens to be using.
+
+**Why the filename starts `zz1-`.** When two files in that folder set the same key, the one
+that sorts **last** wins. That is not folklore; it is in dconf's own source, `bin/dconf.c`,
+in `read_directory()`:
+
+> `FILES-PRECEDENCE: When a path is found in multiple files, value from the file
+> lexicographically latest takes precedence. This is achieved by 1) processing files in
+> reversed lexicographical order, 2) not overwriting existing paths.`
+
+Bazzite's files there are `00-bazzite-desktop-silverblue-global`,
+`01-…-folders` and (on handhelds) `10-bazzite-deck-silverblue-logomenu`. `zz1-aquarius-logomenu`
+sorts after all of them. The build script and CI *compare the real filenames* rather than
+trust the convention.
+
+The rest of the chain was checked rather than assumed too:
+
+- `/etc/dconf/profile/user` — shipped by Fedora's own `dconf` package, and it does read
+  `system-db:distro`. The build insists on that, and writes the standard file if it is
+  somehow missing.
+- Bazzite's `dconf-update.service` recompiles the databases at every boot, and we also run
+  `dconf update` at build time, so the compiled database is baked into the image either way.
+- The compiled `/etc/dconf/db/distro` is checked **by content** — the icon path is read back
+  out of it — because a database built before our file arrived looks exactly like a correct
+  one from the outside.
+
+### Finding 3 — the login screen was already right, but the check was thin
+
+Nobody photographed GDM, so this is still unverified on hardware. What changed is that the
+build and CI now walk the whole chain by content rather than checking that files exist:
+the profile reads the `gdm` database → the keyfile names a picture → **that picture really
+exists in the image** → the compiled database really contains that path. Four links, and a
+break in any one of them gives a login screen with a blank space and no error anywhere.
+
+### Resolved on the bench — the light-first default is correct
+
+The bench photos show Dark Style active, which briefly looked like the Ice light-first
+default had not held. **It had.** Royce had not turned dark mode on: the machine had been
+running the KDE line, and his migrated account carried a leftover `color-scheme=prefer-dark`
+in his *user* dconf, written by Plasma's GTK-sync during the KDE era. A user value beats any
+system default, which is exactly how it is supposed to work.
+
+```
+gsettings reset org.gnome.desktop.interface color-scheme
+```
+
+flipped the desktop straight to Ice light, which proves the shipped default
+(`zz1-aquarius-10-look`, `color-scheme='default'`) is right and that a **fresh** account gets
+light. Worth remembering when anyone rebases an existing KDE-era machine onto the GNOME
+images: settings a person's account already carries are theirs and will survive the rebase.
+The one-line reset above is the fix if the desktop comes up dark on a migrated account.
+
+### Still open after this pass
+
+| Question | Why it needs the bench |
+|---|---|
+| Does the mark read clearly at 20 px on the **light** top bar? | The Logo Menu takes one custom icon, not a light/dark pair, and our mark is a thin two-tone stroke. It is legible on the dark bar in the photo. If it washes out on Ice light, the fix is a panel-specific variant of the mark — not a change to this mechanism. |
+| Is the AquariusOS logo actually on the GDM login screen? | Never photographed. CI now proves the whole chain is intact; only a boot proves it renders. |
+| Does the About logo look right at its real size? | The 279 × 80 constraint is inherited. It should look exactly as prominent as Bazzite's did in the bench photo. |
+| The GNOME handheld's login screen | Still SDDM, still unbranded. A separate job, unchanged by this pass. |
+
+One caveat worth writing down: `bazzite-user-setup` runs `dconf write` into the *user*
+database on Valve, Legion, Ally and Framework hardware, setting Logo Menu's
+`symbolic-icon` and `menu-button-icon-image`. Those are the keys the *built-in* logo list
+uses. Because the extension checks `use-custom-icon` first, our icon still wins even there —
+but it is the sort of thing that would change under us without warning, so it is recorded
+here.
+
+---
+
 ## What still needs a real machine
 
-**None of this has been booted.** GitHub Actions proves the images build and that every
-file is where it should be; it cannot prove the desktop looks right, because there is no
-desktop inside a build container. When an x86 machine is available:
+**One machine has now been booted** (2026-08-31 — see "First bench findings" above), which
+answered a few of these and added three more. Everything still unticked is unchecked.
+GitHub Actions proves the images build and that every file is where it should be; it cannot
+prove the desktop looks right, because there is no desktop inside a build container.
 
-- [ ] Does it come up **light**, with the Ice wallpaper?
+- [x] Does it come up **light**, with the Ice wallpaper? — *yes, once a leftover
+      `prefer-dark` from the account's KDE era was reset. See the bench findings.*
+- [ ] Is the **About page** logo ours, in both light and dark? *(the 2026-08-31 fix — not
+      yet seen on a machine)*
+- [ ] Is the **top-bar button** our logo, and does the mark read clearly at 20 px on the
+      light bar? *(the 2026-08-31 fix — not yet seen on a machine)*
+- [ ] Does it come up light on a **brand-new account**, with no KDE history?
 - [ ] Is the accent blue, and are the fonts Inter and JetBrains Mono?
 - [ ] Is the dock at the bottom, centred, and does it stay put when a window is maximised?
 - [ ] Switch to dark in Settings — does the wallpaper change to Midnight?
@@ -347,8 +527,10 @@ The day the GNOME line is daily-drivable:
 | `Containerfile` | The `AQ_DESKTOP` build argument, and the note on why it is the only branch |
 | `build_files/build.sh` | Every gated step, and the GNOME/KDE fork near the end |
 | `build_files/gnome-extensions.sh` | The Dash to Dock bake — pin, checksum, and the system-wide install |
-| `build_files/gnome-desktop.sh` | Packages, handheld trim, GDM logo, and the settings compile |
+| `build_files/gnome-desktop.sh` | Packages, handheld trim, the three logos (About page, top bar, login screen), and the settings compile |
 | `system_files/usr/share/glib-2.0/schemas/zz1-aquarius-*` | The four settings files |
+| `system_files/etc/dconf/db/distro.d/zz1-aquarius-logomenu` | The top-bar logo button's icon — dconf, not a schema override, and its header says why |
+| `system_files/usr/share/aquarius/branding/aquarius-about-logo*.png` | The two About-page pictures, light and dark |
 | `branding/wallpapers/the-pour-ice.svg`, `-midnight.svg` | The wallpaper sources |
-| `branding/render-wallpaper.sh`, `render-logo-png.sh` | How the PNGs are made |
+| `branding/render-wallpaper.sh`, `render-logo-png.sh`, `render-about-logo.sh` | How the PNGs are made |
 | `.github/workflows/build.yml` | The six-variant matrix and the "Verify the GNOME desktop layer" step |
