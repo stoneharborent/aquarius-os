@@ -214,6 +214,54 @@ breaks nothing, and this setup runs it the correct way for you.
 
 Press Stop only if you have changed your mind."
 
+# The "keep waiting or stop?" window, drawn by whichever tool this desktop has.
+#
+# ⚠️ WHICHEVER IT IS, IT MUST EXIT 0 FOR "KEEP WAITING" AND NON-ZERO FOR "STOP"
+# OR FOR BEING CLOSED. That is the whole contract the loop below reads, and both
+# tools honour it: kdialog's --warningyesno is Yes=0/No=1, and zenity's
+# --question is OK=0/Cancel=1. The --ok-label / --cancel-label flags only change
+# the words on the buttons, not which is which.
+#
+# Which one is tried first follows the desktop rather than the image, because
+# AquariusOS ships in a KDE flavour and a GNOME flavour and this file is the
+# same on both. If neither tool is here, this quietly returns 1 and the loop
+# simply never shows a window — the terminal it is running in is the interface,
+# and it says everything the window would have said.
+ask_keep_waiting() {
+    case "${XDG_CURRENT_DESKTOP:-}" in
+        *GNOME*)
+            if command -v zenity >/dev/null 2>&1; then
+                zenity --question --title="Waiting for DaVinci Resolve" --width=560 \
+                       --ok-label="Keep waiting" --cancel-label="Stop" \
+                       --text="${WAIT_TEXT}" >/dev/null 2>&1
+                return
+            fi
+            ;;
+    esac
+    if command -v kdialog >/dev/null 2>&1; then
+        kdialog --title "Waiting for DaVinci Resolve" \
+                --yes-label "Keep waiting" --no-label "Stop" \
+                --warningyesno "${WAIT_TEXT}" >/dev/null 2>&1
+        return
+    fi
+    if command -v zenity >/dev/null 2>&1; then
+        zenity --question --title="Waiting for DaVinci Resolve" --width=560 \
+               --ok-label="Keep waiting" --cancel-label="Stop" \
+               --text="${WAIT_TEXT}" >/dev/null 2>&1
+        return
+    fi
+    return 1
+}
+
+# True if we can draw that window at all — i.e. there is a desktop AND at least
+# one of the two tools is installed.
+can_ask_keep_waiting() {
+    have_desktop || return 1
+    command -v kdialog >/dev/null 2>&1 && return 0
+    command -v zenity >/dev/null 2>&1 && return 0
+    return 1
+}
+
 wait_for_installer() {   # sets INSTALLER; returns 1 if the user gave up
     local dlg=""
     echo ""
@@ -221,10 +269,8 @@ wait_for_installer() {   # sets INSTALLER; returns 1 if the user gave up
     echo "(Press Ctrl+C at any time to stop. Nothing will be left broken.)"
     echo ""
 
-    if have_desktop && command -v kdialog >/dev/null 2>&1; then
-        kdialog --title "Waiting for DaVinci Resolve" \
-                --yes-label "Keep waiting" --no-label "Stop" \
-                --warningyesno "${WAIT_TEXT}" >/dev/null 2>&1 &
+    if can_ask_keep_waiting; then
+        ask_keep_waiting &
         dlg=$!
     fi
 
@@ -235,14 +281,12 @@ wait_for_installer() {   # sets INSTALLER; returns 1 if the user gave up
             return 0
         fi
 
-        # Did the user press Stop? kdialog exits 0 for "Keep waiting" and
-        # non-zero for "Stop" or for closing the window. "Keep waiting" means
-        # exactly that, so we simply put the window back up.
+        # Did the user press Stop? The window exits 0 for "Keep waiting" and
+        # non-zero for "Stop" or for closing it. "Keep waiting" means exactly
+        # that, so we simply put the window back up.
         if [ -n "${dlg}" ] && ! kill -0 "${dlg}" 2>/dev/null; then
             wait "${dlg}" || return 1
-            kdialog --title "Waiting for DaVinci Resolve" \
-                    --yes-label "Keep waiting" --no-label "Stop" \
-                    --warningyesno "${WAIT_TEXT}" >/dev/null 2>&1 &
+            ask_keep_waiting &
             dlg=$!
         fi
 

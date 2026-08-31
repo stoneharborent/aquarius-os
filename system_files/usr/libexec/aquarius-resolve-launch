@@ -69,8 +69,26 @@ if ! podman container exists "$CONTAINER" 2>/dev/null; then
 Open your apps and click \"Install DaVinci Resolve\" to set it up, or run
     ujust aquarius-resolve
 in a terminal."
-    if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v kdialog >/dev/null 2>&1; then
-        kdialog --title "DaVinci Resolve" --error "$msg" >/dev/null 2>&1
+    # Two tools can draw this window — kdialog on KDE, zenity on GNOME — and
+    # which is tried first follows the desktop rather than the image, because
+    # AquariusOS ships in both flavours and this file is the same on both.
+    # Either way the message is also printed, so nothing is lost when there is
+    # no desktop at all (an SSH session, say) and neither tool can run.
+    if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+        case "${XDG_CURRENT_DESKTOP:-}" in
+            *GNOME*)
+                command -v zenity >/dev/null 2>&1 \
+                    && zenity --error --title="DaVinci Resolve" --width=520 --text="$msg" >/dev/null 2>&1 \
+                    || { command -v kdialog >/dev/null 2>&1 \
+                        && kdialog --title "DaVinci Resolve" --error "$msg" >/dev/null 2>&1; }
+                ;;
+            *)
+                command -v kdialog >/dev/null 2>&1 \
+                    && kdialog --title "DaVinci Resolve" --error "$msg" >/dev/null 2>&1 \
+                    || { command -v zenity >/dev/null 2>&1 \
+                        && zenity --error --title="DaVinci Resolve" --width=520 --text="$msg" >/dev/null 2>&1; }
+                ;;
+        esac
     fi
     printf '%s\n' "$msg" >&2
     exit 1

@@ -95,14 +95,24 @@ PREV_LOG="${LOG_DIR}/${APP_ID}.previous.log"
 # ------------------------------------------------------------------------------
 # How we complain
 # ------------------------------------------------------------------------------
-# One window, three sentences, and the log path. kdialog is part of Plasma so it
-# is always here on AquariusOS; zenity is the fallback in case somebody is
-# running one of our apps on a non-KDE desktop; the terminal is the last resort
-# and is what you get when there is no desktop at all (an SSH session, say).
+# One window, three sentences, and the log path. Two tools can draw it —
+# kdialog on KDE, zenity on GNOME — and the terminal is the last resort, which
+# is what you get when there is no desktop at all (an SSH session, say).
 #
-# --detailederror puts the technical part behind a "Details" button, which is
-# exactly the right shape: a beginner reads three sentences, and the person
-# helping them clicks once and gets the stack trace.
+# ⚠️ WHICH ONE IS TRIED FIRST FOLLOWS THE DESKTOP, NOT THE IMAGE. Since
+# 2026-08-31 AquariusOS ships in a KDE flavour and a GNOME flavour, and this
+# file is the same on both. Reaching for kdialog first on a GNOME desktop would
+# usually still work — but it draws a Qt window on a GTK desktop, at the wrong
+# scale, with the wrong buttons in the wrong order, at the exact moment
+# somebody's app has just failed to start. Asking XDG_CURRENT_DESKTOP costs
+# nothing and gets it right.
+#
+# Both branches keep the other tool as their fallback, so a machine with only
+# one of them installed still gets a window either way.
+#
+# --detailederror (kdialog) and --text-info (zenity) both put the technical part
+# behind a scroll box, which is exactly the right shape: a beginner reads three
+# sentences, and the person helping them reads the stack trace.
 say_sorry() {          # say_sorry <headline> <details>
     local headline="$1" details="$2"
 
@@ -113,19 +123,38 @@ say_sorry() {          # say_sorry <headline> <details>
         return
     fi
 
-    if command -v kdialog >/dev/null 2>&1; then
+    say_sorry_kdialog() {
+        command -v kdialog >/dev/null 2>&1 || return 1
         kdialog --title "${APP_NAME}" --detailederror "$headline" "$details" \
-            >/dev/null 2>&1 && return
-        # Very old kdialog builds have no --detailederror. Fall through.
-        kdialog --title "${APP_NAME}" --error "$headline" >/dev/null 2>&1 && return
-    fi
-    if command -v zenity >/dev/null 2>&1; then
+            >/dev/null 2>&1 && return 0
+        # Very old kdialog builds have no --detailederror.
+        kdialog --title "${APP_NAME}" --error "$headline" >/dev/null 2>&1 && return 0
+        return 1
+    }
+
+    say_sorry_zenity() {
+        command -v zenity >/dev/null 2>&1 || return 1
         printf '%s\n\n%s\n' "$headline" "$details" \
             | zenity --error --title="${APP_NAME}" --width=700 --text-info \
-            >/dev/null 2>&1 && return
+            >/dev/null 2>&1 && return 0
         zenity --error --title="${APP_NAME}" --width=700 --text="$headline" \
-            >/dev/null 2>&1 && return
-    fi
+            >/dev/null 2>&1 && return 0
+        return 1
+    }
+
+    # XDG_CURRENT_DESKTOP can hold several words separated by colons (a GNOME
+    # session often says "ubuntu:GNOME"), so this looks for the word rather than
+    # comparing the whole thing.
+    case "${XDG_CURRENT_DESKTOP:-}" in
+        *GNOME*)
+            say_sorry_zenity && return
+            say_sorry_kdialog && return
+            ;;
+        *)
+            say_sorry_kdialog && return
+            say_sorry_zenity && return
+            ;;
+    esac
 
     printf '%s\n\n%s\n' "$headline" "$details" >&2
 }
