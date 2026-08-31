@@ -21,9 +21,10 @@ to put it on GitHub.
    Containerfile        ──►   reads the recipe            ──►   ghcr.io/<you>/aquarius-os
    build_files/build.sh       downloads Bazzite                 ghcr.io/<you>/aquarius-os-nvidia
    system_files/              runs our build script             ghcr.io/<you>/aquarius-os-deck
-   aquarius-os.env            packages up the result            (bootable OS images)
-                              …three times: AMD/Intel,                  │
-        ▲                     NVIDIA, and handheld                      ▼
+   aquarius-os.env            packages up the result            …and the same three again
+                              …six times: AMD/Intel,             as ghcr.io/<you>/aquarius-os-gnome*
+        ▲                     NVIDIA and handheld,                       │
+        │                     each with KDE and GNOME                    ▼
         │                                                        an .iso you can
    you edit a file                                               burn to a USB stick
    and `git push`                                                and install on a PC
@@ -53,25 +54,47 @@ exactly what you want when non-technical creators are your audience.
 
 ## Which image do I pick?
 
-There are **three AquariusOS images**. They are the same operating system — same apps, same
-settings, same creator suite — built on three different Bazzite foundations. Two questions
-pick one for you, in this order:
+There are **six AquariusOS images**: the same operating system in two desktop flavours,
+each built on three different Bazzite foundations. Two questions pick one for you.
 
-**1. Is the machine a gaming handheld?** (ROG Xbox Ally, ROG Ally X, Steam Deck, Legion Go —
+**1. Which desktop?**
+
+On 2026-08-31 AquariusOS moved from the KDE Plasma desktop to **GNOME**. Both are built for
+now:
+
+| Line | Images | What it means |
+|---|---|---|
+| **GNOME** (current) | names ending `-gnome` | Where all new work goes. Light "Ice" theme, a dock along the bottom, GNOME's own top bar. |
+| **KDE** (frozen) | the plain names | Still built and published every night, so an installed machine keeps updating and keeps working — but nothing new lands on it. It retires once the GNOME line is good enough to live on every day. |
+
+If you are installing today and have no strong feeling, pick the GNOME one. The full story,
+including what the GNOME images ship and what is still to come, is in
+[`docs/gnome-variants.md`](./docs/gnome-variants.md).
+
+**2. Is the machine a gaming handheld?** (ROG Xbox Ally, ROG Ally X, Steam Deck, Legion Go —
 something with a screen, thumbsticks and no keyboard.)
 
-| Answer | Pick | Full address |
+| Answer | GNOME (current) | KDE (frozen) |
 |---|---|---|
-| **Yes, it's a handheld** | `aquarius-os-deck` | `ghcr.io/stoneharborent/aquarius-os-deck:latest` |
+| **Yes, it's a handheld** | `aquarius-os-gnome-deck` | `aquarius-os-deck` |
 
-**2. Otherwise — what graphics card is in it?**
+**3. Otherwise — what graphics card is in it?**
 
-| Your graphics card | Pick | Full address |
+| Your graphics card | GNOME (current) | KDE (frozen) |
 |---|---|---|
-| **NVIDIA** — any RTX card (including the RTX 5090), or a GTX 16-series | `aquarius-os-nvidia` | `ghcr.io/stoneharborent/aquarius-os-nvidia:latest` |
-| **AMD or Intel** — including laptop built-in graphics | `aquarius-os` | `ghcr.io/stoneharborent/aquarius-os:latest` |
+| **NVIDIA** — any RTX card (including the RTX 5090), or a GTX 16-series | `aquarius-os-gnome-nvidia` | `aquarius-os-nvidia` |
+| **AMD or Intel** — including laptop built-in graphics | `aquarius-os-gnome` | `aquarius-os` |
 
-If you're not sure, it's AMD or Intel — NVIDIA cards are a deliberate purchase and you'd know.
+If you're not sure about the graphics card, it's AMD or Intel — NVIDIA cards are a
+deliberate purchase and you'd know.
+
+The full address of any of them is `ghcr.io/stoneharborent/` followed by the name, then
+`:latest` — for example `ghcr.io/stoneharborent/aquarius-os-gnome:latest`.
+
+⚠️ **The GNOME images have not been booted yet.** They build; nobody has yet installed one
+and looked at it. Until that has happened, treat them as the line under development and the
+KDE ones as the line that is known to work. The bench checklist is at the end of
+[`docs/gnome-variants.md`](./docs/gnome-variants.md).
 
 **What the handheld one does differently.** It starts up in **Game Mode** — the full-screen,
 controller-driven Steam interface, the same shape of thing a Steam Deck boots into — instead
@@ -82,19 +105,21 @@ to Desktop, and edit the footage you just captured.
 
 **Why they can't be one image:** NVIDIA graphics need NVIDIA's own driver baked into the OS,
 and that driver can't be present on machines that don't have the card. Handhelds need a
-different startup mode and a pile of handheld-specific hardware support. Both splits happen
-one level down, in Bazzite, and we inherit them. Nothing about the AquariusOS layer differs
-between the three — it is genuinely one recipe.
+different startup mode and a pile of handheld-specific hardware support. And a desktop is a
+desktop — you cannot have GNOME and Plasma be the same installation. All three splits happen
+one level down, in Bazzite, and we inherit every one of them.
 
 **You are not stuck with your choice.** Switching between them later is one command and a
 reboot — see "Switching between the two images" in [GETTING-STARTED.md](./GETTING-STARTED.md).
-Worth knowing if you ever swap the graphics card in a machine.
+Worth knowing if you ever swap the graphics card in a machine, or want to try the other
+desktop.
 
-All three are built by the same GitHub Actions run, from the same recipe, at the same time.
+All six are built by the same GitHub Actions run, from the same recipe, at the same time.
 There is no "the NVIDIA one is behind" — they ship together. Which Bazzite image each one is
 built on, and why that specific one:
-[`docs/nvidia-variant-research.md`](./docs/nvidia-variant-research.md) and
-[`docs/deck-variant-research.md`](./docs/deck-variant-research.md).
+[`docs/nvidia-variant-research.md`](./docs/nvidia-variant-research.md),
+[`docs/deck-variant-research.md`](./docs/deck-variant-research.md) and
+[`docs/gnome-variants.md`](./docs/gnome-variants.md).
 
 ---
 
@@ -104,23 +129,24 @@ built on, and why that specific one:
 |---|---|---|
 | `README.md` | This file. | — |
 | `GETTING-STARTED.md` | **Click-by-click setup for putting this on GitHub.** Start here. | Read it |
-| `Containerfile` | The recipe. Says "start from Bazzite, then run our build script." Used for all three images — which Bazzite to start from is a knob it accepts. | Rarely |
-| `build_files/build.sh` | **The main file you edit.** Installs packages and makes changes on top of Bazzite. Applies to all three images. This is where the creator apps live. | Often |
-| `aquarius-os.env` | Settings: all three image names, all three base images, description, GitHub username. One place, used everywhere. | Once, at setup |
+| `Containerfile` | The recipe. Says "start from Bazzite, then run our build script." Used for all six images — which Bazzite to start from, and which desktop it wears, are knobs it accepts. | Rarely |
+| `build_files/build.sh` | **The main file you edit.** Installs packages and makes changes on top of Bazzite. Applies to all six images; the handful of steps that belong to only one desktop say so. This is where the creator apps live. | Often |
+| `aquarius-os.env` | Settings: all six image names, all six base images, description, GitHub username. One place, used everywhere. | Once, at setup |
 | `system_files/` | Anything here gets copied into the OS's filesystem. `system_files/usr/…` becomes `/usr/…` in the running OS. Holds the desktop look: colour scheme, wallpaper, fonts, layout. | Sometimes |
 | `branding/` | **The design.** Colours, fonts, logo and wallpaper artwork, with `tokens.md` as the single source of truth. Read [`branding/README.md`](./branding/README.md) before changing how anything looks. | To change the look |
 | `ingest/` | **"Make Editor-Ready"** — the tool that takes camera files and writes copies DaVinci Resolve can actually open, with sound. Added to the right-click menu in the Files app. Read [`ingest/README.md`](./ingest/README.md). | Rarely |
 | `docs/ingest-right-click.md` | **How to get a camera card ready for editing** — the beginner walkthrough for the above. No terminal needed. | Read it |
 | `docs/drives-and-desktop-icons.md` | **Why every drive mounts itself and shows up on the desktop** — including the Windows game drive on a dual-boot PC, and why the desktop keeps no app icons. Written for a beginner; also the record of what was rejected and why. | Read it |
 | `disk_config/` | Settings for turning the OS image into an installable `.iso` / VM disk. `iso.toml` is the one that's used. | Once, at setup |
-| `.github/workflows/build.yml` | The build robot's instructions: build **all three** OS images and publish them. Runs on every push + nightly. | No |
+| `.github/workflows/build.yml` | The build robot's instructions: build **all six** OS images and publish them. Runs on every push + nightly. | No |
 | `.github/workflows/build-iso.yml` | The second robot: turns one published OS image into a USB installer `.iso`. You run this by hand and pick which image. | No |
 | `.github/workflows/build-disk.yml` | Makes a virtual-machine disk for testing. By hand, AMD/Intel image only. | No |
 | `.github/workflows/drive-tests.yml` | Fast checks for the two scripts behind "drives mount themselves" and "drives on the desktop". Runs in seconds on every pull request. | No |
-| `installer/` | The live USB installer environment the ISO robot builds. Works for any of the three images. | Rarely |
+| `installer/` | The live USB installer environment the ISO robot builds. Works for any of the images, though nobody has booted a GNOME one yet — see `docs/gnome-variants.md`. | Rarely |
 | `Justfile` | A collection of shortcut commands used by the build robot (and usable on a Linux machine). | No |
 | `docs/nvidia-variant-research.md` | Why the NVIDIA image is built on `bazzite-nvidia-open` and not `bazzite-nvidia`. | Reference |
 | `docs/deck-variant-research.md` | Why the handheld image is built on `bazzite-deck`, what it inherits, and why none of our layers fight Game Mode. | Reference |
+| `docs/gnome-variants.md` | **The GNOME line** — why the desktop changed, what the GNOME images ship, how their settings work, and what is still to come. Read this before touching anything GNOME. | Read it |
 | `docs/UPSTREAM-TEMPLATE-README.md` | The original README from the upstream template we copied, kept for reference. Written for experts. | Reference |
 | `LICENSE` | Apache 2.0, inherited from the upstream template. | No |
 
@@ -133,15 +159,26 @@ Planning docs live one level up: `../ROADMAP.md` is the master plan (phases, dec
 This is a **v0.1 scaffold**. It has not been built or booted yet.
 
 What's set up:
-- **The AquariusOS look** — dark "Flow State" colour scheme, Inter / JetBrains Mono /
+- **The AquariusOS look, on KDE** — dark "Flow State" colour scheme, Inter / JetBrains Mono /
   Sora typefaces, the "The Pour" wallpaper, and a macOS-shaped desktop (slim top bar,
   floating dock, desktop icons down the right edge). See "The look" below.
-- Base image: **Bazzite stable, KDE desktop** (`ghcr.io/ublue-os/bazzite:stable`)
-- Image name: **`aquarius-os`** → publishes to `ghcr.io/<your-github-username>/aquarius-os`
-- Second image: **`aquarius-os-nvidia`**, same recipe on `ghcr.io/ublue-os/bazzite-nvidia-open:stable`,
-  built by the same run — see "Which image do I pick?" above
-- Third image: **`aquarius-os-deck`**, same recipe on `ghcr.io/ublue-os/bazzite-deck:stable`,
-  built by the same run — the handheld one, boots into Game Mode
+- **The AquariusOS look, on GNOME** — the light "Ice" theme with Midnight as its dark mode,
+  the same three typefaces, The Pour recoloured for both, and a dock along the bottom. Built
+  with GNOME's own settings rather than by rebuilding the desktop.
+  See [`docs/gnome-variants.md`](./docs/gnome-variants.md).
+- Six images, all built by the same run, from the same recipe — see "Which image do I pick?"
+  above. Three on KDE (**frozen** since 2026-08-31) and three on GNOME (**current**):
+
+  | Image | Built on | Line |
+  |---|---|---|
+  | `aquarius-os` | `ghcr.io/ublue-os/bazzite:stable` | KDE, frozen |
+  | `aquarius-os-nvidia` | `ghcr.io/ublue-os/bazzite-nvidia-open:stable` | KDE, frozen |
+  | `aquarius-os-deck` | `ghcr.io/ublue-os/bazzite-deck:stable` | KDE, frozen — boots into Game Mode |
+  | `aquarius-os-gnome` | `ghcr.io/ublue-os/bazzite-gnome:stable` | GNOME, current |
+  | `aquarius-os-gnome-nvidia` | `ghcr.io/ublue-os/bazzite-gnome-nvidia-open:stable` | GNOME, current |
+  | `aquarius-os-gnome-deck` | `ghcr.io/ublue-os/bazzite-deck-gnome:stable` | GNOME, current — boots into Game Mode |
+
+  Each publishes to `ghcr.io/<your-github-username>/<the name>`.
 - Build layer: installs exactly one package (`htop`) as proof the layer works
 - Phase 2 creator apps: **commented-out stubs only** in `build_files/build.sh` — visible, not active
 
@@ -152,6 +189,10 @@ What is *not* done yet (all tracked in `../ROADMAP.md`):
 - The top bar has no window title or close/minimise/maximise buttons yet — KDE ships no
   widget for either. Explained in the layout script's own comments.
 - Nothing has been booted on real hardware yet
+- On the GNOME line specifically: drives do not appear on the desktop, there is no
+  first-run chooser, the login-screen scaling fix has not been re-tested, and controller
+  navigation on the GNOME handheld is an open question. All four are listed as G2 items at
+  the end of [`docs/gnome-variants.md`](./docs/gnome-variants.md).
 
 ---
 
