@@ -35,7 +35,7 @@ Rectangle {
     // The small line underneath: the network name, how many devices, "Off".
     property string subtitle: ""
 
-    // A name from the icon theme, e.g. "network-wireless-symbolic". Icon THEME
+    // A name from the icon theme, e.g. "network-wireless-on". Icon THEME
     // names, not image files, so the tile follows whatever icon set the user
     // has chosen and can never point at a missing file.
     property string iconName: ""

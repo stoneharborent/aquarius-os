@@ -76,7 +76,7 @@ PlasmoidItem {
     // What the widget calls itself: in the tooltip, in the "Add Widgets" list,
     // and to a screen reader.
     Plasmoid.title: i18n("Quick Settings")
-    Plasmoid.icon: "settings-configure"
+    Plasmoid.icon: "configure-symbolic"
 
     toolTipMainText: i18n("Quick Settings")
     toolTipSubText: i18n("Wi-Fi, Bluetooth, Focus, sound and brightness")

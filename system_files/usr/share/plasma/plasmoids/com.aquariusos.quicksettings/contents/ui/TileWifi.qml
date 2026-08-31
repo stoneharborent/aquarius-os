@@ -60,8 +60,17 @@ AqTile {
 
     active: enabledConnections.wirelessEnabled
 
-    iconName: active ? "network-wireless-connected-100"
-                     : "network-wireless-disconnected"
+    // These two names are the ones the stock Wi-Fi applet's own toolbar uses
+    // (plasma-nm, applet/Toolbar.qml):
+    //     icon.name: administrativelyEnabled ? "network-wireless-on" : "network-wireless-off"
+    // Both are real files in breeze-icons (icons/status/22/), already drawn in
+    // a single colour so they follow the text colour like a symbolic icon.
+    //
+    // ⚠️ There is NO `network-wireless-on-symbolic` / `-off-symbolic`. Adding
+    // "-symbolic" to these two names gets you a missing icon, which Breeze
+    // renders as a generic placeholder rather than an error.
+    iconName: active ? "network-wireless-on"
+                     : "network-wireless-off"
 
     // The small line under the title. The design shows a network name there
     // ("HarborNet 5G"), which is the interesting case, but the tile has to say

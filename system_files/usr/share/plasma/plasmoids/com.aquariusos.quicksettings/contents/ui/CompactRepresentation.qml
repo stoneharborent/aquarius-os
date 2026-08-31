@@ -66,11 +66,18 @@ Item {
         width: Math.round(Math.min(compact.width, compact.height) * 0.8)
         height: width
 
-        // "settings-configure" is Breeze's row-of-sliders glyph — the one KDE
-        // uses for "Configure". It reads as controls-you-can-adjust, which is
-        // exactly what the panel is, and its thin-stroke line style sits
-        // comfortably next to the design's other bar glyphs.
-        source: "settings-configure"
+        // Despite the name, Breeze's "configure" icon is not a cog — its SVG
+        // draws two horizontal tracks with knobs on them, i.e. sliders. That is
+        // exactly the right glyph for this panel, and it is the one every stock
+        // applet uses for its own "Configure…" action (bluedevil, plasma-nm and
+        // batterymonitor all name `configure-symbolic`).
+        //
+        // "settings-configure" is a symlink to the same drawing, so either name
+        // works; the one upstream actually writes is used here.
+        //
+        // (If a busier, three-slider "equalizer" look is ever wanted, the name
+        // for that is "adjustlevels-symbolic".)
+        source: "configure-symbolic"
 
         // Follow the bar's text colour rather than the icon's own, so the
         // button matches the clock and the menu names beside it.

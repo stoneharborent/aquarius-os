@@ -97,21 +97,21 @@ Item {
                 Layout.fillWidth: true
                 tileSource: "TileWifi.qml"
                 fallbackTitle: i18n("Wi-Fi")
-                fallbackIconName: "network-wireless-disconnected"
+                fallbackIconName: "network-wireless-off"
             }
 
             AqTileSlot {
                 Layout.fillWidth: true
                 tileSource: "TileBluetooth.qml"
                 fallbackTitle: i18n("Bluetooth")
-                fallbackIconName: "preferences-system-bluetooth-inactive"
+                fallbackIconName: "network-bluetooth-inactive-symbolic"
             }
 
             AqTileSlot {
                 Layout.fillWidth: true
                 tileSource: "TileFocus.qml"
                 fallbackTitle: i18n("Focus")
-                fallbackIconName: "notifications"
+                fallbackIconName: "notification-inactive-symbolic"
             }
 
             // The adaptive one. On a handheld this is Game Mode; on a desktop it

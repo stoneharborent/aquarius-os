@@ -104,6 +104,30 @@ topSpacer.currentConfigGroup = ["General"];
 topSpacer.writeConfig("expanding", true);
 topSpacer.reloadConfig();
 
+// Quick Settings — the one drawer for Wi-Fi, Bluetooth, Focus, Game Mode, and
+// the sound and brightness sliders. Ours, not KDE's: it is installed by this
+// image at /usr/share/plasma/plasmoids/com.aquariusos.quicksettings/ and the
+// name below is the folder's name.
+//
+// WHY IT SITS BESIDE THE TRAY AND NOT INSIDE IT
+//   Putting it in the system tray would be the obvious thing to do, and it is
+//   the one arrangement that cannot work. A widget hosted inside the tray does
+//   not get to choose the size of its popup — the tray decides, and the
+//   widget's request is ignored. The design specifies a 330px panel. As its own
+//   widget in the bar it gets that width; inside the tray it would get whatever
+//   the tray felt like.
+//
+// WHY IT COMES BEFORE THE TRAY
+//   The design's bar runs: Drop, search, quick settings, status, clock — so
+//   this belongs immediately left of the tray and the clock. The Drop and
+//   search buttons are not built yet; when they are, they go above this line.
+//
+// This does NOT remove anything. KDE's own network, Bluetooth and volume icons
+// are still in the tray next to it, and still work. This is a faster path to
+// the same switches, not a replacement — which also means a person who dislikes
+// it can right-click and remove it without losing any function.
+topBar.addWidget("com.aquariusos.quicksettings");
+
 topBar.addWidget("org.kde.plasma.systemtray");
 
 // The clock, at the far right end of the bar.

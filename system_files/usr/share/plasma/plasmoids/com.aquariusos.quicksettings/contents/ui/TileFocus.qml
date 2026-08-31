@@ -95,7 +95,15 @@ AqTile {
 
     active: inhibited
 
-    iconName: active ? "notifications-disabled" : "notifications"
+    // Both names come from the stock notifications applet
+    // (plasma-workspace, applets/notifications/CompactRepresentation.qml).
+    //
+    // ⚠️ Note the inconsistent plural, which is upstream's and not a typo here:
+    // the quiet-bell icon is "notification-inactive-symbolic" (singular) while
+    // the crossed-out one is "notifications-disabled-symbolic" (plural). There
+    // is no "notifications-inactive".
+    iconName: active ? "notifications-disabled-symbolic"
+                     : "notification-inactive-symbolic"
 
     // The design shows "Notifications on" under an unlit Focus tile, i.e. the
     // subtitle describes the state of your NOTIFICATIONS, not the state of the

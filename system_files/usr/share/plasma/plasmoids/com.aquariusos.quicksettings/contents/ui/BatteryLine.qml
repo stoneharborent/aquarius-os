@@ -60,18 +60,24 @@ RowLayout {
         Layout.preferredWidth: batteryLine.dp(18)
         Layout.preferredHeight: batteryLine.dp(18)
 
-        // Breeze draws a battery at ten-percent steps and names them
-        // battery-000 … battery-100, with a matching battery-charging-NNN set.
-        // Rounding to the nearest ten and padding to three digits is how the
-        // name is built.
+        // Breeze draws the battery at ten-percent steps, named with a
+        // three-digit number: battery-000-symbolic … battery-100-symbolic, and
+        // a charging set that puts the word AFTER the number —
+        // battery-080-charging-symbolic.
+        //
+        // ⚠️ The charging name is the easy one to get wrong. It is NOT
+        // "battery-charging-080", and a bare "battery-charging" does not exist
+        // either. Nor does a bare "battery": that name belongs to a large
+        // full-colour illustration in icons/devices/64/, not a status glyph, so
+        // using it would put a full-colour picture in the panel.
         source: {
             const bucket = Math.round(Math.max(0, Math.min(100, batteryControl.percent)) / 10) * 10
             const padded = bucket < 10 ? "00" + bucket
                          : bucket < 100 ? "0" + bucket
                                         : "100"
             return batteryControl.state === BatteryControlModel.Charging
-                        ? "battery-charging-" + padded
-                        : "battery-" + padded
+                        ? "battery-" + padded + "-charging-symbolic"
+                        : "battery-" + padded + "-symbolic"
         }
 
         // The design draws the battery's fill in the green `success` colour.

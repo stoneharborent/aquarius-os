@@ -65,8 +65,14 @@ AqTile {
     // three separately, which is why the stock applet uses it too.
     active: BluezQt.Manager.bluetoothOperational
 
-    iconName: active ? "preferences-system-bluetooth"
-                     : "preferences-system-bluetooth-inactive"
+    // Copied from the stock applet's own `Plasmoid.icon` block (bluedevil,
+    // src/applet/qml/main.qml), which picks between exactly these two.
+    //
+    // ⚠️ `preferences-system-bluetooth-inactive` does NOT exist in breeze-icons
+    // — only the `-symbolic` spellings below do. It is an easy name to invent
+    // because the non-inactive half of the pair does exist.
+    iconName: active ? "network-bluetooth-activated-symbolic"
+                     : "network-bluetooth-inactive-symbolic"
 
     // The design shows the connected devices ("Pad · Buds"). Listing their real
     // names is nicer than a count, so that is what this does, with a count as
