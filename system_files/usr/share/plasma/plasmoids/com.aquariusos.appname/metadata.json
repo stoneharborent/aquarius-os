@@ -1,0 +1,19 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "Stone Harbor Entertainment"
+            }
+        ],
+        "Category": "Windows and Tasks",
+        "Description": "The name of the app you are using, in bold, for the top bar",
+        "Icon": "window",
+        "Id": "com.aquariusos.appname",
+        "License": "Apache-2.0",
+        "Name": "Active Application Name",
+        "Version": "1.0",
+        "Website": "https://github.com/stoneharborent/aquarius-os"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}
