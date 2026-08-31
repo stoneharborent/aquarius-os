@@ -1,17 +1,55 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  AquariusOS Plasma Style — the glass behind every POPUP.
+  AquariusOS Plasma Style — the surface behind every POPUP.
 
   This one file is the background of: system-tray popups, the calendar, the
   notification pop-ups, applet popups and the search box (KRunner). Change the
   colour here and all of them change together.
 
+  ⚠️ NO GLASS ANY MORE — decided by Royce 2026-08-30. Popups used to be
+  see-through, on the assumption that the compositor would blur whatever was
+  behind them. It never did (full investigation:
+  `docs/blur-known-issue.md` in the repo root), so a popup opened over a busy
+  window showed that window's text straight through its own — the worst place
+  in the whole desktop for it, because a popup is mostly words. The fill below
+  is now FULLY OPAQUE. Corners, shadow, hairline and sheen are unchanged.
+
+  ⚠️ THIS FILE EXISTS TWICE, AND THE TWO COPIES ARE IDENTICAL BYTE FOR BYTE.
+  There is a `solid/` folder beside this one holding the artwork Plasma uses
+  when somebody sets a panel's Opacity to "Opaque" in Edit Mode. It used to
+  differ from this file: this one was see-through, that one was not. Now that
+  this one is opaque there is nothing left to differ about, so `solid/` is a
+  straight copy. Keep it that way — if you edit this file, copy it over
+  `solid/dialogs/background.svg` in the same change. Deleting the copy is NOT
+  an option: with no file there, "Opaque" falls back to KDE's Breeze artwork
+  and the design vanishes the moment somebody clicks it.
+  (This is why paths in this file are written from the repo root rather than
+  as ../.. — the same text has to make sense from both folders.)
+
   Design values (branding/design-system, "AquariusOS Desktop Shell"):
-    fill      #0D0F18 at 76% opacity
+    fill      #0B0D15, fully opaque   ← see the sum below
     hairline  #EDEFF7 at 14% opacity, 1 pixel
     top sheen #EDEFF7 at 7% opacity, 1 pixel, just inside the top edge
     corners   16 pixels
     shadow    a big soft pool, heavier below than above
+
+  WHERE #0B0D15 CAME FROM — it is the old glass, finished off, not a new
+  colour anybody picked. The design's recipe was "#0D0F18 at 76%, sitting on
+  the desktop", and the desktop is `void` = #06070C (branding/tokens.md). Mix
+  the two in those proportions, channel by channel, in plain decimal:
+
+    red    13×0.76 + 6×0.24  =  9.88 + 1.44 = 11.32 → 11 → 0B
+    green  15×0.76 + 7×0.24  = 11.40 + 1.68 = 13.08 → 13 → 0D
+    blue   24×0.76 + 12×0.24 = 18.24 + 2.88 = 21.12 → 21 → 15
+
+  giving #0B0D15. That is a shade DARKER than the #0D0F18 the design names,
+  and correctly so: the very dark desktop showing through at 24% was always
+  pulling the popup down towards it. Freezing the result keeps what a person
+  actually saw over the wallpaper.
+
+  The hairline and the sheen KEEP their opacity. They are drawn on top of the
+  opaque fill in this same file, so they mix with it rather than with whatever
+  is behind the window — which is what they visually did all along.
 
   HOW TO READ THIS FILE (you do not need to know SVG)
   ...................................................
@@ -28,10 +66,13 @@
 
   There are then three more sets of the same nine names:
 
-    mask-*     A solid black copy of the shape. KWin blurs the wallpaper ONLY
-               where this black shape is. If it does not match the visible
-               shape exactly, blur leaks past the rounded corners as pale
-               squares. Change one, change the other.
+    mask-*     A solid black copy of the shape. Plasma hands this to the
+               compositor as the window's MASK — the region the window really
+               occupies, so nothing is drawn outside the rounded corners. It
+               used to double as the blur-behind region too; there is no blur
+               any more (see the note at the top of this file), but the mask
+               job remains and is unchanged. It must still match the visible
+               shape exactly. Change one, change the other.
     shadow-*   The soft drop shadow. It is drawn OUTSIDE the window, by the
                compositor, so it can be bigger than the window itself.
     hint-*     Invisible markers. Their size is the value; nothing is painted.
@@ -107,41 +148,41 @@
   <!-- ===== BAND 1 — the visible frame ===== -->
   <g id="aq-frame">
     <g id="topleft">
-      <path d="M 0,16 A 16,16 0 0 1 16,0 L 16,16 Z" fill="#0D0F18" fill-opacity="0.76"/>
+      <path d="M 0,16 A 16,16 0 0 1 16,0 L 16,16 Z" fill="#0B0D15"/>
       <path d="M 0.5,16 A 15.5,15.5 0 0 1 16,0.5" fill="none" stroke="#EDEFF7" stroke-opacity="0.14" stroke-width="1"/>
       <path d="M 1.5,16 A 14.5,14.5 0 0 1 16,1.5" fill="none" stroke="#EDEFF7" stroke-opacity="0.07" stroke-width="1"/>
     </g>
     <g id="topright">
-      <path d="M 32,0 A 16,16 0 0 1 48,16 L 32,16 Z" fill="#0D0F18" fill-opacity="0.76"/>
+      <path d="M 32,0 A 16,16 0 0 1 48,16 L 32,16 Z" fill="#0B0D15"/>
       <path d="M 32,0.5 A 15.5,15.5 0 0 1 47.5,16" fill="none" stroke="#EDEFF7" stroke-opacity="0.14" stroke-width="1"/>
       <path d="M 32,1.5 A 14.5,14.5 0 0 1 46.5,16" fill="none" stroke="#EDEFF7" stroke-opacity="0.07" stroke-width="1"/>
     </g>
     <g id="bottomleft">
-      <path d="M 16,48 A 16,16 0 0 1 0,32 L 16,32 Z" fill="#0D0F18" fill-opacity="0.76"/>
+      <path d="M 16,48 A 16,16 0 0 1 0,32 L 16,32 Z" fill="#0B0D15"/>
       <path d="M 16,47.5 A 15.5,15.5 0 0 1 0.5,32" fill="none" stroke="#EDEFF7" stroke-opacity="0.14" stroke-width="1"/>
     </g>
     <g id="bottomright">
-      <path d="M 48,32 A 16,16 0 0 1 32,48 L 32,32 Z" fill="#0D0F18" fill-opacity="0.76"/>
+      <path d="M 48,32 A 16,16 0 0 1 32,48 L 32,32 Z" fill="#0B0D15"/>
       <path d="M 47.5,32 A 15.5,15.5 0 0 1 32,47.5" fill="none" stroke="#EDEFF7" stroke-opacity="0.14" stroke-width="1"/>
     </g>
     <g id="top">
-      <rect x="16" y="0" width="16" height="16" fill="#0D0F18" fill-opacity="0.76"/>
+      <rect x="16" y="0" width="16" height="16" fill="#0B0D15"/>
       <rect x="16" y="0" width="16" height="1" fill="#EDEFF7" fill-opacity="0.14"/>
       <rect x="16" y="1" width="16" height="1" fill="#EDEFF7" fill-opacity="0.07"/>
     </g>
     <g id="bottom">
-      <rect x="16" y="32" width="16" height="16" fill="#0D0F18" fill-opacity="0.76"/>
+      <rect x="16" y="32" width="16" height="16" fill="#0B0D15"/>
       <rect x="16" y="47" width="16" height="1" fill="#EDEFF7" fill-opacity="0.14"/>
     </g>
     <g id="left">
-      <rect x="0" y="16" width="16" height="16" fill="#0D0F18" fill-opacity="0.76"/>
+      <rect x="0" y="16" width="16" height="16" fill="#0B0D15"/>
       <rect x="0" y="16" width="1" height="16" fill="#EDEFF7" fill-opacity="0.14"/>
     </g>
     <g id="right">
-      <rect x="32" y="16" width="16" height="16" fill="#0D0F18" fill-opacity="0.76"/>
+      <rect x="32" y="16" width="16" height="16" fill="#0B0D15"/>
       <rect x="47" y="16" width="1" height="16" fill="#EDEFF7" fill-opacity="0.14"/>
     </g>
-    <rect id="center" x="16" y="16" width="16" height="16" fill="#0D0F18" fill-opacity="0.76"/>
+    <rect id="center" x="16" y="16" width="16" height="16" fill="#0B0D15"/>
   </g>
 
   <!-- ===== BAND 2 — how far content is inset (8 pixels on every side) =====
@@ -151,8 +192,9 @@
     <rect id="hint-left-margin" x="16" y="56" width="8" height="4" fill="none"/>
     <rect id="hint-right-margin" x="16" y="64" width="8" height="4" fill="none"/>
 
-  <!-- ===== BAND 3 — the blur cut-out =====
-       Same 16px corners as band 1. If these ever disagree, blur leaks. -->
+  <!-- ===== BAND 3 — the mask =====
+       Same 16px corners as band 1. If these ever disagree, the popup's
+       shape and its drawing stop lining up at the corners. -->
   <g id="aq-mask">
     <g id="mask-topleft">
       <path d="M 0,96 A 16,16 0 0 1 16,80 L 16,96 Z" fill="#000000"/>

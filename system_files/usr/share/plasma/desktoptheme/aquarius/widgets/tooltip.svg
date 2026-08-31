@@ -2,8 +2,20 @@
 <!--
   AquariusOS Plasma Style — the little TOOLTIP that follows the pointer.
 
-  Same glass as a popup, at a smaller 12px corner because a tooltip is only a
-  couple of lines tall and a 16px corner would make it look like a lozenge.
+  Same surface as a popup, at a smaller 12px corner because a tooltip is only
+  a couple of lines tall and a 16px corner would make it look like a lozenge.
+
+  ⚠️ NO GLASS ANY MORE — decided by Royce 2026-08-30. The compositor never
+  drew the blur this theme kept asking for (full investigation:
+  `docs/blur-known-issue.md` in the repo root), so a see-through tooltip was
+  just a tooltip you could read the window through. The fill is now FULLY
+  OPAQUE at #0B0D15 — the same colour as dialogs/background.svg, arrived at
+  the same way and for the same reason. The arithmetic is written out in that
+  file's header; the short version is that #0D0F18 at 76% over the #06070C
+  desktop comes to #0B0D15, so this is the colour a person already saw.
+
+  Corners, shadow, hairline and sheen are unchanged. The hairline and sheen
+  keep their opacity: they layer on the opaque fill in this same drawing.
 
   HOW TO READ THIS FILE (you do not need to know SVG)
   ...................................................
@@ -20,10 +32,13 @@
 
   There are then three more sets of the same nine names:
 
-    mask-*     A solid black copy of the shape. KWin blurs the wallpaper ONLY
-               where this black shape is. If it does not match the visible
-               shape exactly, blur leaks past the rounded corners as pale
-               squares. Change one, change the other.
+    mask-*     A solid black copy of the shape. Plasma hands this to the
+               compositor as the window's MASK — the region the window really
+               occupies, so nothing is drawn outside the rounded corners. It
+               used to double as the blur-behind region too; there is no blur
+               any more (see the note at the top of this file), but the mask
+               job remains and is unchanged. It must still match the visible
+               shape exactly. Change one, change the other.
     shadow-*   The soft drop shadow. It is drawn OUTSIDE the window, by the
                compositor, so it can be bigger than the window itself.
     hint-*     Invisible markers. Their size is the value; nothing is painted.
@@ -99,44 +114,44 @@
   <!-- ===== BAND 1 — the visible frame ===== -->
   <g id="aq-frame">
     <g id="topleft">
-      <path d="M 0,12 A 12,12 0 0 1 12,0 L 12,12 Z" fill="#0D0F18" fill-opacity="0.76"/>
+      <path d="M 0,12 A 12,12 0 0 1 12,0 L 12,12 Z" fill="#0B0D15"/>
       <path d="M 0.5,12 A 11.5,11.5 0 0 1 12,0.5" fill="none" stroke="#EDEFF7" stroke-opacity="0.14" stroke-width="1"/>
       <path d="M 1.5,12 A 10.5,10.5 0 0 1 12,1.5" fill="none" stroke="#EDEFF7" stroke-opacity="0.07" stroke-width="1"/>
     </g>
     <g id="topright">
-      <path d="M 24,0 A 12,12 0 0 1 36,12 L 24,12 Z" fill="#0D0F18" fill-opacity="0.76"/>
+      <path d="M 24,0 A 12,12 0 0 1 36,12 L 24,12 Z" fill="#0B0D15"/>
       <path d="M 24,0.5 A 11.5,11.5 0 0 1 35.5,12" fill="none" stroke="#EDEFF7" stroke-opacity="0.14" stroke-width="1"/>
       <path d="M 24,1.5 A 10.5,10.5 0 0 1 34.5,12" fill="none" stroke="#EDEFF7" stroke-opacity="0.07" stroke-width="1"/>
     </g>
     <g id="bottomleft">
-      <path d="M 12,36 A 12,12 0 0 1 0,24 L 12,24 Z" fill="#0D0F18" fill-opacity="0.76"/>
+      <path d="M 12,36 A 12,12 0 0 1 0,24 L 12,24 Z" fill="#0B0D15"/>
       <path d="M 12,35.5 A 11.5,11.5 0 0 1 0.5,24" fill="none" stroke="#EDEFF7" stroke-opacity="0.14" stroke-width="1"/>
     </g>
     <g id="bottomright">
-      <path d="M 36,24 A 12,12 0 0 1 24,36 L 24,24 Z" fill="#0D0F18" fill-opacity="0.76"/>
+      <path d="M 36,24 A 12,12 0 0 1 24,36 L 24,24 Z" fill="#0B0D15"/>
       <path d="M 35.5,24 A 11.5,11.5 0 0 1 24,35.5" fill="none" stroke="#EDEFF7" stroke-opacity="0.14" stroke-width="1"/>
     </g>
     <g id="top">
-      <rect x="12" y="0" width="12" height="12" fill="#0D0F18" fill-opacity="0.76"/>
+      <rect x="12" y="0" width="12" height="12" fill="#0B0D15"/>
       <rect x="12" y="0" width="12" height="1" fill="#EDEFF7" fill-opacity="0.14"/>
       <rect x="12" y="1" width="12" height="1" fill="#EDEFF7" fill-opacity="0.07"/>
     </g>
     <g id="bottom">
-      <rect x="12" y="24" width="12" height="12" fill="#0D0F18" fill-opacity="0.76"/>
+      <rect x="12" y="24" width="12" height="12" fill="#0B0D15"/>
       <rect x="12" y="35" width="12" height="1" fill="#EDEFF7" fill-opacity="0.14"/>
     </g>
     <g id="left">
-      <rect x="0" y="12" width="12" height="12" fill="#0D0F18" fill-opacity="0.76"/>
+      <rect x="0" y="12" width="12" height="12" fill="#0B0D15"/>
       <rect x="0" y="12" width="1" height="12" fill="#EDEFF7" fill-opacity="0.14"/>
     </g>
     <g id="right">
-      <rect x="24" y="12" width="12" height="12" fill="#0D0F18" fill-opacity="0.76"/>
+      <rect x="24" y="12" width="12" height="12" fill="#0B0D15"/>
       <rect x="35" y="12" width="1" height="12" fill="#EDEFF7" fill-opacity="0.14"/>
     </g>
-    <rect id="center" x="12" y="12" width="12" height="12" fill="#0D0F18" fill-opacity="0.76"/>
+    <rect id="center" x="12" y="12" width="12" height="12" fill="#0B0D15"/>
   </g>
 
-  <!-- ===== BAND 2 — the blur cut-out =====
+  <!-- ===== BAND 2 — the mask =====
        Corners must match band 1 exactly. -->
   <g id="aq-mask">
     <g id="mask-topleft">

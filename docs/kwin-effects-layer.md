@@ -1,10 +1,25 @@
-# The KWin effects layer — glassy, rounded windows
+# The KWin effects layer — rounded windows
 
 *Built 2026-08-30. Tier 2, Track B of the V2 shell work; the plan it implements is
 `docs/v2-shell-tier2-research.md`, "Layer 2". Everything here assumes zero Linux
 experience.*
 
+> **⚠️ This document was written when the layer shipped TWO add-ons. It now
+> ships one.** Better Blur DX — the window-glass effect — was removed from the
+> image on 2026-08-30, the same day the theme's transparency was removed. The
+> reasons and exactly what changed are in **"Glass removed — 2026-08-30"** at
+> the bottom of this file. Read that first.
+>
+> Everything the older text says about **KDE-Rounded-Corners** is current and
+> correct: it is still compiled into the image, still pinned and checksummed,
+> and still the thing that makes window corners 16px. Everything it says about
+> **Better Blur DX** is now history — accurate history, kept on purpose,
+> because it is the recipe to follow if the effect is ever restored.
+
 ## What this change is, in one paragraph
+
+> **Since 2026-08-30 the frosted-glass half of this paragraph is gone.** What
+> ships is the corners and the shadow. See "Glass removed" at the end.
 
 Application windows on AquariusOS are frosted glass: whatever is behind a window
 shows through it, blurred and slightly more colourful, and all four corners are
@@ -304,6 +319,12 @@ darkness of that single shadow are then set in one place only, `breezerc`.
 
 ## Handhelds get a lighter version
 
+> **Removed 2026-08-30 along with the effect it configured.** The handheld file
+> still exists and still carries the controller-as-mouse setting; it no longer
+> carries a blur strength. The section below is kept because the *reasoning* —
+> a handheld cannot afford what a desktop can — is the thing to remember if any
+> future per-frame effect is added. See "Glass removed".
+
 The blur is a shader that runs on the graphics chip for every window, every
 frame. On a desktop with a real graphics card that is free. On a handheld the
 graphics chip is part of the same processor as everything else, shares the same
@@ -507,3 +528,155 @@ Gap 5 above — "do the two effects coexist perfectly?" — is partly answered. 
 corners of the ordinary window in the photo are cleanly rounded and the blur
 follows them, so the pairing works. Maximised and tiled windows were not in
 frame and are still unchecked; both projects treat them as special cases.
+
+---
+
+## Glass removed — 2026-08-30
+
+Royce's decision, taken the same evening the blur investigation closed
+(`docs/blur-known-issue.md`). Its twin, covering the theme side, is
+`docs/plasma-style.md`, "Glass removed".
+
+### What changed
+
+**Better Blur DX is no longer downloaded, compiled or shipped.** Everything
+that referenced it is gone from the working files:
+
+| File | What came out |
+|---|---|
+| `build_files/kwin-effects.sh` | the whole recipe — pin, commit, URL, checksum, source folder, build step, plug-in path, existence check, `ldd` check, description check, final summary line |
+| `.github/workflows/build.yml` | its assertions in the "Verify KWin effects" step |
+| `system_files/usr/share/aquarius/xdg/kwinrc` | the entire `[Effect-better-blur-dx]` section, `better_blur_dxEnabled=true`, and `blurEnabled=false` |
+| `system_files/usr/share/aquarius/xdg-handheld/kwinrc` | the handheld's gentler `BlurStrength=6` override |
+| `build_files/build.sh` | its half of the one-line call's explanation |
+
+**What stayed, untouched:**
+
+- **KDE-Rounded-Corners**, still compiled from source, still pinned to v0.10.0
+  with its checksum, still the only thing that gives every window 16px corners.
+- Its whole `[Round-Corners]` section in `kwinrc` — the radius, the squircle
+  setting, `UseNativeDecorationShadows=true`, and the window outline tuned on
+  the bench that same day.
+- `breezerc` — **completely unchanged**. The window shadows were never part of
+  the glass and they stay exactly as they were.
+- `[Desktops]` and `[Effect-overview]` in `kwinrc` — the workspaces and the hot
+  corner. Different track, untouched.
+
+### Why
+
+Better Blur DX existed for one reason, stated plainly at the top of this
+document: stock KWin only blurs behind a window if the *application* asks, and
+almost none do, so a fork with that rule removed was the only way to make
+ordinary application windows frosted.
+
+**It never drew a blur.** Not because of anything about the fork — the effect
+compiled, installed and loaded, and was proved innocent early in the
+investigation by testing with it disabled and with stock blur alone. KWin on
+Bazzite 44 / Plasma 6.7 does not render the frost at all, for reasons that sit
+upstream. The elimination chart and the protocol trace are in
+`docs/blur-known-issue.md`.
+
+That leaves an effect that costs real things and delivers nothing:
+
+- a **compile-from-source dependency** in every image build,
+- a **version treadmill** — this document's central argument is that a KWin
+  effect is welded to one exact KWin and has to be rebuilt when Plasma moves,
+- a **per-frame shader** over every window, which upstream's own README calls
+  "very resource-intensive if you have a lot of windows open" — a battery cost
+  on a handheld,
+- a **known footgun**: its destructor removes KWin's blur capability flag
+  unconditionally against a non-refcounted flag, so unloading it mid-session
+  can strip blur for everything (see `blur-known-issue.md`, side-findings).
+
+And on 2026-08-30 the last reason to tolerate all that disappeared: the design
+went opaque. There is now nothing translucent anywhere on the AquariusOS
+desktop for a blur effect to blur, so even a working one would have no visible
+job.
+
+### What this does NOT mean
+
+- **It is not a retreat from compiling effects from source.** The doctrine in
+  this document stands in full, and KDE-Rounded-Corners still follows it. The
+  argument was never "compiling is a good idea in general"; it was "if you ship
+  a KWin effect, compile it here or it will silently break". We now ship one
+  effect, compiled here.
+- **It is not a judgement on Better Blur DX.** The project works; this
+  platform's blur does not. If a future Plasma fixes that, the fork is still
+  the right answer for window glass.
+- **It does not touch window shadows or rounded corners.** Both were confirmed
+  working on the bench on 2026-08-30 and both ship.
+
+### One thing to know about `blurEnabled`
+
+This file used to write `blurEnabled=false` — switching KDE's own blur off —
+because we were *replacing* it with a fork and upstream warns that running both
+double-blurs windows. With no fork in the image there is nothing to replace, so
+that line is simply gone rather than kept "just in case":
+
+- KDE's blur returns to its own default, which is **on**;
+- being on costs nothing here, because blur only ever acts on surfaces that ask
+  for it and, since the theme stopped asking, nothing on this desktop does;
+- and it is one fewer opinion for us to carry, re-justify and keep in step with
+  upstream's defaults.
+
+If frost ever starts rendering again, stock blur being on is exactly what you
+would want anyway — and, per `blur-known-issue.md`, KWin 6.7's own blur now
+supports rounded blur regions natively, so the panels and popups would frost
+with no third-party effect at all.
+
+### Two checks were re-pointed, not deleted
+
+Removing assertions quietly weakens CI. Neither of the two that lost their
+subject was simply dropped:
+
+- **The handheld-file check** (build script and CI) looked for the handheld's
+  `[Effect-better-blur-dx]` / `BlurStrength=6`. It now looks for
+  `gamecontrollerEnabled=true` — the setting that file actually carries now,
+  and the one a device with no mouse genuinely cannot boot without. The check
+  it was really making — "the handheld override reached the handheld image and
+  no other" — is unchanged.
+- **CI gained two new assertions** in place of the blur ones: the corner radius
+  (`Size=16`) and the window outline colour (`OutlineColor=237,239,247`). Both
+  are values a bench session picked deliberately, and neither was verified by
+  CI before.
+
+### If the glass ever comes back
+
+The retest habit stands: after any Bazzite rebase that bumps Plasma, click the
+clock and see whether the calendar popup frosts (`blur-known-issue.md`). If it
+does, restoring window glass means:
+
+1. **Re-add Better Blur DX to `build_files/kwin-effects.sh`.** The exact recipe
+   — tag `v2.5.1`, commit `e8475d0a…`, its SHA-256, its source folder, its
+   plug-in and KCM paths, and every check that went with it — is one `git show`
+   away in this branch's history. **Do not reconstruct it from memory, and do
+   not paste a checksum off a web page**; the whole "how to bump a version"
+   section above applies.
+2. **Restore its `kwinrc` settings**, including `blurEnabled=false` — with the
+   fork back in the image, KDE's own blur has to go off again or windows get
+   double-blurred.
+3. **Restore the handheld's gentler `BlurStrength`.** Its old value was 6, and
+   that number was never measured on hardware. Re-derive it by watching the
+   device rather than copying it back.
+4. **Restore the theme's translucency** — `docs/plasma-style.md`, "Glass
+   removed". Frosted windows behind opaque panels would look worse than either
+   design done properly.
+
+Steps 1–3 without step 4 give you glassy application windows behind a solid top
+bar and solid popups. That is not the design either.
+
+### What still needs a bench
+
+Nothing here was seen on a screen. What can be said from a Mac:
+
+- the build script passes `shellcheck` and `bash -n`;
+- the CI step's embedded script parses and passes `shellcheck`;
+- every settings assertion in both was run against the actual shipped files and
+  matched;
+- both `kwinrc` files and `plasmarc` parse as INI.
+
+What cannot be said until it boots on x86: whether `qdbus org.kde.KWin
+/Effects loadedEffects` lists `kwin4_effect_shapecorners` — still the one
+genuinely outstanding item on this track, exactly as it was before — and
+whether removing the effect changed anything visible about window corners,
+outlines or shadows. It should not have. That is the thing to check.

@@ -5,8 +5,25 @@
   Plasma puts one of these at the top of many popups (the title row of the
   notification panel, the header of an applet) and sometimes a matching one at
   the bottom. It is deliberately quiet: a 4% white wash and a 1-pixel rule, so
-  it separates itself from the list below without adding a second sheet of
-  glass on top of the popup glass.
+  it separates itself from the list below without adding a second sheet on top
+  of the popup.
+
+  WHY THIS FILE DID NOT CHANGE WHEN THE GLASS WAS REMOVED (2026-08-30)
+  ...................................................................
+  Royce removed the glass from the theme on 2026-08-30 — every background
+  surface is now fully opaque (why: `docs/blur-known-issue.md` in the repo root).
+  This drawing was reviewed as part of that and deliberately left alone.
+
+  Nothing in here is glass. The strip is not a background of its own; it is a
+  4% white WASH that Plasma paints ON TOP of the popup drawn by
+  ../dialogs/background.svg. It never let the wallpaper through — the only
+  thing under it was, and still is, the popup. So it is a highlight, in the
+  same category as the state tiles in widgets/tasks.svg, and the sensible
+  thing was to leave it layering as it always has.
+
+  Freezing it to one opaque colour would actually be worse: it would hard-code
+  today's popup colour into a second file, and the next person to change the
+  popup would find the header strip quietly out of step.
 
   Two full sets of shapes live here:
     header-*   rounded along the TOP, with its rule along the bottom
@@ -29,10 +46,13 @@
 
   There are then three more sets of the same nine names:
 
-    mask-*     A solid black copy of the shape. KWin blurs the wallpaper ONLY
-               where this black shape is. If it does not match the visible
-               shape exactly, blur leaks past the rounded corners as pale
-               squares. Change one, change the other.
+    mask-*     A solid black copy of the shape. Plasma hands this to the
+               compositor as the window's MASK — the region the window really
+               occupies, so nothing is drawn outside the rounded corners. It
+               used to double as the blur-behind region too; there is no blur
+               any more (see the note at the top of this file), but the mask
+               job remains and is unchanged. It must still match the visible
+               shape exactly. Change one, change the other.
     shadow-*   The soft drop shadow. It is drawn OUTSIDE the window, by the
                compositor, so it can be bigger than the window itself.
     hint-*     Invisible markers. Their size is the value; nothing is painted.

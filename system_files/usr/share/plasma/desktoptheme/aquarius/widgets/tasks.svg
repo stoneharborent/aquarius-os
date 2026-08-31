@@ -22,6 +22,20 @@
   broken — Breeze was doing its job with our colours. The answer is to stop
   borrowing Breeze's tiles and draw our own.
 
+  WHY THIS FILE DID NOT CHANGE WHEN THE GLASS WAS REMOVED (2026-08-30)
+  ...................................................................
+  Royce removed the glass from the theme on 2026-08-30 — every background
+  surface in it is now fully opaque (why:
+  `docs/blur-known-issue.md` in the repo root). The percentages below were
+  reviewed as part of that and deliberately kept.
+
+  They are not glass. Each tile is painted ON TOP of the dock, which is itself
+  now solid, so a 7% or 16% white tile mixes with the dock's colour and never
+  with the wallpaper. That is what a highlight is — "a bit lighter than the
+  thing underneath" — and it only works if it stays partly transparent. Making
+  these opaque would freeze today's dock colour into a second file for no
+  visible gain, and the two would drift apart the first time either changed.
+
   HOW PLASMA PICKS A SHAPE OUT OF THIS FILE
   .........................................
   Same nine-piece system as the panel and popup drawings: for a state named

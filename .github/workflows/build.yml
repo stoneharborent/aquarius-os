@@ -487,11 +487,17 @@ jobs:
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" </tmp/verify-creator-apps.sh
 
       # ------------------------------------------------------------------------
-      # THE GLASS — are the two compiled-in KWin effects really in this image?
+      # ROUNDED WINDOWS — is the compiled-in KWin effect really in this image?
       # ------------------------------------------------------------------------
-      # AquariusOS gets its frosted, rounded windows from two community add-ons
-      # that are COMPILED during the image build, against the exact KWin the
-      # image ships (build_files/kwin-effects.sh explains why at length).
+      # AquariusOS gets its 16px window corners from one community add-on that
+      # is COMPILED during the image build, against the exact KWin the image
+      # ships (build_files/kwin-effects.sh explains why at length).
+      #
+      # ⚠️ This step used to check TWO effects. The second, Better Blur DX, was
+      # removed from the image on 2026-08-30 together with all the design's
+      # transparency, because the blur it existed to draw never rendered on
+      # this Plasma (docs/blur-known-issue.md). Its assertions are gone from
+      # here; if it ever comes back, they come back with it.
       #
       # That build script already checks its own work. This step asks the same
       # questions again of the FINISHED, rechunked image that is about to be
@@ -501,8 +507,8 @@ jobs:
       #
       # It matters more here than almost anywhere else, because of how a KWin
       # effect fails. It does not crash and it does not print an error: the
-      # plug-in is simply not loaded and the desktop is quietly not glassy any
-      # more. There is no user-visible symptom to report except "it looks
+      # plug-in is simply not loaded and every window corner is quietly square
+      # again. There is no user-visible symptom to report except "it looks
       # wrong". So the check has to happen up here, before anybody boots it.
       #
       # WHAT THIS CANNOT PROVE. There is no compositor and no graphics card in a
@@ -510,7 +516,7 @@ jobs:
       # plug-in. That last step is a human one, written down in
       # docs/kwin-effects-layer.md: on a booted machine,
       #     qdbus org.kde.KWin /Effects loadedEffects
-      # should list better_blur_dx and kwin4_effect_shapecorners.
+      # should list kwin4_effect_shapecorners.
       - name: Verify KWin effects
         id: verify-kwin-effects
         run: |
@@ -523,7 +529,7 @@ jobs:
           ok()  { echo "  OK   $*"; }
 
           # KWin scans exactly one folder for compiled effects. On 64-bit Fedora
-          # it is this one. Both file names were read out of the projects' own
+          # it is this one. The file name was read out of the project's own
           # build files — the working is written out in
           # /usr/share/aquarius/xdg/kwinrc, which ships in this image.
           plugins=/usr/lib64/qt6/plugins/kwin/effects/plugins
@@ -533,11 +539,9 @@ jobs:
           ls -l "$plugins" || echo "(the folder does not exist!)"
           echo "== checks =="
 
-          # 1. The two effects themselves, and their System Settings pages.
+          # 1. The effect itself, and its System Settings page.
           for f in \
-            "${plugins}/better_blur_dx.so" \
             "${plugins}/kwin4_effect_shapecorners.so" \
-            "${configs}/kwin_better_blur_dx_config.so" \
             "${configs}/kwin_shapecorners_config.so"
           do
             if [ -f "$f" ] && [ -r "$f" ]; then ok "$(basename "$f") is present and readable"
@@ -554,55 +558,55 @@ jobs:
             else bad "$f is missing — rounded corners would load and draw nothing"; fi
           done
 
-          # 3. Every library each plug-in needs is present in THIS image.
+          # 3. Every library the plug-in needs is present in THIS image.
           #    A plug-in with a missing library is silently ignored by KWin, so
           #    this is the closest a container can get to "will it load".
-          for f in "${plugins}/better_blur_dx.so" "${plugins}/kwin4_effect_shapecorners.so"; do
-            [ -f "$f" ] || continue
+          #    (This was a loop over two plug-ins until 2026-08-30. With one
+          #    left it is written out plainly rather than looped over once.)
+          f="${plugins}/kwin4_effect_shapecorners.so"
+          if [ -f "$f" ]; then
             missing="$(ldd -r "$f" 2>&1 | grep 'not found' || true)"
             if [ -z "$missing" ]; then ok "$(basename "$f") — every library it needs is in the image"
             else bad "$(basename "$f") needs libraries this image does not have:"; printf '       %s\n' "$missing"; fi
-          done
+          fi
 
           # 4. The description KDE lists an effect by is compiled INTO the .so
           #    as a block of JSON. Losing it gives a plug-in that loads but never
           #    appears in System Settings and can never be switched on. The text
           #    is stored verbatim, so it can simply be looked for.
-          if grep -aq 'Better Blur DX' "${plugins}/better_blur_dx.so" 2>/dev/null; then
-            ok "better_blur_dx.so carries its plug-in description"
-          else
-            bad "better_blur_dx.so has no description compiled into it"
-          fi
           if grep -aqE 'ShapeCorners|Rounded Corners' "${plugins}/kwin4_effect_shapecorners.so" 2>/dev/null; then
             ok "kwin4_effect_shapecorners.so carries its plug-in description"
           else
             bad "kwin4_effect_shapecorners.so has no description compiled into it"
           fi
 
-          # 5. The settings that switch them on shipped too. Two effects nobody
-          #    turns on look exactly like two effects that failed to build.
+          # 5. The settings that switch it on shipped too. An effect nobody
+          #    turns on looks exactly like an effect that failed to build.
           k=/usr/share/aquarius/xdg/kwinrc
           b=/usr/share/aquarius/xdg/breezerc
           check() {  # check "<description>" "<pattern>" "<file>"
             if grep -Eq "$2" "$3" 2>/dev/null; then ok "$1"
             else bad "$1 — /$2/ not found in $3"; fi
           }
-          check "Better Blur DX is switched on"        '^better_blur_dxEnabled=true$'          "$k"
           check "rounded corners are switched on"      '^kwin4_effect_shapecornersEnabled=true$' "$k"
-          check "KDE's own blur is switched off"       '^blurEnabled=false$'                   "$k"
-          check "the blur is tuned"                    '^\[Effect-better-blur-dx\]$'           "$k"
-          check "blur-every-window is set"             '^BlurMatching=false$'                  "$k"
           check "the corner radius is set"             '^\[Round-Corners\]$'                   "$k"
+          check "the corner radius is 16px"            '^Size=16$'                             "$k"
+          check "the window outline is ours"           '^OutlineColor=237,239,247$'            "$k"
           check "one shadow, not two"                  '^UseNativeDecorationShadows=true$'     "$k"
           check "the window shadow file shipped"       '^\[Common\]$'                          "$b"
           check "the shadow is the big one"            '^ShadowSize=ShadowVeryLarge$'          "$b"
 
-          # 6. Handhelds get a gentler blur, and the desktop images must NOT.
-          #    The folder only exists on the handheld image — build.sh deletes it
-          #    from the other two — so which of these two branches runs is itself
-          #    part of what is being checked.
+          # 6. Handhelds get their own extra settings, and the desktop images
+          #    must NOT. The folder only exists on the handheld image — build.sh
+          #    deletes it from the other two — so which of these two branches
+          #    runs is itself part of what is being checked.
+          #
+          #    This used to check the handheld's gentler blur strength. That
+          #    setting went with Better Blur DX on 2026-08-30; what the file
+          #    carries now is the setting a device with no mouse cannot do
+          #    without, so that is what is checked.
           if [ -d /usr/share/aquarius/xdg-handheld ]; then
-            check "the handheld's gentler blur" '^BlurStrength=6$' /usr/share/aquarius/xdg-handheld/kwinrc
+            check "the handheld's controller-as-mouse" '^gamecontrollerEnabled=true$' /usr/share/aquarius/xdg-handheld/kwinrc
           else
             ok "no handheld-only settings on this image (correct for a desktop image)"
           fi
@@ -617,7 +621,7 @@ jobs:
           fi
 
           if [ "$fails" -ne 0 ]; then
-            echo "::error::The KWin effects layer is not correct in this image — the desktop would not be glassy. See above."
+            echo "::error::The KWin effects layer is not correct in this image — window corners would be square. See above."
             exit 1
           fi
           echo "All KWin-effect checks passed."

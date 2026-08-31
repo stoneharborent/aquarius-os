@@ -3,38 +3,59 @@
 # AquariusOS — the KWin effects layer  (Tier 2, Track B)
 # ==============================================================================
 # WHAT THIS FILE DOES, IN ONE SENTENCE
-#   It downloads the source code of two community KWin add-ons, compiles them
-#   inside the image build against the exact KWin this image ships, and installs
-#   the two resulting plug-in files. If either one fails to compile, the whole
-#   OS build goes red and nothing is published.
+#   It downloads the source code of ONE community KWin add-on, compiles it
+#   inside the image build against the exact KWin this image ships, and
+#   installs the resulting plug-in. If it fails to compile, the whole OS build
+#   goes red and nothing is published.
 #
-# WHAT THE TWO ADD-ONS ARE FOR
-#   Better Blur DX      makes ordinary application windows glassy. Stock KWin
-#                       will only blur behind a window if the *application*
-#                       asks for it, and almost none do, so plain transparency
-#                       reads as cheap plastic instead of glass. Better Blur DX
-#                       can blur behind every window whether it asked or not.
+# WHY THE FILE IS STILL CALLED "kwin-effects" WHEN IT BUILDS ONE EFFECT
+#   It used to build two. The second one — Better Blur DX, which made whole
+#   application windows frosted glass — was removed on 2026-08-30 when Royce
+#   decided AquariusOS ships without glass. The name stays because this is
+#   still the place any compiled KWin effect belongs, and because the file is
+#   referenced by name from build.sh, the CI workflow and two docs. If a
+#   second effect is ever added, it goes here.
 #
-#   KDE-Rounded-Corners rounds the corners of every window to 16px, matching the
-#                       AquariusOS design, and re-shapes the window's shadow to
-#                       follow that rounded outline.
+# WHY BETTER BLUR DX IS GONE — the short version
+#   It worked, in the sense that it compiled, installed and loaded. What it
+#   never did was produce a visible blur, because KWin on this Plasma does not
+#   draw the frost at all — a fault that was chased through every layer we
+#   control and found to sit upstream. The full investigation is
+#   ../docs/blur-known-issue.md.
 #
-# WHY COMPILE THEM HERE INSTEAD OF INSTALLING A READY-MADE PACKAGE
+#   With no blur to show, translucent surfaces were just see-through, so the
+#   design dropped the transparency and went fully opaque. And an effect whose
+#   entire job is to blur behind windows that are no longer see-through is a
+#   compile-from-source dependency, a version treadmill, and a per-frame
+#   shader cost, all bought for nothing. So it comes out of the image.
+#
+#   Restoring it, if a future Plasma fixes the blur: the old recipe is in this
+#   file's git history, and what it was for is written up in
+#   ../docs/kwin-effects-layer.md. Both the effect AND the theme's
+#   translucency would have to come back — one without the other does nothing.
+#
+# WHAT THE REMAINING ADD-ON IS FOR
+#   KDE-Rounded-Corners rounds the corners of every window to 16px, matching
+#   the AquariusOS design, and re-shapes the window's shadow to follow that
+#   rounded outline. This one is unaffected by the blur problem: its corners
+#   and its window outline were both confirmed working on the bench on
+#   2026-08-30, and they are visibly part of the shipping look.
+#
+# WHY COMPILE IT HERE INSTEAD OF INSTALLING A READY-MADE PACKAGE
 #   This is the important part, and it is a deliberate decision, not laziness.
 #
-#   A KWin effect is a plug-in loaded into the running compositor. It works with
-#   EXACTLY the KWin version it was compiled against and no other — KDE makes no
-#   promise of compatibility between releases, not even between 6.7.1 and 6.7.2.
-#   The failure mode is the nastiest kind: nothing crashes, no error appears,
-#   the plug-in simply is not loaded and the desktop quietly stops being glassy.
-#   That is not a theory; it is upstream issue #105, where 6.7.1 → 6.7.2 broke
-#   the effect on an already-working machine:
-#     https://github.com/xarblu/kwin-effects-better-blur-dx/issues/105
+#   A KWin effect is a plug-in loaded into the running compositor. It works
+#   with EXACTLY the KWin version it was compiled against and no other — KDE
+#   makes no promise of compatibility between releases, not even between 6.7.1
+#   and 6.7.2. The failure mode is the nastiest kind: nothing crashes, no error
+#   appears, the plug-in simply is not loaded and the corners quietly go
+#   square. That is not a theory; it is a documented upstream case where
+#   6.7.1 -> 6.7.2 broke an effect on an already-working machine.
 #
-#   There is a ready-made Fedora package (a COPR), and using it would mean our
+#   There are ready-made Fedora packages (COPRs), and using one would mean our
 #   image's KWin and somebody else's build of the effect are updated by two
 #   different people on two different days. Sooner or later a user boots an
-#   image where they do not match, and the glass silently disappears.
+#   image where they do not match, and the effect silently disappears.
 #
 #   Compiling here removes that gap entirely. The effect and the KWin it was
 #   built for are welded into the same image; an update ships both or neither,
@@ -45,20 +66,20 @@
 #   in a tab that only we look at, instead of a broken desktop.
 #
 #   That is the whole doctrine in one line: turn an unavoidable compatibility
-#   treadmill into a build-time signal. Do not "fix" a failure here by making it
-#   non-fatal. A silent skip would ship an image whose desktop is missing half
-#   its design with nothing anywhere to say so.
+#   treadmill into a build-time signal. Do not "fix" a failure here by making
+#   it non-fatal. A silent skip would ship an image whose windows are square
+#   with nothing anywhere to say so.
 #
 # WHY THERE IS NO `|| true` ANYWHERE BELOW
 #   Same reason. `set -e` on the next line plus the explicit checks at the end
-#   mean this script has exactly two outcomes: both effects are in the image, or
+#   mean this script has exactly two outcomes: the effect is in the image, or
 #   there is no image.
 #
-# The beginner-facing write-up — what the effects do, how to bump the pinned
-# versions, and the two commands to check them on a real machine — is in
+# The beginner-facing write-up — what the effect does, how to bump the pinned
+# version, and the command to check it on a real machine — is in
 # ../docs/kwin-effects-layer.md.
 #
-# Called from build_files/build.sh. The settings that switch the effects on live
+# Called from build_files/build.sh. The settings that switch the effect on live
 # in system_files/usr/share/aquarius/xdg/kwinrc (and breezerc next to it).
 # ==============================================================================
 
@@ -67,7 +88,7 @@ set -euo pipefail
 # ------------------------------------------------------------------------------
 # WHAT WE BUILD — pinned, to the exact byte
 # ------------------------------------------------------------------------------
-# Each project is pinned three ways, on purpose:
+# The one project below is pinned three ways, on purpose:
 #
 #   the TAG      what a human should look up when reading release notes
 #   the COMMIT   the exact revision that tag pointed at when this was written,
@@ -81,9 +102,9 @@ set -euo pipefail
 # system_files/usr/share/ublue-os/just/96-aquarius-creator.just — a pinned URL
 # and a pinned fingerprint, both written down where a human put them.
 #
-# ⚠️ HOW TO BUMP A VERSION. Change the four lines for that project together —
-# tag, commit, URL and checksum — and never one without the others. Get the new
-# checksum the honest way, by downloading the file and asking for it:
+# ⚠️ HOW TO BUMP THE VERSION. Change the four lines together — tag, commit, URL
+# and checksum — and never one without the others. Get the new checksum the
+# honest way, by downloading the file and asking for it:
 #
 #     curl -fsSL -o /tmp/x.tar.gz <the new URL>
 #     sha256sum /tmp/x.tar.gz
@@ -91,21 +112,11 @@ set -euo pipefail
 # Do NOT copy a checksum out of a web page. The point of the number is that it
 # was computed from a file somebody actually held.
 #
-# (These are GitHub's automatically generated source tarballs. They are byte
+# (This is GitHub's automatically generated source tarball. They are byte
 # stable for a given tag — the tarball checked in here was fetched three times
 # on three connections and matched — and the contents were compared file by file
 # against a `git clone` of the pinned commit before the value was written down.)
 # ------------------------------------------------------------------------------
-
-# Better Blur DX — https://github.com/xarblu/kwin-effects-better-blur-dx
-# v2.5.1, released 2026-06-23. Upstream's README lists Plasma 6.5, 6.6 and 6.7
-# as supported; its CMakeLists.txt refuses outright to build against anything
-# older than KWin 6.4.
-BBDX_TAG="v2.5.1"
-BBDX_COMMIT="e8475d0a7045e1ef035d54cff9cf2c0b02f0aff0"
-BBDX_URL="https://github.com/xarblu/kwin-effects-better-blur-dx/archive/refs/tags/v2.5.1.tar.gz"
-BBDX_SHA256="42152f040434f0adfef55eab510000a5fc00b0afe1935e0dc6f01c766b4c9dbb"
-BBDX_SRCDIR="kwin-effects-better-blur-dx-2.5.1"
 
 # KDE-Rounded-Corners — https://github.com/matinlotfali/KDE-Rounded-Corners
 # v0.10.0, released 2026-08-23. This is the release that added the Plasma 6.7
@@ -118,7 +129,7 @@ KRC_SHA256="f3f03d96e17ae4b7dcee6347a01c75de6f90ed19e070e98ae8bf2dd71ae276db"
 KRC_SRCDIR="KDE-Rounded-Corners-0.10.0"
 
 # ------------------------------------------------------------------------------
-# WHERE THE FINISHED PLUG-INS LAND
+# WHERE THE FINISHED PLUG-IN LANDS
 # ------------------------------------------------------------------------------
 # KWin looks for compiled effects in one folder and one folder only:
 #   <Qt plug-in folder>/kwin/effects/plugins/
@@ -126,20 +137,8 @@ KRC_SRCDIR="KDE-Rounded-Corners-0.10.0"
 KWIN_PLUGIN_DIR="/usr/lib64/qt6/plugins/kwin/effects/plugins"
 KWIN_CONFIG_DIR="/usr/lib64/qt6/plugins/kwin/effects/configs"
 
-# The exact file names, read out of each project's build files rather than
+# The exact file name, read out of the project's build files rather than
 # guessed:
-#   better_blur_dx.so
-#     src/CMakeLists.txt: `add_library(better_blur_dx MODULE …)` +
-#     `install(TARGETS better_blur_dx DESTINATION
-#      ${KDE_INSTALL_PLUGINDIR}/kwin/effects/plugins)`.
-#     There is no "lib" on the front because KDE's shared CMake rules strip it:
-#     extra-cmake-modules, kde-modules/KDECMakeSettings.cmake — "By default,
-#     don't put a prefix on MODULE targets… in KDE plugins don't have a prefix",
-#     `set(CMAKE_SHARED_MODULE_PREFIX "")`.
-#     Confirmed independently by upstream issue #105, where a maintainer's build
-#     log names the file as
-#     /usr/lib64/qt6/plugins/kwin-x11/effects/plugins/better_blur_dx.so
-#     (that is the X11 folder; ours is the kwin/ one — we do not build X11).
 #
 #   kwin4_effect_shapecorners.so
 #     src/CMakeLists.txt: `kcoreaddons_add_plugin(kwin4_effect_shapecorners …
@@ -147,8 +146,6 @@ KWIN_CONFIG_DIR="/usr/lib64/qt6/plugins/kwin/effects/configs"
 #     KWIN_NAMESPACE_PREFIX set to "kwin" for the Wayland build.
 #     Also listed literally in the project's own Fedora spec file,
 #     .copr/kwin-effect-roundcorners.spec.
-BBDX_SO="${KWIN_PLUGIN_DIR}/better_blur_dx.so"
-BBDX_KCM_SO="${KWIN_CONFIG_DIR}/kwin_better_blur_dx_config.so"
 KRC_SO="${KWIN_PLUGIN_DIR}/kwin4_effect_shapecorners.so"
 KRC_KCM_SO="${KWIN_CONFIG_DIR}/kwin_shapecorners_config.so"
 
@@ -185,26 +182,23 @@ KRC_SHADERS=(
 #   it can never remove something Bazzite had already put there.
 #
 # WHERE THIS LIST CAME FROM
-#   Not from guesswork and not from a forum. Both projects publish their own
-#   Fedora build instructions, and both are tested on Fedora by their own CI:
-#     * Better Blur DX — README.md, the "Fedora 41, 42" box, Wayland column.
-#     * KDE-Rounded-Corners — .github/workflows/fedora.yml, which runs on
-#       fedora:44 (the same Fedora our Bazzite base is built from), plus its
-#       .copr/kwin-effect-roundcorners.spec.
+#   Not from guesswork and not from a forum. KDE-Rounded-Corners publishes its
+#   own Fedora build instructions and is tested on Fedora by its own CI:
+#   .github/workflows/fedora.yml runs on fedora:44 (the same Fedora our Bazzite
+#   base is built from), and .copr/kwin-effect-roundcorners.spec lists the same
+#   set again.
 #
-#   The list below is those two lists merged, with the entries that are plainly
-#   runtime-only dropped (they are already on any Plasma desktop) and the two
-#   X11-only ones dropped (we build the Wayland version only — see below).
-#   Everything else is kept even where it looks redundant, and that is a
-#   deliberate choice: this is the exact set the people who maintain these
-#   projects use to build them on Fedora, and second-guessing it to save
-#   packages would buy nothing. It all goes away again at the end of this
-#   script, so an over-generous list costs a little build time and not one byte
-#   of the finished image. Trimming it is not an optimisation worth the risk of
-#   a red build.
-#
-#   Where a package is only needed by one of the two projects, it is still
-#   installed for both. One dnf transaction is simpler than two.
+#   ⚠️ THE LIST IS DELIBERATELY NOT TRIMMED, even now that only one project is
+#   built from it. It was originally the union of two upstreams' Fedora lists,
+#   and a handful of entries below are marked as having come in for Better Blur
+#   DX, which was removed on 2026-08-30. They are kept because:
+#     * KWin's own headers reach for several of them indirectly, and working
+#       out exactly which by deletion means a round of red builds;
+#     * every one of them is removed again at the end of this script, inside
+#       the same Containerfile RUN, so an over-generous list costs a little
+#       build time and not one byte of the finished image.
+#   Trimming it would be an optimisation that buys nothing and risks a red
+#   build. If somebody does trim it one day, do it one package at a time.
 #
 #   kwin-devel is NOT in this list. It is handled separately below, because it
 #   is the one package whose version has to match something already installed.
@@ -221,7 +215,8 @@ AQ_BUILD_PACKAGES=(
     qt6-qtbase-private-devel    # KWin's headers use Qt's private API, and
                                 # KDE-Rounded-Corners links Qt6::CorePrivate
                                 # directly on Qt 6.10 and newer
-    qt6-qtdeclarative-devel     # Qt6::Qml and Qt6::Quick — Better Blur DX
+    qt6-qtdeclarative-devel     # came in for Better Blur DX (removed 2026-08-30);
+                                # kept — see the ⚠️ note above
 
     # --- KDE Frameworks 6 ---
     # The first block is one package per find_package(KF6 … COMPONENTS …) entry
@@ -247,11 +242,13 @@ AQ_BUILD_PACKAGES=(
     plasma-workspace-devel
 
     # --- the window-decoration API ---
-    kdecoration-devel           # find_package(KDecoration3) — Better Blur DX
+    kdecoration-devel           # came in for Better Blur DX (removed 2026-08-30);
+                                # kept — see the ⚠️ note above
 
     # --- graphics and display plumbing that KWin's own headers reach for ---
     libepoxy-devel              # find_package(epoxy) — both projects
-    libX11-devel                # find_package(X11) — Better Blur DX
+    libX11-devel                # came in for Better Blur DX (removed 2026-08-30);
+                                # kept — see the ⚠️ note above
     libxcb-devel                # find_package(XCB) — both projects
     libdrm-devel
     wayland-devel
@@ -435,23 +432,10 @@ build_effect() {
     cmake --install "${AQ_WORK}/${srcdir}-build"
 }
 
-# --- Better Blur DX -----------------------------------------------------------
-# Wayland only. Upstream ships an X11 build behind -DBETTERBLUR_X11=ON and says
-# in its own README that X11 is "more or less deprecated and not tested much".
-# AquariusOS logs in on Wayland, so building the X11 version would double the
-# build time to produce a file nothing loads — and, per upstream issue #105, a
-# half-updated X11 build is itself a way to break the Wayland one. Not built.
-say ""
-say "=== Better Blur DX ${BBDX_TAG} (commit ${BBDX_COMMIT}) ==="
-fetch_and_verify "Better Blur DX ${BBDX_TAG}" "${BBDX_URL}" "${BBDX_SHA256}" "${AQ_WORK}/bbdx.tar.gz"
-tar -xzf "${AQ_WORK}/bbdx.tar.gz" -C "${AQ_WORK}"
-[ -d "${AQ_WORK}/${BBDX_SRCDIR}" ] || die "Better Blur DX unpacked into an unexpected folder." \
-    "Expected ${AQ_WORK}/${BBDX_SRCDIR}; the archive contained:" \
-    "$(ls -1 "${AQ_WORK}")"
-build_effect "Better Blur DX" "${BBDX_SRCDIR}"
-
 # --- KDE-Rounded-Corners ------------------------------------------------------
-# Same reasoning: -DKWIN_X11=ON is available and deliberately not used.
+# Wayland only. -DKWIN_X11=ON is available upstream and deliberately not used:
+# AquariusOS logs in on Wayland, so building the X11 version would add build
+# time to produce a file nothing loads.
 say ""
 say "=== KDE-Rounded-Corners ${KRC_TAG} (commit ${KRC_COMMIT}) ==="
 fetch_and_verify "KDE-Rounded-Corners ${KRC_TAG}" "${KRC_URL}" "${KRC_SHA256}" "${AQ_WORK}/krc.tar.gz"
@@ -469,7 +453,7 @@ build_effect "KDE-Rounded-Corners" "${KRC_SRCDIR}"
 # error message can still say something useful.
 
 say ""
-say "=== Checking the installed plug-ins ==="
+say "=== Checking the installed plug-in ==="
 
 check_file() {
     local what="$1" path="$2"
@@ -478,7 +462,7 @@ check_file() {
             "" \
             "That means the project changed where it installs itself. Here is" \
             "everything that looks like a KWin effect on this image:" \
-            "$(find /usr/lib64 /usr/lib /usr/share -name '*shapecorners*' -o -name '*better_blur*' 2>/dev/null | sort)" \
+            "$(find /usr/lib64 /usr/lib /usr/share -name '*shapecorners*' 2>/dev/null | sort)" \
             "" \
             "Fix the expected paths at the top of build_files/kwin-effects.sh," \
             "and update the matching check in .github/workflows/build.yml."
@@ -486,21 +470,19 @@ check_file() {
     say "  OK  ${path}  ($(stat -c '%s' "${path}") bytes)"
 }
 
-check_file "The Better Blur DX effect"            "${BBDX_SO}"
-check_file "The Better Blur DX settings page"     "${BBDX_KCM_SO}"
 check_file "The KDE-Rounded-Corners effect"       "${KRC_SO}"
 check_file "The KDE-Rounded-Corners settings page" "${KRC_KCM_SO}"
 for aq_shader in "${KRC_SHADERS[@]}"; do
     check_file "A KDE-Rounded-Corners shader" "${aq_shader}"
 done
 
-# Every library each plug-in needs must be present in the image. `ldd -r` walks
+# Every library the plug-in needs must be present in the image. `ldd -r` walks
 # the whole dependency list and prints "not found" for anything missing. This is
 # the closest thing to "will KWin be able to load this" that can be asked inside
 # a container with no graphics and no compositor running.
 say ""
-say "=== Checking every library the plug-ins need is in the image ==="
-for aq_so in "${BBDX_SO}" "${KRC_SO}" "${BBDX_KCM_SO}" "${KRC_KCM_SO}"; do
+say "=== Checking every library the plug-in needs is in the image ==="
+for aq_so in "${KRC_SO}" "${KRC_KCM_SO}"; do
     if ldd -r "${aq_so}" 2>&1 | grep -q 'not found'; then
         die "$(basename "${aq_so}") needs libraries this image does not have:" \
             "" \
@@ -517,15 +499,7 @@ done
 # could not find produces a plug-in that loads but never appears anywhere), and
 # easy to check: the text is stored verbatim inside the file.
 say ""
-say "=== Checking the plug-in descriptions were compiled in ==="
-if ! grep -aq 'Better Blur DX' "${BBDX_SO}"; then
-    die "The Better Blur DX plug-in has no description compiled into it." \
-        "(Expected to find the text 'Better Blur DX' inside ${BBDX_SO}.)" \
-        "" \
-        "Without it the effect cannot be listed in System Settings and KWin" \
-        "cannot work out whether it should be on."
-fi
-say "  OK  better_blur_dx.so carries its description"
+say "=== Checking the plug-in description was compiled in ==="
 if ! grep -aq 'ShapeCorners\|Rounded Corners' "${KRC_SO}"; then
     die "The KDE-Rounded-Corners plug-in has no description compiled into it." \
         "(Expected 'Rounded Corners' or 'ShapeCorners' inside ${KRC_SO}.)"
@@ -535,11 +509,11 @@ say "  OK  kwin4_effect_shapecorners.so carries its description"
 # ==============================================================================
 # STEP 5 — the settings that switch them on are really in the image
 # ==============================================================================
-# The plug-ins are useless if nothing turns them on. Those defaults are plain
-# text files copied in at the top of build.sh; a rename or a typo there would
-# ship an image with two effects nobody ever sees.
+# The plug-in is useless if nothing turns it on. Those defaults are plain text
+# files copied in at the top of build.sh; a rename or a typo there would ship
+# an image with an effect nobody ever sees.
 #
-# The exact spelling of each switch, and where it was read from, is written out
+# The exact spelling of the switch, and where it was read from, is written out
 # in the kwinrc file itself. This only checks the lines are present.
 
 say ""
@@ -560,22 +534,24 @@ check_setting() {
 [ -f "${AQ_KWINRC}" ] || die "${AQ_KWINRC} is not in the image."
 [ -f "${AQ_BREEZERC}" ] || die "${AQ_BREEZERC} is not in the image."
 
-check_setting "${AQ_KWINRC}" '^better_blur_dxEnabled=true$'         "Better Blur DX is switched on"
 check_setting "${AQ_KWINRC}" '^kwin4_effect_shapecornersEnabled=true$' "Rounded corners are switched on"
-check_setting "${AQ_KWINRC}" '^blurEnabled=false$'                  "KDE's own blur is switched off"
-check_setting "${AQ_KWINRC}" '^\[Effect-better-blur-dx\]$'          "The Better Blur DX settings section"
 check_setting "${AQ_KWINRC}" '^\[Round-Corners\]$'                  "The rounded-corners settings section"
 check_setting "${AQ_BREEZERC}" '^\[Common\]$'                       "The window-shadow settings section"
 check_setting "${AQ_BREEZERC}" '^ShadowSize=ShadowVeryLarge$'       "The big window shadow"
 
-# On handhelds a second, higher-priority copy of kwinrc turns the blur down for
-# a laptop-class chip. That folder only exists on the handheld image (build.sh
+# On handhelds a second, higher-priority copy of kwinrc adds the settings only
+# a handheld needs. That folder only exists on the handheld image (build.sh
 # deletes it from the other two, further up), so this is not a variant check —
 # it is the same "is the folder there?" question that
 # /etc/xdg/plasma-workspace/env/zz-aquarius.sh asks.
+#
+# Until 2026-08-30 this checked for the handheld's gentler BLUR setting. That
+# setting is gone with Better Blur DX, and the file's remaining job — driving
+# the desktop with a game controller, on a device that has no mouse — is the
+# more important of the two anyway. So that is what is checked now.
 if [ -d /usr/share/aquarius/xdg-handheld ]; then
     check_setting /usr/share/aquarius/xdg-handheld/kwinrc \
-        '^\[Effect-better-blur-dx\]$' "The handheld's gentler blur setting"
+        '^gamecontrollerEnabled=true$' "The handheld's controller-as-mouse setting"
 fi
 
 # ==============================================================================
@@ -609,7 +585,6 @@ say ""
 say "=== Checking the desktop survived ==="
 for aq_must_exist in \
     /usr/bin/kwin_wayland \
-    "${BBDX_SO}" \
     "${KRC_SO}" \
     "${KRC_SHADERS[0]}" \
     "${KRC_SHADERS[1]}"
@@ -633,5 +608,4 @@ rm -rf "${AQ_WORK}" "${AQ_PKGS_BEFORE}" /tmp/aq-packages-after.txt /tmp/aq-packa
 
 say ""
 say "KWin effects layer built and installed:"
-say "  Better Blur DX      ${BBDX_TAG}   against KWin ${AQ_KWIN_VR}"
 say "  KDE-Rounded-Corners ${KRC_TAG}  against KWin ${AQ_KWIN_VR}"

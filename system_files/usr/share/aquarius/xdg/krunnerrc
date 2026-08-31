@@ -246,10 +246,16 @@ krunner_charrunnerEnabled=false
 #   the daemon that owns shortcuts reads one file in the user's home folder only.
 #   See docs/flow-search.md and the /etc/skel kglobalshortcutsrc header.
 #
-# Window width, corner radius, blur, colours — none of these are krunnerrc
-#   settings. The glass comes from the Aquarius Plasma Style's dialogs SVG
+# Window width, corner radius, colours — none of these are krunnerrc settings.
+#   The search box's surface comes from the Aquarius Plasma Style's dialogs SVG
 #   (Tier 2 track A), which covers KRunner along with every other popup. The
 #   width waits for phase 2.
+#
+#   Blur is not in that list any more either. KRunner used to be drawn as
+#   frosted glass; since 2026-08-30 that popup is fully opaque, because the
+#   compositor never rendered the blur and see-through-without-frost is at its
+#   worst behind a box you are reading and typing into. See
+#   docs/plasma-style.md, "Glass removed".
 #
 # [General] RetainPriorSearch and the history settings — left alone. KRunner's
 #   defaults here (remember history, clear the box between openings) are already

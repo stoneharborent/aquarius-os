@@ -4,7 +4,7 @@
 # ==============================================================================
 # WHAT PROBLEM THIS SOLVES
 #
-# The glass look of the desktop — the top bar, the dock, every popup — is drawn
+# The look of the desktop shell — the top bar, the dock, every popup — is drawn
 # in a handful of SVG files under
 #     /usr/share/plasma/desktoptheme/aquarius/
 #
