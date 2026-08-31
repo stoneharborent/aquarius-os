@@ -554,6 +554,23 @@ esac
 /ctx/plasma-style-version.sh
 
 # ==============================================================================
+# THE DOCK — check our own widget will actually load
+# ==============================================================================
+# The dock is not a stock KDE widget. It is KDE's icons-only task manager,
+# copied into this image with three additions the design asks for: the hover
+# lift, the dot under a running app, and the dashed "+" tile.
+#
+# Copied code leans on pieces of KDE that Bazzite supplies, and a move to a newer
+# Plasma can rename or remove any of them. When that happens the build still
+# succeeds and the DOCK IS SIMPLY MISSING on the booted machine, with nothing
+# anywhere saying why. This one line turns that into a failed build instead.
+#
+# Full reasoning: the header of dock-check.sh, and docs/aquarius-dock.md
+# ------------------------------------------------------------------------------
+
+/ctx/dock-check.sh
+
+# ==============================================================================
 # AQUARIUSOS IDENTITY — make the OS call itself AquariusOS
 # ==============================================================================
 # Everything above this point installs things. This last step renames things:
