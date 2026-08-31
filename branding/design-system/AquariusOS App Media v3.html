@@ -1,0 +1,55 @@
+<!-- @dsCard group="Apps" viewport="1280x800" name="Media v3 · player only" subtitle="QuickTime-style single-window video player on Dragon" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AquariusOS · Media</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+*{box-sizing:border-box;margin:0}
+html,body{height:100%}
+body{width:1280px;height:800px;background:radial-gradient(140% 100% at 78% -10%,#0B0E22 0%,var(--void) 55%);font-family:var(--font-body);color:#FFFFFF;overflow:hidden;position:relative;display:flex;align-items:center;justify-content:center}
+a{color:var(--starlight)}a:hover{color:var(--starlight-hover)}
+.win{width:1020px;border-radius:var(--radius-xl);background:rgba(13,15,24,.8);backdrop-filter:blur(22px) saturate(1.3);-webkit-backdrop-filter:blur(22px) saturate(1.3);border:1px solid rgba(237,239,247,.14);box-shadow:var(--shadow-pop),inset 0 1px 0 rgba(237,239,247,.07);overflow:hidden;position:relative}
+.ctl{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#FFFFFF;cursor:pointer}
+.ctl:hover{background:rgba(255,255,255,.1)}
+.chip{height:28px;padding:0 12px;border-radius:99px;display:flex;align-items:center;gap:6px;font:500 11.5px var(--font-body);color:rgba(255,255,255,.8);background:rgba(255,255,255,.08);border:1px solid rgba(237,239,247,.14);cursor:pointer}
+.chip:hover{background:rgba(255,255,255,.13)}
+</style>
+</head>
+<body data-screen-label="Media player">
+<div style="position:fixed;left:-10%;top:20%;width:120%;height:120px;background:linear-gradient(90deg,transparent 10%,rgba(91,75,224,.22) 45%,rgba(138,180,255,.16) 70%,transparent);filter:blur(50px);transform:rotate(-10deg);pointer-events:none"></div>
+<div class="win">
+<div style="display:flex;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid var(--border-1);background:rgba(6,7,12,.4)">
+<span style="display:flex;gap:8px"><span style="width:12px;height:12px;border-radius:50%;background:#FF7A85"></span><span style="width:12px;height:12px;border-radius:50%;background:#E6C069"></span><span style="width:12px;height:12px;border-radius:50%;background:#55D6A5"></span></span>
+<span style="flex:1;text-align:center;font:500 13px var(--font-body)">clip_final.mp4<span style="color:rgba(255,255,255,.5);font:400 11px var(--font-mono)">&nbsp;· 4K 60 · HDR · 1.2 GB</span></span>
+<span style="width:60px"></span>
+</div>
+<div style="height:520px;position:relative;background:#06070C;overflow:hidden">
+<span style="position:absolute;left:-15%;top:36%;width:130%;height:60px;background:linear-gradient(90deg,transparent,rgba(138,180,255,.45) 50%,transparent);filter:blur(24px);transform:rotate(-11deg)"></span>
+<span style="position:absolute;left:-15%;top:58%;width:130%;height:36px;background:linear-gradient(90deg,transparent,rgba(214,120,232,.4) 55%,transparent);filter:blur(18px);transform:rotate(-9deg)"></span>
+<div style="position:absolute;left:50%;bottom:18px;transform:translateX(-50%);width:900px;border-radius:16px;background:rgba(13,15,24,.72);backdrop-filter:blur(24px) saturate(1.35);-webkit-backdrop-filter:blur(24px) saturate(1.35);border:1px solid rgba(237,239,247,.16);box-shadow:var(--shadow-pop),inset 0 1px 0 rgba(237,239,247,.08);padding:12px 18px">
+<div style="display:flex;align-items:center;gap:12px">
+<span style="font:400 11px var(--font-mono);color:rgba(255,255,255,.8)">0:47</span>
+<span style="flex:1;height:5px;border-radius:3px;background:rgba(255,255,255,.16);position:relative;cursor:pointer"><i style="position:absolute;left:0;top:0;bottom:0;width:21%;border-radius:3px;background:var(--starlight)"></i><u style="position:absolute;left:21%;top:50%;width:13px;height:13px;border-radius:50%;background:#FFFFFF;transform:translate(-50%,-50%)"></u></span>
+<span style="font:400 11px var(--font-mono);color:rgba(255,255,255,.8)">-2:55</span>
+</div>
+<div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+<span class="ctl" title="Volume"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l6 5V4L8 9H4z"></path><path d="M17 9a4.5 4.5 0 0 1 0 6"></path></svg></span>
+<span style="width:80px;height:4px;border-radius:2px;background:rgba(255,255,255,.16);position:relative"><i style="position:absolute;left:0;top:0;bottom:0;width:64%;border-radius:2px;background:#FFFFFF"></i></span>
+<span style="flex:1"></span>
+<span class="ctl" title="Back 10s"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v5h5"></path></svg></span>
+<span class="ctl" style="width:50px;height:50px;background:var(--starlight);color:var(--on-accent)"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="4" width="5" height="16" rx="1"></rect><rect x="14" y="4" width="5" height="16" rx="1"></rect></svg></span>
+<span class="ctl" title="Forward 10s"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"></path><path d="M21 4v5h-5"></path></svg></span>
+<span style="flex:1"></span>
+<span class="chip">1.0×</span>
+<span class="chip" title="Subtitles">CC</span>
+<span class="chip" title="Share"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 7l5-4 5 4"></path><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"></path></svg></span>
+<span class="ctl" title="Full screen"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"></path></svg></span>
+</div>
+</div>
+</div>
+</div>
+<div style="position:absolute;left:24px;bottom:14px;font:400 11px var(--font-mono);color:rgba(255,255,255,.45)">Media · plays anything, remembers your spot · <a href="AquariusOS Desktop Shell.html">back to shell</a></div>
+</body>
+</html>

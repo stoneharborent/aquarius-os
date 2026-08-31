@@ -1,0 +1,255 @@
+<!-- @dsCard group="Apps" viewport="1280x800" name="Files v2 · Dolphin core" subtitle="Tabs, split view, info panel, filter bar — click the toolbar toggles" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AquariusOS · Files</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+*{box-sizing:border-box;margin:0}
+html,body{height:100%}
+body{width:1280px;height:800px;background:radial-gradient(140% 100% at 78% -10%,#0B0E22 0%,var(--void) 55%);font-family:var(--font-body);color:var(--text-1);overflow:hidden;position:relative;display:flex;align-items:center;justify-content:center}
+a{color:var(--starlight)}a:hover{color:var(--starlight-hover)}
+.glass{backdrop-filter:blur(20px) saturate(1.3);-webkit-backdrop-filter:blur(20px) saturate(1.3)}
+.win{width:1190px;height:740px;border-radius:var(--radius-xl);background:rgba(13,15,24,.8);backdrop-filter:blur(22px) saturate(1.3);-webkit-backdrop-filter:blur(22px) saturate(1.3);border:1px solid rgba(237,239,247,.14);box-shadow:var(--shadow-pop),inset 0 1px 0 rgba(237,239,247,.07);display:flex;flex-direction:column;overflow:hidden}
+.wtab{display:flex;align-items:center;gap:8px;padding:7px 14px;border-radius:9px;font:500 12px var(--font-body);color:rgba(255,255,255,.65);cursor:pointer}
+.wtab.on{background:rgba(255,255,255,.09);color:#FFFFFF}
+.side{width:218px;border-right:1px solid var(--border-1);padding:12px 10px;display:flex;flex-direction:column;gap:2px;background:rgba(6,7,12,.28);overflow:hidden}
+.side h4{font:600 10px var(--font-mono);color:rgba(255,255,255,.55);letter-spacing:.08em;padding:10px 12px 6px}
+.si{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:9px;font:500 13px var(--font-body);color:rgba(255,255,255,.8);cursor:pointer}
+.si:hover{background:rgba(255,255,255,.06)}
+.si.on{background:rgba(138,180,255,.16);color:#FFFFFF}
+.si svg{flex-shrink:0}
+.crumb{font:500 13px var(--font-body);color:rgba(255,255,255,.75);padding:5px 9px;border-radius:7px;cursor:pointer}
+.crumb:hover{background:rgba(255,255,255,.07)}
+.crumb.on{color:#FFFFFF}
+.tool{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.8);cursor:pointer;position:relative}
+.tool:hover{background:rgba(255,255,255,.08)}
+.tool.on{background:rgba(138,180,255,.18);color:#FFFFFF}
+.item{display:flex;flex-direction:column;align-items:center;gap:8px;padding:14px 6px;border-radius:12px;cursor:pointer}
+.item:hover{background:rgba(255,255,255,.05)}
+.item.sel{background:rgba(138,180,255,.12);outline:1px solid rgba(138,180,255,.4)}
+.item b{font:500 12.5px var(--font-body);font-weight:500;text-align:center}
+.item s{font:400 10px var(--font-mono);color:rgba(255,255,255,.5);text-decoration:none}
+.fo{width:58px;height:44px;position:relative}
+.fo::before{content:"";position:absolute;inset:0;border-radius:8px;background:linear-gradient(180deg,#3D4670,#2A3152);border:1px solid rgba(138,180,255,.4)}
+.fo::after{content:"";position:absolute;left:0;top:-6px;width:26px;height:12px;border-radius:6px 6px 0 0;background:#3D4670;border:1px solid rgba(138,180,255,.4);border-bottom:none}
+.fl{width:44px;height:54px;border-radius:8px;background:rgba(46,53,80,.75);border:1px solid rgba(237,239,247,.22);display:flex;align-items:center;justify-content:center;font:600 10px var(--font-mono);color:#FFFFFF}
+.meta{display:flex;justify-content:space-between;font:400 11.5px var(--font-body);padding:5px 0}
+.meta u{color:rgba(255,255,255,.55);text-decoration:none}
+.tag{font:500 10.5px var(--font-body);padding:3px 10px;border-radius:99px;border:1px solid rgba(138,180,255,.35);color:#FFFFFF;cursor:pointer}
+.side.dragover{background:rgba(138,180,255,.08);box-shadow:inset 0 0 0 1.5px rgba(138,180,255,.45)}
+.side .hint{display:none;margin:4px 8px;padding:8px 10px;border-radius:9px;border:1.5px dashed rgba(138,180,255,.5);font:500 11px var(--font-body);color:#8AB4FF;text-align:center}
+.side.dragover .hint{display:block}
+.si.new{animation:pop .3s var(--ease-out)}
+@keyframes pop{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:none}}
+.si.dragging{opacity:.4}
+.si.dropline{box-shadow:inset 0 2px 0 var(--starlight)}
+#info,#split,#filter,#cols{display:none}
+body.info #info{display:flex}
+body.split #split{display:flex}
+body.filter #filter{display:flex}
+#qv{display:none;position:absolute;inset:0;z-index:30}
+body.qv #qv{display:block}
+.qbtn{height:32px;padding:0 16px;border-radius:9px;display:flex;align-items:center;gap:8px;font:500 12.5px var(--font-body);color:#FFFFFF;background:rgba(255,255,255,.09);border:1px solid rgba(237,239,247,.16);cursor:pointer}
+.qbtn:hover{background:rgba(255,255,255,.14)}
+.qbtn.pri{background:var(--starlight);color:var(--on-accent);border-color:transparent}
+.qnav{width:36px;height:36px;border-radius:50%;background:rgba(13,15,24,.7);backdrop-filter:blur(20px) saturate(1.3);-webkit-backdrop-filter:blur(20px) saturate(1.3);border:1px solid rgba(237,239,247,.16);display:flex;align-items:center;justify-content:center;color:#FFFFFF;cursor:pointer;position:absolute;top:50%;transform:translateY(-50%)}
+.qnav:hover{background:rgba(255,255,255,.12)}
+body.cols #grid{display:none !important}
+body.cols #cols{display:flex}
+body.cols #btnSplit{display:none}
+.col{width:232px;border-right:1px solid var(--border-1);padding:10px 8px;display:flex;flex-direction:column;gap:2px;overflow:hidden;flex-shrink:0}
+.ci{display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:8px;font:500 12.5px var(--font-body);color:rgba(255,255,255,.85);cursor:pointer}
+.ci:hover{background:rgba(255,255,255,.06)}
+.ci.on{background:rgba(138,180,255,.16);color:#FFFFFF}
+.ci svg,.ci .mini{flex-shrink:0}
+.ci .chev{margin-left:auto;color:rgba(255,255,255,.4)}
+.mini{width:26px;height:20px;border-radius:5px;background:linear-gradient(180deg,#3D4670,#2A3152);border:1px solid rgba(138,180,255,.4)}
+.minif{width:20px;height:24px;border-radius:5px;background:rgba(46,53,80,.75);border:1px solid rgba(237,239,247,.22);display:flex;align-items:center;justify-content:center;font:600 7px var(--font-mono);color:#FFFFFF;flex-shrink:0}
+</style>
+</head>
+<body data-screen-label="Files app v2" class="info">
+<div style="position:fixed;left:-10%;top:20%;width:120%;height:120px;background:linear-gradient(90deg,transparent 10%,rgba(91,75,224,.22) 45%,rgba(138,180,255,.16) 70%,transparent);filter:blur(50px);transform:rotate(-10deg);pointer-events:none"></div>
+<div class="win">
+<div style="display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid var(--border-1);background:rgba(6,7,12,.35)">
+<span style="display:flex;gap:8px;margin-right:8px"><span style="width:12px;height:12px;border-radius:50%;background:#FF7A85"></span><span style="width:12px;height:12px;border-radius:50%;background:#E6C069"></span><span style="width:12px;height:12px;border-radius:50%;background:#55D6A5"></span></span>
+<span class="wtab on"><svg width="12" height="10" viewBox="0 0 24 18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5z"></path></svg>Projects</span>
+<span class="wtab"><svg width="12" height="10" viewBox="0 0 24 18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5z"></path></svg>Games SSD</span>
+<span class="wtab" style="padding:7px 10px">+</span>
+<span style="flex:1"></span>
+<span style="font:400 10.5px var(--font-mono);color:rgba(255,255,255,.45)">⌘T new tab · ⌘Z always undoes</span>
+</div>
+<div style="flex:1;display:flex;overflow:hidden">
+<aside class="side">
+<h4>PLACES</h4>
+<div id="placesList" style="display:flex;flex-direction:column;gap:2px">
+<div class="si"><svg width="15" height="13" viewBox="0 0 24 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 8l9-6 9 6v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8z"></path></svg>Home</div>
+<div class="si on"><svg width="15" height="12" viewBox="0 0 24 18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5z"></path></svg>Projects</div>
+<div class="si"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v12M7 10l5 5 5-5"></path><path d="M4 19h16"></path></svg>Downloads</div>
+<div class="si"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="5" width="18" height="14" rx="2"></rect><circle cx="12" cy="12" r="3.4"></circle></svg>Pictures</div>
+<div class="si"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l10-2v12"></path><circle cx="6.5" cy="18" r="2.5"></circle><circle cx="16.5" cy="16" r="2.5"></circle></svg>Music</div>
+<div class="si"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M6 7l1.5 13h9L18 7M10 7V4h4v3"></path></svg>Trash</div>
+</div>
+<div class="hint">Drop to add to Places</div>
+<h4>TAGS</h4>
+<div class="si"><span style="width:9px;height:9px;border-radius:50%;background:#D678E8"></span>Stream kit</div>
+<div class="si"><span style="width:9px;height:9px;border-radius:50%;background:#55D6A5"></span>Ready to post</div>
+<div class="si"><span style="width:9px;height:9px;border-radius:50%;background:#E6C069"></span>Work in progress</div>
+<h4>DRIVES</h4>
+<div class="si"><svg width="16" height="10" viewBox="0 0 24 14" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1" y="1" width="22" height="12" rx="3"></rect><circle cx="18.5" cy="7" r="1.4" fill="#8AB4FF" stroke="none"></circle></svg>Games SSD<span style="margin-left:auto;font:400 10px var(--font-mono);color:rgba(255,255,255,.5)">1.2 TB</span></div>
+<div class="si"><svg width="16" height="10" viewBox="0 0 24 14" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1" y="1" width="22" height="12" rx="3"></rect><circle cx="18.5" cy="7" r="1.4" fill="#55D6A5" stroke="none"></circle></svg>Aquarius<span style="margin-left:auto;font:400 10px var(--font-mono);color:rgba(255,255,255,.5)">412 GB</span></div>
+</aside>
+<section style="flex:1;display:flex;flex-direction:column;min-width:0">
+<div style="display:flex;align-items:center;gap:6px;height:50px;padding:0 12px;border-bottom:1px solid var(--border-1)">
+<span class="tool"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"></path></svg></span>
+<span class="tool" style="opacity:.4"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"></path></svg></span>
+<div style="display:flex;align-items:center;gap:2px;margin-left:6px;flex:1;min-width:0" title="Click to type a path — the location bar is one click away, never in the way">
+<span class="crumb">Home</span><span style="color:rgba(255,255,255,.4)">›</span><span class="crumb on">Projects</span>
+</div>
+<div style="width:190px;height:32px;border-radius:9px;background:rgba(255,255,255,.06);border:1px solid var(--border-1);display:flex;align-items:center;gap:8px;padding:0 11px;font:400 12.5px var(--font-body);color:rgba(255,255,255,.55)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path></svg>Search</div>
+<span class="tool" onclick="document.body.classList.toggle('qv')" title="Quick View — press Space on any file"><svg width="16" height="12" viewBox="0 0 24 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M1.5 8S5.5 1.5 12 1.5 22.5 8 22.5 8 18.5 14.5 12 14.5 1.5 8 1.5 8z"></path><circle cx="12" cy="8" r="3"></circle></svg></span>
+<span class="tool" onclick="document.body.classList.toggle('filter')" title="Filter this folder"><svg width="15" height="14" viewBox="0 0 24 22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h20l-8 9v7l-4 2v-9L2 3z"></path></svg></span>
+<span class="tool" onclick="document.body.classList.toggle('cols');this.classList.toggle('on')" title="Column view — click through folders like macOS"><svg width="15" height="13" viewBox="0 0 24 20" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="1.5" y="1.5" width="21" height="17" rx="2.5"></rect><path d="M8.5 1.5v17M15.5 1.5v17"></path></svg></span>
+<span class="tool" onclick="document.body.classList.toggle('split')" title="Split view — drag files between panes" id="btnSplit"><svg width="15" height="13" viewBox="0 0 24 20" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="1.5" y="1.5" width="21" height="17" rx="2.5"></rect><path d="M12 1.5v17"></path></svg></span>
+<span class="tool on" onclick="document.body.classList.toggle('info')" title="Info panel"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5M12 8h.01"></path></svg></span>
+</div>
+<div style="flex:1;display:flex;min-height:0">
+<div id="grid" style="flex:1;padding:16px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px;align-content:start;overflow:hidden">
+<div class="item"><span class="fo"></span><b>Stream overlays</b><s>12 items</s></div>
+<div class="item"><span class="fo"></span><b>Channel art</b><s>34 items</s></div>
+<div class="item sel"><span class="fo"></span><b>kd_intro_v3</b><s>edited yesterday</s></div>
+<div class="item"><span class="fo"></span><b>Sound packs</b><s>8 items</s></div>
+<div class="item"><span class="fl">MP4</span><b>clip_final.mp4</b><s>1.2 GB</s></div>
+<div class="item"><span class="fl">KRA</span><b>emote_wave.kra</b><s>18 MB</s></div>
+<div class="item"><span class="fl">MP4</span><b>raw_session_08.mp4</b><s>6.8 GB</s></div>
+<div class="item"><span class="fl">PNG</span><b>thumb_starfall.png</b><s>2.1 MB</s></div>
+</div>
+<div id="cols" style="flex:1;overflow:hidden">
+<div class="col">
+<div class="ci"><span class="mini"></span>Stream overlays<span class="chev">›</span></div>
+<div class="ci"><span class="mini"></span>Channel art<span class="chev">›</span></div>
+<div class="ci on"><span class="mini"></span>kd_intro_v3<span class="chev">›</span></div>
+<div class="ci"><span class="mini"></span>Sound packs<span class="chev">›</span></div>
+<div class="ci"><span class="minif">MP4</span>clip_final.mp4</div>
+<div class="ci"><span class="minif">KRA</span>emote_wave.kra</div>
+<div class="ci"><span class="minif">PNG</span>thumb_starfall.png</div>
+</div>
+<div class="col">
+<div class="ci"><span class="minif">KDL</span>kd_intro_v3.kdenlive</div>
+<div class="ci"><span class="mini"></span>renders<span class="chev">›</span></div>
+<div class="ci"><span class="mini"></span>assets<span class="chev">›</span></div>
+<div class="ci"><span class="minif">WAV</span>vo_take_02.wav</div>
+</div>
+<div style="flex:1;display:flex;align-items:center;justify-content:center;padding:20px">
+<div style="text-align:center;font:400 11.5px/1.7 var(--font-body);color:rgba(255,255,255,.45)">Select a file to preview it here<br>← every parent stays visible</div>
+</div>
+</div>
+<div id="split" style="flex:1;border-left:1px solid var(--border-1);flex-direction:column;background:rgba(6,7,12,.2)">
+<div style="display:flex;align-items:center;gap:2px;padding:10px 14px;border-bottom:1px solid var(--border-1)"><span class="crumb">Games SSD</span><span style="color:rgba(255,255,255,.4)">›</span><span class="crumb on">Recordings</span></div>
+<div style="flex:1;padding:16px;display:grid;grid-template-columns:repeat(3,1fr);gap:6px;align-content:start">
+<div class="item"><span class="fl">MP4</span><b>ranked_finals.mp4</b><s>4.1 GB</s></div>
+<div class="item"><span class="fl">MP4</span><b>speedrun_pb.mp4</b><s>2.7 GB</s></div>
+<div class="item"><span class="fo"></span><b>Highlights</b><s>21 items</s></div>
+</div>
+<div style="padding:8px 14px;border-top:1px solid var(--border-1);font:400 10.5px var(--font-mono);color:rgba(255,255,255,.5)">drop files here to copy — no cut/paste to remember</div>
+</div>
+<aside id="info" style="width:270px;border-left:1px solid var(--border-1);flex-direction:column;padding:18px;gap:14px;background:rgba(6,7,12,.28)">
+<div style="height:130px;border-radius:14px;background:linear-gradient(150deg,#2A3152,#10121C);border:1px solid var(--border-2);position:relative;overflow:hidden">
+<span style="position:absolute;left:-20%;top:45%;width:140%;height:26px;background:linear-gradient(90deg,transparent,rgba(214,120,232,.5) 50%,transparent);filter:blur(12px);transform:rotate(-13deg)"></span>
+<span style="position:absolute;right:10px;bottom:8px;font:600 10px var(--font-mono);color:rgba(255,255,255,.7);background:rgba(6,7,12,.6);padding:2px 8px;border-radius:5px">PREVIEW</span>
+</div>
+<div>
+<div style="font:600 15px var(--font-display)">kd_intro_v3</div>
+<div style="font:400 11.5px var(--font-body);color:rgba(255,255,255,.6);margin-top:2px">Kdenlive project folder</div>
+</div>
+<div style="border-top:1px solid var(--border-1);padding-top:10px">
+<div class="meta"><u>Size</u><span>318 MB · 9 items</span></div>
+<div class="meta"><u>Modified</u><span>Yesterday, 22:14</span></div>
+<div class="meta"><u>Created</u><span>Aug 12, 2026</span></div>
+<div class="meta"><u>Where</u><span>Home › Projects</span></div>
+</div>
+<div>
+<div style="font:600 10px var(--font-mono);color:rgba(255,255,255,.55);letter-spacing:.08em;margin-bottom:8px">TAGS</div>
+<div style="display:flex;flex-wrap:wrap;gap:7px"><span class="tag" style="border-color:rgba(214,120,232,.5)">Stream kit</span><span class="tag" style="border-color:rgba(230,192,105,.5)">Work in progress</span><span class="tag" style="border-color:var(--border-2);color:rgba(255,255,255,.6)">+ add</span></div>
+</div>
+<span style="flex:1"></span>
+<div style="font:400 10.5px/1.6 var(--font-mono);color:rgba(255,255,255,.45)">Open with Kdenlive · Share · Compress — right-click for everything</div>
+</aside>
+</div>
+<div id="filter" style="align-items:center;gap:10px;padding:8px 14px;border-top:1px solid var(--border-1);background:rgba(138,180,255,.07)">
+<svg width="13" height="12" viewBox="0 0 24 22" fill="none" stroke="#8AB4FF" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h20l-8 9v7l-4 2v-9L2 3z"></path></svg>
+<span style="font:400 12.5px var(--font-body)">intro<span style="color:rgba(255,255,255,.4)">|</span></span>
+<span style="font:400 11px var(--font-body);color:rgba(255,255,255,.55)">— showing 1 of 8, as you type</span>
+<span style="flex:1"></span>
+<span style="font:400 10.5px var(--font-mono);color:rgba(255,255,255,.5);cursor:pointer" onclick="document.body.classList.remove('filter')">Esc close</span>
+</div>
+<div id="qv" onclick="document.body.classList.remove('qv')">
+<div style="position:absolute;inset:0;background:rgba(6,7,12,.55);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)"></div>
+<div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:760px;border-radius:var(--radius-xl);background:rgba(13,15,24,.8);backdrop-filter:blur(22px) saturate(1.3);-webkit-backdrop-filter:blur(22px) saturate(1.3);border:1px solid rgba(237,239,247,.16);box-shadow:var(--shadow-pop),inset 0 1px 0 rgba(237,239,247,.08);overflow:hidden" onclick="event.stopPropagation()">
+<div style="display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border-1)">
+<span style="width:12px;height:12px;border-radius:50%;background:#FF7A85;cursor:pointer" onclick="document.body.classList.remove('qv')"></span>
+<span style="font:600 13px var(--font-body)">clip_final.mp4</span>
+<span style="font:400 11px var(--font-mono);color:rgba(255,255,255,.5)">1.2 GB · 3:42 · 4K 60fps</span>
+<span style="flex:1"></span>
+<span class="qbtn pri">Open in Media</span>
+<span class="qbtn">Share</span>
+</div>
+<div style="height:400px;position:relative;background:linear-gradient(150deg,#1A2038,#0B0E1C)">
+<span style="position:absolute;left:-15%;top:38%;width:130%;height:50px;background:linear-gradient(90deg,transparent,rgba(138,180,255,.45) 50%,transparent);filter:blur(20px);transform:rotate(-11deg)"></span>
+<span style="position:absolute;left:-15%;top:60%;width:130%;height:30px;background:linear-gradient(90deg,transparent,rgba(214,120,232,.4) 55%,transparent);filter:blur(16px);transform:rotate(-9deg)"></span>
+<span style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:66px;height:66px;border-radius:50%;background:rgba(13,15,24,.65);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(237,239,247,.2);display:flex;align-items:center;justify-content:center;cursor:pointer"><svg width="22" height="22" viewBox="0 0 24 24" fill="#FFFFFF"><path d="M8 5l11 7-11 7V5z"></path></svg></span>
+<div style="position:absolute;left:16px;right:16px;bottom:14px;display:flex;align-items:center;gap:12px">
+<span style="font:400 10.5px var(--font-mono);color:rgba(255,255,255,.8)">0:47</span>
+<span style="flex:1;height:5px;border-radius:3px;background:rgba(255,255,255,.18);position:relative"><i style="position:absolute;left:0;top:0;bottom:0;width:21%;border-radius:3px;background:var(--starlight)"></i><u style="position:absolute;left:21%;top:50%;width:12px;height:12px;border-radius:50%;background:#FFFFFF;transform:translate(-50%,-50%)"></u></span>
+<span style="font:400 10.5px var(--font-mono);color:rgba(255,255,255,.8)">3:42</span>
+</div>
+</div>
+<div style="display:flex;align-items:center;gap:14px;padding:11px 16px;font:400 11px var(--font-mono);color:rgba(255,255,255,.5)">
+<span><b style="color:#FFFFFF;font-weight:500">Space</b> close</span><span><b style="color:#FFFFFF;font-weight:500">← →</b> next file</span><span><b style="color:#FFFFFF;font-weight:500">↵</b> open</span>
+<span style="flex:1"></span>video · image · audio · pdf · docs · archives — previews without opening apps
+</div>
+</div>
+<span class="qnav" style="left:calc(50% - 452px)" onclick="event.stopPropagation()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"></path></svg></span>
+<span class="qnav" style="left:calc(50% + 416px)" onclick="event.stopPropagation()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"></path></svg></span>
+</div>
+<div style="height:34px;border-top:1px solid var(--border-1);display:flex;align-items:center;gap:14px;padding:0 16px;font:400 11px var(--font-mono);color:rgba(255,255,255,.55)">
+8 items · 1 selected (318 MB)
+<span style="flex:1"></span>
+<span style="display:flex;align-items:center;gap:8px">Aquarius · 412 GB free<span style="width:90px;height:4px;border-radius:2px;background:rgba(255,255,255,.12);overflow:hidden;display:inline-block"><i style="display:block;width:57%;height:100%;background:var(--starlight)"></i></span></span>
+<span style="display:flex;align-items:center;gap:6px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg><span style="width:70px;height:4px;border-radius:2px;background:rgba(255,255,255,.12);position:relative;display:inline-block"><i style="position:absolute;left:0;top:0;bottom:0;width:45%;border-radius:2px;background:rgba(255,255,255,.4)"></i><u style="position:absolute;left:45%;top:50%;width:10px;height:10px;border-radius:50%;background:#EDEFF7;transform:translate(-50%,-50%)"></u></span></span>
+</div>
+</section>
+</div>
+</div>
+<div style="position:absolute;left:24px;bottom:14px;font:400 11px var(--font-mono);color:rgba(255,255,255,.45)">Files v2 · Dolphin under the hood · <a href="AquariusOS Desktop Shell.html">back to shell</a></div>
+<script>
+document.getElementById('btnSplit').addEventListener('click',function(){this.classList.toggle('on')});
+document.addEventListener('keydown',function(e){if(e.code==='Space'){e.preventDefault();document.body.classList.toggle('qv')}if(e.key==='Escape')document.body.classList.remove('qv')});
+// drag any folder to the sidebar to favorite it
+const side=document.querySelector('.side'),places=document.getElementById('placesList');
+document.querySelectorAll('.item,.ci').forEach(function(el){
+if(!el.querySelector('.fo')&&!el.querySelector('.mini'))return;
+el.setAttribute('draggable','true');
+el.addEventListener('dragstart',function(e){e.dataTransfer.setData('text/plain',el.querySelector('b')?el.querySelector('b').textContent:el.textContent.replace('›','').trim());e.dataTransfer.effectAllowed='copy'});
+});
+side.addEventListener('dragover',function(e){e.preventDefault();e.dataTransfer.dropEffect='copy';side.classList.add('dragover')});
+side.addEventListener('dragleave',function(e){if(!side.contains(e.relatedTarget))side.classList.remove('dragover')});
+side.addEventListener('drop',function(e){e.preventDefault();side.classList.remove('dragover');
+const name=e.dataTransfer.getData('text/plain');if(!name)return;
+const exists=Array.from(places.querySelectorAll('.si')).some(function(s){return s.textContent.trim().indexOf(name)===0});if(exists)return;
+const d=document.createElement('div');d.className='si new';d.innerHTML='<svg width="15" height="12" viewBox="0 0 24 18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5z"></path></svg>'+name;
+places.appendChild(d);wireReorder(d)});
+// reorder places by dragging
+let dragEl=null;
+function wireReorder(el){
+el.setAttribute('draggable','true');
+el.addEventListener('dragstart',function(e){dragEl=el;el.classList.add('dragging');e.dataTransfer.effectAllowed='move';e.stopPropagation()});
+el.addEventListener('dragend',function(){el.classList.remove('dragging');dragEl=null;places.querySelectorAll('.si').forEach(function(s){s.classList.remove('dropline')})});
+el.addEventListener('dragover',function(e){if(!dragEl||dragEl===el)return;e.preventDefault();e.stopPropagation();e.dataTransfer.dropEffect='move';places.querySelectorAll('.si').forEach(function(s){s.classList.remove('dropline')});el.classList.add('dropline')});
+el.addEventListener('drop',function(e){if(!dragEl||dragEl===el)return;e.preventDefault();e.stopPropagation();el.classList.remove('dropline');places.insertBefore(dragEl,el)});
+}
+places.querySelectorAll('.si').forEach(wireReorder);
+</script>
+</body>
+</html>

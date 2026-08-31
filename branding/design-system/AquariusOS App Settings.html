@@ -1,0 +1,85 @@
+<!-- @dsCard group="Apps" viewport="1280x800" name="Settings" subtitle="System Settings reimagined · plain-language categories, Appearance page" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AquariusOS · Settings</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+*{box-sizing:border-box;margin:0}
+html,body{height:100%}
+body{width:1280px;height:800px;background:radial-gradient(140% 100% at 78% -10%,#0B0E22 0%,var(--void) 55%);font-family:var(--font-body);color:var(--text-1);overflow:hidden;position:relative;display:flex;align-items:center;justify-content:center}
+a{color:var(--starlight)}a:hover{color:var(--starlight-hover)}
+.win{width:1150px;height:716px;border-radius:var(--radius-xl);background:rgba(13,15,24,.8);backdrop-filter:blur(22px) saturate(1.3);-webkit-backdrop-filter:blur(22px) saturate(1.3);border:1px solid rgba(237,239,247,.14);box-shadow:var(--shadow-pop),inset 0 1px 0 rgba(237,239,247,.07);display:flex;overflow:hidden}
+.side{width:250px;border-right:1px solid var(--border-1);padding:14px 10px;display:flex;flex-direction:column;gap:2px;background:rgba(6,7,12,.28);overflow:hidden}
+.si{display:flex;align-items:center;gap:11px;padding:9px 12px;border-radius:9px;font:500 13px var(--font-body);color:var(--text-2);cursor:pointer}
+.si:hover{background:rgba(237,239,247,.05)}
+.si.on{background:rgba(138,180,255,.14);color:var(--text-1)}
+.si .ic{width:26px;height:26px;border-radius:7px;display:flex;align-items:center;justify-content:center;color:#fff;flex-shrink:0}
+.row{display:flex;align-items:center;gap:14px;padding:16px 18px;border-radius:14px;background:rgba(237,239,247,.04)}
+.row b{font:600 13.5px var(--font-body);display:block}
+.row p{font:400 12px var(--font-body);color:var(--text-3)}
+.sw{width:44px;height:26px;border-radius:13px;background:rgba(237,239,247,.14);position:relative;cursor:pointer;flex-shrink:0}
+.sw.on{background:var(--starlight)}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:left var(--dur-fast) var(--ease-out)}
+.sw.on::after{left:21px}
+.wp{width:172px;border-radius:14px;overflow:hidden;border:2px solid transparent;cursor:pointer;position:relative}
+.wp.on{border-color:var(--starlight);box-shadow:var(--glow-accent)}
+.wp .pv{height:100px;position:relative;overflow:hidden}
+.wp b{display:block;font:500 12px var(--font-body);padding:8px 10px;background:rgba(237,239,247,.04)}
+.acc{width:34px;height:34px;border-radius:50%;cursor:pointer;border:2px solid transparent}
+.acc.on{border-color:#fff;box-shadow:0 0 0 3px rgba(138,180,255,.35)}
+</style>
+</head>
+<body data-screen-label="Settings app"><div style="position:fixed;left:-10%;top:20%;width:120%;height:120px;background:linear-gradient(90deg,transparent 10%,rgba(91,75,224,.22) 45%,rgba(138,180,255,.16) 70%,transparent);filter:blur(50px);transform:rotate(-10deg);pointer-events:none"></div>
+<div class="win">
+<aside class="side">
+<div style="display:flex;gap:8px;padding:4px 12px 12px"><span style="width:12px;height:12px;border-radius:50%;background:#FF7A85"></span><span style="width:12px;height:12px;border-radius:50%;background:#E6C069"></span><span style="width:12px;height:12px;border-radius:50%;background:#55D6A5"></span></div>
+<div style="margin:0 10px 12px;height:34px;border-radius:9px;background:rgba(237,239,247,.05);border:1px solid var(--border-1);display:flex;align-items:center;gap:8px;padding:0 11px;font:400 12.5px var(--font-body);color:var(--text-3)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path></svg>Find a setting</div>
+<div class="si"><span class="ic" style="background:#3D7BFF"><svg width="14" height="10" viewBox="0 0 16 12" fill="none"><path d="M1.5 4.5a9.5 9.5 0 0 1 13 0M4 7.2a6 6 0 0 1 8 0M6.5 9.8a2.6 2.6 0 0 1 3 0" stroke="#fff" stroke-width="1.5" stroke-linecap="round"></path><circle cx="8" cy="11" r="1" fill="#fff"></circle></svg></span>Wi-Fi &amp; Internet</div>
+<div class="si"><span class="ic" style="background:#5B4BE0"><svg width="9" height="13" viewBox="0 0 12 18" fill="none" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"><path d="M3 4.5 9 13l-3 3V2l3 3-6 8.5"></path></svg></span>Bluetooth &amp; Devices</div>
+<div class="si on"><span class="ic" style="background:linear-gradient(135deg,#D678E8,#5B4BE0)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"></circle><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"></path></svg></span>Look &amp; Feel</div>
+<div class="si"><span class="ic" style="background:#2AA9E0"><svg width="15" height="11" viewBox="0 0 24 18" fill="none" stroke="#fff" stroke-width="1.8"><rect x="1.5" y="1.5" width="21" height="13" rx="2"></rect><path d="M8 17h8" stroke-linecap="round"></path></svg></span>Displays</div>
+<div class="si"><span class="ic" style="background:#E06AA0"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l6 5V4L8 9H4z"></path><path d="M17 9a4.5 4.5 0 0 1 0 6"></path></svg></span>Sound</div>
+<div class="si"><span class="ic" style="background:#E0483E"><svg width="13" height="14" viewBox="0 0 22 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 2a6 6 0 0 0-6 6v4l-2 4h16l-2-4V8a6 6 0 0 0-6-6z"></path><path d="M9 20a2 2 0 0 0 4 0"></path></svg></span>Notifications &amp; Focus</div>
+<div class="si"><span class="ic" style="background:#3AA65C"><svg width="12" height="14" viewBox="0 0 20 24" fill="none" stroke="#fff" stroke-width="1.8"><rect x="4" y="7" width="12" height="14" rx="2.5"></rect><path d="M8 7V5a2 2 0 0 1 4 0v2" stroke-linecap="round"></path></svg></span>Battery &amp; Power</div>
+<div class="si"><span class="ic" style="background:#8AB4FF;color:#080B14"><svg width="15" height="12" viewBox="0 0 24 18" fill="none" stroke="#080B14" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8h4M8 6v4"></path><circle cx="16.5" cy="7.5" r="0.9" fill="#080B14" stroke="none"></circle><circle cx="18.5" cy="10" r="0.9" fill="#080B14" stroke="none"></circle><path d="M17.3 4H6.7a4.7 4.7 0 0 0-4.6 4l-.8 5a3 3 0 0 0 5.2 2.4L8.6 13h6.8l2.1 2.4A3 3 0 0 0 22.7 13l-.8-5a4.7 4.7 0 0 0-4.6-4z"></path></svg></span>Gaming</div>
+<div class="si"><span class="ic" style="background:#6B7390"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="8" r="3.6"></circle><path d="M5 20a7 7 0 0 1 14 0"></path></svg></span>People</div>
+<div class="si"><span class="ic" style="background:#55D6A5;color:#08140E"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#08140E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"></path><path d="M21 4v5h-5"></path></svg></span>Updates</div>
+</aside>
+<section style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+<div style="padding:22px 26px 0">
+<h1 style="font:600 22px var(--font-display)">Look &amp; Feel</h1>
+<p style="font:400 13px var(--font-body);color:var(--text-3);margin-top:4px">Make it yours. Changes apply instantly — nothing to save.</p>
+</div>
+<div style="flex:1;padding:18px 26px 24px;display:flex;flex-direction:column;gap:14px;overflow:hidden">
+<div>
+<div style="font:600 11px var(--font-mono);color:var(--text-3);letter-spacing:.08em;margin-bottom:10px">WALLPAPER &amp; MOOD</div>
+<div style="display:flex;gap:14px">
+<div class="wp on"><span class="pv" style="background:radial-gradient(120% 100% at 70% 0%,#0B0E22,#06070C)"><span style="position:absolute;left:-20%;top:35%;width:140%;height:26px;background:linear-gradient(90deg,transparent,rgba(138,180,255,.45) 50%,transparent);filter:blur(10px);transform:rotate(-12deg)"></span><span style="position:absolute;left:-20%;top:55%;width:140%;height:18px;background:linear-gradient(90deg,transparent,rgba(91,75,224,.5) 55%,transparent);filter:blur(9px);transform:rotate(-10deg)"></span></span><b>The Pour · default</b></div>
+<div class="wp"><span class="pv" style="background:radial-gradient(120% 100% at 50% 100%,#0A0F1A,#06070C)"><span style="position:absolute;left:-20%;top:60%;width:140%;height:14px;background:linear-gradient(90deg,transparent,rgba(138,180,255,.25) 50%,transparent);filter:blur(12px);transform:rotate(-4deg)"></span></span><b>Still Water · calm</b></div>
+<div class="wp"><span class="pv" style="background:radial-gradient(120% 100% at 30% 0%,#160B22,#06070C)"><span style="position:absolute;left:-20%;top:25%;width:140%;height:30px;background:linear-gradient(90deg,transparent,rgba(214,120,232,.5) 45%,rgba(138,180,255,.4) 70%,transparent);filter:blur(9px);transform:rotate(-16deg)"></span><span style="position:absolute;left:-20%;top:58%;width:140%;height:20px;background:linear-gradient(90deg,transparent,rgba(230,192,105,.35) 55%,transparent);filter:blur(9px);transform:rotate(-13deg)"></span></span><b>Overdrive · energetic</b></div>
+</div>
+</div>
+<div>
+<div style="font:600 11px var(--font-mono);color:var(--text-3);letter-spacing:.08em;margin-bottom:10px">ACCENT</div>
+<div style="display:flex;gap:12px;align-items:center">
+<span class="acc on" style="background:#8AB4FF"></span>
+<span class="acc" style="background:#D678E8"></span>
+<span class="acc" style="background:#55D6A5"></span>
+<span class="acc" style="background:#E6C069"></span>
+<span class="acc" style="background:#FF7A85"></span>
+<span style="font:400 12px var(--font-body);color:var(--text-3);margin-left:6px">Starlight — buttons, links, and highlights use this color.</span>
+</div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+<div class="row"><span style="flex:1"><b>Dark mode</b><p>Easy on the eyes. Aquarius is designed dark-first.</p></span><span class="sw on"></span></div>
+<div class="row"><span style="flex:1"><b>Ribbon motion</b><p>Gentle wallpaper movement. Turns off in Game Mode.</p></span><span class="sw on"></span></div>
+</div>
+<div class="row"><span style="flex:1"><b>Text size</b><p>Everything scales together — icons, menus, and apps.</p></span><span style="display:flex;align-items:center;gap:10px;font:500 13px var(--font-body)"><span style="font-size:12px;color:var(--text-3)">A</span><span style="width:180px;height:6px;border-radius:3px;background:rgba(237,239,247,.12);position:relative"><i style="position:absolute;left:0;top:0;bottom:0;width:40%;border-radius:3px;background:var(--starlight)"></i><u style="position:absolute;left:40%;top:50%;width:16px;height:16px;border-radius:50%;background:#FFFFFF;transform:translate(-50%,-50%)"></u></span><span style="font-size:17px">A</span></span></div>
+</div>
+</section>
+</div>
+<div style="position:absolute;left:24px;bottom:18px;font:400 11px var(--font-mono);color:var(--text-3)">Settings · <a href="AquariusOS Desktop Shell.html">back to shell</a></div>
+</body>
+</html>

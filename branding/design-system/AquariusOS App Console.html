@@ -1,0 +1,51 @@
+<!-- @dsCard group="Apps" viewport="1280x800" name="Console" subtitle="For those who want it — never required to use Aquarius" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AquariusOS · Console</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+*{box-sizing:border-box;margin:0}
+html,body{height:100%}
+body{width:1280px;height:800px;background:radial-gradient(140% 100% at 78% -10%,#0B0E22 0%,var(--void) 55%);font-family:var(--font-body);color:var(--text-1);overflow:hidden;position:relative;display:flex;align-items:center;justify-content:center}
+a{color:var(--starlight)}a:hover{color:var(--starlight-hover)}
+.win{width:1000px;height:640px;border-radius:var(--radius-xl);background:rgba(8,10,17,.84);backdrop-filter:blur(22px) saturate(1.3);-webkit-backdrop-filter:blur(22px) saturate(1.3);border:1px solid rgba(237,239,247,.14);box-shadow:var(--shadow-pop),inset 0 1px 0 rgba(237,239,247,.07);display:flex;flex-direction:column;overflow:hidden}
+.tab{display:flex;align-items:center;gap:8px;padding:7px 14px;border-radius:8px;font:500 12px var(--font-body);color:var(--text-3);cursor:pointer}
+.tab.on{background:rgba(237,239,247,.07);color:var(--text-1)}
+.t{font:400 13px/1.75 var(--font-mono)}
+.p{color:#8AB4FF;font-weight:600}
+.ok{color:#55D6A5}
+.dim{color:#848CA6}
+</style>
+</head>
+<body data-screen-label="Console app"><div style="position:fixed;left:-10%;top:20%;width:120%;height:120px;background:linear-gradient(90deg,transparent 10%,rgba(91,75,224,.22) 45%,rgba(138,180,255,.16) 70%,transparent);filter:blur(50px);transform:rotate(-10deg);pointer-events:none"></div>
+<div class="win">
+<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border-1);background:rgba(6,7,12,.5)">
+<span style="display:flex;gap:8px;margin-right:6px"><span style="width:12px;height:12px;border-radius:50%;background:#FF7A85"></span><span style="width:12px;height:12px;border-radius:50%;background:#E6C069"></span><span style="width:12px;height:12px;border-radius:50%;background:#55D6A5"></span></span>
+<span class="tab on">royce@aquarius — ~</span>
+<span class="tab">builds</span>
+<span class="tab" style="padding:7px 10px">+</span>
+<span style="flex:1"></span>
+<span style="font:400 10.5px var(--font-mono);color:var(--text-3)">zsh · JetBrains Mono 13</span>
+</div>
+<div style="flex:1;padding:18px 22px" class="t">
+<div><span class="p">royce@aquarius</span> <span class="dim">~</span> <span style="color:#D678E8">%</span> aq status</div>
+<div class="ok">● aquarius-stable 42.1 — everything healthy</div>
+<div><span class="dim">   gpu</span>       RX 9070 XT · driver 25.8 <span class="ok">✓</span></div>
+<div><span class="dim">   game mode</span> ready · gamescope 3.16 <span class="ok">✓</span></div>
+<div><span class="dim">   updates</span>   applied last night, no restart needed <span class="ok">✓</span></div>
+<div style="height:14px"></div>
+<div><span class="p">royce@aquarius</span> <span class="dim">~</span> <span style="color:#D678E8">%</span> aq snapshot create "before mod install"</div>
+<div class="ok">✓ snapshot saved — restore anytime from Settings → Updates</div>
+<div style="height:14px"></div>
+<div><span class="p">royce@aquarius</span> <span class="dim">~</span> <span style="color:#D678E8">%</span> <span style="border-right:7px solid rgba(138,180,255,.8)">&nbsp;</span></div>
+</div>
+<div style="padding:10px 22px;border-top:1px solid var(--border-1);display:flex;align-items:center;gap:16px;font:400 11px var(--font-mono);color:var(--text-3)">
+<span style="color:var(--text-2)">TIP</span>everything here also lives in Settings — the console is optional, always
+<span style="flex:1"></span><span>⌘K clear</span><span>⌘T new tab</span>
+</div>
+</div>
+<div style="position:absolute;left:24px;bottom:18px;font:400 11px var(--font-mono);color:var(--text-3)">Console · <a href="AquariusOS Desktop Shell.html">back to shell</a></div>
+</body>
+</html>
