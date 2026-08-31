@@ -453,11 +453,12 @@ systemctl enable aquarius-greeter-scale.service
 # HANDHELD-ONLY SETTINGS — kept on the handheld image, deleted from the others
 # ==============================================================================
 # A handheld needs a small number of KDE defaults that a desktop PC actively does
-# not want. Right now there is one of them and it is the important one: turn the
-# game controller into a mouse and keyboard on the desktop, which is the only way
-# to use an ROG Xbox Ally with nothing plugged into it. On a desktop PC the same
-# setting means a controller plugged in for a game starts shoving the mouse
-# pointer around, which nobody asked for.
+# not want. The important one: turn the game controller into a mouse and keyboard
+# on the desktop, which is the only way to use an ROG Xbox Ally with nothing
+# plugged into it. On a desktop PC the same setting means a controller plugged in
+# for a game starts shoving the mouse pointer around, which nobody asked for.
+# The other one is a gentler window blur, because a handheld's graphics chip and
+# its battery are the same budget.
 #
 #   /usr/share/aquarius/xdg-handheld/kwinrc   ← read that file; the reasoning,
 #                                               the button map and the sources
@@ -504,6 +505,36 @@ case "${AQ_IMAGE_NAME}" in
     rm -rf /usr/share/aquarius/xdg-handheld
     ;;
 esac
+
+# ==============================================================================
+# TIER 2, TRACK B — THE KWIN EFFECTS LAYER (glassy, rounded windows)
+# ==============================================================================
+# One line again, for the same reason as the creator apps above: all the detail
+# lives in its own file.
+#
+#     build_files/kwin-effects.sh
+#
+# What it does: downloads the source code of two community KDE add-ons —
+# Better Blur DX and KDE-Rounded-Corners — and COMPILES them here, inside the
+# build, against the exact KWin this image ships. That is unusual and it is
+# deliberate: a KWin effect only works with the precise KWin it was built for,
+# and when it does not match it fails silently rather than loudly. Building both
+# here welds them to our KWin, so an update ships both or neither, and a Plasma
+# bump that upstream has not caught up with turns a broken desktop into a red
+# build. If either one fails to compile, no image is published. That is the
+# point, not a bug — read the top of that file before "fixing" a failure.
+#
+# The settings that switch them on are ordinary defaults in the xdg cascade:
+#   system_files/usr/share/aquarius/xdg/kwinrc     (blur + rounded corners)
+#   system_files/usr/share/aquarius/xdg/breezerc   (window shadows)
+#   system_files/usr/share/aquarius/xdg-handheld/kwinrc  (gentler blur on APUs)
+#
+# It runs HERE, after the handheld folder has been trimmed above, so its check
+# of the handheld override only happens on the image that actually keeps it.
+# Beginner-facing write-up: docs/kwin-effects-layer.md
+# ------------------------------------------------------------------------------
+
+/ctx/kwin-effects.sh
 
 # ==============================================================================
 # THE GLASS DESKTOP — give the Plasma style a fresh version number

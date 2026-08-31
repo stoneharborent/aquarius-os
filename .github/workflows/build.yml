@@ -486,6 +486,147 @@ jobs:
             --entrypoint /usr/bin/bash \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" </tmp/verify-creator-apps.sh
 
+      # ------------------------------------------------------------------------
+      # THE GLASS — are the two compiled-in KWin effects really in this image?
+      # ------------------------------------------------------------------------
+      # AquariusOS gets its frosted, rounded windows from two community add-ons
+      # that are COMPILED during the image build, against the exact KWin the
+      # image ships (build_files/kwin-effects.sh explains why at length).
+      #
+      # That build script already checks its own work. This step asks the same
+      # questions again of the FINISHED, rechunked image that is about to be
+      # pushed — same reasoning as the creator-app step above: rechunking
+      # re-packs every file in the image, and "the file was there when we made
+      # it" is not the same claim as "the file is there in what we published".
+      #
+      # It matters more here than almost anywhere else, because of how a KWin
+      # effect fails. It does not crash and it does not print an error: the
+      # plug-in is simply not loaded and the desktop is quietly not glassy any
+      # more. There is no user-visible symptom to report except "it looks
+      # wrong". So the check has to happen up here, before anybody boots it.
+      #
+      # WHAT THIS CANNOT PROVE. There is no compositor and no graphics card in a
+      # container, so nothing here can start KWin and watch it accept the
+      # plug-in. That last step is a human one, written down in
+      # docs/kwin-effects-layer.md: on a booted machine,
+      #     qdbus org.kde.KWin /Effects loadedEffects
+      # should list better_blur_dx and kwin4_effect_shapecorners.
+      - name: Verify KWin effects
+        id: verify-kwin-effects
+        run: |
+          set -euo pipefail
+          cat >/tmp/verify-kwin-effects.sh <<'SCRIPT'
+          set -u
+
+          fails=0
+          bad() { echo "  FAIL $*"; fails=1; }
+          ok()  { echo "  OK   $*"; }
+
+          # KWin scans exactly one folder for compiled effects. On 64-bit Fedora
+          # it is this one. Both file names were read out of the projects' own
+          # build files — the working is written out in
+          # /usr/share/aquarius/xdg/kwinrc, which ships in this image.
+          plugins=/usr/lib64/qt6/plugins/kwin/effects/plugins
+          configs=/usr/lib64/qt6/plugins/kwin/effects/configs
+
+          echo "== what is actually in ${plugins} =="
+          ls -l "$plugins" || echo "(the folder does not exist!)"
+          echo "== checks =="
+
+          # 1. The two effects themselves, and their System Settings pages.
+          for f in \
+            "${plugins}/better_blur_dx.so" \
+            "${plugins}/kwin4_effect_shapecorners.so" \
+            "${configs}/kwin_better_blur_dx_config.so" \
+            "${configs}/kwin_shapecorners_config.so"
+          do
+            if [ -f "$f" ] && [ -r "$f" ]; then ok "$(basename "$f") is present and readable"
+            else bad "$f is missing — that effect cannot load"; fi
+          done
+
+          # 2. The rounded-corners effect reads two shader files at run time and
+          #    draws nothing without them. They are separate files, installed by
+          #    a separate CMake rule, so they can go missing on their own.
+          for f in /usr/share/kwin/shaders/shapecorners.frag \
+                   /usr/share/kwin/shaders/shapecorners_core.frag
+          do
+            if [ -f "$f" ]; then ok "$(basename "$f") shader is present"
+            else bad "$f is missing — rounded corners would load and draw nothing"; fi
+          done
+
+          # 3. Every library each plug-in needs is present in THIS image.
+          #    A plug-in with a missing library is silently ignored by KWin, so
+          #    this is the closest a container can get to "will it load".
+          for f in "${plugins}/better_blur_dx.so" "${plugins}/kwin4_effect_shapecorners.so"; do
+            [ -f "$f" ] || continue
+            missing="$(ldd -r "$f" 2>&1 | grep 'not found' || true)"
+            if [ -z "$missing" ]; then ok "$(basename "$f") — every library it needs is in the image"
+            else bad "$(basename "$f") needs libraries this image does not have:"; printf '       %s\n' "$missing"; fi
+          done
+
+          # 4. The description KDE lists an effect by is compiled INTO the .so
+          #    as a block of JSON. Losing it gives a plug-in that loads but never
+          #    appears in System Settings and can never be switched on. The text
+          #    is stored verbatim, so it can simply be looked for.
+          if grep -aq 'Better Blur DX' "${plugins}/better_blur_dx.so" 2>/dev/null; then
+            ok "better_blur_dx.so carries its plug-in description"
+          else
+            bad "better_blur_dx.so has no description compiled into it"
+          fi
+          if grep -aqE 'ShapeCorners|Rounded Corners' "${plugins}/kwin4_effect_shapecorners.so" 2>/dev/null; then
+            ok "kwin4_effect_shapecorners.so carries its plug-in description"
+          else
+            bad "kwin4_effect_shapecorners.so has no description compiled into it"
+          fi
+
+          # 5. The settings that switch them on shipped too. Two effects nobody
+          #    turns on look exactly like two effects that failed to build.
+          k=/usr/share/aquarius/xdg/kwinrc
+          b=/usr/share/aquarius/xdg/breezerc
+          check() {  # check "<description>" "<pattern>" "<file>"
+            if grep -Eq "$2" "$3" 2>/dev/null; then ok "$1"
+            else bad "$1 — /$2/ not found in $3"; fi
+          }
+          check "Better Blur DX is switched on"        '^better_blur_dxEnabled=true$'          "$k"
+          check "rounded corners are switched on"      '^kwin4_effect_shapecornersEnabled=true$' "$k"
+          check "KDE's own blur is switched off"       '^blurEnabled=false$'                   "$k"
+          check "the blur is tuned"                    '^\[Effect-better-blur-dx\]$'           "$k"
+          check "blur-every-window is set"             '^BlurMatching=false$'                  "$k"
+          check "the corner radius is set"             '^\[Round-Corners\]$'                   "$k"
+          check "one shadow, not two"                  '^UseNativeDecorationShadows=true$'     "$k"
+          check "the window shadow file shipped"       '^\[Common\]$'                          "$b"
+          check "the shadow is the big one"            '^ShadowSize=ShadowVeryLarge$'          "$b"
+
+          # 6. Handhelds get a gentler blur, and the desktop images must NOT.
+          #    The folder only exists on the handheld image — build.sh deletes it
+          #    from the other two — so which of these two branches runs is itself
+          #    part of what is being checked.
+          if [ -d /usr/share/aquarius/xdg-handheld ]; then
+            check "the handheld's gentler blur" '^BlurStrength=6$' /usr/share/aquarius/xdg-handheld/kwinrc
+          else
+            ok "no handheld-only settings on this image (correct for a desktop image)"
+          fi
+
+          # 7. The compilers and header files used to build the effects must be
+          #    gone again. Shipping them would put hundreds of megabytes of
+          #    development tools on every user's machine.
+          if rpm -q kwin-devel > /dev/null 2>&1; then
+            bad "kwin-devel is still installed — the build tools were not cleaned up"
+          else
+            ok "no development packages left in the image"
+          fi
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::The KWin effects layer is not correct in this image — the desktop would not be glassy. See above."
+            exit 1
+          fi
+          echo "All KWin-effect checks passed."
+          SCRIPT
+
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" </tmp/verify-kwin-effects.sh
+
       - name: Generate Build Tags
         id: gen-build-tags
         run: |
