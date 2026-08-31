@@ -355,12 +355,8 @@ Recorded rather than quietly pretended away.
    setting, so those collapse into one value. Nothing can be done about this
    short of writing our own compositor.
 
-3. **The window outlines are at upstream's defaults.** KDE-Rounded-Corners draws
-   a thin black line around every window plus a fainter white one just inside it.
-   That is *close* to the design's hairline border and inner top highlight, but
-   it is not the same thing, and numbers picked here without looking at a screen
-   would be numbers nobody had checked. Left alone on the first test image;
-   judge it there and tune `[Round-Corners]` in `kwinrc` if it needs it.
+3. ~~**The window outlines are at upstream's defaults.**~~ **Judged and changed
+   on 2026-08-30 — see "First bench findings" at the bottom of this document.**
 
 4. **The titlebar is not translucent.** KDE's Breeze window frame has no
    transparency setting. The blur is told to blur *behind* the frame as well,
@@ -400,3 +396,114 @@ finished image and proves:
 It **cannot** prove the plug-in loads. There is no compositor and no graphics
 card in a container. That is what the `loadedEffects` command above is for, and
 it is the one genuinely outstanding item on this track.
+
+---
+
+## First bench findings — 2026-08-30
+
+The image booted on real x86 hardware. The photograph that matters here is a
+close-up of a window's top-left corner. Everything this layer is *for* was
+working: the effects compiled, loaded and rounded the corners, and the settings
+cascade reached KWin.
+
+### What the photo showed
+
+Two lines, not one, and both wrong for the design.
+
+1. A **cream-white hairline** tracing the whole window, hugging the rounded
+   corner. Bright — brighter than anything else on the screen.
+2. A **straight dark 1px line** at the top-left, running upwards past the point
+   where the corner curves away and stopping abruptly against the wallpaper.
+
+### The cream line — fixed
+
+That is upstream's second outline: white at `ActiveSecondOutlineAlpha=85`, which
+is 85 out of 255, the "33%" everybody quotes. Upstream's first outline is black
+at full opacity, which against our wallpaper all but vanishes — so the only ring
+you actually see is the white one.
+
+Gap 3 above said these were left at upstream's defaults because numbers picked
+without a screen are numbers nobody has checked. There is now a screen, so they
+have been set:
+
+| Key | Was (upstream) | Now | Why |
+|---|---|---|---|
+| `OutlineColor` | `black` | `237,239,247` | the design's hairline colour |
+| `ActiveOutlineAlpha` | `255` | `36` | `border-2` is 14%; 14% of 255 is 35.7 |
+| `InactiveOutlineColor` | `black` | `237,239,247` | same line |
+| `InactiveOutlineAlpha` | `255` | `26` | 10%, the top bar's quieter hairline — a window you are not using recedes |
+| `SecondOutlineThickness` | `1` | `0` | off |
+| `InactiveSecondOutlineThickness` | `1` | `0` | off |
+
+Every key name and default was read out of `src/kcm/options.kcfg` at the pinned
+tag v0.10.0, and the exact lines are quoted in `kwinrc` next to the settings.
+Two things about that file are worth repeating here because they are easy to get
+wrong and fail silently:
+
+- **The colour keys hold RGB only.** An alpha written into a colour is read and
+  then overwritten by the separate `*Alpha` key
+  (`color.setAlpha(alpha)` in `src/WindowConfig.cpp`). Writing
+  `OutlineColor=237,239,247,36` gives a solid line, not a 14% one.
+- **Active has no prefix; inactive does — but only on the colours.** The active
+  colour is `OutlineColor`; there is no `ActiveOutlineColor`. The alphas are
+  both prefixed. This asymmetry is the main trap in the file.
+
+The second outline is off rather than dimmed because the design's 7% inner
+highlight is a *top-edge* sheen, and this effect can only draw a complete ring.
+A 7% ring is not a quieter version of the design; it is a different thing.
+
+### The dark line past the corner — diagnosed, not fixed
+
+Written down rather than guessed at, because the fix has a cost.
+
+**Conclusion: it is most likely the effect's own corner reconstruction — the
+shadow path — and not the outline.**
+
+The reasoning, from the v0.10.0 source:
+
+- *Not* the outline drawn on a square frame. The effect computes the outline and
+  the window edge from one shared rounded distance field (`shapeCorner()`,
+  `src/shaders/shapecorners.glsl`). A geometry mismatch would show at every
+  corner in both directions, and the photo has a vertical stub with no
+  horizontal twin.
+- *Not* the second outline. It is clamped strictly inside the radius and cannot
+  render outside the curve at all.
+- **It fits `getNativeShadow()`** in `src/shaders/shapecorners_shadows.glsl`.
+  With `UseNativeDecorationShadows=true` — which we set deliberately, to keep one
+  shadow instead of two — the effect does not draw a shadow; it *rebuilds* what
+  should sit behind the corner it rounded off, by sampling the window texture
+  about three pixels outside the frame on each side and blending the two samples
+  across the corner. Three pixels outside the frame is exactly where a window
+  decoration paints its own dark border, so that dark pixel gets smeared along
+  the corner. And the region it writes starts two pixels outside the frame, so
+  the smear genuinely extends past the window edge onto the wallpaper.
+
+Upstream says the same. Issue **#252**, "Remnant of outline despite it being
+disabled in the settings": the reporter has both outlines switched off and still
+sees a stub at the top-left corner; the maintainer's reply is *"Actually, it is
+not the outline, but the shadow"*, and he adds that it shows on Wayland and not
+on X11. Issue **#378** is the same artefact at 125% display scaling.
+
+**Why it is not being changed here.** The fix is
+`UseNativeDecorationShadows=false`, and that undoes the one-shadow decision
+documented above: with it off, this effect draws its own shadow alongside
+Breeze's, tuned by a different set of keys in a different file. Trading a
+known 1px artefact for a possible doubled halo, without a screen to look at, is
+the kind of change this document exists to argue against.
+
+**The next bench test, in order:**
+
+1. Look again with the outline colour already changed. If the stub is gone, it
+   was the outline after all and there is nothing left to do.
+2. If it is still there, set `UseNativeDecorationShadows=false` and set
+   `ShadowSize` / `ActiveShadowAlpha` to match what `breezerc` asks for — then
+   check the window shadow has not doubled.
+3. Check the display scaling. At 125% or 150%, try 100% once: #378 says the
+   sample offsets land on the wrong texels at fractional scales.
+
+### Also worth recording
+
+Gap 5 above — "do the two effects coexist perfectly?" — is partly answered. The
+corners of the ordinary window in the photo are cleanly rounded and the blur
+follows them, so the pairing works. Maximised and tiled windows were not in
+frame and are still unchecked; both projects treat them as special cases.

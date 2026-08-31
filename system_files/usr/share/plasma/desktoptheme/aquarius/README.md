@@ -13,6 +13,7 @@ Full write-up, including how to test it on real hardware:
 | File | What it is the background of |
 |---|---|
 | `widgets/panel-background.svg` | The top bar **and** the dock. |
+| `widgets/tasks.svg` | The tile behind a dock icon — hover, active, running, needs-you. Added 2026-08-30; without it Plasma borrows Breeze's, which paints the active app as a bright blue box. |
 | `dialogs/background.svg` | Every popup: tray popups, the calendar, notifications, applet popups, and the search box (KRunner). |
 | `widgets/tooltip.svg` | The little tooltip that follows the pointer. |
 | `widgets/background.svg` | A card — a widget sitting on the desktop itself. |

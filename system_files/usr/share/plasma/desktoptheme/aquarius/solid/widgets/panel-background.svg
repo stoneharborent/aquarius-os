@@ -116,27 +116,47 @@
       <stop offset="0.75" stop-color="#000000" stop-opacity="0.0405"/>
       <stop offset="1" stop-color="#000000" stop-opacity="0"/>
     </radialGradient>
+    <!-- The 7% top sheen, tapering to nothing as it turns a corner.
+         The V2 design draws the sheen as a CSS `inset 0 1px 0` highlight, and
+         that kind of highlight wraps the top of a rounded box and fades out
+         down the sides. Painting it at full strength all the way round a
+         corner is what made the corner read thicker than the straight edge it
+         ran into; painting it not at all made the sheen start with a step.
+         These two fade it out instead. -->
+    <linearGradient id="aq-sheen-in" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#EDEFF7" stop-opacity="0"/>
+      <stop offset="1" stop-color="#EDEFF7" stop-opacity="0.07"/>
+    </linearGradient>
+    <linearGradient id="aq-sheen-out" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#EDEFF7" stop-opacity="0.07"/>
+      <stop offset="1" stop-color="#EDEFF7" stop-opacity="0"/>
+    </linearGradient>
   </defs>
 
-  <!-- ===== BAND 1 — the top bar (plain names) ===== -->
+  <!-- ===== BAND 1 — the top bar (plain names) =====
+       Hairlines are FILLED bands, never strokes — a 1px stroke along a curve
+       is anti-aliased over ~2px and steps visibly where it meets the crisp
+       1px filled rect on the neighbouring edge piece. Changed 2026-08-30
+       after the first bench boot; the reasoning is written out in full in
+       ../../widgets/panel-background.svg, BAND 3. -->
   <g id="aq-frame">
     <g id="topleft">
       <path d="M 0,16 A 16,16 0 0 1 16,0 L 16,16 Z" fill="#06070C" fill-opacity="1"/>
-      <path d="M 0.5,16 A 15.5,15.5 0 0 1 16,0.5" fill="none" stroke="#EDEFF7" stroke-opacity="0.1" stroke-width="1"/>
-      <path d="M 1.5,16 A 14.5,14.5 0 0 1 16,1.5" fill="none" stroke="#EDEFF7" stroke-opacity="0.07" stroke-width="1"/>
+      <path d="M 0,16 A 16,16 0 0 1 16,0 L 16,1 A 15,15 0 0 0 1,16 Z" fill="#EDEFF7" fill-opacity="0.1"/>
+      <path d="M 1,16 A 15,15 0 0 1 16,1 L 16,2 A 14,14 0 0 0 2,16 Z" fill="url(#aq-sheen-in)"/>
     </g>
     <g id="topright">
       <path d="M 32,0 A 16,16 0 0 1 48,16 L 32,16 Z" fill="#06070C" fill-opacity="1"/>
-      <path d="M 32,0.5 A 15.5,15.5 0 0 1 47.5,16" fill="none" stroke="#EDEFF7" stroke-opacity="0.1" stroke-width="1"/>
-      <path d="M 32,1.5 A 14.5,14.5 0 0 1 46.5,16" fill="none" stroke="#EDEFF7" stroke-opacity="0.07" stroke-width="1"/>
+      <path d="M 32,0 A 16,16 0 0 1 48,16 L 47,16 A 15,15 0 0 0 32,1 Z" fill="#EDEFF7" fill-opacity="0.1"/>
+      <path d="M 32,1 A 15,15 0 0 1 47,16 L 46,16 A 14,14 0 0 0 32,2 Z" fill="url(#aq-sheen-out)"/>
     </g>
     <g id="bottomleft">
       <path d="M 16,48 A 16,16 0 0 1 0,32 L 16,32 Z" fill="#06070C" fill-opacity="1"/>
-      <path d="M 16,47.5 A 15.5,15.5 0 0 1 0.5,32" fill="none" stroke="#EDEFF7" stroke-opacity="0.1" stroke-width="1"/>
+      <path d="M 16,48 A 16,16 0 0 1 0,32 L 1,32 A 15,15 0 0 0 16,47 Z" fill="#EDEFF7" fill-opacity="0.1"/>
     </g>
     <g id="bottomright">
       <path d="M 48,32 A 16,16 0 0 1 32,48 L 32,32 Z" fill="#06070C" fill-opacity="1"/>
-      <path d="M 47.5,32 A 15.5,15.5 0 0 1 32,47.5" fill="none" stroke="#EDEFF7" stroke-opacity="0.1" stroke-width="1"/>
+      <path d="M 48,32 A 16,16 0 0 1 32,48 L 32,47 A 15,15 0 0 0 47,32 Z" fill="#EDEFF7" fill-opacity="0.1"/>
     </g>
     <g id="top">
       <rect x="16" y="0" width="16" height="16" fill="#06070C" fill-opacity="1"/>
@@ -191,21 +211,21 @@
   <g id="aq-frame-floating">
     <g id="floating-topleft">
       <path d="M 120,16 A 16,16 0 0 1 136,0 L 136,16 Z" fill="#06070C" fill-opacity="1"/>
-      <path d="M 120.5,16 A 15.5,15.5 0 0 1 136,0.5" fill="none" stroke="#EDEFF7" stroke-opacity="0.14" stroke-width="1"/>
-      <path d="M 121.5,16 A 14.5,14.5 0 0 1 136,1.5" fill="none" stroke="#EDEFF7" stroke-opacity="0.07" stroke-width="1"/>
+      <path d="M 120,16 A 16,16 0 0 1 136,0 L 136,1 A 15,15 0 0 0 121,16 Z" fill="#EDEFF7" fill-opacity="0.14"/>
+      <path d="M 121,16 A 15,15 0 0 1 136,1 L 136,2 A 14,14 0 0 0 122,16 Z" fill="url(#aq-sheen-in)"/>
     </g>
     <g id="floating-topright">
       <path d="M 152,0 A 16,16 0 0 1 168,16 L 152,16 Z" fill="#06070C" fill-opacity="1"/>
-      <path d="M 152,0.5 A 15.5,15.5 0 0 1 167.5,16" fill="none" stroke="#EDEFF7" stroke-opacity="0.14" stroke-width="1"/>
-      <path d="M 152,1.5 A 14.5,14.5 0 0 1 166.5,16" fill="none" stroke="#EDEFF7" stroke-opacity="0.07" stroke-width="1"/>
+      <path d="M 152,0 A 16,16 0 0 1 168,16 L 167,16 A 15,15 0 0 0 152,1 Z" fill="#EDEFF7" fill-opacity="0.14"/>
+      <path d="M 152,1 A 15,15 0 0 1 167,16 L 166,16 A 14,14 0 0 0 152,2 Z" fill="url(#aq-sheen-out)"/>
     </g>
     <g id="floating-bottomleft">
       <path d="M 136,48 A 16,16 0 0 1 120,32 L 136,32 Z" fill="#06070C" fill-opacity="1"/>
-      <path d="M 136,47.5 A 15.5,15.5 0 0 1 120.5,32" fill="none" stroke="#EDEFF7" stroke-opacity="0.14" stroke-width="1"/>
+      <path d="M 136,48 A 16,16 0 0 1 120,32 L 121,32 A 15,15 0 0 0 136,47 Z" fill="#EDEFF7" fill-opacity="0.14"/>
     </g>
     <g id="floating-bottomright">
       <path d="M 168,32 A 16,16 0 0 1 152,48 L 152,32 Z" fill="#06070C" fill-opacity="1"/>
-      <path d="M 167.5,32 A 15.5,15.5 0 0 1 152,47.5" fill="none" stroke="#EDEFF7" stroke-opacity="0.14" stroke-width="1"/>
+      <path d="M 168,32 A 16,16 0 0 1 152,48 L 152,47 A 15,15 0 0 0 167,32 Z" fill="#EDEFF7" fill-opacity="0.14"/>
     </g>
     <g id="floating-top">
       <rect x="136" y="0" width="16" height="16" fill="#06070C" fill-opacity="1"/>
@@ -257,15 +277,19 @@
   </g>
 
   <!-- ===== BAND 5 — content inset markers =====
-       top bar 4px, dock 6px, 'thick' panels 8px -->
+       top bar 4px, dock 9px down / 13px across, 'thick' panels 8px.
+       The dock numbers are the padding the V2 design draws on the dock itself
+       (branding/design-system/AquariusOS Desktop Shell.html, "padding: 9px 13px").
+       They were 6px all round until the first bench boot showed icons crowding
+       the glass edge. Full note in ../../widgets/panel-background.svg, BAND 5. -->
     <rect id="hint-top-margin" x="200" y="56" width="4" height="4" fill="none"/>
     <rect id="hint-bottom-margin" x="208" y="56" width="4" height="4" fill="none"/>
     <rect id="hint-left-margin" x="216" y="56" width="4" height="4" fill="none"/>
     <rect id="hint-right-margin" x="216" y="64" width="4" height="4" fill="none"/>
-    <rect id="floating-hint-top-margin" x="200" y="72" width="4" height="6" fill="none"/>
-    <rect id="floating-hint-bottom-margin" x="208" y="72" width="4" height="6" fill="none"/>
-    <rect id="floating-hint-left-margin" x="216" y="72" width="6" height="4" fill="none"/>
-    <rect id="floating-hint-right-margin" x="216" y="80" width="6" height="4" fill="none"/>
+    <rect id="floating-hint-top-margin" x="200" y="72" width="4" height="9" fill="none"/>
+    <rect id="floating-hint-bottom-margin" x="208" y="72" width="4" height="9" fill="none"/>
+    <rect id="floating-hint-left-margin" x="216" y="72" width="13" height="4" fill="none"/>
+    <rect id="floating-hint-right-margin" x="216" y="80" width="13" height="4" fill="none"/>
     <rect id="thick-hint-top-margin" x="240" y="88" width="4" height="8" fill="none"/>
     <rect id="thick-hint-bottom-margin" x="248" y="88" width="4" height="8" fill="none"/>
     <rect id="thick-hint-left-margin" x="256" y="88" width="8" height="4" fill="none"/>
@@ -275,14 +299,21 @@
   <!-- ===== BAND 6 — the drop shadow =====
        Shared by both bars. The top bar only ever
        shows its bottom tile, because that is its only switched-on edge. -->
+    <!-- ⚠️ Fixed 2026-08-30, first bench boot: a shadow tile is DARKEST along the
+         edge that touches the window and fades away from it. All four edge tiles
+         below used to be the other way round — clear next to the window, 45%
+         black at the far edge — which drew a hard dark rectangle around
+         everything. The corners were always right, so the mismatch showed up as
+         blocks at the ends. The rule: the gradient's SOLID end points at the
+         window. Full write-up in widgets/panel-background.svg, BAND 6. -->
     <rect id="shadow-topleft" x="0" y="120" width="20" height="10" fill="url(#aq-sh-corner-br)"/>
-    <rect id="shadow-top" x="20" y="120" width="16" height="10" fill="url(#aq-sh-down)"/>
+    <rect id="shadow-top" x="20" y="120" width="16" height="10" fill="url(#aq-sh-up)"/>
     <rect id="shadow-topright" x="36" y="120" width="20" height="10" fill="url(#aq-sh-corner-bl)"/>
-    <rect id="shadow-left" x="0" y="130" width="20" height="16" fill="url(#aq-sh-rightward)"/>
+    <rect id="shadow-left" x="0" y="130" width="20" height="16" fill="url(#aq-sh-leftward)"/>
     <rect id="shadow-center" x="20" y="130" width="16" height="16" fill="none"/>
-    <rect id="shadow-right" x="36" y="130" width="20" height="16" fill="url(#aq-sh-leftward)"/>
+    <rect id="shadow-right" x="36" y="130" width="20" height="16" fill="url(#aq-sh-rightward)"/>
     <rect id="shadow-bottomleft" x="0" y="146" width="20" height="30" fill="url(#aq-sh-corner-tr)"/>
-    <rect id="shadow-bottom" x="20" y="146" width="16" height="30" fill="url(#aq-sh-up)"/>
+    <rect id="shadow-bottom" x="20" y="146" width="16" height="30" fill="url(#aq-sh-down)"/>
     <rect id="shadow-bottomright" x="36" y="146" width="20" height="30" fill="url(#aq-sh-corner-tl)"/>
     <rect id="shadow-hint-top-margin" x="0" y="184" width="2" height="10" fill="none"/>
     <rect id="shadow-hint-bottom-margin" x="8" y="184" width="2" height="30" fill="none"/>

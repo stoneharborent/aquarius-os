@@ -196,6 +196,17 @@ tasks.currentConfigGroup = ["General"];
 //
 // To find the right name for an app, look in /usr/share/applications/ on a
 // running AquariusOS machine and use the filename.
+//
+// CHECKED 2026-08-30, first bench boot. All five slots appeared in the dock
+// with an icon, so all five names resolve — these are the upstream filenames
+// and none of them is wrong. What the photo DOES show is that Files, Console
+// and Settings draw as pale flat squares with very little colour. That is an
+// icon-theme question, not a name question: `kdeglobals` next door asks for
+// `breeze-dark`, and whether that theme is actually in the image, and what it
+// draws at dock size, can only be answered on the machine —
+//     ls /usr/share/icons
+// and a close look at the dock. Deliberately not guessed at here; changing a
+// name that works would only make it harder to find out.
 tasks.writeConfig("launchers", [
     "preferred://browser",
     "applications:steam.desktop",
