@@ -507,30 +507,36 @@ case "${AQ_IMAGE_NAME}" in
 esac
 
 # ==============================================================================
-# TIER 2, TRACK B — THE KWIN EFFECTS LAYER (glassy, rounded windows)
+# TIER 2, TRACK B — THE KWIN EFFECTS LAYER (rounded windows)
 # ==============================================================================
 # One line again, for the same reason as the creator apps above: all the detail
 # lives in its own file.
 #
 #     build_files/kwin-effects.sh
 #
-# What it does: downloads the source code of two community KDE add-ons —
-# Better Blur DX and KDE-Rounded-Corners — and COMPILES them here, inside the
-# build, against the exact KWin this image ships. That is unusual and it is
-# deliberate: a KWin effect only works with the precise KWin it was built for,
-# and when it does not match it fails silently rather than loudly. Building both
-# here welds them to our KWin, so an update ships both or neither, and a Plasma
-# bump that upstream has not caught up with turns a broken desktop into a red
-# build. If either one fails to compile, no image is published. That is the
-# point, not a bug — read the top of that file before "fixing" a failure.
+# What it does: downloads the source code of one community KDE add-on —
+# KDE-Rounded-Corners — and COMPILES it here, inside the build, against the
+# exact KWin this image ships. That is unusual and it is deliberate: a KWin
+# effect only works with the precise KWin it was built for, and when it does
+# not match it fails silently rather than loudly. Building it here welds it to
+# our KWin, so an update ships both or neither, and a Plasma bump that upstream
+# has not caught up with turns a broken desktop into a red build. If it fails
+# to compile, no image is published. That is the point, not a bug — read the
+# top of that file before "fixing" a failure.
 #
-# The settings that switch them on are ordinary defaults in the xdg cascade:
-#   system_files/usr/share/aquarius/xdg/kwinrc     (blur + rounded corners)
+# ⚠️ It used to build TWO add-ons. The second, Better Blur DX, made whole
+# windows frosted glass; it was removed on 2026-08-30 along with all the
+# transparency in the design, because the blur it existed to draw never
+# rendered on this Plasma. The reasoning is at the top of kwin-effects.sh and
+# the investigation is in docs/blur-known-issue.md.
+#
+# The settings that switch it on are ordinary defaults in the xdg cascade:
+#   system_files/usr/share/aquarius/xdg/kwinrc     (rounded corners, outlines)
 #   system_files/usr/share/aquarius/xdg/breezerc   (window shadows)
-#   system_files/usr/share/aquarius/xdg-handheld/kwinrc  (gentler blur on APUs)
+#   system_files/usr/share/aquarius/xdg-handheld/kwinrc  (controller-as-mouse)
 #
 # It runs HERE, after the handheld folder has been trimmed above, so its check
-# of the handheld override only happens on the image that actually keeps it.
+# of the handheld file only happens on the image that actually keeps it.
 # Beginner-facing write-up: docs/kwin-effects-layer.md
 # ------------------------------------------------------------------------------
 

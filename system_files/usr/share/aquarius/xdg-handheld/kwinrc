@@ -118,61 +118,33 @@
 gamecontrollerEnabled=true
 
 # ------------------------------------------------------------------------------
-# A GENTLER BLUR, BECAUSE A HANDHELD IS NOT A DESKTOP
+# WHAT USED TO BE HERE: a gentler blur  (removed 2026-08-30)
 # ------------------------------------------------------------------------------
-# AquariusOS blurs the background behind every window — see the long section in
-# ../xdg/kwinrc, and docs/kwin-effects-layer.md for what the effect is and why
-# it is compiled into the image. It is a shader that runs on the graphics chip
-# for every window on screen, every frame, and upstream says so themselves:
-# "This effect can be very resource-intensive if you have a lot of windows
-# open."
-#   Source: xarblu/kwin-effects-better-blur-dx, README.md, "Known Issues".
+# This file used to carry one more setting — a lower blur strength, 6 instead
+# of the desktop's 11 — because blurring is a shader that runs on the graphics
+# chip for every window, every frame, and on a handheld that chip shares one
+# processor, one pool of memory and one battery with everything else.
 #
-# On a desktop with a real graphics card that is free. On a handheld it is not:
-# the graphics chip is part of the same processor as everything else, shares the
-# same memory and the same power budget, and the machine runs off a battery.
-# Softer blur is more passes over the whole screen, so it is the one setting
-# here with a direct cost in frames and in minutes of use.
+# Both halves of that are gone:
 #
-# So the handheld gets the same look, one notch cheaper.
+#   * The effect it configured, Better Blur DX, has been removed from the
+#     image. It never produced a visible blur on this Plasma — the fault sits
+#     upstream in KWin and is written up in
+#     ../../../../../docs/blur-known-issue.md — and with no frost to show,
+#     Royce dropped transparency from the design entirely on 2026-08-30. The
+#     panels, popups and windows of AquariusOS are opaque now.
 #
-# HOW ONE LINE HERE CHANGES ONE LINE THERE, AND LEAVES THE REST ALONE
-#   KDE reads its settings from a stack of folders and merges them KEY BY KEY,
-#   not file by file — the same reason a user changing one thing in System
-#   Settings does not lose every other default. This folder sits in FRONT of
-#   ../xdg/ in that stack (see the last block of
-#   ../../../../etc/xdg/plasma-workspace/env/zz-aquarius.sh, which says it is
-#   ordered this way precisely so that the more specific answer wins the day the
-#   two overlap). So BlurStrength below replaces the desktop file's 11, and
-#   every other blur setting — the saturation, the corner radius, the "blur
-#   everything" rule — still comes through from ../xdg/kwinrc underneath.
+#   * So there is nothing left to turn down. The handheld is not getting a
+#     worse-looking desktop out of this; it is getting the same desktop as the
+#     PC, and no longer paying for a shader that was drawing nothing.
 #
-#   That is also why only this ONE key is written here. Copying the whole
-#   section across would mean two files to keep in step, and one of them would
-#   quietly fall behind.
+# ⚠️ IF THE GLASS EVER COMES BACK, THIS IS THE FILE THAT HAS TO REMEMBER.
+# The whole reason it existed was that a handheld cannot afford what a desktop
+# can. Restoring the effect without restoring a gentler setting here would
+# quietly hand an APU the full desktop workload. The old block is one `git
+# show` away in this branch's history, and the number in it (6) was never
+# measured on real hardware — it was a starting point, and it should be
+# re-derived by watching the device rather than copied back.
 #
-# The section name is spelled with hyphens, which is not a typo — it is what
-# the project calls it, in src/blur.kcfg: <group name="Effect-better-blur-dx">.
-[Effect-better-blur-dx]
-
-# 6 instead of the desktop's 11, on a 1–15 scale. Still clearly frosted glass,
-# roughly half the shader passes.
-#
-# ⚠️ THIS NUMBER IS A STARTING POINT, NOT A MEASUREMENT. It has never been run
-# on Royce's ROG Xbox Ally — nothing in this repo can be, because the build
-# machines and his Mac are not handhelds. It is set from the shape of the
-# problem, not from a frame-rate capture, and it should be checked on the real
-# device: if the desktop still feels heavy, drop it further (4, or 1); if it is
-# perfectly smooth, it can go back up towards the desktop's 11.
-#
-# The honest way to check is to look at the desktop, not at a number — drag a
-# window around over the wallpaper with a few others open and see whether it
-# keeps up. Game Mode is not affected either way: it runs on gamescope, which
-# is a different compositor with no KWin effects in it at all.
-BlurStrength=6
-
-# The grain is off on the desktop image too, so this is not a handheld-specific
-# choice — it is only repeated because a person reading this file should not
-# have to open another one to know whether it applies. It costs a little GPU
-# time for an effect our flat surfaces do not need.
-NoiseStrength=0
+# What remains in this file is the setting the handheld genuinely cannot do
+# without: driving the desktop with a game controller, above.
