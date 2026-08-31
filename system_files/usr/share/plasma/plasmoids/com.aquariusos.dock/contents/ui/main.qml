@@ -69,6 +69,15 @@ PlasmoidItem {
     }
 
 //BEGIN TODO: this is not precise enough: launchers are smaller than full tasks
+    // AQUARIUS DEVIATION — the two `aqAddTile` terms below.
+    //
+    // The dock panel is set to "fit" length, which means the panel is exactly as
+    // wide as this widget asks to be. The "add an app" tile is drawn after the
+    // row of apps, so the widget has to ask for one tile more than the apps need
+    // — otherwise the panel ends at the last app and the + tile hangs off the
+    // end of the dock, outside its background.
+    //
+    // Everything else in these two blocks is upstream, untouched.
     Layout.preferredWidth: {
         if (shouldShrinkToZero) {
             return 0.01;
@@ -76,14 +85,14 @@ PlasmoidItem {
         if (vertical) {
             return Kirigami.Units.gridUnit * 10;
         }
-        return taskList.Layout.maximumWidth
+        return taskList.Layout.maximumWidth + (aqAddTile.visible ? aqAddTile.width : 0)
     }
     Layout.preferredHeight: {
         if (shouldShrinkToZero) {
             return 0.01;
         }
         if (vertical) {
-            return taskList.Layout.maximumHeight
+            return taskList.Layout.maximumHeight + (aqAddTile.visible ? aqAddTile.height : 0)
         }
         return Kirigami.Units.gridUnit * 2;
     }
@@ -501,6 +510,179 @@ PlasmoidItem {
                         tasksRoot: tasks
                     }
                 }
+            }
+        }
+
+        // AQUARIUS DEVIATION — the "add an app" tile.
+        //
+        // A dashed outline of a tile, with a + in it, sitting after the last app
+        // in the dock. Clicking it opens the full-screen app grid. This is the
+        // last element of the V2 dock design that stock Plasma has no option for
+        // (branding/design-system/AquariusOS Desktop Shell.html, the last
+        // `.dock-ico`, marked `border-style: dashed`, title "Add an app").
+        //
+        // WHAT THE CLICK DOES, AND WHY THIS WAY
+        // .....................................
+        // It calls `activateLauncherMenu` on plasmashell over D-Bus. That is
+        // Plasma's own published way of saying "open the app launcher": the
+        // shell walks its panels, finds the widget that advertises itself as a
+        // launcher menu, and opens it.
+        //
+        // On AquariusOS that widget is the AquariusOS mark in the top bar, which
+        // the layout script sets to Application Dashboard — the full-screen grid
+        // of every installed app, with a live search box. So this tile opens
+        // exactly the surface the design draws, and it opens the SAME one the
+        // logo opens, rather than a second copy of it.
+        //
+        // If Royce ever swaps the top-bar launcher for a different one, this
+        // tile follows it automatically, because the shell resolves "the
+        // launcher" at click time rather than us naming one here.
+        //
+        // Other ways to do this were considered and rejected; the list, with the
+        // reason each one is worse, is in FORK-NOTES.md and docs/aquarius-dock.md.
+        //
+        // The tile is not a drop target and is not draggable — it is a button.
+        // Dropping an app onto the DOCK still pins it, as it always did; that is
+        // handled by MouseHandler above and is untouched.
+        PlasmaCore.ToolTipArea {
+            id: aqAddTile
+
+            // Line the tile up with the apps, just after the last one — to the
+            // right of them on a bottom dock, below them on a side dock.
+            anchors {
+                left: tasks.vertical ? undefined : tmf.right
+                verticalCenter: tasks.vertical ? undefined : tmf.verticalCenter
+                top: tasks.vertical ? tmf.bottom : undefined
+                horizontalCenter: tasks.vertical ? tmf.horizontalCenter : undefined
+            }
+
+            visible: !tasks.shouldShrinkToZero
+
+            // Square, the same size as a task tile: a task tile fills the dock's
+            // thickness, so on a bottom dock that is the dock's height.
+            readonly property real tileSize: tasks.vertical ? tasks.width : tasks.height
+
+            width: tileSize
+            height: tileSize
+
+            // The same 4-in-32 inset the theme's tasks.svg draws into every task
+            // tile, so this outline sits on exactly the same line as the
+            // highlight behind a hovered app instead of a pixel off it.
+            readonly property real inset: Math.round(tileSize * 4 / 32)
+
+            mainText: i18nc("@info:tooltip", "Add an app")
+            subText: i18nc("@info:tooltip", "Show all installed applications")
+
+            activeFocusOnTab: true
+            Accessible.role: Accessible.Button
+            Accessible.name: mainText
+            Accessible.description: subText
+            Keys.onReturnPressed: aqAddTile.activate()
+            Keys.onEnterPressed: aqAddTile.activate()
+            Keys.onSpacePressed: aqAddTile.activate()
+
+            function activate(): void {
+                DBus.SessionBus.asyncCall({
+                    service: "org.kde.plasmashell",
+                    path: "/PlasmaShell",
+                    iface: "org.kde.PlasmaShell",
+                    member: "activateLauncherMenu",
+                    arguments: [],
+                    signature: "()"
+                });
+            }
+
+            // The same hover lift the app icons get. In the design this tile is
+            // an ordinary dock tile and lifts like the rest of them.
+            readonly property bool lifted: aqAddTileMouse.containsMouse
+                                           && Plasmoid.configuration.taskHoverEffect
+
+            scale: lifted ? 1.08 : 1.0
+
+            Behavior on scale {
+                NumberAnimation {
+                    duration: 120
+                    easing.type: Easing.Bezier
+                    easing.bezierCurve: [0.22, 1, 0.36, 1, 1, 1]
+                }
+            }
+
+            transform: Translate {
+                y: aqAddTile.lifted ? -4 : 0
+
+                Behavior on y {
+                    NumberAnimation {
+                        duration: 120
+                        easing.type: Easing.Bezier
+                        easing.bezierCurve: [0.22, 1, 0.36, 1, 1, 1]
+                    }
+                }
+            }
+
+            // Rectangle cannot draw a dashed border, so the outline is painted
+            // by hand. Everything about it comes from the design: an 11px corner
+            // radius, a hairline stroke, and a dash pattern fine enough to read
+            // as "not a real tile yet" at dock size.
+            Canvas {
+                id: aqAddTileOutline
+
+                anchors.fill: parent
+                antialiasing: true
+
+                readonly property color strokeColor: Kirigami.Theme.disabledTextColor
+                readonly property real radius: Math.round(aqAddTile.tileSize * 11 / 44)
+
+                onStrokeColorChanged: requestPaint()
+                onRadiusChanged: requestPaint()
+                onWidthChanged: requestPaint()
+                onHeightChanged: requestPaint()
+
+                onPaint: {
+                    const ctx = getContext("2d");
+                    ctx.reset();
+
+                    const inset = aqAddTile.inset;
+                    const lineWidth = 1;
+                    // Sit the stroke on a half-pixel so a 1px line stays 1px
+                    // instead of blurring across two.
+                    const x = inset + lineWidth / 2;
+                    const y = inset + lineWidth / 2;
+                    const w = width - 2 * inset - lineWidth;
+                    const h = height - 2 * inset - lineWidth;
+
+                    if (w <= 0 || h <= 0) {
+                        return;
+                    }
+
+                    ctx.strokeStyle = strokeColor;
+                    ctx.lineWidth = lineWidth;
+                    ctx.setLineDash([3, 3]);
+                    ctx.beginPath();
+                    ctx.roundedRect(x, y, w, h, radius, radius);
+                    ctx.stroke();
+                }
+            }
+
+            PlasmaComponents3.Label {
+                anchors.centerIn: parent
+                text: "+"
+                color: Kirigami.Theme.disabledTextColor
+                // Sized as a fraction of the tile so it holds its proportions at
+                // any dock thickness: the design draws an 18px "+" on a 44px tile.
+                font.pixelSize: Math.round(aqAddTile.tileSize * 18 / 44)
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+            }
+
+            MouseArea {
+                id: aqAddTileMouse
+
+                anchors.fill: parent
+                hoverEnabled: true
+                acceptedButtons: Qt.LeftButton
+                cursorShape: Qt.PointingHandCursor
+
+                onClicked: aqAddTile.activate()
             }
         }
     }
