@@ -241,8 +241,13 @@ if ! command -v glib-compile-schemas > /dev/null 2>&1; then
 fi
 
 AQ_SCHEMA_TEST="$(mktemp -d)"
-# Every schema description, so the overrides have something to attach to...
+# Every schema description, so the overrides have something to attach to.
+# TWO globs, not one: some of GNOME's schemas keep their enum definitions in a
+# separate `.enums.xml` file (GWeather is one). Copy only the `.gschema.xml`
+# half and --strict fails on GNOME's OWN files with "enum not (yet) defined" —
+# which is exactly how the first six-variant CI run died (run 33422024053).
 cp "${SCHEMA_DIR}"/*.gschema.xml "${AQ_SCHEMA_TEST}/"
+cp "${SCHEMA_DIR}"/*.enums.xml "${AQ_SCHEMA_TEST}/" 2> /dev/null || true
 # ...but only OUR overrides. See the note above.
 cp "${SCHEMA_DIR}"/zz1-aquarius-*.gschema.override "${AQ_SCHEMA_TEST}/"
 if ! glib-compile-schemas --strict "${AQ_SCHEMA_TEST}"; then
