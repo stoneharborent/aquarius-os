@@ -274,15 +274,34 @@
 
   <!-- ===== BAND 6 — the drop shadow =====
        Shared by both bars. The top bar only ever
-       shows its bottom tile, because that is its only switched-on edge. -->
+       shows its bottom tile, because that is its only switched-on edge.
+
+       ⚠️ WHICH WAY A SHADOW TILE FADES  (fixed 2026-08-30, first bench boot)
+       ..................................................................
+       A shadow tile is DARKEST along the edge that touches the panel and
+       fades to nothing as it moves away. So `shadow-top` — the strip ABOVE
+       the panel — has to be solid along its BOTTOM and clear at its top,
+       which is `aq-sh-up`. It used to say `aq-sh-down`, and all four edge
+       tiles were the same way round, i.e. every one of them was inside out:
+       clear next to the panel, 45% black at the far edge, ending in a hard
+       cut against the wallpaper.
+
+       That is the "dark blocks around the ends of the dock" in the bench
+       photo. The four CORNER tiles were always correct — they fade outwards
+       from the corner that touches the panel — so where a correct corner met
+       an inside-out edge there was a visible step, which is why it read as
+       blocks rather than as one wrong shadow.
+
+       The rule, if you ever touch these again: the gradient's SOLID end
+       always points at the panel. -->
     <rect id="shadow-topleft" x="0" y="120" width="20" height="10" fill="url(#aq-sh-corner-br)"/>
-    <rect id="shadow-top" x="20" y="120" width="16" height="10" fill="url(#aq-sh-down)"/>
+    <rect id="shadow-top" x="20" y="120" width="16" height="10" fill="url(#aq-sh-up)"/>
     <rect id="shadow-topright" x="36" y="120" width="20" height="10" fill="url(#aq-sh-corner-bl)"/>
-    <rect id="shadow-left" x="0" y="130" width="20" height="16" fill="url(#aq-sh-rightward)"/>
+    <rect id="shadow-left" x="0" y="130" width="20" height="16" fill="url(#aq-sh-leftward)"/>
     <rect id="shadow-center" x="20" y="130" width="16" height="16" fill="none"/>
-    <rect id="shadow-right" x="36" y="130" width="20" height="16" fill="url(#aq-sh-leftward)"/>
+    <rect id="shadow-right" x="36" y="130" width="20" height="16" fill="url(#aq-sh-rightward)"/>
     <rect id="shadow-bottomleft" x="0" y="146" width="20" height="30" fill="url(#aq-sh-corner-tr)"/>
-    <rect id="shadow-bottom" x="20" y="146" width="16" height="30" fill="url(#aq-sh-up)"/>
+    <rect id="shadow-bottom" x="20" y="146" width="16" height="30" fill="url(#aq-sh-down)"/>
     <rect id="shadow-bottomright" x="36" y="146" width="20" height="30" fill="url(#aq-sh-corner-tl)"/>
     <rect id="shadow-hint-top-margin" x="0" y="184" width="2" height="10" fill="none"/>
     <rect id="shadow-hint-bottom-margin" x="8" y="184" width="2" height="30" fill="none"/>

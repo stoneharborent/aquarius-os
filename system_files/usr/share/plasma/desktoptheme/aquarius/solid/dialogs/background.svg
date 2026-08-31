@@ -188,14 +188,21 @@
   </g>
 
   <!-- ===== BAND 4 — the drop shadow ===== -->
+    <!-- ⚠️ Fixed 2026-08-30, first bench boot: a shadow tile is DARKEST along the
+         edge that touches the window and fades away from it. All four edge tiles
+         below used to be the other way round — clear next to the window, 45%
+         black at the far edge — which drew a hard dark rectangle around
+         everything. The corners were always right, so the mismatch showed up as
+         blocks at the ends. The rule: the gradient's SOLID end points at the
+         window. Full write-up in widgets/panel-background.svg, BAND 6. -->
     <rect id="shadow-topleft" x="0" y="136" width="34" height="18" fill="url(#aq-sh-corner-br)"/>
-    <rect id="shadow-top" x="34" y="136" width="16" height="18" fill="url(#aq-sh-down)"/>
+    <rect id="shadow-top" x="34" y="136" width="16" height="18" fill="url(#aq-sh-up)"/>
     <rect id="shadow-topright" x="50" y="136" width="34" height="18" fill="url(#aq-sh-corner-bl)"/>
-    <rect id="shadow-left" x="0" y="154" width="34" height="16" fill="url(#aq-sh-rightward)"/>
+    <rect id="shadow-left" x="0" y="154" width="34" height="16" fill="url(#aq-sh-leftward)"/>
     <rect id="shadow-center" x="34" y="154" width="16" height="16" fill="none"/>
-    <rect id="shadow-right" x="50" y="154" width="34" height="16" fill="url(#aq-sh-leftward)"/>
+    <rect id="shadow-right" x="50" y="154" width="34" height="16" fill="url(#aq-sh-rightward)"/>
     <rect id="shadow-bottomleft" x="0" y="170" width="34" height="50" fill="url(#aq-sh-corner-tr)"/>
-    <rect id="shadow-bottom" x="34" y="170" width="16" height="50" fill="url(#aq-sh-up)"/>
+    <rect id="shadow-bottom" x="34" y="170" width="16" height="50" fill="url(#aq-sh-down)"/>
     <rect id="shadow-bottomright" x="50" y="170" width="34" height="50" fill="url(#aq-sh-corner-tl)"/>
     <rect id="shadow-hint-top-margin" x="0" y="228" width="2" height="18" fill="none"/>
     <rect id="shadow-hint-bottom-margin" x="8" y="228" width="2" height="50" fill="none"/>
