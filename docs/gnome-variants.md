@@ -258,6 +258,30 @@ That is the *text* on the page. The *picture* at the top of it turned out to wor
 completely different way, and did not become ours until 2026-08-31 — see "First bench
 findings — branding" below.
 
+### Two packages for the Aquarius Session prototype (added 2026-09-02)
+
+The GNOME images install **`quickshell`** and **`niri`**. Those are the two programs the
+experimental "Aquarius Session" needs: niri is a Wayland compositor, and quickshell provides
+the `qs` command that runs our shell's QML (sibling repo `aquarius-shell`, folder `session/`).
+
+**This does not change which desktop AquariusOS ships.** GNOME is still the desktop, nothing
+here is switched on, and nobody sees a difference unless they deliberately install the
+session and pick it at the login screen. The session's own files — the `aquarius-session`
+launcher, the niri config, the shell QML and the `aquarius.desktop` login-screen entry — are
+still installed by `aquarius-shell/session/install-session.sh` into `/usr/local`, by hand,
+*not* by the image. Only the two runtime packages moved here.
+
+Why they are baked in instead of layered with `rpm-ostree install`: on 2026-09-02 a bench
+boot of the session came up as a bare grey screen. The layered quickshell was the newest
+build in Fedora `updates` (release -5, 2026-08-30), compiled against Qt 6.11.2 and using
+Qt's *private* API; the image ships Qt 6.11.1, so `qs` died on launch with
+`undefined symbol: _ZN23QUntypedPropertyBindingC1EP23QPropertyBindingPrivate`. Qt's private
+API is only ABI-stable within an exact patch release. Installing inside the build makes dnf5
+resolve quickshell against the same package snapshot as Qt, so the two cannot drift apart —
+and when the base moves Qt, the rebuild picks up the matching quickshell.
+
+The KDE images do not get them: the KDE line is frozen, and the session is GNOME-line only.
+
 ---
 
 ## How the two lines stay apart in one recipe

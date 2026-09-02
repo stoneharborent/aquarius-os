@@ -1036,6 +1036,35 @@ jobs:
             bad "nautilus-python is not installed — that extension file would never be read"
           fi
 
+          # --- 8b. the Aquarius Session's two runtime packages ------------------
+          # niri (the compositor) and quickshell (which provides the `qs` command
+          # that runs our experimental shell's QML) are baked into the GNOME
+          # images so that quickshell is always resolved against the same package
+          # snapshot as this image's Qt.
+          #
+          # They were layered with rpm-ostree once, on 2026-09-02, and the
+          # session came up as a bare grey screen: the layered quickshell was
+          # built against Qt 6.11.2 while the image ships 6.11.1, and Qt's
+          # private API only holds its shape within one exact patch release. The
+          # whole story is next to the dnf5 line in build_files/build.sh.
+          #
+          # Nothing here starts either program — a build container has no
+          # display. This only answers "are they really in the image".
+          for aq_session_cmd in qs niri; do
+            if command -v "$aq_session_cmd" >/dev/null 2>&1; then
+              ok "${aq_session_cmd} is installed"
+            else
+              bad "${aq_session_cmd} is missing — the Aquarius Session could not start on this image"
+            fi
+          done
+          for aq_session_pkg in quickshell niri; do
+            if rpm -q "$aq_session_pkg" >/dev/null 2>&1; then
+              ok "${aq_session_pkg} is installed ($(rpm -q "$aq_session_pkg"))"
+            else
+              bad "${aq_session_pkg} is not installed — see the Aquarius Session block in build_files/build.sh"
+            fi
+          done
+
           # --- 9. the login screen logo ----------------------------------------
           # GDM on the desktop images, SDDM on the handheld — so which branch
           # runs is part of what is checked.

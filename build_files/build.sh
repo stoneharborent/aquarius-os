@@ -887,6 +887,100 @@ else
 fi
 
 # ==============================================================================
+# THE AQUARIUS SESSION PROTOTYPE — its two runtime packages, baked in
+# ==============================================================================
+# WHAT THESE TWO PACKAGES ARE
+#
+#   niri        a Wayland compositor — the program that actually draws windows
+#               and moves them around. It is the thing GNOME Shell is on a GNOME
+#               machine, and KWin is on a KDE one.
+#   quickshell  a runtime for building a desktop shell (top bar, dock, popups)
+#               out of QML files. It provides the `qs` command. Our experimental
+#               shell in the sibling aquarius-shell repo is a folder of QML that
+#               `qs` runs.
+#
+# Together they are the whole "Aquarius Session" prototype track: an experimental
+# desktop that appears as an EXTRA choice at the login screen, next to GNOME.
+# See the aquarius-shell repo, session/ , and its docs/session.md.
+#
+# ⚠️ THIS DOES NOT CHANGE WHICH DESKTOP AQUARIUSOS SHIPS. The shipping desktop is
+# GNOME and stays GNOME (ROADMAP standing decision, 2026-08-31). Nothing here is
+# switched on, nothing is set as a default, and nobody sees any difference unless
+# they deliberately install the session files and pick it at the login screen.
+# All this does is put two programs on the disk.
+#
+# ⚠️ AND IT DOES NOT INSTALL THE SESSION ITSELF. The session files — the
+# `aquarius-session` launcher script, the niri configuration, the shell's QML and
+# the `aquarius.desktop` entry that puts it on the login screen — are still
+# installed by aquarius-shell/session/install-session.sh, into /usr/local, by
+# hand, by whoever is testing it. That is on purpose: it is a prototype, it
+# changes daily, and it must stay removable by deleting five files without
+# rebuilding the OS. ONLY the two runtime packages move into the image. If you
+# ever find yourself adding the session's own files here, stop and go read the
+# top of install-session.sh first.
+#
+# ------------------------------------------------------------------------------
+# WHY THEY ARE BAKED IN HERE INSTEAD OF LAYERED WITH `rpm-ostree install`
+#
+# Because layering them broke, on the bench, on 2026-09-02.
+#
+# The first boot of the Aquarius Session came up as a bare grey screen — niri
+# started, and the shell drew absolutely nothing. The cause was not our QML.
+# `quickshell` had been added to the machine afterwards with
+# `rpm-ostree install quickshell`, and that command takes the NEWEST build in
+# Fedora's `updates` repository — at that moment release -5, built 2026-08-30.
+# That build was compiled against Qt 6.11.2 and uses Qt's PRIVATE API, which it
+# advertises as a dependency on `libQt6Core.so.6(Qt_6.11_PRIVATE_API)`. The Qt
+# baked into our image is 6.11.1. So `qs` started, failed to find a symbol, and
+# died before drawing anything:
+#
+#   undefined symbol: _ZN23QUntypedPropertyBindingC1EP23QPropertyBindingPrivate
+#
+# The rule underneath that, and the reason this is not a one-off: Qt's private
+# API is only guaranteed to keep the same shape within an EXACT patch release.
+# 6.11.1 and 6.11.2 are allowed to differ, and here they did. Anything built
+# against one and run against the other is a coin toss.
+#
+# Layering is what made the mismatch possible at all, because it happens at a
+# different moment in time from the image build: the image's Qt was frozen when
+# the image was built, and `rpm-ostree install` went and fetched whatever was
+# newest that day. Two package snapshots, two different Qts, one broken program.
+#
+# Installing them HERE closes the gap by construction. dnf5 resolves quickshell
+# against the very same package snapshot that supplied this image's Qt, so the
+# two cannot be from different days. And when Bazzite's next rebuild moves Qt,
+# this line picks up the matching quickshell in the same build — they move
+# together or not at all. If they ever genuinely cannot be reconciled, dnf5 says
+# so and the build goes red here, which is exactly where we want to find out.
+#
+# ------------------------------------------------------------------------------
+# ⚠️ GNOME IMAGES ONLY. The KDE line is FROZEN at its Wave-2 capstone: its images
+# keep building and keep updating, but nothing new is allowed onto them, and a
+# prototype for a desktop that only exists on the GNOME line is about as new as
+# it gets. The session is also only ever tested against GDM, which is the GNOME
+# line's login screen.
+# ------------------------------------------------------------------------------
+
+if [ "${AQ_DESKTOP}" = "gnome" ]; then
+  dnf5 install -y quickshell niri
+
+  # Prove both commands really landed, rather than trusting that a package named
+  # `quickshell` provides a command named `qs`. It does — but the whole point of
+  # this section is that the session died last time on something nobody checked.
+  #
+  # This deliberately does NOT run `qs` or `niri` for real. Neither can start in
+  # a build container: there is no Wayland display, no graphics card and no
+  # logged-in person. The Qt mismatch that caused the grey screen is prevented
+  # above by dnf5 resolving both against one snapshot, not detected here.
+  command -v qs > /dev/null
+  command -v niri > /dev/null
+  echo "OK: the Aquarius Session runtime is installed — $(rpm -q quickshell) and $(rpm -q niri)."
+else
+  echo "NOTE: KDE image — skipping quickshell and niri (the Aquarius Session is GNOME-line only,"
+  echo "      and the KDE line is frozen)."
+fi
+
+# ==============================================================================
 # AQUARIUSOS IDENTITY — make the OS call itself AquariusOS
 # ==============================================================================
 # Everything above this point installs things. This last step renames things:
