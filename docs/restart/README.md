@@ -119,12 +119,14 @@ parts. The comment above that trick in the file explains it properly.
 
 ### 2. `build_files/` — the steps
 
-Ten numbered scripts, run in order, plus three `stage-` scripts that are not
+Eleven numbered scripts, run in order, plus four `stage-` scripts that are not
 part of the operating system at all — they compile or fetch the pieces Fedora
-does not give us, in throwaway containers, and only the results are copied in.
-The numbers on the rest are the point: The numbers are the point: the
-build log reads in the same order as the folder listing, so when something goes
-wrong you can find the file by its heading.
+does not give us (labwc, Quickshell, the Aquarius Shell, xremap), in throwaway
+containers, and only the results are copied in. The numbers on the rest are the
+point: the build log reads in the same order as the folder listing, so when
+something goes wrong you can find the file by its heading. Numbers are left
+spare between them so a new step can be slotted in without renaming everything
+after it.
 
 | File | What it does |
 | --- | --- |
@@ -140,6 +142,8 @@ wrong you can find the file by its heading.
 | `55-aquarius-session.sh` | The **Aquarius Desktop** — our own shell on the labwc window manager, added beside GNOME as a second choice at the login screen. Installs what the two compiled programs need, sets up the portals, and switches greetd off. See [`aquarius-session.md`](aquarius-session.md). |
 | `60-nvidia.sh` | The NVIDIA driver. Does nothing on the AMD/Intel image. The hardest file in the repo — see [`nvidia-notes.md`](nvidia-notes.md). |
 | `70-image-info.sh` | Teaches the system to call itself AquariusOS. |
+| `74-xremap-build.sh` | ⚠️ Does NOT run inside AquariusOS. It runs in a throwaway container whose only job is to compile the keyboard remapper, so that a compiler never ends up in the finished operating system. |
+| `75-aquarius-keys.sh` | Mac-style keyboard shortcuts, on by default — Copy is Command-C. Installs what the step above built, and checks the whole feature. Plain-language guide: [`aquarius-keys.md`](aquarius-keys.md). |
 | `80-boot-branding.sh` | Everything you see BEFORE the login screen: the Aquarius boot splash, the name in the boot menu, the text login banners — and a rebuild of the boot ramdisk, without which none of it takes effect. ⚠️ Must run after `60-nvidia.sh`; see [`boot-branding.md`](boot-branding.md). |
 | `90-cleanup.sh` | Sweeps up, and refuses to ship an image with two kernels in it. |
 
@@ -220,6 +224,7 @@ thing locally. `just` with no arguments lists everything available.
 
 - **Moving the bench machine over:** [`bench-rebase.md`](bench-rebase.md)
 - **How the boot screen and the boot menu are branded:** [`boot-branding.md`](boot-branding.md)
+- **Mac-style keyboard shortcuts (Copy is Command-C):** [`aquarius-keys.md`](aquarius-keys.md)
 - **Why the NVIDIA driver is done the way it is:** [`nvidia-notes.md`](nvidia-notes.md)
 - **Why Fedora and not Bazzite/Arch/Ubuntu:** [`../base-distro-reassessment-2026-09.md`](../base-distro-reassessment-2026-09.md)
 - **The plan for R2, R3 and R4:** `ROADMAP.md`, one folder above the repo

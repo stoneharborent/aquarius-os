@@ -63,6 +63,15 @@ ARG NVIDIA=0
 # and docs/restart/nvidia-notes.md for the whole story.
 ARG AKMODS_NVIDIA_IMAGE=ghcr.io/ublue-os/akmods-nvidia-open
 
+# Which xremap — the program behind Aquarius Keys, the Mac-style keyboard
+# shortcuts. Nobody packages it for Fedora, so we compile it, and we compile
+# ONE exact version. The commit id is the real pin: it is a checksum of the
+# whole source tree, so unlike a tag it cannot be moved. Changing these two
+# lines is how we move to a newer xremap, deliberately.
+# See build_files/74-xremap-build.sh for the full story.
+ARG XREMAP_VERSION=0.15.12
+ARG XREMAP_COMMIT=7e6649e442ca445b781e4cf0e90c165f86e717db
+
 # ------------------------------------------------------------------------------
 # The three pieces of the Aquarius Desktop that do not come from Fedora
 # ------------------------------------------------------------------------------
@@ -121,6 +130,25 @@ COPY ingest /ingest
 FROM scratch AS nvidia-src-0
 FROM ${AKMODS_NVIDIA_IMAGE}:main-${FEDORA_VERSION} AS nvidia-src-1
 FROM nvidia-src-${NVIDIA} AS nvidia-src
+
+# ------------------------------------------------------------------------------
+# The keyboard remapper — compiled here, so the finished OS never sees a compiler
+# ------------------------------------------------------------------------------
+# AquariusOS ships Mac-style keyboard shortcuts turned on. The program that
+# does that is called xremap, it is written in Rust, and nobody packages it for
+# Fedora — so we build it from its own published source at one pinned version.
+#
+# It is built in THIS stage, a plain Fedora container that exists only for the
+# length of the build, because compiling Rust needs about a gigabyte of
+# compiler and none of that belongs in a finished operating system. Only the
+# two small finished programs are copied across, in step 75 below. Same
+# pattern, same reason, as the NVIDIA stage above.
+FROM quay.io/fedora/fedora:${FEDORA_VERSION} AS xremap-build
+ARG XREMAP_VERSION
+ARG XREMAP_COMMIT
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    XREMAP_VERSION="${XREMAP_VERSION}" XREMAP_COMMIT="${XREMAP_COMMIT}" \
+    /ctx/build_files/74-xremap-build.sh
 
 # ==============================================================================
 # THE THREE WORKSHOPS
@@ -276,6 +304,14 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     IMAGE_NAME="${IMAGE_NAME}" IMAGE_VENDOR="${IMAGE_VENDOR}" NVIDIA="${NVIDIA}" \
     /ctx/build_files/70-image-info.sh
+
+# 7b. Aquarius Keys: Mac-style keyboard shortcuts, on by default. Installs the
+#     two remapper programs built in the xremap-build stage above, and checks
+#     the rule files, the service and the `aq keys` switch that came in with
+#     system_files at step 5.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=bind,from=xremap-build,source=/out,target=/ctx-xremap \
+    /ctx/build_files/75-aquarius-keys.sh
 
 # 8. The boot path: the Aquarius splash screen, the name in the boot menu, the
 #    text login banners, and then a rebuild of the boot ramdisk so that all of

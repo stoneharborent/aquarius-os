@@ -30,7 +30,14 @@ name: Build AquariusOS (next)
 on:
   push:
     branches:
+      # The real line. Pushes here build, check, publish and sign.
       - restart/fedora-bootc
+      # A side branch, so that work in progress gets the same build and the
+      # same checks before it is merged. It BUILDS AND CHECKS ONLY — every
+      # publishing step below carries an `if:` that limits it to the branch
+      # above, so a side branch cannot overwrite the images real machines
+      # update from. See the PUBLISHING heading in the job.
+      - restart/aquarius-keys
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -1213,9 +1220,198 @@ jobs:
             '
 
       # ------------------------------------------------------------------------
+      # Aquarius Keys — the Mac-style keyboard shortcuts
+      # ------------------------------------------------------------------------
+      # A keyboard feature fails in a particularly nasty way: some keys just do
+      # nothing, and nothing anywhere says why. So this asks the finished image
+      # every question that matters — are both remappers there and do they run,
+      # are the rule files ones the remapper itself accepts, is the service
+      # switched on, does a brand-new account get Mac keys, is the permission
+      # rule in place, and does `aq keys` work.
+      #
+      # The rule files are ALSO parsed here on the runner as plain YAML. That is
+      # not a duplicate of the check the build does: the build asks "does xremap
+      # accept this?", and this asks "is it well-formed text?" — which is the
+      # question that catches a file that has been truncated or mangled on its
+      # way into the image.
+      - name: Check the Mac keyboard shortcuts are really in there
+        run: |
+          set -euo pipefail
+
+          # ---- 1. inside the image -------------------------------------------
+          cat > /tmp/verify-keys.sh <<'SCRIPT'
+          set -u
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+          check() {   # check "<description>" "<pattern>" "<file>"
+            if [ ! -e "$3" ]; then bad "$1 — $3 does not exist"; return; fi
+            if grep -Eq "$2" "$3"; then ok "$1"; else bad "$1 — /$2/ not found in $3"; fi
+          }
+
+          echo "== the two remapper programs =="
+          for feature in wlroots gnome; do
+            bin="/usr/bin/xremap-${feature}"
+            if [ ! -x "${bin}" ]; then
+              bad "${bin} is missing"
+              continue
+            fi
+            if out="$("${bin}" --version 2>&1)"; then
+              ok "${bin} — ${out}"
+            else
+              bad "${bin} is installed but will not run: ${out}"
+            fi
+            # A library that is not in the image shows up here as "not found",
+            # and would otherwise only be discovered at somebody's login.
+            if ldd "${bin}" 2>&1 | grep -q "not found"; then
+              bad "${bin} needs a library that is not in this image:"
+              ldd "${bin}" 2>&1 | grep "not found" | sed 's/^/       /'
+            else
+              ok "${bin} has every library it needs"
+            fi
+          done
+
+          echo
+          echo "== the rule files, judged by the remapper itself =="
+          # xremap reads and validates the whole file before it looks at any
+          # keyboard, so pointing it at a device that does not exist gets the
+          # full check and then stops. A complaint about the FILE says "Failed
+          # to load config"; a complaint about missing devices is expected,
+          # because there is no keyboard inside a container.
+          for profile in mac windows; do
+            file="/usr/share/aquarius/keys/${profile}.yaml"
+            if [ ! -s "${file}" ]; then bad "${file} is missing or empty"; continue; fi
+            out="$(/usr/bin/xremap-wlroots --device /nonexistent-device "${file}" 2>&1 || true)"
+            if printf '%s' "${out}" | grep -q "Failed to load config"; then
+              bad "${file} is not a valid profile:"
+              printf '%s\n' "${out}" | sed 's/^/       /'
+            else
+              ok "${file} is a profile xremap accepts"
+            fi
+          done
+
+          echo
+          echo "== the rules Royce actually asked for =="
+          MAC=/usr/share/aquarius/keys/mac.yaml
+          check "the key beside the space bar is Command" '^ *Alt_L: Super_L$'     "${MAC}"
+          check "the Windows key is Option"               '^ *Super_L: Alt_L$'     "${MAC}"
+          check "Apple keyboards are left alone"          'ids:0x05ac'             "${MAC}"
+          check "Command-C copies"                        '^ *Super-c: C-c( |$)'   "${MAC}"
+          check "in a terminal, Command-C copies"         '^ *Super-c: C-Shift-c( |$)' "${MAC}"
+          check "Command-Q closes the window"             '^ *Super-q: A-F4$'      "${MAC}"
+          check "Command-Shift-3 takes a screenshot"      '^ *Super-Shift-3: SYSRQ$' "${MAC}"
+          check "Files gets its own rules"                '^ *- Nautilus$'         "${MAC}"
+          check "DaVinci Resolve is left alone"           '^ *- resolve *#'        "${MAC}"
+
+          # These three must NOT be remapped: they are how the desktop's own
+          # search and window switching are reached. A rule for any of them
+          # would take the search palette away with no error anywhere.
+          for combo in 'Super-space' 'Super-Tab' 'Super-grave'; do
+            if grep -Eq "^[[:space:]]+${combo}:" "${MAC}"; then
+              bad "${combo} is remapped — that key belongs to the desktop"
+            else
+              ok "${combo} is left for the desktop, as designed"
+            fi
+          done
+
+          echo
+          echo "== permission to read the keyboard without being root =="
+          RULE=/usr/lib/udev/rules.d/70-aquarius-input.rules
+          check "the udev rule covers the invented keyboard" 'uinput'          "${RULE}"
+          check "it uses uaccess, not a permanent group"     'TAG\+="uaccess"' "${RULE}"
+          check "it covers the real keyboards too"           'SUBSYSTEM=="input", KERNEL=="event\[0-9\]\*"' "${RULE}"
+          check "the uinput driver loads at boot"            '^uinput$' /usr/lib/modules-load.d/aquarius-uinput.conf
+
+          echo
+          echo "== the service, and that it is switched on =="
+          UNIT=/usr/lib/systemd/user/aquarius-keys.service
+          WANTS=/usr/lib/systemd/user/graphical-session.target.wants/aquarius-keys.service
+          check "the service runs the right program" '^ExecStart=/usr/libexec/aquarius-keys-run$' "${UNIT}"
+          check "it belongs to the graphical session" '^WantedBy=graphical-session\.target$'      "${UNIT}"
+          check "it restarts itself if it crashes"    '^Restart=on-failure$'                     "${UNIT}"
+          if [ -L "${WANTS}" ] && [ -e "${WANTS}" ]; then
+            ok "switched on by default — ${WANTS} -> $(readlink "${WANTS}")"
+          else
+            bad "${WANTS} is missing or dangling — the service would never start"
+          fi
+
+          echo
+          echo "== the default is Mac, in both places it is written =="
+          check "a brand-new account gets Mac keys" '^mode=mac$'      /etc/skel/.config/aquarius/keys.conf
+          check "an account with no file gets them too" '^AQ_MODE="mac"$' /usr/libexec/aquarius-keys-run
+
+          echo
+          echo "== the switch =="
+          for script in /usr/libexec/aquarius-keys-run /usr/bin/aq; do
+            if [ ! -x "${script}" ]; then bad "${script} is missing or not runnable"; continue; fi
+            if bash -n "${script}"; then ok "${script} is valid shell"; else bad "${script} has a syntax error"; fi
+          done
+          if /usr/bin/aq --help > /dev/null 2>&1; then ok "aq --help works"; else bad "aq --help failed"; fi
+          echo "--- aq keys status, with no desktop running ---"
+          if /usr/bin/aq keys status; then
+            ok "aq keys status explains itself instead of falling over"
+          else
+            bad "aq keys status failed"
+          fi
+          echo "---"
+
+          echo
+          echo "== the GNOME add-on that reports the focused app =="
+          EXT=/usr/share/gnome-shell/extensions/xremap@k0kubun.com
+          check "it is installed" '"uuid": "xremap@k0kubun.com"' "${EXT}/metadata.json"
+          if [ -s "${EXT}/extension.js" ]; then ok "its code is present"; else bad "${EXT}/extension.js is missing"; fi
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::Aquarius Keys is not correctly assembled in this image."
+            exit 1
+          fi
+          echo "All Aquarius Keys checks passed."
+          SCRIPT
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-keys.sh
+
+          # ---- 2. on the runner: are the rule files well-formed YAML? --------
+          # PyYAML is on GitHub's runners already; the install line is there so
+          # that a future runner image without it fails loudly at this line
+          # rather than quietly skipping the check.
+          python3 -c 'import yaml' 2>/dev/null || sudo apt-get install -y python3-yaml
+          for profile in mac windows; do
+            podman run --rm --pull=never --entrypoint /usr/bin/cat \
+              "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" \
+              "/usr/share/aquarius/keys/${profile}.yaml" > "/tmp/${profile}.yaml"
+            python3 - "$profile" <<'PY'
+          import sys, yaml
+          name = sys.argv[1]
+          with open(f"/tmp/{name}.yaml") as fh:
+              doc = yaml.safe_load(fh)
+          assert isinstance(doc, dict), f"{name}.yaml is not a settings file at all"
+          for section in ("modmap", "keymap"):
+              assert section in doc, f"{name}.yaml has no '{section}' section"
+              assert isinstance(doc[section], list), f"{name}.yaml: '{section}' is not a list"
+          rules = sum(len(block.get("remap", {})) for block in doc["keymap"])
+          print(f"  OK   {name}.yaml is well-formed YAML — "
+                f"{len(doc['modmap'])} key swap block(s), "
+                f"{len(doc['keymap'])} rule block(s), {rules} rules")
+          PY
+          done
+
+      # ------------------------------------------------------------------------
       # PUBLISHING
       # ------------------------------------------------------------------------
+      # ⚠️ EVERY STEP FROM HERE DOWN ONLY RUNS ON `restart/fedora-bootc`.
+      #
+      # Side branches (`restart/aquarius-keys` and any future one) build the
+      # image and run every check above, and then stop. They must not publish,
+      # because publishing means pushing to the `aquarius-os-next:latest` tags
+      # that real machines update from — so a half-finished side branch would
+      # overwrite the working image on the bench PC with its own work in
+      # progress. Building and checking is the whole value of running CI on a
+      # side branch; publishing from one is only a way to break something.
+      #
+      # Fable removes these `if:` lines when a side branch is merged back.
       - name: Work out the tags to publish under
+        if: github.ref_name == 'restart/fedora-bootc'
         id: tags
         run: |
           alias_tags="$(just generate-build-tags "${IMAGE_NAME}" "${DEFAULT_TAG}")"
@@ -1223,11 +1419,13 @@ jobs:
           echo "alias_tags=${alias_tags}" >> "${GITHUB_OUTPUT}"
 
       - name: Apply the tags
+        if: github.ref_name == 'restart/fedora-bootc'
         env:
           ALIAS_TAGS: ${{ steps.tags.outputs.alias_tags }}
         run: just tag-images "${IMAGE_NAME}" "${DEFAULT_TAG}" "${ALIAS_TAGS}"
 
       - name: Sign in to GitHub's container registry
+        if: github.ref_name == 'restart/fedora-bootc'
         uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
         with:
           registry: ghcr.io
@@ -1235,6 +1433,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish
+        if: github.ref_name == 'restart/fedora-bootc'
         id: push-image
         env:
           ALIAS_TAGS: ${{ steps.tags.outputs.alias_tags }}
@@ -1248,6 +1447,7 @@ jobs:
           echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
 
       - name: Install cosign
+        if: github.ref_name == 'restart/fedora-bootc'
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
           cosign-release: 'v3.1.2'
@@ -1257,6 +1457,7 @@ jobs:
       # called SIGNING_SECRET; the matching public half is cosign.pub in this
       # repository, and it is the same pair the Bazzite line uses.
       - name: Sign the published image
+        if: github.ref_name == 'restart/fedora-bootc'
         env:
           COSIGN_EXPERIMENTAL: false
           COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
@@ -1269,6 +1470,7 @@ jobs:
             "${IMAGE_REGISTRY}/${IMAGE_NAME}@${DIGEST}"
 
       - name: What was published
+        if: github.ref_name == 'restart/fedora-bootc'
         run: |
           echo "### ${IMAGE_NAME}" >> "${GITHUB_STEP_SUMMARY}"
           echo "" >> "${GITHUB_STEP_SUMMARY}"

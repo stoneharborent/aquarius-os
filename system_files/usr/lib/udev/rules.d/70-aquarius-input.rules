@@ -1,0 +1,90 @@
+# =============================================================================
+# Aquarius Keys — letting the logged-in person's own programs read the keyboard
+# =============================================================================
+# WHAT THIS FILE IS
+#
+# udev is the part of Linux that notices hardware and decides who is allowed to
+# use it. This file adds two permissions, and nothing else.
+#
+# The keyboard remapper that gives AquariusOS its Mac-style shortcuts needs to
+# do two things that ordinary programs are not allowed to do:
+#
+#   1. READ THE KEYBOARD DIRECTLY, at /dev/input/event*, so it can see the keys
+#      you actually pressed before any app does.
+#   2. INVENT A KEYBOARD, through /dev/uinput, so it can type the replacement
+#      keys as if they had come from real hardware.
+#
+# Out of the box Linux reserves both for the administrator, so the remapper
+# would have to run as root. Running a program that watches every key you type
+# as the administrator, for the whole life of the machine, is exactly the thing
+# not to do. This file is how it runs as you instead.
+#
+# -----------------------------------------------------------------------------
+# `uaccess` — WHY THIS, AND NOT A GROUP
+# -----------------------------------------------------------------------------
+# There are two ways to grant this, and the difference matters.
+#
+#   THE COMMON WAY, which we did NOT use: put the person in a group called
+#   "input". It works, and it is what xremap's own instructions say. But the
+#   permission is then PERMANENT and UNCONDITIONAL: that account can read the
+#   keyboard whether it is logged in or not, from an SSH connection, while the
+#   screen is locked, forever. And on an image-based system like AquariusOS
+#   there is no good moment to add an existing account to a group — the
+#   installer has already created it by the time our image is on disk.
+#
+#   WHAT WE DO INSTEAD: `TAG+="uaccess"`. This is systemd's own mechanism for
+#   "give this to whoever is physically logged in at this screen, right now".
+#   The permission is granted at login and TAKEN AWAY AT LOGOUT, automatically,
+#   by the same part of Linux that already does this for your webcam, your
+#   microphone and your graphics card. Nobody is added to any group; a second
+#   user who logs in gets it and the first one loses it; an SSH connection
+#   never gets it at all.
+#
+#   It is a strictly smaller permission than the group, granted for a strictly
+#   shorter time, with nothing to undo if the feature is removed.
+#
+# ⚠️ THE HONEST CAVEAT, WRITTEN DOWN BECAUSE IT IS REAL. Whichever way you do
+# it, the person sitting at the machine can now read every key typed on it.
+# That is unavoidable — it is what remapping keys *is* — and it is the same
+# exposure every "Mac keys on Linux" tool has. On a single-person creator
+# machine it is the right trade. On a shared server it would not be.
+#
+# -----------------------------------------------------------------------------
+# WHY 70-, AND WHY /usr/lib RATHER THAN /etc
+# -----------------------------------------------------------------------------
+# udev reads its rule files in number order and the tagging rules systemd ships
+# are numbered 70-, so ours sits alongside them rather than before the devices
+# it is talking about exist. Rules that belong to the operating system live in
+# /usr/lib/udev/rules.d; /etc/udev/rules.d is for a person's local changes, and
+# putting ours there would mean an update could not fix a mistake in it.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 1. The real keyboards.
+# -----------------------------------------------------------------------------
+# One /dev/input/event* file per input device — keyboard, mouse, lid switch,
+# power button. systemd already hands out game controllers this way; keyboards
+# it does not, because most programs have no business reading them. Ours does.
+SUBSYSTEM=="input", KERNEL=="event[0-9]*", TAG+="uaccess"
+
+# -----------------------------------------------------------------------------
+# 2. The invented keyboard.
+# -----------------------------------------------------------------------------
+# /dev/uinput is the door a program goes through to create a keyboard of its
+# own. Three things are set here and each one earns its place:
+#
+#   TAG+="uaccess"              the same "whoever is at the screen" grant
+#   MODE="0660", GROUP="input"  a second, independent path to the same
+#                               permission. If `uaccess` ever fails on a
+#                               machine — it depends on a login session being
+#                               registered correctly — a person can fall back
+#                               to `sudo usermod -aG input $USER` and it works
+#                               immediately, with no image change. This line is
+#                               what makes that fallback possible.
+#   OPTIONS+="static_node"      /dev/uinput does not exist until the uinput
+#                               driver is loaded, and a device that does not
+#                               exist cannot have permissions. This tells udev
+#                               to apply them to the node the moment it appears
+#                               — which is what makes the FIRST login after a
+#                               fresh install work rather than the second.
+KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", MODE="0660", GROUP="input", OPTIONS+="static_node=uinput"

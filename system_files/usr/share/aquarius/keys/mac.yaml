@@ -1,0 +1,348 @@
+# =============================================================================
+# Aquarius Keys — Mac mode
+# =============================================================================
+# This is the file that makes AquariusOS use Mac-style keyboard shortcuts.
+# Copy is Command-C. Paste is Command-V. Quit is Command-Q. Just like a Mac.
+#
+# It is read by a program called xremap, which sits between your keyboard and
+# everything else on the computer.
+#
+# The plain-English guide to all of this — what changes, how to switch it off,
+# how to test it — is in docs/restart/aquarius-keys.md. Read that first if you
+# are new here. This file is the machine-readable half.
+#
+# -----------------------------------------------------------------------------
+# THE ONE IDEA YOU NEED TO READ THIS FILE
+# -----------------------------------------------------------------------------
+# Linux has no key called "Command". The key a Mac calls Command, Linux calls
+# **Super** (it is the key with the Windows logo on a PC keyboard).
+#
+# So everywhere below, when you see `Super-c`, read it as "Command-C".
+#
+# On a PC keyboard those two keys are in the WRONG PLACES for a Mac user: the
+# Windows key sits where a Mac's Option key is, and Alt sits where a Mac's
+# Command key is. The `modmap` section directly below swaps them, so that the
+# key next to the space bar behaves as Command — which is where your thumb
+# already goes. That was Royce's decision on 2026-09-03: position, not label.
+#
+# -----------------------------------------------------------------------------
+# HOW TO CHANGE SOMETHING IN HERE
+# -----------------------------------------------------------------------------
+# This file lives in /usr/share, which is the read-only half of AquariusOS —
+# you cannot edit it on a running machine, and that is on purpose. To change a
+# rule, edit THIS file in the os-image repository and rebuild.
+#
+# Every block below starts with `- name:` and a sentence saying what it is for.
+# The order of the blocks matters: for any given key press, the FIRST block
+# that applies wins. That is why the app-specific blocks come before the
+# general one.
+#
+# Key names come from Linux's own list. `Super_L`, `Alt_L`, `Backspace`,
+# `Print`, `comma`, `minus`, `equal`, `grave` are all spelled the way xremap
+# expects. If you invent a name, the whole file is rejected and the service
+# refuses to start, which is better than half-working shortcuts.
+# =============================================================================
+
+# =============================================================================
+# PART 1 — WHICH PHYSICAL KEY IS "COMMAND"
+# =============================================================================
+modmap:
+  - name: >-
+      Make the key beside the space bar behave as Command, on PC keyboards only
+    # -------------------------------------------------------------------------
+    # WHY THIS BLOCK SKIPS APPLE KEYBOARDS
+    # -------------------------------------------------------------------------
+    # An Apple keyboard is already correct. Linux reads its Command key as
+    # Super and its Option key as Alt, in exactly the Mac positions, because
+    # the keys are physically where a Mac user expects them. Swapping them here
+    # would break the very keyboard we are trying to imitate.
+    #
+    # So: this swap applies to every keyboard EXCEPT the Apple ones.
+    #
+    # `not` is a list of ways to recognise a keyboard. Each entry is checked
+    # against the keyboard's name (a partial match is enough) or, for the
+    # `ids:` entries, against the maker and model numbers the device reports.
+    #
+    #   ids:0x05ac:0x0000   any device made by Apple, plugged in by USB.
+    #                       05ac is Apple's manufacturer number; 0000 means
+    #                       "any model".
+    #   ids:0x004c:0x0000   the same thing for Apple devices connected over
+    #                       Bluetooth, which report a different number.
+    #   Apple               anything whose name contains the word Apple
+    #   Magic Keyboard      Apple's current keyboards, some of which do not
+    #                       have "Apple" in the name they report
+    #
+    # To see what YOUR keyboard calls itself:
+    #     xremap-wlroots --list-devices
+    device:
+      not:
+        - "ids:0x05ac:0x0000"
+        - "ids:0x004c:0x0000"
+        - "Apple"
+        - "Magic Keyboard"
+    remap:
+      # Left of the space bar. Alt becomes Command, Windows becomes Option.
+      Alt_L: Super_L
+      Super_L: Alt_L
+      # Right of the space bar, so the right-hand Command works too.
+      #
+      # ⚠️ IF YOU USE A NON-US KEYBOARD LAYOUT, DELETE THESE TWO LINES.
+      # On international layouts the right-hand Alt key is "AltGr", and it is
+      # how accented and special characters are typed (é, €, ñ). Turning it
+      # into a Command key takes those characters away. Royce's keyboard is US
+      # layout, where AltGr does nothing, so the swap is free.
+      Alt_R: Super_R
+      Super_R: Alt_R
+
+# =============================================================================
+# PART 2 — WHAT THE SHORTCUTS DO
+# =============================================================================
+keymap:
+
+  # ===========================================================================
+  # BLOCK 1 — TERMINALS ARE DIFFERENT, AND THEY HAVE TO BE
+  # ===========================================================================
+  # In a terminal, Control-C does not mean copy. It means STOP — it is how you
+  # interrupt a program that is running away with itself, and it has meant that
+  # for fifty years. If Command-C were turned into Control-C in a terminal,
+  # copying text would kill whatever you were running.
+  #
+  # macOS solves this by having Command-C copy and Control-C interrupt, and
+  # Linux terminals solve it by having Control-SHIFT-C copy. So in a terminal
+  # we send Control-Shift-C instead, and the physical Control key is left
+  # completely alone — Control-C still interrupts, exactly as it should.
+  #
+  # Anything NOT listed here falls through to the general block further down,
+  # so Command-S, Command-F and the rest still work normally in a terminal.
+  # ===========================================================================
+  - name: Terminals — copy and paste the way Linux terminals do it
+    application:
+      only:
+        # A name without a dot in it matches the last part of an app's id, so
+        # "Ptyxis" matches org.gnome.Ptyxis. A name WITH a dot has to match
+        # exactly. Anything between slashes is a search pattern.
+        - Ptyxis           # Fedora's terminal — the one AquariusOS ships
+        - Console          # GNOME Console
+        - kgx              # what GNOME Console calls itself on some systems
+        - Alacritty
+        - foot
+        - kitty
+        - ghostty
+        - konsole
+        - org.gnome.Terminal
+        - /gnome-terminal/ # matches gnome-terminal-server too
+        - /^xterm/
+    remap:
+      Super-c: C-Shift-c   # copy
+      Super-v: C-Shift-v   # paste
+      Super-x: C-Shift-x   # cut
+      Super-a: C-Shift-a   # select all
+      Super-f: C-Shift-f   # find
+      Super-t: C-Shift-t   # new tab
+      Super-w: C-Shift-w   # close tab
+      Super-n: C-Shift-n   # new window
+
+  # ===========================================================================
+  # BLOCK 2 — FILES (NAUTILUS), WHERE MAC HABITS ARE DIFFERENT AGAIN
+  # ===========================================================================
+  # Four shortcuts that mean something specific in a file manager and nothing
+  # anywhere else. Everything else about Files — copy, paste, select all, new
+  # window — comes from the general block below, so it is not repeated here.
+  # ===========================================================================
+  - name: Files — the four file-manager habits a Mac user has
+    application:
+      only:
+        - Nautilus
+    remap:
+      Super-Backspace: Delete      # move to Bin, the way Command-Delete does
+      Super-Down: Enter            # open the selected thing
+      Super-Up: A-Up               # go up to the folder above
+      Super-i: A-Enter             # Get Info (Linux calls it Properties)
+
+  # ===========================================================================
+  # BLOCK 3 — EVERYTHING ELSE
+  # ===========================================================================
+  # This is the main rule table, and it is where 95% of the Mac feeling comes
+  # from. It applies in every app EXCEPT the ones listed under `not` below.
+  #
+  # ---------------------------------------------------------------------------
+  # THE EXCLUSION LIST — THIS IS THE LIST TO EDIT
+  # ---------------------------------------------------------------------------
+  # Some programs should be left completely alone:
+  #
+  #   * Professional apps that were built on Linux with Control-based
+  #     shortcuts, where a creator already has years of muscle memory —
+  #     DaVinci Resolve, Blender, OBS.
+  #   * Games. A game reads the keyboard directly and expects the keys the
+  #     player configured. Remapping in the middle of a game is the fastest
+  #     way to lose a fight.
+  #
+  # To stop Aquarius Keys touching an app, add its id to this list. To find
+  # out what an app calls itself, click on its window and run:
+  #
+  #     xremap-wlroots --list-windows      (in the Aquarius Session)
+  #
+  # On GNOME's Wayland desktop that command cannot work — GNOME does not let
+  # any program ask. There, turn on the "Xremap" add-on in the Extensions app
+  # and read the app name out of the service's log:
+  #
+  #     journalctl --user -u aquarius-keys -f
+  # ---------------------------------------------------------------------------
+  - name: The Mac shortcut set — everywhere except the apps listed below
+    application:
+      not:
+        - resolve            # DaVinci Resolve
+        - /[Bb]lender/
+        - obs                # OBS Studio
+        - com.obsproject.Studio
+        - /^[Ss]team/        # Steam itself AND every game it launches
+                             # (games appear as steam_app_1234)
+        - gamescope
+        - /^lutris/
+        - /^heroic/
+    remap:
+
+      # -----------------------------------------------------------------------
+      # The everyday eight. These are the ones that have to feel invisible.
+      # -----------------------------------------------------------------------
+      Super-c: C-c                 # copy
+      Super-v: C-v                 # paste
+      Super-x: C-x                 # cut
+      Super-a: C-a                 # select all
+      Super-z: C-z                 # undo
+      Super-Shift-z: C-Shift-z     # redo
+      Super-s: C-s                 # save
+      Super-Shift-s: C-Shift-s     # save as
+
+      # -----------------------------------------------------------------------
+      # Formatting text. Not on the original list, added because leaving them
+      # out would have been the bug: every writing app on earth uses these
+      # three, and on a Mac they are Command keys.
+      # -----------------------------------------------------------------------
+      Super-b: C-b                 # bold
+      Super-i: C-i                 # italic  (in Files this is Get Info — see block 2)
+      Super-u: C-u                 # underline
+
+      # -----------------------------------------------------------------------
+      # Finding, opening, printing
+      # -----------------------------------------------------------------------
+      Super-f: C-f                 # find
+      Super-g: C-g                 # find the next one
+      Super-Shift-g: C-Shift-g     # find the previous one
+      Super-o: C-o                 # open
+      Super-p: C-p                 # print
+      Super-r: C-r                 # reload / refresh
+      Super-l: C-l                 # jump to the address bar
+
+      # -----------------------------------------------------------------------
+      # Windows and tabs
+      # -----------------------------------------------------------------------
+      Super-n: C-n                 # new window
+      Super-t: C-t                 # new tab
+      Super-Shift-t: C-Shift-t     # reopen the tab you just closed
+      Super-w: C-w                 # close tab
+
+      # Quit. This one is not a Control shortcut at all.
+      #
+      # Alt-F4 is the "close this window" instruction that the window manager
+      # itself listens for — both GNOME and labwc use it — so it works even in
+      # apps that have no Quit shortcut of their own. That makes it more
+      # reliable than sending Control-Q, which only some apps understand.
+      #
+      # Honest difference from a Mac: this closes the WINDOW. On macOS,
+      # Command-Q quits the whole app. On Linux almost every app quits when its
+      # last window closes, so in practice they behave the same.
+      #
+      # If you would rather it sent Control-Q, change the right-hand side to
+      # `C-q` and rebuild.
+      Super-q: A-F4
+
+      # -----------------------------------------------------------------------
+      # Settings and zoom
+      # -----------------------------------------------------------------------
+      Super-comma: C-comma         # Preferences / Settings
+      Super-equal: C-equal         # zoom in  (the = key, no Shift needed)
+      Super-Shift-equal: C-Shift-equal   # zoom in (the + key, i.e. Shift and =)
+      Super-minus: C-minus         # zoom out
+      Super-0: C-0                 # zoom back to normal
+
+      # -----------------------------------------------------------------------
+      # Moving around text — the part Mac users miss most on Linux
+      # -----------------------------------------------------------------------
+      # Command and an arrow jumps to the start or end of the line, or of the
+      # whole document. Adding Shift selects on the way, which is why each one
+      # has a Shift twin.
+      Super-Left: Home
+      Super-Right: End
+      Super-Shift-Left: Shift-Home
+      Super-Shift-Right: Shift-End
+      Super-Up: C-Home             # to the very top of the document
+      Super-Down: C-End            # to the very bottom
+      Super-Shift-Up: C-Shift-Home
+      Super-Shift-Down: C-Shift-End
+
+      # Command-Backspace deletes backwards. On a Mac that is "to the start of
+      # the line"; Linux's nearest equivalent, and the one that actually exists
+      # everywhere, is "delete the word behind the cursor".
+      Super-Backspace: C-Backspace
+
+      # Option and an arrow jumps one word at a time — the same on both
+      # systems. Remember that after the swap at the top of this file,
+      # "Option" is the key with the Windows logo on it.
+      A-Left: C-Left
+      A-Right: C-Right
+      A-Shift-Left: C-Shift-Left
+      A-Shift-Right: C-Shift-Right
+      A-Backspace: C-Backspace     # delete the word behind the cursor
+
+      # -----------------------------------------------------------------------
+      # Screenshots
+      # -----------------------------------------------------------------------
+      # The Print Screen key opens the screenshot tool; Shift and Print Screen
+      # goes straight to "select an area". Both go through the desktop's own
+      # screenshot window, which is what a Mac user expects from
+      # Command-Shift-3 and Command-Shift-4.
+      #
+      # ⚠️ THE KEY IS CALLED `SYSRQ`, NOT `Print`, AND THIS IS A REAL TRAP.
+      # Linux has two separate keys in its list: KEY_SYSRQ, which is the one
+      # actually printed "PrtSc" on your keyboard, and KEY_PRINT, which is a
+      # different key that almost no keyboard has. Writing `Print` here would
+      # compile fine, run fine, and take no screenshots.
+      Super-Shift-3: SYSRQ
+      Super-Shift-4: Shift-SYSRQ
+
+      # -----------------------------------------------------------------------
+      # WHAT IS DELIBERATELY NOT IN THIS LIST
+      # -----------------------------------------------------------------------
+      # These key combinations are left untouched ON PURPOSE, so that they
+      # reach the desktop itself rather than the app you are typing in. After
+      # the swap at the top of this file they are already Super combinations,
+      # which is exactly what the desktop is listening for:
+      #
+      #   Command-Space          the Aquarius search palette (Super-Space).
+      #                          This is why the whole design works: the Mac's
+      #                          Spotlight key and the Aquarius search key are
+      #                          the same key.
+      #   Command-Tab            switch apps. GNOME already listens for
+      #                          Super-Tab and does exactly this.
+      #   Command-Shift-Tab      switch apps backwards.
+      #   Command-`              switch between windows of the same app.
+      #                          GNOME listens for Super-` for this.
+      #   Command-Shift-E        log out of the Aquarius Session.
+      #
+      # ⚠️ KNOWN GAP IN THE AQUARIUS SESSION (labwc), 2026-09-03. labwc's own
+      # defaults put "switch windows" on Alt-Tab, not Super-Tab, so Command-Tab
+      # and Command-` do nothing there yet. Fixing it is two lines in the
+      # aquarius-shell repository's session/labwc/rc.xml, which is not ours to
+      # edit — the exact proposal is written down in
+      # docs/restart/aquarius-keys.md. On GNOME, which is what AquariusOS boots
+      # into today, both already work.
+
+  # ===========================================================================
+  # BLOCK 4 — A NOTE ON WHAT IS *NOT* HERE
+  # ===========================================================================
+  # There is no block for "the physical Control key". It is not touched
+  # anywhere in this file, at all. Control-C in a terminal is Control-C.
+  # Control-Alt-F3 still switches to a text console. Nothing that was a Control
+  # shortcut before has been taken away — Mac shortcuts are added alongside.
+  # ===========================================================================
