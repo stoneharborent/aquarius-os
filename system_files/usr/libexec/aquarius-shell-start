@@ -39,6 +39,58 @@ aq_log() { echo "[shell-start] $*" >> "${AQ_LOG}"; }
 aq_log "starting the Aquarius Shell"
 aq_log "  QS_CONFIG_PATH = ${QS_CONFIG_PATH:-(not set!)}"
 
+# ---------------------------------------------------------------------------
+# Is there a shell in this image at all?
+#
+# There may not be. The shell lives in its own repository, and a container build
+# has no GitHub account — so if that repository is private, the build finishes
+# without it and says so, rather than failing the whole operating system over
+# one folder.
+#
+# The result is an image where everything else works and there is no bar. That
+# is a perfectly reasonable thing to ship while the shell is being finished, and
+# it is exactly what the "R2a platform" step of the plan is. What is NOT
+# reasonable is letting somebody discover it as a blank screen.
+# ---------------------------------------------------------------------------
+aq_shell_say() { # aq_shell_say <title> <message>
+    aq_log "----- what the person was told -----"
+    printf '%s\n' "$2" | sed 's/^/[shell-start] /' >> "${AQ_LOG}"
+    if command -v zenity > /dev/null 2>&1; then
+        zenity --info --title="$1" --width=560 --text="$2" >> "${AQ_LOG}" 2>&1 &
+    elif command -v notify-send > /dev/null 2>&1; then
+        notify-send "$1" "$2" >> "${AQ_LOG}" 2>&1 &
+    fi
+}
+
+if [ ! -s "${QS_CONFIG_PATH:-/usr/share/aquarius/shell}/shell.qml" ]; then
+    aq_log "there is no shell.qml in this image — showing the not-installed-yet notice"
+    if [ -r /usr/share/aquarius/shell-build.txt ]; then
+        sed 's/^/[shell-start] /' /usr/share/aquarius/shell-build.txt >> "${AQ_LOG}"
+    fi
+
+    aq_shell_say "Aquarius Desktop" "The Aquarius Shell is not installed yet.
+
+This version of AquariusOS has the desktop's FOUNDATIONS — the window manager, the shell runtime, the login-screen entry and screen recording — but not the bar, dock and search themselves. That is deliberate, and it is why there is a wallpaper and nothing else.
+
+This is a working desktop, just an empty one:
+
+    Super + Return        a terminal
+    Alt + Tab             switch windows
+    Alt + F4              close a window
+    Super + arrow keys    snap a window to half the screen
+    Super + Shift + E     back to the login screen
+
+TO GET YOUR NORMAL DESKTOP BACK:
+Press Super+Shift+E. At the login screen, click the gear near the password box and choose GNOME. Everything is exactly as you left it.
+
+Why the shell is missing is written down in:
+
+    /usr/share/aquarius/shell-build.txt
+    ${AQ_LOG}"
+
+    exit 0
+fi
+
 aq_started_at="${SECONDS}"
 
 # The shell itself. A bare `qs` — the configuration comes from QS_CONFIG_PATH.
@@ -92,23 +144,7 @@ WHAT WENT WRONG IS WRITTEN DOWN:
 
 Look for lines that begin with [shell]. Those are the bar's own words."
 
-# Log it first — the dialog can fail, the log cannot.
-aq_log "----- what the person was told -----"
-printf '%s\n' "${aq_message}" | sed 's/^/[shell-start] /' >> "${AQ_LOG}"
-
-# zenity draws a plain GTK dialog and is part of the image. --width keeps the
-# text from becoming one long line. If zenity is somehow not there, fall back to
-# a desktop notification, and if THAT is not there the log above is all there is
-# — which is still infinitely more than the first boot had.
-if command -v zenity > /dev/null 2>&1; then
-    zenity --error \
-        --title="Aquarius Desktop" \
-        --width=560 \
-        --text="${aq_message}" >> "${AQ_LOG}" 2>&1 &
-elif command -v notify-send > /dev/null 2>&1; then
-    notify-send --urgency=critical "The Aquarius bar could not start" \
-        "Press Super+Shift+E to return to the login screen and pick GNOME. Details: ${AQ_LOG}" \
-        >> "${AQ_LOG}" 2>&1 &
-fi
+# Log it first — the dialog can fail, the log cannot. aq_shell_say does both.
+aq_shell_say "Aquarius Desktop" "${aq_message}"
 
 exit "${aq_status}"

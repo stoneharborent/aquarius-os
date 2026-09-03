@@ -315,11 +315,35 @@ rm -f /tmp/aq-ldd.txt
 # ==============================================================================
 say "The Aquarius Shell"
 
+sed 's/^/       /' /usr/share/aquarius/shell-build.txt
+
+# ⚠️ A MISSING SHELL IS A WARNING HERE, NOT A FAILURE, AND THAT IS DELIBERATE.
+#
+# The shell lives in its own repository. A container build has no GitHub
+# account, so it can read a public repository and nothing else — and there is
+# deliberately no token in this build, because a secret handed to a container
+# build is recorded in the finished image's history where anybody can read it.
+#
+# So if that repository is private on the day this runs, the image is finished
+# WITHOUT the shell. Everything else works: the window manager, the wallpaper,
+# the keyboard, screen recording, the login-screen entry. Picking "Aquarius
+# Desktop" gives a wallpaper and a dialog saying, in plain English, that the
+# shell is not installed yet and how to get back to GNOME.
+#
+# That is the "R2a platform" state of the plan and it is a reasonable thing to
+# ship. What would not be reasonable is shipping it silently, so it is said
+# here, in the image, and on the CI run.
+AQ_SHELL_PRESENT=0
 if [ -s "${AQ_SHELL_DIR}/shell.qml" ]; then
+    AQ_SHELL_PRESENT=1
     ok "the shell is installed at ${AQ_SHELL_DIR}"
-    sed 's/^/       /' /usr/share/aquarius/shell-build.txt
 else
-    bad "there is no ${AQ_SHELL_DIR}/shell.qml — the shell did not arrive"
+    echo "::warning::This image has no Aquarius Shell. The Aquarius Desktop will start and explain itself. See /usr/share/aquarius/shell-build.txt."
+    echo "  NOTE   the Aquarius Shell is NOT in this image."
+    echo "         Everything else in the Aquarius Desktop is. The session"
+    echo "         starts, shows the wallpaper, and puts a dialog on screen"
+    echo "         explaining that the bar is not installed yet."
+    echo "         The fix is to make the shell repository public and rebuild."
 fi
 
 # THE CHECK THAT CATCHES THE EXPENSIVE MISTAKE.
@@ -335,11 +359,19 @@ fi
 say "Every Quickshell module the shell imports is installed"
 AQ_QML_ROOT="/usr/lib64/qt6/qml"
 
-grep -rhoE '^import Quickshell[A-Za-z.]*' "${AQ_SHELL_DIR}" 2> /dev/null \
-    | sed 's/^import //' | sort -u > /tmp/aq-imports.txt
+if [ "${AQ_SHELL_PRESENT}" -eq 0 ]; then
+    echo "  skipped — there is no shell in this image to read imports from."
+    echo "  Quickshell's own modules were already checked in its build stage."
+fi
 
-if [ ! -s /tmp/aq-imports.txt ]; then
-    bad "no Quickshell imports found anywhere in ${AQ_SHELL_DIR} — the shell tree looks wrong"
+if [ "${AQ_SHELL_PRESENT}" -eq 1 ]; then
+    grep -rhoE '^import Quickshell[A-Za-z.]*' "${AQ_SHELL_DIR}" 2> /dev/null \
+        | sed 's/^import //' | sort -u > /tmp/aq-imports.txt
+    if [ ! -s /tmp/aq-imports.txt ]; then
+        bad "no Quickshell imports found anywhere in ${AQ_SHELL_DIR} — the shell tree looks wrong"
+    fi
+else
+    : > /tmp/aq-imports.txt
 fi
 
 while read -r aq_import; do

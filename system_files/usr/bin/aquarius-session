@@ -162,15 +162,32 @@ if [ -n "${aq_missing}" ]; then
         "Log in with GNOME, and report which names are listed above."
 fi
 
-for aq_dir in "${AQ_LABWC_CONFIG_DIR}" "${AQ_SHELL_DIR}"; do
-    if [ -d "${aq_dir}" ]; then
-        echo "  found    ${aq_dir}"
-    else
-        die "The folder ${aq_dir} is not in this image." \
-            "The Aquarius Desktop is made of two folders and two programs, and" \
-            "one of the folders is not here. Log in with GNOME."
-    fi
-done
+if [ -d "${AQ_LABWC_CONFIG_DIR}" ]; then
+    echo "  found    ${AQ_LABWC_CONFIG_DIR}"
+else
+    die "The folder ${AQ_LABWC_CONFIG_DIR} is not in this image." \
+        "Without it the window manager has no key bindings and no way to start" \
+        "anything. This is a broken image, not something you did. Log in with" \
+        "GNOME."
+fi
+
+# The shell is a DIFFERENT case, and deliberately not fatal.
+#
+# It lives in its own repository, and a container build has no GitHub account —
+# so if that repository is private when the image is built, the image is
+# finished without it. Everything else still works: the window manager, the
+# wallpaper, the keyboard, screen recording. There is simply no bar.
+#
+# So this is a note, not a death. The helper that would have started the shell
+# puts a dialog on screen explaining it instead, and /usr/share/aquarius/
+# shell-build.txt says exactly why.
+if [ -s "${AQ_SHELL_DIR}/shell.qml" ]; then
+    echo "  found    ${AQ_SHELL_DIR}"
+else
+    echo "  NOTE     the Aquarius Shell is not in this image — there will be no bar."
+    echo "           Why: /usr/share/aquarius/shell-build.txt"
+    echo "           The desktop still starts, and a dialog will explain it."
+fi
 
 # gdbus is how the shell asks the system whether it prefers a light or a dark
 # appearance. Its absence is NOT fatal — the shell simply stays on Ice, its

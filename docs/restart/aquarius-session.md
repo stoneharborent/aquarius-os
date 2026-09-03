@@ -16,6 +16,50 @@ can take it away.
 
 ---
 
+## ⚠️ One thing is waiting on you, Royce
+
+**The shell repository is private, and that is the only reason the bar might not
+appear.**
+
+The Aquarius Shell lives at `github.com/stoneharborent/aquarius-shell`. The
+machine that builds AquariusOS has no GitHub account — it can read a *public*
+repository and nothing else — and there is deliberately no password or token in
+the build, because a secret handed to a container build gets recorded inside the
+finished image where anybody who downloads AquariusOS could read it.
+
+So while that repository is private, every build finishes **without** the shell.
+The image is still good: the window manager, the wallpaper, the keyboard
+shortcuts, screen recording, the login-screen entry are all there. Picking
+"Aquarius Desktop" gives you a wallpaper and a dialog explaining that the bar is
+not installed yet and how to get back to GNOME. Nothing is hidden — the build
+log says it, the CI run says it, and the machine itself says it in
+`/usr/share/aquarius/shell-build.txt`.
+
+**The fix is four clicks and no code:**
+
+1. Go to `github.com/stoneharborent/aquarius-shell`
+2. **Settings** → **General**
+3. Scroll to **Danger Zone** → **Change visibility** → **Make public**
+4. Push anything to the AquariusOS repository, or re-run the last build
+
+The next image bakes the shell in. Not one file in the OS recipe changes — it
+already knows how to fetch it, and it already knows which exact commit to take.
+
+*(The reason it must be public rather than token-protected: a token would work
+for the test job, which runs on GitHub's own machines, but not for the image
+build, which happens inside a container that must never carry a secret.)*
+
+To check which state a machine is in:
+
+```bash
+cat /usr/share/aquarius/shell-build.txt
+```
+
+`status=installed` means the bar is there. `status=unavailable` means it is not,
+and the file says why.
+
+---
+
 ## Picking it
 
 1. Log out, or start the computer.
@@ -79,11 +123,15 @@ setting with the Aquarius Desktop.
 ### If the bar does not appear but the wallpaper does
 
 You will get a dialog explaining it, because that is what
-`/usr/libexec/aquarius-shell-start` exists to do. Read it. Then either:
+`/usr/libexec/aquarius-shell-start` exists to do. **Read it** — it says which of
+the two things happened:
 
-- press **Super + Return** for a terminal and type `qs` to start the bar again,
-  or
-- press **Super + Shift + E** and log in with GNOME.
+- **"The Aquarius Shell is not installed yet"** — the shell was not in this
+  build. See the section at the top of this page; it is four clicks to fix, then
+  a rebuild. Nothing is wrong with your machine.
+- **"The Aquarius bar could not start"** — the shell is there and it crashed.
+  Either press **Super + Return** for a terminal and type `qs` to start it again,
+  or press **Super + Shift + E** and log in with GNOME.
 
 ### If you get a black screen and go straight back to the login screen
 
@@ -316,6 +364,10 @@ Being clear about this matters more than it being short.
 
 In order. Stop at the first failure and read the log.
 
+0. **First, from GNOME, check whether the bar is even in this build:**
+   `cat /usr/share/aquarius/shell-build.txt`. If it says `status=unavailable`,
+   only steps 1, 11 and 12 below can pass — see the section at the top of this
+   page for the four clicks that fix it.
 1. **Log in.** At GDM, pick **Aquarius Desktop**. It should reach a wallpaper
    with a bar across the top, not a black screen.
 2. **Look at the bar.** Aquarius mark on the left, the current window's name

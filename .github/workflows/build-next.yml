@@ -754,44 +754,58 @@ jobs:
           fi
           echo "       built as: $(cat /usr/share/aquarius/quickshell-build.txt 2>/dev/null | tr '\n' ' ')"
 
-          echo "== every Quickshell module the shell imports =="
-          # Derived from the shell's own source, so it cannot drift out of date.
-          grep -rhoE '^import Quickshell[A-Za-z.]*' /usr/share/aquarius/shell 2>/dev/null \
-            | sed 's/^import //' | sort -u > /tmp/imports.txt
-          if [ ! -s /tmp/imports.txt ]; then
-            bad "no Quickshell imports found in the shell — the shell tree is wrong"
-          fi
-          while read -r imp; do
-            p="/usr/lib64/qt6/qml/$(printf '%s' "${imp}" | tr '.' '/')"
-            if [ -f "${p}/qmldir" ]; then ok "${imp}"
-            else bad "${imp} is imported by the shell but was not built into Quickshell"; fi
-          done < /tmp/imports.txt
-
           echo "== the shell that was baked in =="
+          # A missing shell is a WARNING, not a failure. The shell lives in a
+          # separate repository and a container build has no GitHub account, so
+          # if that repository is private the image is finished without it. What
+          # ships is then a working desktop with no bar, which says so on screen.
+          # Everything else in this step still has to be right.
+          sed 's/^/       /' /usr/share/aquarius/shell-build.txt 2>/dev/null || \
+            bad "there is no /usr/share/aquarius/shell-build.txt — the shell stage did not run at all"
           if [ -s /usr/share/aquarius/shell/shell.qml ]; then
             ok "the shell is installed"
-            sed 's/^/       /' /usr/share/aquarius/shell-build.txt
-          else
-            bad "/usr/share/aquarius/shell/shell.qml is missing — there is no bar to draw"
-          fi
-          GOT_REF="$(grep -E '^commit=' /usr/share/aquarius/shell-build.txt 2>/dev/null | cut -d= -f2)"
-          if [ "${GOT_REF}" = "${EXPECT_SHELL_REF}" ]; then
-            ok "it is the pinned commit"
-          else
-            bad "the image contains shell commit '${GOT_REF}' but aquarius-os.env pins '${EXPECT_SHELL_REF}'"
-          fi
-          for f in theme/Ice.qml theme/Midnight.qml components/bar/TopBar.qml \
-                   components/dock/Dock.qml components/search/FlowSearch.qml \
-                   components/notifications/NotificationLayer.qml; do
-            if [ -s "/usr/share/aquarius/shell/${f}" ]; then ok "${f}"; else bad "${f} is missing"; fi
-          done
-          for junk in harness tests .git .github; do
-            if [ -e "/usr/share/aquarius/shell/${junk}" ]; then
-              bad "${junk}/ was shipped inside the operating system and should not have been"
+            GOT_REF="$(grep -E '^commit=' /usr/share/aquarius/shell-build.txt 2>/dev/null | cut -d= -f2)"
+            if [ "${GOT_REF}" = "${EXPECT_SHELL_REF}" ]; then
+              ok "it is the pinned commit"
             else
-              ok "${junk}/ was correctly left out of the image"
+              bad "the image contains shell commit '${GOT_REF}' but aquarius-os.env pins '${EXPECT_SHELL_REF}'"
             fi
-          done
+            for f in theme/Ice.qml theme/Midnight.qml components/bar/TopBar.qml \
+                     components/dock/Dock.qml components/search/FlowSearch.qml \
+                     components/notifications/NotificationLayer.qml; do
+              if [ -s "/usr/share/aquarius/shell/${f}" ]; then ok "${f}"; else bad "${f} is missing"; fi
+            done
+            for junk in harness tests .git .github; do
+              if [ -e "/usr/share/aquarius/shell/${junk}" ]; then
+                bad "${junk}/ was shipped inside the operating system and should not have been"
+              else
+                ok "${junk}/ was correctly left out of the image"
+              fi
+            done
+            echo "== every Quickshell module the shell imports =="
+            grep -rhoE '^import Quickshell[A-Za-z.]*' /usr/share/aquarius/shell 2>/dev/null \
+              | sed 's/^import //' | sort -u > /tmp/imports.txt
+            if [ ! -s /tmp/imports.txt ]; then
+              bad "no Quickshell imports found in the shell — the shell tree is wrong"
+            fi
+            while read -r imp; do
+              p="/usr/lib64/qt6/qml/$(printf '%s' "${imp}" | tr '.' '/')"
+              if [ -f "${p}/qmldir" ]; then ok "${imp}"
+              else bad "${imp} is imported by the shell but was not built into Quickshell"; fi
+            done < /tmp/imports.txt
+          else
+            echo "::warning::This image has no Aquarius Shell — /usr/share/aquarius/shell-build.txt says why. The Aquarius Desktop starts and explains itself on screen. Make the shell repository public and rebuild to bake it in."
+            echo "  NOTE the Aquarius Shell is not in this image. Everything else"
+            echo "       about the Aquarius Desktop is, and the session tells the"
+            echo "       person what is going on rather than showing a blank screen."
+            # The one thing that must still be true: the image has to KNOW it is
+            # missing, so the session can say so.
+            if grep -q '^status=unavailable$' /usr/share/aquarius/shell-build.txt 2>/dev/null; then
+              ok "the image records why the shell is absent"
+            else
+              bad "the shell is absent and the image does not say why — the session would show a blank screen with no explanation"
+            fi
+          fi
 
           echo "== the login screen entry =="
           ENTRY=/usr/share/wayland-sessions/aquarius.desktop
@@ -980,7 +994,7 @@ jobs:
               ok "the shell's code says nothing about Bazzite (only its notes do, which is fine)"
             fi
           else
-            bad "/usr/share/aquarius/shell does not exist — the desktop's shell is missing"
+            ok "there is no shell in this image to check (see the warning above)"
           fi
 
           echo
@@ -1295,10 +1309,28 @@ jobs:
           echo "ref=${REF}" >> "${GITHUB_OUTPUT}"
           echo "shell: ${REPO} @ ${REF}"
 
+      # ⚠️ This can legitimately fail to find anything, and that is not an error.
+      #
+      # A GitHub Actions run can read THIS repository and no other. If
+      # aquarius-shell is private, this job cannot fetch it — and neither can
+      # the image build, which is why the image ships without the shell and says
+      # so on screen. Both halves have to behave the same way, so this reports a
+      # warning and stops rather than failing the run for something nobody can
+      # fix from inside this repository.
+      #
+      # The fix is one click: make github.com/stoneharborent/aquarius-shell
+      # public. Then this job runs the shell's real tests on every push, and the
+      # image bakes the shell in, with no file here changing.
       - name: Fetch the shell at that exact commit
+        id: fetch
         run: |
-          set -euo pipefail
-          git clone "${{ steps.pin.outputs.repo }}" aquarius-shell
+          set -uo pipefail
+          export GIT_TERMINAL_PROMPT=0
+          if ! git clone "${{ steps.pin.outputs.repo }}" aquarius-shell 2>&1; then
+            echo "::warning::Could not read ${{ steps.pin.outputs.repo }} — it is private, so this job and the image build both go without the shell. Make it public to turn this on."
+            echo "available=no" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
           cd aquarius-shell
           git checkout --detach "${{ steps.pin.outputs.ref }}"
           GOT="$(git rev-parse HEAD)"
@@ -1307,8 +1339,10 @@ jobs:
             exit 1
           fi
           git log -1 --format='%h %ad %s' --date=short
+          echo "available=yes" >> "${GITHUB_OUTPUT}"
 
       - name: Install what the checks need
+        if: steps.fetch.outputs.available == 'yes'
         run: |
           set -euo pipefail
           sudo apt-get update
@@ -1316,6 +1350,7 @@ jobs:
           python3 -m pip install --user pyyaml
 
       - name: Run the shell's own checks
+        if: steps.fetch.outputs.available == 'yes'
         working-directory: aquarius-shell
         run: ./tests/test-shell.sh
 
@@ -1323,6 +1358,7 @@ jobs:
       # the shell's own tests have no reason to check because they are about how
       # the OPERATING SYSTEM installs it.
       - name: Check the shell still looks the way the image expects
+        if: steps.fetch.outputs.available == 'yes'
         working-directory: aquarius-shell
         run: |
           set -euo pipefail

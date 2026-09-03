@@ -54,9 +54,83 @@ echo "  commit:     ${AQ_SHELL_REF}"
 
 aq_dnf install git
 
-# A shallow clone cannot check out an arbitrary commit, so this is a full clone.
-# The repository is a few hundred kilobytes of text; it costs nothing.
-git clone "${AQ_SHELL_REPO}" /src
+# ------------------------------------------------------------------------------
+# ⚠️ THE ONE THING THAT CAN STOP THE SHELL BEING BAKED IN
+# ------------------------------------------------------------------------------
+# A container build has no GitHub account. It can read a PUBLIC repository and
+# nothing else. There is deliberately no token here and there should never be
+# one: a secret passed into a container build is recorded in the finished
+# image's history, where anybody who downloads AquariusOS can read it.
+#
+# So if aquarius-shell is private, this stage cannot fetch it, and the honest
+# thing to do is say so at the top of the build log and carry on WITHOUT the
+# shell — producing an operating system whose Aquarius Desktop starts, shows the
+# wallpaper, and puts a dialog on screen explaining in plain English that the
+# shell is not installed yet and how to get back to GNOME.
+#
+# That is not a silent failure. It is written in the build log, it is written
+# into the image at /usr/share/aquarius/shell-build.txt, the checks in
+# 55-aquarius-session.sh repeat it, and CI prints it as a warning on the run.
+#
+# THE FIX IS ONE CLICK, AND IT IS ROYCE'S TO MAKE:
+#   github.com/stoneharborent/aquarius-shell -> Settings -> General ->
+#   Danger Zone -> Change visibility -> Public
+# The next build then bakes the shell in with no change to any file here.
+#
+# (The alternative — a personal access token in an Actions secret — would work
+# for the CI job but not for the container build, for the reason above.)
+# ------------------------------------------------------------------------------
+GIT_TERMINAL_PROMPT=0
+export GIT_TERMINAL_PROMPT
+
+AQ_SHELL_AVAILABLE=1
+if ! git clone "${AQ_SHELL_REPO}" /src 2>&1 | sed 's/^/  /'; then
+    AQ_SHELL_AVAILABLE=0
+fi
+# The pipe above hides git's exit code, so ask the filesystem instead.
+if [ ! -d /src/.git ]; then
+    AQ_SHELL_AVAILABLE=0
+fi
+
+if [ "${AQ_SHELL_AVAILABLE}" -eq 0 ]; then
+    install -d -m 0755 "${AQ_STAGE}/usr/share/aquarius"
+    {
+        echo "# Written by build_files/stage-aquarius-shell.sh. Do not edit by hand."
+        echo "status=unavailable"
+        echo "repository=${AQ_SHELL_REPO}"
+        echo "wanted_commit=${AQ_SHELL_REF}"
+        echo "reason=the repository could not be read without an account, so it is private"
+        echo "fix=make the repository public, then rebuild; nothing in the OS recipe needs changing"
+    } > "${AQ_STAGE}/usr/share/aquarius/shell-build.txt"
+
+    echo
+    echo "::warning::The Aquarius Shell was NOT baked into this image: ${AQ_SHELL_REPO} could not be read without an account. The Aquarius Desktop will start and show a dialog explaining it. Make the repository public and rebuild."
+    echo "  ============================================================"
+    echo "  THE AQUARIUS SHELL IS NOT IN THIS IMAGE"
+    echo "  ============================================================"
+    echo "  ${AQ_SHELL_REPO} could not be read."
+    echo ""
+    echo "  A container build has no GitHub account, so it can only read"
+    echo "  public repositories. This one is private."
+    echo ""
+    echo "  The image is still good: labwc, Quickshell, the login-screen"
+    echo "  entry and the portals are all here. Picking \"Aquarius Desktop\""
+    echo "  gives a wallpaper and a dialog saying the shell is not"
+    echo "  installed yet, and how to get back to GNOME."
+    echo ""
+    echo "  To fix it, on github.com:"
+    echo "    stoneharborent/aquarius-shell -> Settings -> General ->"
+    echo "    Danger Zone -> Change visibility -> Public"
+    echo "  Then rebuild. No file in this repository needs to change."
+    echo "  ============================================================"
+    echo
+
+    say "What is being copied into AquariusOS"
+    find "${AQ_STAGE}" -type f | sort | sed "s|${AQ_STAGE}||; s/^/  /"
+    aq_finish "Aquarius Shell source stage (shell NOT included)"
+    exit 0
+fi
+
 cd /src || exit 1
 git checkout --detach "${AQ_SHELL_REF}"
 
@@ -100,6 +174,7 @@ cp -a /src/LICENSE "${AQ_STAGE}/usr/share/licenses/aquarius-shell/LICENSE"
 # Royce asks "which version of the bar is this", this is the answer.
 {
     echo "# Written by build_files/stage-aquarius-shell.sh. Do not edit by hand."
+    echo "status=installed"
     echo "repository=${AQ_SHELL_REPO}"
     echo "commit=${AQ_GOT}"
     echo "subject=$(git log -1 --format='%s')"
