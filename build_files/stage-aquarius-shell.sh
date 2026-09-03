@@ -40,6 +40,10 @@
 # ==============================================================================
 
 # shellcheck source=build_files/aq-lib.sh
+# NOTE (2026-09-03): the shell repo, github.com/stoneharborent/aquarius-shell, was
+# private when this line was first built, so the fetch below failed loudly and the
+# image shipped the placeholder. Royce made it public the same day; no token is
+# ever used here (a build secret would end up in the published image's history).
 source "$(dirname "$0")/aq-lib.sh"
 
 AQ_SHELL_REPO="${AQUARIUS_SHELL_REPO:?AQUARIUS_SHELL_REPO was not passed to this stage}"
