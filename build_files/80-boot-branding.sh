@@ -123,6 +123,9 @@ if [ ! -d "${SPINNER_DIR}" ]; then
     exit 1
 fi
 
+echo "What Fedora's spinner theme actually ships (so a missing picture names itself):"
+rpm -ql plymouth-theme-spinner 2> /dev/null | sed 's/^/  /' || echo "  (cannot list the package)"
+
 # An explicit list, not a wildcard. A wildcard would also drag in spinner's own
 # grey spinning animation, which would then fight our dots for the same spot on
 # screen.
@@ -172,8 +175,11 @@ say "Making the Aquarius splash the default"
 install -d -m 0755 /etc/plymouth
 
 if aq_have plymouth-set-default-theme; then
-    plymouth-set-default-theme "${THEME_NAME}"
-    echo "plymouth-set-default-theme ${THEME_NAME} — done"
+    # `|| true` on purpose. This helper's exit status has meant different things
+    # in different Plymouth releases, and it is not what we are relying on — the
+    # file it writes is, and that is checked immediately below.
+    plymouth-set-default-theme "${THEME_NAME}" || true
+    echo "plymouth-set-default-theme ${THEME_NAME} — ran"
 else
     echo "NOTE: plymouth-set-default-theme is not in this image; writing the"
     echo "      settings file directly instead."
@@ -557,16 +563,27 @@ fi
 
 # The two About-page pictures must still be step 5's. This is the check that
 # catches the mistake the warning above is about.
+# ⚠️ Written as a POSITIVE assertion — each path must hold its own specific
+# picture — and not as "is this one of ours?". The first version of this check
+# asked the latter, and failed the build: the dark About-page picture IS one of
+# the two pictures this step hands out, so "it matches one of ours" is true when
+# everything is correct. What we actually care about is that the LIGHT page has
+# the light picture and the DARK page has the dark one, which is a different
+# question with a different answer.
 say "Making sure the About page was not trampled"
-for f in /usr/share/pixmaps/fedora_logo_med.png /usr/share/pixmaps/fedora_whitelogo_med.png; do
-    if [ ! -s "$f" ]; then
-        bad "$f is missing — step 5 should have written it"
-    elif cmp -s "${AQ_MARK_PNG}" "$f" || cmp -s "${AQ_WIDE_PNG}" "$f"; then
-        bad "$f was overwritten by this step with the wrong picture — take it out of the list above"
+aq_about_pair() { # aq_about_pair <destination> <the picture it must hold>
+    if [ ! -s "$1" ]; then
+        bad "$1 is missing — step 5 should have written it"
+    elif cmp -s "$2" "$1"; then
+        ok "$(basename "$1") still holds $(basename "$2")"
     else
-        ok "$(basename "$f") is still step 5's About-page picture"
+        bad "$(basename "$1") does not hold $(basename "$2") — something overwrote step 5's About-page picture"
     fi
-done
+}
+aq_about_pair /usr/share/pixmaps/fedora_logo_med.png \
+    /usr/share/aquarius/branding/aquarius-about-logo.png
+aq_about_pair /usr/share/pixmaps/fedora_whitelogo_med.png \
+    /usr/share/aquarius/branding/aquarius-about-logo-white.png
 
 # ==============================================================================
 # 6. THE FIRST-LOOK EXTRAS
@@ -638,9 +655,20 @@ AQ_OLD_MODULES=/tmp/aq-initramfs-modules-before.txt
 AQ_NEW_MODULES=/tmp/aq-initramfs-modules-after.txt
 : > "${AQ_OLD_MODULES}"
 
+# `lsinitrd -m` prints a header and the early-CPIO file listing BEFORE the
+# module names. Sorting its whole output gives a "module list" with file
+# permissions and 1970 dates in it, which is useless for comparing. Everything
+# after the line "dracut modules:" is the real list.
+aq_module_list() { # aq_module_list <ramdisk> <output file>
+    lsinitrd -m "$1" > /tmp/aq-lsinitrd-raw.txt 2> /dev/null || true
+    awk '/^dracut modules:/ { seen = 1; next } seen' /tmp/aq-lsinitrd-raw.txt \
+        | tr -d '[:blank:]' | grep -E '^[a-z0-9][a-z0-9._-]*$' | sort -u > "$2" || true
+    rm -f /tmp/aq-lsinitrd-raw.txt
+}
+
 if [ -s "${AQ_INITRAMFS}" ] && aq_have lsinitrd; then
     echo "The ramdisk Fedora shipped: $(stat -c '%s' "${AQ_INITRAMFS}") bytes"
-    lsinitrd -m "${AQ_INITRAMFS}" 2> /dev/null | sort -u > "${AQ_OLD_MODULES}" || true
+    aq_module_list "${AQ_INITRAMFS}" "${AQ_OLD_MODULES}"
     echo "It was built from these $(wc -l < "${AQ_OLD_MODULES}") parts:"
     tr '\n' ' ' < "${AQ_OLD_MODULES}"
     echo
@@ -675,33 +703,51 @@ export DRACUT_NO_XATTR=1
 
 AQ_DRACUT_ARGS=(--force --no-hostonly --reproducible --kver "${AQ_KVER}" -v)
 
-if dracut --list-modules 2> /dev/null | grep -qx 'ostree'; then
-    ok "the 'ostree' ramdisk part is available to dracut"
-    AQ_DRACUT_ARGS+=(--add ostree)
-else
-    echo "AQUARIUS ERROR: dracut does not know about the 'ostree' part." >&2
-    echo "                That is the piece that lets an image-based system" >&2
-    echo "                boot at all. Building a ramdisk without it would" >&2
-    echo "                produce an image that installs and then will not" >&2
-    echo "                start. Stopping instead." >&2
-    echo "                Parts dracut does know about:" >&2
-    dracut --list-modules 2> /dev/null | sort | tr '\n' ' ' >&2 || true
-    echo >&2
-    exit 1
-fi
+# ⚠️ ASK FOR THE LIST ONCE, INTO A FILE, AND GREP THE FILE. Do not write
+# `dracut --list-modules | grep -q ...`. That form reported "ostree is not
+# available" on 2026-09-03 while ostree was plainly in the list, and the reason
+# is the trap this repo already has a scar from: `grep -q` stops reading the
+# moment it matches, the program on the left of the pipe is killed by SIGPIPE,
+# and `pipefail` then reports the whole pipeline as failed — so a SUCCESSFUL
+# match looks like a failure. It is the same bug that made every font check lie
+# earlier in the same week.
+AQ_DRACUT_MODULES=/tmp/aq-dracut-modules.txt
+dracut --list-modules > "${AQ_DRACUT_MODULES}" 2> /dev/null || true
+echo "Parts dracut can build a ramdisk out of ($(wc -l < "${AQ_DRACUT_MODULES}") of them):"
+sort "${AQ_DRACUT_MODULES}" | tr '\n' ' '
+echo
 
-# Plymouth is normally included on its own when it is installed, but saying so
-# explicitly costs nothing and turns "it silently was not there" into a loud
-# failure at build time instead of a Fedora splash on a real machine.
-if dracut --list-modules 2> /dev/null | grep -qx 'plymouth'; then
-    ok "the 'plymouth' ramdisk part is available to dracut"
-    AQ_DRACUT_ARGS+=(--add plymouth)
-else
-    echo "AQUARIUS ERROR: dracut does not know about the 'plymouth' part, so the" >&2
-    echo "                boot splash could not be put into the ramdisk at all." >&2
-    echo "                Is the plymouth package installed? Step 2 installs it." >&2
-    exit 1
-fi
+# ostree and bootc are the two parts that know how to find and start an
+# image-based system. Both are in the ramdisk Fedora ships with this base image,
+# so both have to be in ours. A ramdisk without them produces an image that
+# installs perfectly, publishes perfectly, and then stops at a black screen.
+#
+# plymouth is normally pulled in on its own when it is installed, but naming it
+# turns "it silently was not there" into a loud failure at build time rather than
+# a Fedora splash on a real machine.
+for part in ostree bootc plymouth; do
+    if grep -qx "${part}" "${AQ_DRACUT_MODULES}"; then
+        ok "the '${part}' ramdisk part is available to dracut"
+        AQ_DRACUT_ARGS+=(--add "${part}")
+    else
+        echo "AQUARIUS ERROR: dracut does not know about the '${part}' part." >&2
+        case "${part}" in
+            ostree | bootc)
+                echo "                That is a piece that lets an image-based system" >&2
+                echo "                boot at all. Building a ramdisk without it would" >&2
+                echo "                produce an image that installs and then will not" >&2
+                echo "                start. Stopping instead." >&2
+                ;;
+            plymouth)
+                echo "                So the boot splash could not be put into the" >&2
+                echo "                ramdisk at all. Is the plymouth package" >&2
+                echo "                installed? Step 2 installs it." >&2
+                ;;
+        esac
+        echo "                The parts it DOES know about are listed above." >&2
+        exit 1
+    fi
+done
 
 echo "Running: dracut ${AQ_DRACUT_ARGS[*]} ${AQ_INITRAMFS}"
 dracut "${AQ_DRACUT_ARGS[@]}" "${AQ_INITRAMFS}"
@@ -726,7 +772,7 @@ if ! aq_have lsinitrd; then
     aq_finish "The boot path"
 fi
 
-lsinitrd -m "${AQ_INITRAMFS}" 2> /dev/null | sort -u > "${AQ_NEW_MODULES}" || true
+aq_module_list "${AQ_INITRAMFS}" "${AQ_NEW_MODULES}"
 echo "Built from these $(wc -l < "${AQ_NEW_MODULES}") parts:"
 tr '\n' ' ' < "${AQ_NEW_MODULES}"
 echo
@@ -740,7 +786,8 @@ if [ -s "${AQ_OLD_MODULES}" ]; then
         sed 's/^/       /' /tmp/aq-initramfs-lost.txt
         # The must-haves. Losing one of these is the "builds fine, will not
         # boot" failure this whole section exists to prevent.
-        for critical in ostree systemd systemd-initrd dracut-systemd; do
+        for critical in ostree bootc systemd systemd-initrd dracut-systemd \
+            btrfs rootfs-block usrmount kernel-modules crypt dm; do
             if grep -qx "${critical}" /tmp/aq-initramfs-lost.txt; then
                 bad "the new ramdisk lost '${critical}' — this image would not boot"
             fi
@@ -750,7 +797,7 @@ if [ -s "${AQ_OLD_MODULES}" ]; then
     fi
 fi
 
-for want in plymouth ostree; do
+for want in plymouth ostree bootc; do
     if grep -qx "${want}" "${AQ_NEW_MODULES}"; then
         ok "the ramdisk contains the '${want}' part"
     else
@@ -791,7 +838,11 @@ echo "The splash setting baked into the ramdisk:"
 : > /tmp/aq-initrd-conf.txt
 AQ_CONF_FOUND=0
 for c in /etc/plymouth/plymouthd.conf /usr/share/plymouth/plymouthd.defaults; do
-    if lsinitrd -f "${c}" "${AQ_INITRAMFS}" > /tmp/aq-one-conf.txt 2> /dev/null \
+    # Files inside a ramdisk are stored without a leading slash. lsinitrd is
+    # documented to cope with either spelling; asking both ways costs nothing
+    # and removes a guess.
+    if { lsinitrd -f "${c}" "${AQ_INITRAMFS}" > /tmp/aq-one-conf.txt 2> /dev/null \
+        || lsinitrd -f "${c#/}" "${AQ_INITRAMFS}" > /tmp/aq-one-conf.txt 2> /dev/null; } \
         && [ -s /tmp/aq-one-conf.txt ]; then
         AQ_CONF_FOUND=1
         echo "       --- ${c} (inside the ramdisk) ---"

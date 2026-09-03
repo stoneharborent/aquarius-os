@@ -485,7 +485,7 @@ jobs:
 
           echo "== the splash program and its parts =="
           for pkg in plymouth plymouth-plugin-two-step plymouth-plugin-label \
-                     plymouth-theme-spinner dracut; do
+                     plymouth-theme-spinner plymouth-system-theme dracut; do
             if rpm -q "${pkg}" > /dev/null 2>&1; then ok "${pkg} $(rpm -q --queryformat '%{VERSION}-%{RELEASE}' "${pkg}")"
             else bad "${pkg} is NOT installed"; fi
           done
@@ -590,10 +590,15 @@ jobs:
           else
             ok "the ramdisk exists ($(stat -c '%s' "${IMG}") bytes, mode $(stat -c '%a' "${IMG}"))"
 
+            # `lsinitrd -m` prints a header and the early-CPIO file listing
+            # before the module names, so everything after the line
+            # "dracut modules:" is the real list.
             echo "-- the parts it was built from --"
-            lsinitrd -m "${IMG}" 2>/dev/null | sort -u > /tmp/initrd-mods.txt || true
+            lsinitrd -m "${IMG}" > /tmp/lsinitrd-raw.txt 2>/dev/null || true
+            awk '/^dracut modules:/ { seen = 1; next } seen' /tmp/lsinitrd-raw.txt \
+              | tr -d '[:blank:]' | grep -E '^[a-z0-9][a-z0-9._-]*$' | sort -u > /tmp/initrd-mods.txt || true
             tr '\n' ' ' < /tmp/initrd-mods.txt; echo
-            for part in plymouth ostree; do
+            for part in plymouth ostree bootc; do
               if grep -qx "${part}" /tmp/initrd-mods.txt; then ok "the ramdisk contains the '${part}' part"
               else bad "the ramdisk has no '${part}' part"; fi
             done
@@ -622,7 +627,9 @@ jobs:
             : > /tmp/initrd-conf.txt
             found=0
             for c in /etc/plymouth/plymouthd.conf /usr/share/plymouth/plymouthd.defaults; do
-              if lsinitrd -f "${c}" "${IMG}" > /tmp/one-conf.txt 2>/dev/null && [ -s /tmp/one-conf.txt ]; then
+              # Paths inside a ramdisk are stored with no leading slash; ask both ways.
+              if { lsinitrd -f "${c}" "${IMG}" > /tmp/one-conf.txt 2>/dev/null \
+                   || lsinitrd -f "${c#/}" "${IMG}" > /tmp/one-conf.txt 2>/dev/null; } && [ -s /tmp/one-conf.txt ]; then
                 found=1
                 echo "-- ${c}, inside the ramdisk --"; cat /tmp/one-conf.txt
                 cat /tmp/one-conf.txt >> /tmp/initrd-conf.txt
@@ -662,9 +669,22 @@ jobs:
       #
       # It is two different rules, on purpose:
       #
-      #   BAZZITE  must appear NOWHERE. Zero. This branch is built from bare
-      #            Fedora and has no relationship to Bazzite at all, so any
-      #            occurrence is a mistake by definition.
+      #   BAZZITE  must appear NOWHERE. Zero — not in a file name, not in an
+      #            installed package, not in the text of any file this build
+      #            writes to, comments included. This branch is built from bare
+      #            Fedora and has no relationship to Bazzite, so any occurrence
+      #            is a mistake by definition.
+      #
+      #            ⚠️ This rule is stricter than the Fedora one below, and that
+      #            asymmetry is on purpose. When this check was first written it
+      #            found five real hits, all of them historical notes in the
+      #            comments of two GNOME settings files ("the old Bazzite line
+      #            pinned all three", and so on). Those notes are genuinely
+      #            useful and they were kept — but reworded to say "the line
+      #            this replaced", because those files are installed onto every
+      #            machine, and Royce's instruction was that a machine should
+      #            not say Bazzite anywhere. The repository's own documentation,
+      #            which does not ship, still tells the story by name.
       #
       #   FEDORA   must not appear in the places a PERSON reads a name. It is
       #            expected and correct in the places a PROGRAM reads one —

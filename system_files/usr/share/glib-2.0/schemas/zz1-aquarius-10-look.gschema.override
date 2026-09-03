@@ -25,10 +25,10 @@
 #   ⚠️ Do NOT rename these files to sort earlier. Everything in them would
 #   silently stop working, with no error anywhere.
 #
-# (On the Bazzite line this prefix was fighting a specific set of files called
-# "zz0-…". Those are gone with Bazzite. The prefix stays because the reasoning
-# still holds and because renaming settings files is exactly the kind of change
-# that breaks quietly.)
+# (On the gaming-distribution line this replaced, the prefix was fighting a
+# specific set of files called "zz0-…". Those are gone along with that base. The
+# prefix stays because the reasoning still holds and because renaming settings
+# files is exactly the kind of change that breaks quietly.)
 #
 # HOW TO CHANGE SOMETHING HERE
 #
@@ -149,9 +149,9 @@ secondary-color='#111A2B'
 # Every setting NOT mentioned above keeps Fedora's own answer. The ones worth
 # naming, so nobody wonders whether they were forgotten:
 #
-#   enable-hot-corners           Left at GNOME's own default. On the Bazzite
-#                                line this was switched off because Bazzite
-#                                shipped an extension that moved the same
+#   enable-hot-corners           Left at GNOME's own default. On the line this
+#                                replaced it was switched off, because that
+#                                base shipped an extension which moved the same
 #                                gesture to the bottom edge; that extension is
 #                                not packaged by Fedora and is not here, so
 #                                turning the corner off now would remove a

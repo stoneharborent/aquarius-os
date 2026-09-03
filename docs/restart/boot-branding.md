@@ -309,10 +309,21 @@ the audit in `.github/workflows/build-next.yml` with its reason:
 | The **filenames** `fedora_logo_med.png` and `fedora_whitelogo_med.png` | The Settings → About page opens those exact paths, so the only way to brand that page is to put our picture at Fedora's filename. The bytes are ours; the name is not. |
 
 Everything not on that list is checked, and the build fails if the word Fedora
-turns up in it. **The word Bazzite is allowed nowhere at all** — not in a file
-name, not in an installed package, not in the text of any file the build can
-write to. This branch is built from bare Fedora and has no relationship to
+turns up in it.
+
+**The word Bazzite is allowed nowhere at all** — not in a file name, not in an
+installed package, not in the text of any file the build can write to, comments
+included. This branch is built from bare Fedora and has no relationship to
 Bazzite, so any occurrence is a mistake by definition.
+
+That rule is deliberately stricter than the Fedora one, and the first time the
+check ran it found five real hits — all of them historical notes in the comments
+of two GNOME settings files, along the lines of *"the old Bazzite line pinned all
+three."* Those notes are useful and they were kept, but reworded to say *"the
+line this replaced"*, because settings files are installed onto every machine and
+the instruction was that a machine should not say Bazzite anywhere. This
+repository's own documentation does not ship to anybody, so it still tells the
+story by name — as this paragraph does.
 
 ---
 

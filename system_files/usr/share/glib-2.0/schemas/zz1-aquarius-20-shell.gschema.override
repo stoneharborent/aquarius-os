@@ -35,7 +35,7 @@
 #   Settings    GNOME buries it, and a new user needs it on day one
 #
 # ⚠️ WHAT IS NOT HERE, AND WHY: Aquarius Editor, Aquarius Writer and Steam.
-# The old Bazzite line pinned all three. None of them are installed in this
+# The line this replaced pinned all three. None of them are installed in this
 # image yet — the Aquarius apps come back in Phase R3, Steam in R4 — and a dock
 # icon for a program that is not installed is a dead square that does nothing
 # when clicked. The list stays honest: it names what is actually here.
@@ -72,7 +72,7 @@ favorite-apps=['org.gnome.Nautilus.desktop', 'org.mozilla.firefox.desktop', 'org
 # build_files/40-gnome-desktop.sh. Nothing here is downloaded at build time.
 #
 # ------------------------------------------------------------------------------
-# WHAT THE BAZZITE LINE HAD THAT THIS ONE DOES NOT
+# WHAT THE PREVIOUS LINE HAD THAT THIS ONE DOES NOT
 # ------------------------------------------------------------------------------
 # Written down so nobody spends an afternoon looking for a bug that is really a
 # missing package. These five were packaged by Universal Blue, not by Fedora,
@@ -82,7 +82,7 @@ favorite-apps=['org.gnome.Nautilus.desktop', 'org.mozilla.firefox.desktop', 'org
 #   logomenu              the distro logo button in the top-left corner
 #   add-to-steam          right-click an app, add it to Steam
 #   restartto             reboot straight into another OS or the BIOS
-#   bazaar-integration    wiring for Bazzite's app store
+#   bazaar-integration    wiring for that base's own app store
 #
 # The one that is a real loss is **logomenu** — that button is where the
 # AquariusOS mark lived in the top bar. Getting it back means packaging the
