@@ -154,7 +154,7 @@ command Universal Blue and Bazzite use:
 
 ```bash
 dracut --force --no-hostonly --reproducible --kver "<version>" \
-       --add ostree --add plymouth -v \
+       --add ostree --add bootc --add plymouth -v \
        /usr/lib/modules/<version>/initramfs.img
 ```
 
@@ -164,9 +164,28 @@ dracut --force --no-hostonly --reproducible --kver "<version>" \
   own documentation makes the same point.
 - `--no-hostonly` means "build one that works on any computer" rather than
   tailoring it to the machine doing the build.
-- `--add ostree` is the part that knows how to start an image-based system. It is
-  not optional. Leave it out and you get an image that installs perfectly and
-  then stops at a black screen.
+- `--add ostree` and `--add bootc` are the two parts that know how to find and
+  start an image-based system. Neither is optional. Leave one out and you get an
+  image that installs perfectly and then stops at a black screen. Both are in
+  the ramdisk this base image ships, and the build checks that both are still in
+  ours afterwards.
+
+### Why the ramdisk got much bigger, and why that is fine
+
+Fedora's own ramdisk for this base image is about **121 MB**. Ours is about
+**281 MB**. That is not a mistake and it is not a compression setting — dracut
+already picks zstd on its own, and the build log says so.
+
+It is the honest cost of `--no-hostonly` on a full desktop image. The base image
+has almost no hardware support installed, so a ramdisk that works on "any
+computer" is small. Ours has every graphics driver, all the wireless firmware,
+and the full set of kernel modules, and a portable ramdisk has to be able to
+carry all of it — because the one thing worse than a large download is an image
+that will not start on the machine somebody installed it on.
+
+The cost lands once per update on the layer that holds that file. Making it
+smaller would mean leaving hardware out, which is the wrong trade for a machine
+that gets plugged into cameras, capture cards and external GPUs.
 
 ### ⚠️⚠️ Why this step runs LAST, and must keep running last
 
