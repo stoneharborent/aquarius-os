@@ -357,38 +357,66 @@ application_id = "AquariusOS"
 publisher = "Stone Harbor Entertainment"
 ```
 
-`volume_id` is the name written onto the disc image. It is what shows up when the
-stick is plugged into a Mac or a Windows machine, and the installer's own boot
-menu is built from it too — so the first screen when booting the stick says
-AQUARIUSOS rather than `Fedora-bootc-…`. (Only capital letters, digits, `-` and
-`_` are allowed there. It is an old format with old rules.)
+`volume_id` is the name written onto the disc image — what shows up when the
+stick is plugged into a Mac or a Windows machine, and what the installer uses to
+find its own files. (Only capital letters, digits, `-` and `_` are allowed there.
+It is an old format with old rules.)
+
+### What the finished ISO actually says — measured, not assumed
+
+The first ISO built with this configuration was read back out of the build log
+(run 33775709207), and it is better than expected. The ISO builder takes the
+product name straight out of our image's own `/etc/os-release`, so:
+
+```
+org.osbuild.grub2.iso        "product": { "name": "AquariusOS", "version": "44" }
+org.osbuild.grub2.iso.legacy "product": { "name": "AquariusOS", "version": "44" }
+org.osbuild.buildstamp       "product": "AquariusOS", "version": "44"
+                             "isolabel": "AQUARIUSOS"
+```
+
+- Both boot menus on the stick — the modern UEFI one and the older BIOS one —
+  are titled **AquariusOS 44**.
+- `buildstamp` is the file Anaconda itself reads to learn what it is installing,
+  so **the installer calls itself AquariusOS** in its own headings and text.
+- The disc label is **AQUARIUSOS**, which is what a Mac or a Windows machine
+  shows when the stick is plugged in.
 
 ### What could NOT be rebranded, and what it would take
 
-**The installer program's own pages still show Fedora's logo.** Once you are past
-that first menu and Anaconda — the Fedora installer — is drawing its screens, the
-header artwork and the sidebar logo are Fedora's.
+Two things, and both are narrower than they sound.
+
+**1. The installer's pictures are still Fedora's.** `fedora-logos-42.0.1` is
+installed into the installer's own runtime (confirmed in the same log), so the
+sidebar logo and the header artwork on Anaconda's pages are Fedora's, even though
+every word on those pages says AquariusOS.
 
 The reason is a boundary, not an oversight. That artwork does not come from
-AquariusOS. It lives inside the *installer's own* runtime, a separate mini-system
-that the ISO builder assembles from Fedora's packages. Our image is the thing
-being installed, not the thing doing the installing, so nothing we put in our
-image can reach it. The build does replace those paths *inside our image*
-(`/usr/share/anaconda/pixmaps/*`, if the installer software is present at all),
-which covers a machine that runs the installer after it is already up — but not
-the USB stick.
+AquariusOS. It lives inside the *installer's own* runtime — a separate
+mini-system the ISO builder assembles from Fedora's packages. Our image is the
+thing being installed, not the thing doing the installing, so nothing we put in
+our image can reach it. The build does replace those same paths *inside our
+image* (`/usr/share/anaconda/pixmaps/*` — 4 of them, confirmed replaced), which
+covers a machine that runs the installer after it is already up, but not the USB
+stick.
 
-Changing it properly would mean building a replacement for Fedora's `fedora-logos`
+Fixing it properly means building a replacement for Fedora's `fedora-logos`
 package, with our pictures at Fedora's filenames, and getting the ISO builder to
-install that package into the installer runtime. The ISO builder
-(`bootc-image-builder`) has no setting for adding a package to that runtime — its
-configuration covers the kickstart, which installer screens to show, and the disc
-label, and stops there. So it would mean either building our own ISO a different
-way, or waiting for the ISO builder to grow the option.
+install that package into the installer runtime. `bootc-image-builder` has no
+setting for adding a package to that runtime — its configuration covers the
+kickstart, which installer screens to show, and the disc label, and stops there.
+So it would mean either building the ISO a different way or waiting for that
+setting to exist.
 
-**The call:** not worth it now. It is a handful of screens, seen once, on the way
-to a machine that then says AquariusOS everywhere for the rest of its life. Worth
-revisiting if AquariusOS is ever handed to somebody who is not Royce.
+**2. The boot-loader folder on the stick is named `fedora`.** The ISO carries
+`"vendor": "fedora"`, which is the name of the directory the boot files sit in
+(`/EFI/fedora/`). It is a path, not a caption — nobody reading the screen ever
+sees it, and changing it would mean signing our own boot-loader files, which is a
+Secure Boot project and not a branding one.
+
+**The call:** not worth it now. It is a logo on a handful of screens, seen once,
+on the way to a machine that then says AquariusOS everywhere for the rest of its
+life. Worth revisiting if AquariusOS is ever handed to somebody who is not Royce.
 
 ---
 
