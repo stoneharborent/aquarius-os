@@ -130,8 +130,10 @@ Full guide: [`GETTING-STARTED.md`](GETTING-STARTED.md).
 reboot. Reversible with `sudo bootc rollback`. Step by step:
 [`docs/restart/bench-rebase.md`](docs/restart/bench-rebase.md).
 
-**Install on a machine that does not run it yet** — build an ISO by hand:
-Actions → *Build AquariusOS ISO (next)* → "Run workflow".
+**Install on a machine that does not run it yet** — build an ISO by hand, by
+pushing a tag (`git tag iso-nvidia-2026-09-03 && git push origin iso-nvidia-2026-09-03`).
+Why a tag and not the Actions button: see
+[`GETTING-STARTED.md`](GETTING-STARTED.md#3-make-an-installer-usb-stick).
 
 ---
 

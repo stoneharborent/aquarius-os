@@ -173,9 +173,14 @@ You do not need a Linux computer. GitHub builds the OS.
 
 - **Every push to `restart/fedora-bootc`** builds and publishes both images.
   Watch it at GitHub → Actions → *Build AquariusOS (next)*.
-- **Installer ISOs are built by hand** when they are needed: GitHub → Actions →
-  *Build AquariusOS ISO (next)* → "Run workflow". It takes 20–40 minutes and the
-  ISO appears at the bottom of the run's page.
+- **Installer ISOs are built by hand** when they are needed, by pushing a tag
+  named `iso-base-…` or `iso-nvidia-…`. It takes 20–40 minutes and the ISO
+  appears at the bottom of the run's page.
+
+  It is a tag rather than the usual "Run workflow" button because GitHub only
+  shows that button for workflows on the repository's *default* branch, and ours
+  is still `main`. The button starts working, with no change to anything, the
+  day this branch becomes the default one.
 
 If you *do* have a Linux machine with `podman` on it, `just build` does the same
 thing locally. `just` with no arguments lists everything available.

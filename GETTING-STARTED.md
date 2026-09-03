@@ -105,13 +105,35 @@ sudo systemctl reboot
 Only needed for a machine that does **not** already run AquariusOS. It is built
 by hand because an ISO is several gigabytes and takes half an hour.
 
-1. [Actions](https://github.com/stoneharborent/aquarius-os/actions)
-2. **Build AquariusOS ISO (next)** in the left-hand list
-3. **Run workflow** → pick `base` or `nvidia` → green button
-4. Wait, then download the ISO from **Artifacts** at the bottom of the run's page
-5. Write it to a USB stick with [Fedora Media Writer](https://fedoraproject.org/workstation/download/)
-   or [balenaEtcher](https://etcher.balena.io/)
-6. Boot the target computer from the stick and follow the installer
+```bash
+git tag iso-nvidia-2026-09-03      # or iso-base-… for an AMD/Intel machine
+git push origin iso-nvidia-2026-09-03
+```
+
+Then watch [Actions](https://github.com/stoneharborent/aquarius-os/actions),
+wait, and download the ISO from **Artifacts** at the bottom of the run's page.
+Write it to a USB stick with
+[Fedora Media Writer](https://fedoraproject.org/workstation/download/) or
+[balenaEtcher](https://etcher.balena.io/), boot the target computer from the
+stick, and follow the installer.
+
+### Why a tag, and not the "Run workflow" button
+
+Because the button does not exist yet, and this catches everybody once.
+
+GitHub only shows "Run workflow" for workflows that live on the repository's
+**default** branch. Ours is `main` — the frozen Bazzite line — and nothing from
+this branch is ever put there. So the button is genuinely absent from the
+Actions page, and looking harder does not help.
+
+A tag works because a tag is not a branch: pushing one changes no branch,
+touches nothing on `main`, and runs the workflow from the code at that tag,
+which is ours. The first part of the tag name (`iso-base-` or `iso-nvidia-`) is
+how the workflow knows which image you meant; the rest is yours, and a date is
+the obvious thing.
+
+The day this branch becomes the default branch — Phase R3 — the button starts
+working on its own, with no change to anything.
 
 ⚠️ **Installing erases the disk you point it at.** There is no dual-boot option
 in this installer. If the machine has anything on it you want, get it off first.

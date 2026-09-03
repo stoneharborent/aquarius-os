@@ -26,6 +26,22 @@
 # `bootc switch`, which points the freshly installed machine at our published
 # image on GitHub as the thing it should be, and should keep updating from.
 #
+# ⚠️ THE IMAGE NAME BELOW IS A DEFAULT, AND CI REPLACES IT.
+#
+# This file names ONE image, and there are two. When
+# .github/workflows/build-next-iso.yml builds the NVIDIA ISO it makes a copy of
+# this file with the NVIDIA image name substituted in, and checks that no other
+# image is left named in it.
+#
+# That step is not tidiness. If an NVIDIA ISO shipped with this line still
+# naming the AMD image, the machine would install correctly, work perfectly, and
+# then on its first automatic update quietly replace itself with the AMD image
+# and lose its graphics driver — a black screen, days later, for no visible
+# reason.
+#
+# The name left here is the AMD/Intel one, so that `just build-iso` on a Linux
+# machine, which uses this file as it stands, does the sensible thing.
+#
 # ⚠️ The owner segment must be a real GitHub owner. If it is ever empty the
 # reference becomes "ghcr.io//aquarius-os-next", the ISO builds perfectly, and
 # the machine it installs cannot update — which is discovered weeks later.

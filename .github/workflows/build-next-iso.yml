@@ -7,15 +7,38 @@
 # you do not need this at all — `sudo bootc switch …` is faster and reversible.
 # See docs/restart/bench-rebase.md.
 #
-# HOW TO RUN IT
-#   1. GitHub → this repository → Actions
-#   2. "Build AquariusOS ISO (next)" in the left-hand list
-#   3. "Run workflow", pick the variant, press the green button
-#   4. Wait (20-40 minutes), then download the ISO from the run's Artifacts
+# ------------------------------------------------------------------------------
+# HOW TO RUN IT — AND WHY THERE ARE TWO WAYS
+# ------------------------------------------------------------------------------
+# ⚠️ GitHub has a rule that catches everybody exactly once: **the "Run workflow"
+# button only appears for workflows that exist on the repository's DEFAULT
+# branch.** Ours is `main`, which is the frozen Bazzite line, and nothing from
+# this branch is ever put there. So until the restart branch becomes the default
+# branch (which happens when Phase R3 closes), the button below does not exist
+# in the Actions page and pressing it is not an option.
 #
-# It is manual-only on purpose. An ISO is several gigabytes, it takes half an
-# hour of a build machine, and it is needed a handful of times a year — building
-# one on every push would be a lot of electricity for nothing.
+# So there are two triggers, and which one you use depends on today's date.
+#
+# TODAY — push a tag. Tags are not branches, so this touches nothing.
+#
+#     git tag iso-nvidia-2026-09-03
+#     git push origin iso-nvidia-2026-09-03
+#
+#   The tag name says which image: it must start with `iso-base-` or
+#   `iso-nvidia-`. Anything after that is yours — a date is the obvious thing.
+#   Pushing the tag starts the build.
+#
+# ONCE THIS BRANCH IS THE DEFAULT BRANCH — the ordinary way.
+#
+#     1. GitHub → this repository → Actions
+#     2. "Build AquariusOS ISO (next)" in the left-hand list
+#     3. "Run workflow", pick the variant, press the green button
+#
+# Either way: wait 20-40 minutes, then download the ISO from the Artifacts
+# section at the bottom of the run's page.
+#
+# It is deliberately never automatic. An ISO is several gigabytes, it takes half
+# an hour of a build machine, and it is needed a handful of times a year.
 #
 # ⚠️ THE IMAGE MUST BE PUBLISHED FIRST. This workflow takes an image that is
 # already on ghcr.io and turns it into an installer. It does not build one. If
@@ -41,6 +64,7 @@
 name: Build AquariusOS ISO (next)
 
 on:
+  # The ordinary way — only available once this branch is the default branch.
   workflow_dispatch:
     inputs:
       variant:
@@ -56,14 +80,19 @@ on:
         required: false
         default: latest
         type: string
+  # The way that works today. Push a tag whose name starts with the variant.
+  push:
+    tags:
+      - 'iso-base-*'
+      - 'iso-nvidia-*'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.variant }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build-iso:
-    name: Build the installer ISO (${{ inputs.variant }})
+    name: Build the installer ISO
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -85,11 +114,34 @@ jobs:
       - name: Work out which image to wrap
         id: names
         env:
-          VARIANT: ${{ inputs.variant }}
-          TAG: ${{ inputs.tag }}
+          INPUT_VARIANT: ${{ inputs.variant }}
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+          EVENT: ${{ github.event_name }}
           OWNER: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
+
+          # Which image, from whichever trigger fired. When somebody pressed the
+          # button, it is the box they chose. When a tag was pushed, it is the
+          # first word of the tag name — `iso-nvidia-2026-09-03` means nvidia.
+          if [ -n "${INPUT_VARIANT:-}" ]; then
+            VARIANT="${INPUT_VARIANT}"
+            echo "Started by hand. Variant: ${VARIANT}"
+          else
+            case "${REF_NAME}" in
+              iso-base-*)   VARIANT="base" ;;
+              iso-nvidia-*) VARIANT="nvidia" ;;
+              *)
+                echo "::error::Tag '${REF_NAME}' does not start with iso-base- or iso-nvidia-, so there is no way to tell which image to build. Delete the tag and push one that does."
+                exit 1
+                ;;
+            esac
+            echo "Started by the tag '${REF_NAME}'. Variant: ${VARIANT}"
+          fi
+
+          TAG="${INPUT_TAG:-latest}"
+
           IMAGE_NAME="$(just variant-image-name "${VARIANT}")"
           IMAGE_REF="ghcr.io/${OWNER}/${IMAGE_NAME}:${TAG:-latest}"
           IMAGE_REF="${IMAGE_REF,,}"
@@ -97,31 +149,78 @@ jobs:
           echo "This ISO will install: ${IMAGE_REF}"
 
           {
+            echo "variant=${VARIANT}"
             echo "image-ref=${IMAGE_REF}"
             echo "image-name=${IMAGE_NAME,,}"
-            echo "iso-basename=${IMAGE_NAME,,}-${TAG:-latest}-amd64.iso"
+            echo "iso-basename=${IMAGE_NAME,,}-${TAG}-amd64.iso"
             echo "user-uid=$(id -u)"
             echo "user-gid=$(id -g)"
           } >> "${GITHUB_OUTPUT}"
 
-      # The kickstart inside disk_config/iso.toml names the image the installed
-      # machine will follow for updates. If that ever drifts from the image this
-      # ISO actually installs, the machine comes up as the wrong variant and
-      # nobody finds out until it updates. So it is checked here, once, cheaply.
-      - name: Check the installer points at the right image
+      # ------------------------------------------------------------------------
+      # Point the installer at the image THIS run is wrapping
+      # ------------------------------------------------------------------------
+      # ⚠️ THIS IS NOT BOILERPLATE. An installer ISO does two separate things,
+      # and it is easy to get one right and the other wrong:
+      #
+      #   1. it carries an image and writes it to the disk
+      #   2. it tells the installed machine which image to FOLLOW for updates,
+      #      by running `bootc switch` at the end of the install
+      #
+      # Number 2 lives in the kickstart inside disk_config/iso.toml, and that
+      # file has one image name written in it. If we built an NVIDIA ISO and left
+      # the file naming the AMD image, the machine would install with the NVIDIA
+      # driver and then, on its very first automatic update, quietly replace
+      # itself with the AMD image and lose the driver. On a graphics card that is
+      # a black screen, days later, for no visible reason.
+      #
+      # So the name is substituted here, per run, and then read back.
+      - name: Point the installer at the right image
+        id: config
         env:
           IMAGE_REF: ${{ steps.names.outputs.image-ref }}
           IMAGE_NAME: ${{ steps.names.outputs.image-name }}
         run: |
           set -euo pipefail
-          echo "disk_config/iso.toml says:"
+          echo "The template (disk_config/iso.toml) says:"
           grep -n 'bootc switch' disk_config/iso.toml
-          if grep -q "ghcr.io/.*/${IMAGE_NAME}:latest" disk_config/iso.toml; then
-            echo "  OK   the installer will point the machine at ${IMAGE_NAME}"
+
+          GENERATED="${RUNNER_TEMP}/iso.toml"
+
+          # Done in python rather than sed purely for readability: the pattern
+          # needs to match a container reference and stop at a quote or a space,
+          # and writing that through two layers of shell quoting is how typos
+          # get in.
+          python3 - "${IMAGE_REF}" disk_config/iso.toml "${GENERATED}" <<'PY'
+          import re, sys
+          ref, src, dst = sys.argv[1], sys.argv[2], sys.argv[3]
+          text = open(src).read()
+          new, count = re.subn(r'ghcr\.io/[^\s"\']+', ref, text)
+          print(f"Replaced {count} image reference(s) with {ref}")
+          open(dst, "w").write(new)
+          PY
+
+          echo "This run will use:"
+          grep -n 'bootc switch' "${GENERATED}"
+
+          if grep -qF "${IMAGE_REF}" "${GENERATED}"; then
+            echo "  OK   the installed machine will follow ${IMAGE_REF}"
           else
-            echo "::error::disk_config/iso.toml does not name '${IMAGE_NAME}'. The ISO would install one image and then update to a different one."
+            echo "::error::Could not put '${IMAGE_REF}' into the installer configuration. The ISO would install one image and then update itself to a different one."
             exit 1
           fi
+
+          # And nothing else must still be named in there.
+          grep -oE 'ghcr\.io/[^"[:space:]]+' "${GENERATED}" > "${RUNNER_TEMP}/refs.txt" || true
+          sort -u "${RUNNER_TEMP}/refs.txt"
+          if grep -vF "${IMAGE_REF}" "${RUNNER_TEMP}/refs.txt" > "${RUNNER_TEMP}/others.txt"; then
+            echo "::error::The installer configuration still names another image:"
+            cat "${RUNNER_TEMP}/others.txt"
+            exit 1
+          fi
+          echo "  OK   no other image is named in the installer configuration"
+
+          echo "config-file=${GENERATED}" >> "${GITHUB_OUTPUT}"
 
       - name: Sign in to GitHub's container registry
         uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
@@ -135,7 +234,7 @@ jobs:
         uses: osbuild/bootc-image-builder-action@8661cd3832544ad68c12dcde8681b13ab0f56a8d # main
         with:
           builder-image: "quay.io/centos-bootc/bootc-image-builder:latest"
-          config-file: ./disk_config/iso.toml
+          config-file: ${{ steps.config.outputs.config-file }}
           image: ${{ steps.names.outputs.image-ref }}
           chown: ${{ steps.names.outputs.user-uid }}:${{ steps.names.outputs.user-gid }}
           types: anaconda-iso
@@ -169,7 +268,7 @@ jobs:
       - name: What to do with it
         run: |
           {
-            echo "### AquariusOS installer ISO — ${{ inputs.variant }}"
+            echo "### AquariusOS installer ISO — ${{ steps.names.outputs.variant }}"
             echo ""
             echo "Download it from the **Artifacts** section at the bottom of this run's page."
             echo ""
