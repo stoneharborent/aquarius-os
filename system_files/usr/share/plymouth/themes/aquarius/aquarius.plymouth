@@ -1,0 +1,219 @@
+# ==============================================================================
+# The AquariusOS boot splash
+# ==============================================================================
+# PLAIN ENGLISH
+#
+# This file describes the screen you see for a few seconds between choosing
+# AquariusOS in the boot menu and the login screen appearing. The program that
+# draws it is called Plymouth. Plymouth reads this file, then draws the pictures
+# sitting next to it in this same folder.
+#
+# What it draws, top to bottom:
+#
+#   1. A flat Midnight background (#06070C — the `void` colour in
+#      branding/tokens.md).
+#   2. watermark.png, a little above the middle: the Aquarius mark with a soft
+#      glow, and the word "AquariusOS" underneath it.
+#   3. throbber-0001.png … throbber-0036.png, below that, played in a loop:
+#      three dots with a soft pulse travelling left to right.
+#
+# There is deliberately NO computer-manufacturer logo. See UseFirmwareBackground
+# below — that switch is the whole reason a stock Fedora machine shows a Dell or
+# ASUS badge while it starts.
+#
+# ------------------------------------------------------------------------------
+# HOW TO CHANGE IT
+# ------------------------------------------------------------------------------
+# To change the picture: edit branding/logo.svg or the sizes at the top of
+# branding/render-plymouth-assets.sh, run that script on the Mac, and commit the
+# PNGs it writes. Do not edit the PNGs by hand — they are output, not source.
+#
+# To change where things sit: the numbers below are FRACTIONS OF THE SCREEN, not
+# pixels. `.5` is the middle, `0` is the very top or left edge, `1` is the very
+# bottom or right. That is what makes one file work on a handheld and on a 4K
+# monitor.
+#
+# To change a colour: colours here are written as 0xRRGGBB — the same six hex
+# digits as everywhere else in this project, with `0x` in front instead of `#`.
+# Copy them out of branding/tokens.md. Never pick one by eye.
+#
+# ⚠️ AFTER ANY CHANGE THE BOOT RAMDISK HAS TO BE REBUILT, or the machine keeps
+# showing the old splash. The build does that for you in
+# build_files/80-boot-branding.sh — you do not have to do anything, but if you
+# ever wonder why an edit "did nothing", that is the mechanism, and
+# docs/restart/boot-branding.md explains it.
+# ==============================================================================
+
+[Plymouth Theme]
+Name=AquariusOS
+Description=The Aquarius mark on Midnight, with a soft travelling pulse.
+
+# ------------------------------------------------------------------------------
+# WHY `two-step` AND NOT `script`
+# ------------------------------------------------------------------------------
+# Plymouth themes are drawn by one of several plug-ins. The two real candidates
+# were `two-step` and `script`, and this is a deliberate choice, not a default:
+#
+#   two-step  is the plug-in Fedora's OWN default themes use (`bgrt`, which is
+#             what a stock Fedora 44 machine boots with, and `spinner`). So it
+#             is the code path that Fedora, Red Hat and Universal Blue test on
+#             every graphics card there is, on every release. That matters most
+#             on NVIDIA, where the boot splash is historically the first thing
+#             to break.
+#
+#             It also already knows how to draw the things a boot screen
+#             occasionally has to draw and that are easy to forget: the
+#             "type your disk password" box, the shutdown screen, the
+#             "installing updates, do not turn the computer off" screen. Those
+#             come free, and they are correct.
+#
+#   script    is a small programming language for boot splashes. It is more
+#             flexible and would let us animate the mark's stroke drawing
+#             itself. But every one of those extra screens above would have to
+#             be re-implemented by hand in that language — and the one that
+#             matters, the disk-password box, is one nobody would notice was
+#             missing until the day somebody turned on disk encryption and the
+#             machine appeared to hang at a blank screen.
+#
+# So: two-step. The plug-in is already installed (plymouth-plugin-two-step), it
+# needs no extra package, and the parts of it we do not use cost nothing.
+ModuleName=two-step
+
+[two-step]
+# Where the pictures are. Plymouth looks for every image it needs in this one
+# folder, which is why build_files/80-boot-branding.sh copies Fedora's plain
+# grey password-box pictures in here alongside ours.
+ImageDir=/usr/share/plymouth/themes/aquarius
+
+# ------------------------------------------------------------------------------
+# The background
+# ------------------------------------------------------------------------------
+# `void` / Midnight from branding/tokens.md. Start and End being the same colour
+# means a flat fill rather than a gradient — the design's boot frame is flat.
+BackgroundStartColor=0x06070C
+BackgroundEndColor=0x06070C
+
+# ------------------------------------------------------------------------------
+# Where each thing sits (fractions of the screen)
+# ------------------------------------------------------------------------------
+# The looping dots.
+HorizontalAlignment=.5
+VerticalAlignment=.66
+
+# The mark and the word. Slightly above centre, because the dots below it and
+# the empty space under those balance out to look centred.
+WatermarkHorizontalAlignment=.5
+WatermarkVerticalAlignment=.44
+
+# The disk-password box, on a machine with an encrypted disk. Below everything
+# else so it does not land on top of the logo.
+DialogHorizontalAlignment=.5
+DialogVerticalAlignment=.82
+TitleHorizontalAlignment=.5
+TitleVerticalAlignment=.5
+
+# ------------------------------------------------------------------------------
+# Type
+# ------------------------------------------------------------------------------
+# The AquariusOS faces, from branding/tokens.md. These are only ever used for
+# the occasional line of text — the password prompt, an update message. If the
+# boot ramdisk turns out not to carry a font file, Plymouth falls back to
+# whatever it can find and the prompt still works; see the note about
+# 99-aquarius-plymouth.conf in build_files/80-boot-branding.sh.
+Font=Inter 11
+TitleFont=Sora 30
+MonospaceFont=JetBrains Mono 10
+ConsoleLogTextColor=0xB4BACD
+
+# Messages appear under the dots rather than under the logo.
+MessageBelowAnimation=true
+
+# ------------------------------------------------------------------------------
+# The progress bar
+# ------------------------------------------------------------------------------
+# Switched OFF for a normal start-up (see [boot-up] below) — the dots are the
+# progress indicator there, and two indicators at once is noise. It IS switched
+# on for the update and upgrade screens, where a person genuinely wants to know
+# how far along it is. These are the colours it uses when it appears:
+# starlight on surface-2.
+ProgressBarHorizontalAlignment=.5
+ProgressBarVerticalAlignment=.78
+ProgressBarWidth=320
+ProgressBarHeight=3
+ProgressBarForegroundColor=0x8AB4FF
+ProgressBarBackgroundColor=0x161A29
+
+# No fade or wipe between screens. tokens.md: quick and calm.
+Transition=none
+TransitionDuration=0.0
+
+# ==============================================================================
+# The individual screens
+# ==============================================================================
+# Plymouth draws a different screen depending on what the computer is doing.
+# Each section below is one of them, and each one has to say
+# UseFirmwareBackground=false in its own right — the setting is per screen, not
+# global, so leaving it out of any one of them lets the manufacturer's logo back
+# in on that screen only.
+#
+# ⚠️ THIS IS THE SETTING THAT REMOVES THE DELL / ASUS / MSI BADGE.
+#
+# Fedora's default theme is called `bgrt` and it exists precisely to SHOW that
+# badge: the computer's firmware leaves a picture of its own logo in memory
+# (the ACPI "BGRT" table) and `bgrt` puts it on screen as the background.
+# Setting this to false everywhere is what makes an AquariusOS machine show
+# AquariusOS while it starts, and nothing else.
+
+[boot-up]
+UseFirmwareBackground=false
+UseAnimation=true
+UseEndAnimation=false
+UseProgressBar=false
+
+[shutdown]
+UseFirmwareBackground=false
+UseAnimation=true
+UseEndAnimation=false
+UseProgressBar=false
+
+[reboot]
+UseFirmwareBackground=false
+UseAnimation=true
+UseEndAnimation=false
+UseProgressBar=false
+
+[updates]
+Title=Installing updates
+SubTitle=Please do not turn the computer off.
+UseFirmwareBackground=false
+UseAnimation=true
+UseEndAnimation=false
+UseProgressBar=true
+ProgressBarShowPercentComplete=true
+
+[system-upgrade]
+Title=Upgrading AquariusOS
+SubTitle=Please do not turn the computer off.
+UseFirmwareBackground=false
+UseAnimation=true
+UseEndAnimation=false
+UseProgressBar=true
+ProgressBarShowPercentComplete=true
+
+[firmware-upgrade]
+Title=Updating firmware
+SubTitle=Please do not turn the computer off.
+UseFirmwareBackground=false
+UseAnimation=true
+UseEndAnimation=false
+UseProgressBar=true
+ProgressBarShowPercentComplete=true
+
+[system-reset]
+Title=Resetting AquariusOS
+SubTitle=Please do not turn the computer off.
+UseFirmwareBackground=false
+UseAnimation=true
+UseEndAnimation=false
+UseProgressBar=true
+ProgressBarShowPercentComplete=true

@@ -25,6 +25,7 @@ the build can use.
 | `render-wallpaper.sh` | Turns that artwork into the picture files the OS actually ships. |
 | `render-logo-png.sh` | Makes the bitmap copy of the mark that GNOME's **login screen** needs. |
 | `render-about-logo.sh` | Makes the two wide "mark + AquariusOS" pictures for GNOME's **Settings > About** page — one for light mode, one for dark. |
+| `render-plymouth-assets.sh` | Makes the pictures for the **boot screen** — the mark with the word AquariusOS under it, and 36 frames of pulsing dots. See `../docs/restart/boot-branding.md`. |
 | `README.md` | This file. |
 
 > **Why the About page needs its own pictures.** It does not look the logo up by name like
