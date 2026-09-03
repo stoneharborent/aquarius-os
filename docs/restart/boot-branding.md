@@ -72,8 +72,10 @@ git commit -m "Change the boot screen picture"
 git push
 ```
 
-GitHub rebuilds the OS, and the next `bootc upgrade` on the bench brings the new
-picture down with it. You never have to touch the machine itself.
+GitHub rebuilds the OS, and the next update on the bench brings the new picture
+down with it — `sudo bootc upgrade` once the bench is on the new image (see
+[`bench-rebase.md`](bench-rebase.md) for getting it there). You never have to
+touch the machine itself.
 
 **Do not edit the PNG files by hand.** They are output. The next person to run
 the render script would silently throw your edit away.

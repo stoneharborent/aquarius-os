@@ -3,6 +3,14 @@
 *Step by step. Assumes no Linux experience. Nothing here erases your disk, and
 every step is reversible.*
 
+> ### ⚠️ Every command in this document runs on the BENCH PC — never on the Mac
+>
+> `bootc` and `rpm-ostree` are Linux tools for managing a Linux machine's
+> operating system. They do not exist on macOS. Typing one into a Mac terminal
+> gets you `sudo: bootc: command not found`, which is the Mac correctly saying
+> it has never heard of the tool — nothing is broken and nothing was changed.
+> Sit down at the bench, or SSH into it, before you type anything below.
+
 ---
 
 ## What you are about to do
@@ -31,42 +39,89 @@ Set aside about fifteen minutes. Most of that is downloading.
 run of **Build AquariusOS (next)**. It must have a green tick. If it is still
 running, or red, stop here — there is nothing to switch to yet.
 
-**Check the package is public.** The first time a new image name is published,
-GitHub keeps it private until somebody makes it public. It is a one-time click:
-
-1. Go to <https://github.com/orgs/stoneharborent/packages>
-2. Find `aquarius-os-next-nvidia`
-3. Package settings → Danger Zone → **Change visibility** → Public
-
-If you skip this, step 1 below fails with a message about authentication.
+**The package should already be public** — confirmed 3 September 2026, so there
+is nothing for you to do here. If Step 2 comes back saying *unauthorized* or
+*manifest unknown*, it means the package went private: open
+<https://github.com/orgs/stoneharborent/packages>, click `aquarius-os-next-nvidia`,
+then **Package settings → Danger Zone → Change visibility → Public**, and run the
+command again.
 
 ---
 
-## Step 1 — Tell the machine to become the new one
+## Step 1 — Find out which tool this machine has
 
-Open the terminal on the bench PC and type this, exactly:
+On the bench, open the terminal and type:
+
+```bash
+command -v bootc
+```
+
+- **It prints a path** (something like `/usr/bin/bootc`) → use **Step 2a**.
+- **It prints nothing at all** → use **Step 2b**.
+
+That is the whole test. Take the ten seconds; it saves guessing later.
+
+### Why there are two commands
+
+An image-based Linux machine can be managed by either of two tools, and both can
+move this machine onto our image: `rpm-ostree` is the older one that every Fedora
+Atomic system (including the Bazzite-based AquariusOS on the bench today) has
+had for years, and `bootc` is the newer container-native replacement that our new
+image uses. Most recent images ship both — you are just checking which one this
+particular machine actually has before you type a command at it.
+
+---
+
+## Step 2 — Point the machine at the new image
+
+### Step 2a — if `command -v bootc` printed a path
 
 ```bash
 sudo bootc switch ghcr.io/stoneharborent/aquarius-os-next-nvidia:latest
 ```
 
-It will ask for your password. Then it downloads — several gigabytes, so give it
-a few minutes. It will print a lot of lines about layers; that is normal.
+### Step 2b — if it printed nothing
 
-When it finishes it will say something about the new deployment being staged.
-**Nothing has changed yet.** The new system is written to the disk beside the
-old one; neither is running.
+<!-- Migration path verified against rpm-ostree's own container docs
+     (https://coreos.github.io/rpm-ostree/container/ — "rpm-ostree rebase
+     ostree-unverified-registry:…") and bootc's upgrade/switch/rollback reference
+     (https://bootc.dev/bootc/upgrades.html). -->
 
-### What `bootc switch` means
+```bash
+sudo rpm-ostree rebase ostree-unverified-registry:ghcr.io/stoneharborent/aquarius-os-next-nvidia:latest
+```
 
-`bootc` is the tool that manages the operating system as a whole. `switch` means
-"from now on, be this image instead, and get your updates from there". It is the
-same mechanism as `bootc upgrade`, which is what has been quietly updating this
-machine all along — it is just pointed somewhere new.
+**Either way:** it will ask for your password, then download several gigabytes,
+so give it a few minutes. It prints a lot of lines about layers; that is normal.
+
+When it finishes it says the new deployment is staged. **Nothing has changed
+yet.** The new system is written to the disk beside the old one; neither is
+running until you reboot.
+
+### What `ostree-unverified-registry:` means
+
+It is a prefix telling the older tool two things: `registry` — this is a
+container image on a registry (ghcr.io, GitHub's) — and `unverified` — for this
+one download, skip the cryptographic signature check.
+
+Skipping it is fine here, for this hop, because you are naming **our own image on
+our own GitHub organisation**, and the download still happens over HTTPS, which
+nobody can tamper with in transit. It is also a one-off: you type it once, to
+cross from the old tool's world into the new one. From the next boot onward the
+machine is managed by `bootc`, and signature checking is a `bootc`-side setting
+configured in one place on the new system — every image is signed in CI with our
+key (`cosign.pub` in this repo). You are not living with `unverified`; you are
+passing through it.
+
+### What `bootc switch` / `rpm-ostree rebase` mean
+
+Both mean the same thing in plain words: *"from now on, be this image instead,
+and get your updates from there."* It is the same machinery that has quietly been
+updating this machine all along — just pointed somewhere new.
 
 ---
 
-## Step 2 — Restart
+## Step 3 — Restart
 
 ```bash
 sudo systemctl reboot
@@ -74,7 +129,7 @@ sudo systemctl reboot
 
 ---
 
-## Step 3 — What you should see
+## Step 4 — What you should see
 
 **At the boot menu.** There will be two entries, and both of them start with the
 words **AquariusOS**. The top one is the new system; the one below it is the old
@@ -103,17 +158,7 @@ the boot splash did not take. That means the boot ramdisk was not rebuilt, and
 
 **Check it is really the new one.** Settings → System → About. It should say
 **AquariusOS**, with the AquariusOS logo above it, and **NVIDIA Edition**
-underneath.
-
-Or in the terminal:
-
-```bash
-cat /etc/os-release
-```
-
-The first lines should say `NAME="AquariusOS"` and
-`VARIANT="NVIDIA Edition"`, and `ID=fedora` further down. That last one is
-deliberate — see the note at the top of `build_files/70-image-info.sh`.
+underneath. For the terminal version of that check, see the next section.
 
 ### ⚠️ If the desktop comes up DARK
 
@@ -136,7 +181,53 @@ without doing anything.
 
 ---
 
-## Step 4 — Have a proper look
+## Optional: confirm the new image booted
+
+Two commands, ten seconds, and you know for certain which system you are on.
+
+```bash
+cat /etc/os-release | head -3
+```
+
+**Expect** the first line to be `NAME="AquariusOS"`. Further down the same file
+you should also see `VARIANT="NVIDIA Edition"` and `ID=fedora` — that last one is
+deliberate, see the note at the top of `build_files/70-image-info.sh`.
+
+```bash
+bootc status
+```
+
+**Expect** it to print a block describing the *booted* image, and for that image
+to be `ghcr.io/stoneharborent/aquarius-os-next-nvidia:latest`.
+
+**What a wrong result looks like:**
+
+| You see | What it means | What to do |
+| --- | --- | --- |
+| `NAME="Bazzite"` or `NAME="Fedora Linux"` | You are still on the old system | Reboot and pick the **top** entry at the boot menu |
+| `bootc: command not found` | You are not on the new image at all (the new one always has `bootc`) — or you typed it on the Mac | Check you are on the bench, then reboot and take the top entry |
+| `bootc status` shows `aquarius-os-gnome-nvidia` as booted | The switch was staged but you booted the old entry | Reboot, take the top entry |
+| The image line says `aquarius-os-next-nvidia` but `NAME=` is wrong | Shouldn't happen — say so, that is a build bug | Send both outputs |
+
+---
+
+## Once you are on the new image
+
+The new image ships `bootc`, so from here on it is one tool for everything. You
+never need `rpm-ostree` again.
+
+| What you want | Command |
+| --- | --- |
+| Get the latest AquariusOS | `sudo bootc upgrade` |
+| Move to a different image | `sudo bootc switch ghcr.io/stoneharborent/<image-name>:latest` |
+| Undo the last one of those | `sudo bootc rollback` |
+
+Every one of them only *stages* the change — nothing happens until
+`sudo systemctl reboot`.
+
+---
+
+## Step 5 — Have a proper look
 
 Worth checking while you are in there, because these are the things R1 is
 supposed to have got right:
@@ -158,21 +249,32 @@ supposed to have got right:
 
 ## If you want to go back
 
+**From the new image** — this is the normal case, and `bootc` is definitely
+present once you have booted it:
+
 ```bash
 sudo bootc rollback
 sudo systemctl reboot
 ```
 
-That is it. The machine boots the previous system — the Bazzite one — exactly as
-it was. Nothing was lost, because nothing was overwritten.
+**If `bootc` is somehow not there** (which would mean you never got onto the new
+image), the older tool does the same job:
 
-You can also just pick the older entry at the boot menu without running anything,
-if the desktop will not start.
+```bash
+sudo rpm-ostree rollback
+sudo systemctl reboot
+```
+
+**If the desktop will not start at all**, you do not need any command: restart the
+machine and pick the older entry at the boot menu by hand.
+
+Any of the three boots the previous system — the Bazzite one — exactly as it was.
+Nothing was lost, because nothing was overwritten.
 
 ### Going back permanently
 
 `rollback` swaps which of the two is default. If you want to stop following the
-new image entirely and go back to the old one for good:
+new image entirely and go back to the old one for good, from the new image:
 
 ```bash
 sudo bootc switch ghcr.io/stoneharborent/aquarius-os-gnome-nvidia:latest
@@ -205,6 +307,11 @@ preinstalled or preconfigured yet.
 
 ## If something goes wrong
 
+**`sudo: bootc: command not found` or `sudo: rpm-ostree: command not found`.**
+Either you are typing on the Mac (see the warning at the top — these are Linux
+tools), or you are on the bench and picked the wrong branch of Step 2. Run
+`command -v bootc` again and follow what it tells you.
+
 **The machine will not boot at all.** Pick the second entry at the boot menu.
 That is the old system and it is untouched.
 
@@ -215,8 +322,8 @@ reboot, pick the old entry, and say so — the useful information is what
 `nvidia-smi` and `journalctl -b -1 -p err` print once you are back on a working
 system.
 
-**`bootc switch` says "unauthorized" or "manifest unknown".** The package is
-still private. See "Before you start" above.
+**Step 2 says "unauthorized" or "manifest unknown".** The package went private.
+See "Before you start" above — it is a one-time click on GitHub.
 
 **Everything works but it looks wrong.** Screenshots are genuinely the fastest
 way to sort that out — the look is the one thing CI cannot check.

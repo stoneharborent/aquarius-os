@@ -40,8 +40,9 @@ the old one:
 | `aquarius-os-gnome` | `aquarius-os-next` |
 | `aquarius-os-gnome-nvidia` | `aquarius-os-next-nvidia` |
 
-Moving the bench from one to the other is a single command, and it is reversible
-with a single command. That is what
+Moving the bench from one to the other is one command on the bench PC — `bootc
+switch`, or `rpm-ostree rebase` on a machine that does not have `bootc` — and it
+is reversible with a single command. That is what
 [`bench-rebase.md`](bench-rebase.md) walks through.
 
 The word "next" comes off the names when Phase R3 finishes and the new line has

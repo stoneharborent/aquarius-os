@@ -70,12 +70,33 @@ If the machine already runs AquariusOS — which the 4090 bench does — you do 
 reinstall anything. One command points it at a different image, and one command
 puts it back.
 
+**Run these on the Linux machine, not on the Mac.** `bootc` and `rpm-ostree` are
+Linux tools; on macOS they are simply not installed and you get `command not
+found`.
+
+First ask the machine which tool it has:
+
+```bash
+command -v bootc
+```
+
+**If that printed a path:**
+
 ```bash
 sudo bootc switch ghcr.io/stoneharborent/aquarius-os-next-nvidia:latest
 sudo systemctl reboot
 ```
 
-To go back:
+**If it printed nothing** — the older `rpm-ostree` does the same job, and the
+`ostree-unverified-registry:` prefix is how you hand it a container image:
+
+```bash
+sudo rpm-ostree rebase ostree-unverified-registry:ghcr.io/stoneharborent/aquarius-os-next-nvidia:latest
+sudo systemctl reboot
+```
+
+To go back (the new image always has `bootc`; `sudo rpm-ostree rollback` is the
+fallback, and picking the older boot-menu entry works with no command at all):
 
 ```bash
 sudo bootc rollback
@@ -91,7 +112,8 @@ RTX card.
 
 ### Ordinary updates
 
-Once a machine is following an image it updates itself. To do it now:
+Once a machine is on the new image it updates itself, and `bootc` is the only
+tool you need from then on:
 
 ```bash
 sudo bootc upgrade

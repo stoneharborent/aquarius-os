@@ -125,9 +125,12 @@ Full guide: [`GETTING-STARTED.md`](GETTING-STARTED.md).
 `restart/fedora-bootc`. GitHub builds and publishes both images. Watch it at
 [Actions](https://github.com/stoneharborent/aquarius-os/actions).
 
-**Put a new build on a machine that already runs AquariusOS** —
-`sudo bootc switch ghcr.io/stoneharborent/aquarius-os-next-nvidia:latest`, then
-reboot. Reversible with `sudo bootc rollback`. Step by step:
+**Put a new build on a machine that already runs AquariusOS** — on that Linux
+machine (not on the Mac), run `command -v bootc`. If it prints a path:
+`sudo bootc switch ghcr.io/stoneharborent/aquarius-os-next-nvidia:latest`. If it
+prints nothing, the older tool does the same job:
+`sudo rpm-ostree rebase ostree-unverified-registry:ghcr.io/stoneharborent/aquarius-os-next-nvidia:latest`.
+Then reboot. Reversible with `sudo bootc rollback`. Step by step:
 [`docs/restart/bench-rebase.md`](docs/restart/bench-rebase.md).
 
 **Install on a machine that does not run it yet** — build an ISO by hand, by
