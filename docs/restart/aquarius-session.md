@@ -174,6 +174,20 @@ does not have it.
 Fedora 45 has 0.20 already (in Rawhide). When AquariusOS moves to Fedora 45 this
 whole compile step is deleted and replaced with one line.
 
+**One thing that is checked twice, on purpose:** whether labwc can run X11-only
+software. That is what DaVinci Resolve needs, and on 3 September the build
+produced a labwc without it — one library was missing, the build printed a
+single warning in the middle of a thousand lines, and carried on. The image
+would have published. Both the build and the finished image now read labwc's own
+report of itself and refuse to go on unless it says `+xwayland`. You can read
+that report yourself:
+
+```bash
+labwc --version
+```
+
+It should say `labwc 0.20.2 (+xwayland +nls +rsvg +libsfdo) wlroots-0.20.2`.
+
 ### Why we compile Quickshell ourselves — and the evening it cost
 
 Two reasons. The small one: the shell uses two Quickshell modules

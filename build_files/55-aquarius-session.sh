@@ -261,6 +261,19 @@ case "${AQ_LABWC_SAYS}" in
     *) bad "labwc reports '${AQ_LABWC_SAYS}' — expected 0.20.x. Fedora's own 0.9.6 may have been installed over ours." ;;
 esac
 
+# labwc lists its optional features in that same line, each with a plus or a
+# minus. XWayland is the one that must never be a minus: it is what lets X11-only
+# software run, and on a creator machine that means DaVinci Resolve.
+#
+# This is checked here, in the finished image, as well as in the build stage,
+# because it went wrong once already (2026-09-03): a missing text file made the
+# build print one warning nobody read and produce a window manager with XWayland
+# switched off. The image built and would have published.
+case "${AQ_LABWC_SAYS}" in
+    *+xwayland*) ok "labwc can run X11 software (DaVinci Resolve needs this)" ;;
+    *) bad "labwc was built WITHOUT XWayland — X11-only software, including DaVinci Resolve, would not start. Its report: ${AQ_LABWC_SAYS}" ;;
+esac
+
 # --- Quickshell ---------------------------------------------------------------
 if [ -e /usr/bin/qs ] || [ -L /usr/bin/qs ]; then
     ok "the qs command is installed"

@@ -91,9 +91,14 @@ echo "  commit:     ${AQ_LABWC_COMMIT}"
 #   libsfdo            the freedesktop icon/desktop-entry lookups (0.1.3 is the
 #                      minimum labwc asks for; Fedora 44 has exactly 0.1.3)
 #   libdrm, libinput   graphics cards and input devices
-#   libxcb + xcb-util-wm   XWayland support. Leave these out and labwc builds
-#                      without the ability to run X11 software — which on a
-#                      creator machine means no DaVinci Resolve.
+#   libxcb + xcb-util-wm + xorg-x11-server-Xwayland-devel
+#                      XWayland support: the ability to run X11-only software,
+#                      which on a creator machine means DaVinci Resolve. All
+#                      THREE are needed, and the third is the one that is easy
+#                      to miss — it contains nothing but the small text file
+#                      that tells a build which version of Xwayland exists.
+#                      Leaving it out was a real bug on 2026-09-03; the
+#                      configure section below explains what it cost.
 #   systemd-devel      the systemd session integration
 #   gettext            compiles the translations
 say "Installing the build tools and libraries"
@@ -120,6 +125,7 @@ aq_dnf install \
     libinput-devel \
     libxcb-devel \
     xcb-util-wm-devel \
+    xorg-x11-server-Xwayland-devel \
     systemd-devel
 
 # Write down what we built against. When something breaks in six months, this
@@ -146,15 +152,35 @@ ok "the source is commit ${AQ_GOT}, exactly as pinned"
 # ------------------------------------------------------------------------------
 # Compiling
 # ------------------------------------------------------------------------------
-# No feature switches are passed on purpose. Every optional feature in labwc's
-# meson.build defaults to "auto", which means "switch it on if the library is
-# installed" — and the step above installed every one of them. Naming them again
-# here would be a second list to keep in step with the first, and the two would
-# eventually disagree.
+# EVERY FEATURE WE DEPEND ON IS NAMED HERE, AND THAT IS THE WHOLE POINT.
 #
-# What we do instead is CHECK, further down, that the features we care about
-# really were compiled in. A list of switches is a statement of intent; reading
-# the finished binary is a fact.
+# The first version of this file passed no switches at all, reasoning that every
+# optional feature defaults to "auto" — switch it on if the library is there —
+# and that the step above installs every library. That reasoning cost a build on
+# 2026-09-03, and would have cost much more than a build.
+#
+# One library was missing: the small text file that says which version of
+# Xwayland is installed. "auto" did exactly what it promises. It printed
+#
+#     Run-time dependency xwayland found: NO
+#     WARNING: disabling xwayland, requires version >= 21.1.9
+#
+# in the middle of a thousand lines of output, and carried on happily. The image
+# would have built, published, and contained a window manager that cannot run
+# X11 software — which on this operating system means DaVinci Resolve does not
+# start, discovered by a person, on a machine, weeks later.
+#
+# "enabled" is the difference between a warning nobody reads and a build that
+# stops. So the features AquariusOS actually depends on are named, and a missing
+# library is now a red build rather than a quiet absence.
+#
+#   xwayland          X11-only software. DaVinci Resolve is the reason.
+#   svg               scalable icons on title-bar buttons
+#   icon              window icons, via the freedesktop lookups
+#   nls               translations
+#   systemd-session   installs labwc-session.target, which the session's
+#                     autostart file starts by name and which is how the portals
+#                     learn a graphical session exists
 #
 # A note on the Vulkan renderer, because HDR needs it and somebody will look for
 # it here: it is NOT a labwc build option. The renderer belongs to wlroots, and
@@ -166,7 +192,12 @@ ok "the source is commit ${AQ_GOT}, exactly as pinned"
 say "Configuring"
 meson setup build \
     --prefix=/usr \
-    --buildtype=release
+    --buildtype=release \
+    -Dxwayland=enabled \
+    -Dsvg=enabled \
+    -Dicon=enabled \
+    -Dnls=enabled \
+    -Dsystemd-session=enabled
 
 echo
 echo "--- how meson configured this build ---"
@@ -227,27 +258,51 @@ else
     bad "the binary reports '${AQ_REPORTED}', not ${AQ_LABWC_VERSION}"
 fi
 
-# Which libraries it was linked against. This is how we check that the optional
-# features really were compiled in: a program that does not use SVG icons has no
-# reason to be linked against the SVG library, and a program built without
-# XWayland support has no reason to be linked against the X11 protocol library.
-say "Which features were compiled in (read from the binary's libraries)"
-ldd "${AQ_LABWC_BIN}" > /tmp/labwc-libs.txt
-sed 's/^/  /' /tmp/labwc-libs.txt
+# WHICH FEATURES ARE IN IT — read from the program's own report
+#
+# The first version of this check LIED, and it is worth knowing how. It looked at
+# which libraries the program was linked against and reasoned that a program
+# linked to libxcb must have XWayland support. That does not follow: wlroots
+# pulls in libxcb for its own reasons, so the check printed a green tick on a
+# build that had XWayland switched off. A false pass is worse than no check.
+#
+# labwc answers the question itself. Its --version line lists every optional
+# feature with a plus or a minus in front of it:
+#
+#     labwc 0.20.2 (+xwayland +nls +rsvg +libsfdo) wlroots-0.20.2
+#
+# That is the program's own statement about itself, and it cannot be confused
+# with a library that happens to be linked for some other reason.
+say "Which features are in the finished program"
+echo "  ${AQ_REPORTED}"
 
-aq_ldd_has() { # aq_ldd_has <library name fragment> "<what it proves>"
-    if grep -q "$1" /tmp/labwc-libs.txt; then
+aq_labwc_has() { # aq_labwc_has <+flag> "<what it gives us>"
+    if printf '%s' "${AQ_REPORTED}" | grep -q -- "$1"; then
         ok "$2"
     else
-        bad "$2 — nothing links to $1, so that feature was NOT compiled in"
+        bad "$2 — labwc says this feature is OFF. Its full report: ${AQ_REPORTED}"
     fi
 }
 
-aq_ldd_has "libwlroots"  "built against wlroots (the compositor itself)"
-aq_ldd_has "librsvg"     "scalable icons in menus and title bars"
-aq_ldd_has "libxcb"      "XWayland, so X11-only software such as DaVinci Resolve can run"
-aq_ldd_has "libsfdo"     "desktop-entry and icon lookups"
-aq_ldd_has "libpangocairo" "text rendering in window title bars"
+aq_labwc_has "+xwayland" "X11-only software can run (DaVinci Resolve is the reason this matters)"
+aq_labwc_has "+rsvg"     "scalable icons on title-bar buttons and in menus"
+aq_labwc_has "+libsfdo"  "desktop-entry and icon lookups"
+aq_labwc_has "+nls"      "translations"
+
+# The systemd user target. The session's autostart file starts it BY NAME, and
+# it is how the portals and the keyring learn that a graphical session exists.
+# It arrives with -Dsystemd-session=enabled; if it ever stopped arriving, the
+# symptom would be screen recording and file dialogs silently doing nothing.
+if [ -f "${AQ_STAGE}/usr/lib/systemd/user/labwc-session.target" ]; then
+    ok "labwc-session.target is installed (the portals depend on it)"
+else
+    bad "labwc-session.target was not installed — portals and file dialogs would silently fail"
+    find "${AQ_STAGE}" -name '*.target' | sed 's/^/       /'
+fi
+
+say "Libraries"
+ldd "${AQ_LABWC_BIN}" > /tmp/labwc-libs.txt
+sed 's/^/  /' /tmp/labwc-libs.txt
 
 # Anything the linker cannot find here is a library Fedora 44 has in its -devel
 # package but not as a plain runtime package. Better to discover that now, in a

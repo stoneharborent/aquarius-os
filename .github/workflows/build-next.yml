@@ -732,6 +732,14 @@ jobs:
             *)
               bad "labwc reports '${LABWC_SAYS}'. Fedora 44's own 0.9.6 is NOT good enough: no HDR, no colour management, and that is the whole reason this project uses labwc." ;;
           esac
+          # labwc lists its optional features in that same line with a + or a -.
+          # XWayland must never be a minus: it is what runs X11-only software,
+          # and on a creator machine that means DaVinci Resolve. This went wrong
+          # once (2026-09-03) and the build printed one warning and carried on.
+          case "${LABWC_SAYS}" in
+            *+xwayland*) ok "labwc can run X11 software (DaVinci Resolve needs this)" ;;
+            *) bad "labwc was built WITHOUT XWayland — DaVinci Resolve and every other X11-only program would not start. Its report: ${LABWC_SAYS}" ;;
+          esac
 
           echo "== the shell runtime =="
           # qs is a symlink to quickshell; -e follows it, -L does not.
