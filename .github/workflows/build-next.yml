@@ -449,6 +449,397 @@ jobs:
             -e WANT_DARK="${DARK_SUM}" \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-logos.sh
 
+      # ------------------------------------------------------------------------
+      # THE BOOT PATH
+      # ------------------------------------------------------------------------
+      # Everything a person sees before the login screen: the boot menu, the
+      # splash screen, and the text banner over a text login prompt.
+      #
+      # The splash is the one piece of branding in the whole image that CANNOT be
+      # checked by looking at files on disk alone. A copy of it is baked into the
+      # boot ramdisk (initramfs.img), and it is that copy the machine actually
+      # uses. Change the theme, forget to rebuild the ramdisk, and the machine
+      # shows Fedora's splash forever while every file on disk looks perfect.
+      # So the last part of this step opens the ramdisk and reads what is inside.
+      - name: Check the boot screen says AquariusOS
+        run: |
+          set -euo pipefail
+          # The picture in the middle of the boot screen, checksummed from the
+          # repository. Same trick as the About-page step above: the only way to
+          # know OUR picture went in is to compare the bytes.
+          WATERMARK_SUM="$(sha256sum system_files/usr/share/plymouth/themes/aquarius/watermark.png | awk '{print $1}')"
+          REPO_FRAMES="$(find system_files/usr/share/plymouth/themes/aquarius -name 'throbber-*.png' | wc -l | tr -d ' ')"
+          echo "In the repository: watermark ${WATERMARK_SUM}, ${REPO_FRAMES} throbber frames"
+
+          cat > /tmp/verify-boot.sh <<'SCRIPT'
+          set -u
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+          check() {   # check "<description>" "<pattern>" "<file>"
+            if [ ! -r "$3" ]; then bad "$1 — $3 does not exist"; return; fi
+            if grep -Eq "$2" "$3"; then ok "$1"; else bad "$1 — /$2/ not found in $3"; fi
+          }
+
+          THEME=/usr/share/plymouth/themes/aquarius
+
+          echo "== the splash program and its parts =="
+          for pkg in plymouth plymouth-plugin-two-step plymouth-plugin-label \
+                     plymouth-theme-spinner dracut; do
+            if rpm -q "${pkg}" > /dev/null 2>&1; then ok "${pkg} $(rpm -q --queryformat '%{VERSION}-%{RELEASE}' "${pkg}")"
+            else bad "${pkg} is NOT installed"; fi
+          done
+
+          echo "== the Aquarius theme on disk =="
+          ls -l "${THEME}" || true
+          FRAMES="$(find "${THEME}" -name 'throbber-*.png' | wc -l)"
+          echo "throbber frames in the image: ${FRAMES}"
+          if [ "${FRAMES}" -eq "${WANT_FRAMES}" ]; then ok "all ${WANT_FRAMES} throbber frames are installed"
+          else bad "${FRAMES} throbber frames in the image, expected ${WANT_FRAMES}"; fi
+
+          got="$(sha256sum "${THEME}/watermark.png" 2>/dev/null | awk '{print $1}')"
+          echo "watermark.png in the image: ${got:-<missing>}"
+          if [ "${got}" = "${WANT_WATERMARK}" ]; then ok "the picture on the boot screen is ours"
+          else bad "the boot screen picture is NOT the one in the repository"; fi
+
+          # lock.png is the one file the two-step plug-in genuinely requires. If
+          # it is missing, a machine with an encrypted disk shows no password box
+          # and appears to hang.
+          if [ -s "${THEME}/lock.png" ]; then ok "the disk-password box has its artwork"
+          else bad "${THEME}/lock.png is missing — an encrypted machine would show no password box"; fi
+
+          echo "== the theme's own settings =="
+          cat "${THEME}/aquarius.plymouth" | grep -vE '^[[:space:]]*(#|$)' || true
+          check "the theme uses the two-step plug-in"  '^ModuleName=two-step$'          "${THEME}/aquarius.plymouth"
+          check "the background is Midnight"           '^BackgroundStartColor=0x06070C$' "${THEME}/aquarius.plymouth"
+          check "the progress colour is starlight"     '^ProgressBarForegroundColor=0x8AB4FF$' "${THEME}/aquarius.plymouth"
+
+          # THE SETTING THAT REMOVES THE MANUFACTURER'S BADGE. It is per-screen,
+          # so it has to be false in every screen the theme defines — one missed
+          # section lets a Dell or ASUS logo back in on that screen only.
+          if grep -q '^UseFirmwareBackground=true$' "${THEME}/aquarius.plymouth"; then
+            bad "the theme switches the firmware/manufacturer logo ON somewhere"
+            grep -n '^UseFirmwareBackground=' "${THEME}/aquarius.plymouth"
+          else
+            ok "the firmware/manufacturer logo is off in every screen ($(grep -c '^UseFirmwareBackground=false$' "${THEME}/aquarius.plymouth") of them)"
+          fi
+
+          echo "== which splash this machine is set to =="
+          echo "--- /etc/plymouth/plymouthd.conf ---"; cat /etc/plymouth/plymouthd.conf 2>/dev/null || echo "(missing)"
+          echo "--- /usr/share/plymouth/plymouthd.defaults ---"; cat /usr/share/plymouth/plymouthd.defaults 2>/dev/null || echo "(missing)"
+          echo "---"
+          check "this machine's splash is aquarius" '^Theme=aquarius$' /etc/plymouth/plymouthd.conf
+
+          echo "== kernel options =="
+          for f in /usr/lib/bootc/kargs.d/*.toml; do echo "--- ${f} ---"; cat "${f}"; done
+          check "the boot options ask for a splash" 'kargs = \["quiet", "splash", "rhgb"\]' \
+                /usr/lib/bootc/kargs.d/05-aquarius-boot.toml
+
+          echo "== the boot menu =="
+          # On an image-based system the boot-menu entry text is generated from
+          # PRETTY_NAME, not from /etc/default/grub. Both are checked: the first
+          # is what actually decides, the second is what a person goes looking
+          # for and what a non-image boot path would use.
+          check "PRETTY_NAME is what the menu entries are named from" \
+                '^PRETTY_NAME="AquariusOS"$' /etc/os-release
+          check "GRUB_DISTRIBUTOR is AquariusOS" \
+                '^GRUB_DISTRIBUTOR="AquariusOS"$' /etc/default/grub
+          # Evidence, for the log, that the tooling which writes the boot-menu
+          # entries really does read PRETTY_NAME to title them. Same technique
+          # as the About-page step above: look for the string inside the
+          # compiled program.
+          echo "Which programs name PRETTY_NAME internally:"
+          for b in /usr/bin/ostree /usr/bin/bootc /usr/bin/bootupctl; do
+            [ -e "${b}" ] || continue
+            if grep -a -q 'PRETTY_NAME' "${b}"; then
+              echo "  ${b} reads PRETTY_NAME"
+            else
+              echo "  ${b} does not name PRETTY_NAME directly (it may go through a library)"
+            fi
+          done
+
+          echo "== the text banners =="
+          for f in /etc/issue /etc/issue.net /etc/fedora-release /etc/system-release /etc/redhat-release; do
+            echo "--- ${f} ---"; cat "${f}" 2>/dev/null || echo "(missing)"
+          done
+          echo "--- /etc/motd (should be empty) ---"; cat /etc/motd 2>/dev/null || echo "(missing)"
+          echo "---"
+          check "the console banner says AquariusOS" '^AquariusOS$' /etc/issue
+          check "the network banner says AquariusOS" '^AquariusOS$' /etc/issue.net
+          check "the old-style release line is ours" '^AquariusOS release ' /etc/fedora-release
+          if [ -f /etc/motd ] && [ ! -s /etc/motd ]; then ok "/etc/motd is empty (deliberate)"
+          elif [ ! -e /etc/motd ]; then ok "/etc/motd does not exist (fine)"
+          else bad "/etc/motd has content — it would print on every ssh login: $(cat /etc/motd)"; fi
+
+          echo "== neither Fedora welcome screen is installed =="
+          for pkg in gnome-tour gnome-initial-setup; do
+            if rpm -q "${pkg}" > /dev/null 2>&1; then bad "${pkg} is installed — it shows a 'Welcome to Fedora' screen"
+            else ok "${pkg} is not installed"; fi
+          done
+
+          # ---------------------------------------------------------------
+          # THE CHECK THAT MATTERS: open the boot ramdisk and read it.
+          # ---------------------------------------------------------------
+          echo "== inside the boot ramdisk =="
+          KVER="$(rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core)"
+          IMG="/usr/lib/modules/${KVER}/initramfs.img"
+          echo "kernel  : ${KVER}"
+          echo "ramdisk : ${IMG}"
+          if [ ! -s "${IMG}" ]; then
+            bad "${IMG} is missing or empty — this image has no boot ramdisk at all"
+          else
+            ok "the ramdisk exists ($(stat -c '%s' "${IMG}") bytes, mode $(stat -c '%a' "${IMG}"))"
+
+            echo "-- the parts it was built from --"
+            lsinitrd -m "${IMG}" 2>/dev/null | sort -u > /tmp/initrd-mods.txt || true
+            tr '\n' ' ' < /tmp/initrd-mods.txt; echo
+            for part in plymouth ostree; do
+              if grep -qx "${part}" /tmp/initrd-mods.txt; then ok "the ramdisk contains the '${part}' part"
+              else bad "the ramdisk has no '${part}' part"; fi
+            done
+
+            echo "-- everything Plymouth-related inside it --"
+            lsinitrd "${IMG}" 2>/dev/null | grep -i plymouth > /tmp/initrd-ply.txt || true
+            cat /tmp/initrd-ply.txt || true
+            echo "--"
+
+            # These three lines are the evidence that the splash is really in the
+            # ramdisk and not just on disk.
+            for want in 'plymouth/themes/aquarius/aquarius.plymouth' \
+                        'plymouth/themes/aquarius/watermark.png' \
+                        'plymouth/themes/aquarius/throbber-0001.png'; do
+              if grep -q "${want}" /tmp/initrd-ply.txt; then
+                ok "in the ramdisk: $(grep -m1 "${want}" /tmp/initrd-ply.txt | awk '{print $NF}')"
+              else
+                bad "${want} is NOT inside the ramdisk"
+              fi
+            done
+
+            # And that the setting inside the ramdisk names our theme rather than
+            # one of Fedora's. This is the "no spinner, no bgrt as the default"
+            # check — the file is what decides, not which folders happen to be
+            # present.
+            : > /tmp/initrd-conf.txt
+            found=0
+            for c in /etc/plymouth/plymouthd.conf /usr/share/plymouth/plymouthd.defaults; do
+              if lsinitrd -f "${c}" "${IMG}" > /tmp/one-conf.txt 2>/dev/null && [ -s /tmp/one-conf.txt ]; then
+                found=1
+                echo "-- ${c}, inside the ramdisk --"; cat /tmp/one-conf.txt
+                cat /tmp/one-conf.txt >> /tmp/initrd-conf.txt
+              fi
+            done
+            if [ "${found}" -eq 0 ]; then
+              bad "the ramdisk carries no splash setting — it would fall back to Fedora's bgrt"
+            elif grep -q '^Theme=aquarius$' /tmp/initrd-conf.txt; then
+              ok "the setting inside the ramdisk says Theme=aquarius (so not spinner, not bgrt)"
+            else
+              bad "the setting inside the ramdisk does not say Theme=aquarius:"
+              cat /tmp/initrd-conf.txt
+            fi
+            if grep -qE '^Theme=(bgrt|spinner|charge)$' /tmp/initrd-conf.txt; then
+              bad "a Fedora theme is named as the default inside the ramdisk"
+            fi
+          fi
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::The boot path is not correctly branded in this image."
+            exit 1
+          fi
+          echo "All boot-path checks passed."
+          SCRIPT
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            -e WANT_WATERMARK="${WATERMARK_SUM}" \
+            -e WANT_FRAMES="${REPO_FRAMES}" \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-boot.sh
+
+      # ------------------------------------------------------------------------
+      # THE "NO STRAY NAMES" AUDIT
+      # ------------------------------------------------------------------------
+      # Royce's instruction was "anything that still says Bazzite should say
+      # Aquarius". This step is what keeps that true next month, when somebody
+      # adds a feature and copies a snippet from somewhere.
+      #
+      # It is two different rules, on purpose:
+      #
+      #   BAZZITE  must appear NOWHERE. Zero. This branch is built from bare
+      #            Fedora and has no relationship to Bazzite at all, so any
+      #            occurrence is a mistake by definition.
+      #
+      #   FEDORA   must not appear in the places a PERSON reads a name. It is
+      #            expected and correct in the places a PROGRAM reads one —
+      #            AquariusOS really is Fedora underneath, and pretending
+      #            otherwise breaks package installation and security scanning.
+      #            The allowed places are listed, with a reason each, below.
+      - name: Check nothing still says Bazzite or Fedora
+        run: |
+          set -euo pipefail
+          cat > /tmp/verify-names.sh <<'SCRIPT'
+          set -u
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+
+          # A settings file's VALUES, without the plain-English notes around
+          # them. Every config file in this project carries a long explanatory
+          # header, and several of those headers legitimately explain what
+          # Fedora does and why we differ. Explaining Fedora is not the same as
+          # being branded Fedora, so the comments are not part of the audit.
+          values_only() { grep -vE '^[[:space:]]*(#|;|$)' "$1" 2>/dev/null || true; }
+
+          echo "=============================================================="
+          echo " RULE 1 — the word Bazzite must not appear anywhere"
+          echo "=============================================================="
+
+          echo "-- as part of a file or folder name --"
+          find / -xdev -iname '*bazzite*' > /tmp/bz-names.txt 2>/dev/null || true
+          if [ -s /tmp/bz-names.txt ]; then
+            bad "$(wc -l < /tmp/bz-names.txt) path(s) are named after Bazzite:"
+            head -40 /tmp/bz-names.txt
+          else
+            ok "no file or folder anywhere on the image is named after Bazzite"
+          fi
+
+          echo "-- as an installed package --"
+          if rpm -qa | grep -i bazzite > /tmp/bz-pkgs.txt; then
+            bad "Bazzite packages are installed:"; cat /tmp/bz-pkgs.txt
+          else
+            ok "no installed package is a Bazzite one"
+          fi
+
+          # Inside text files. The excluded folders are translations, manuals and
+          # timezone tables — many gigabytes of text that no AquariusOS build
+          # writes into, and which would turn a two-minute check into a
+          # twenty-minute one. Everything the build can actually touch is in.
+          echo "-- inside text files --"
+          grep -rIil bazzite \
+            /etc /usr/bin /usr/sbin /usr/libexec /usr/lib/os-release /usr/lib/bootc \
+            /usr/lib/systemd /usr/lib/dracut /usr/share/aquarius /usr/share/plymouth \
+            /usr/share/glib-2.0/schemas /usr/share/gnome-background-properties \
+            /usr/share/applications /usr/share/gnome-shell /usr/share/wayland-sessions \
+            /usr/share/xsessions /usr/share/pixmaps /usr/share/backgrounds \
+            > /tmp/bz-text.txt 2>/dev/null || true
+          if [ -s /tmp/bz-text.txt ]; then
+            bad "$(wc -l < /tmp/bz-text.txt) file(s) contain the word Bazzite:"
+            head -40 /tmp/bz-text.txt
+          else
+            ok "no text file in any folder this build writes to mentions Bazzite"
+          fi
+
+          echo
+          echo "=============================================================="
+          echo " RULE 2 — Fedora must not appear where a PERSON reads a name"
+          echo "=============================================================="
+
+          # nofedora <what it is> <file> [<grep pattern to narrow to some lines>]
+          nofedora() {
+            local what="$1" file="$2" narrow="${3:-}" body
+            if [ ! -e "${file}" ]; then
+              ok "${what}: ${file} does not exist in this image (nothing to say Fedora)"
+              return
+            fi
+            body="$(values_only "${file}")"
+            if [ -n "${narrow}" ]; then
+              body="$(printf '%s\n' "${body}" | grep -E "${narrow}" || true)"
+            fi
+            if printf '%s\n' "${body}" | grep -qi fedora; then
+              bad "${what} (${file}) still says Fedora:"
+              printf '%s\n' "${body}" | grep -i fedora | sed 's/^/       /'
+            else
+              ok "${what} (${file})"
+            fi
+          }
+
+          nofedora "the system's name, pretty name and edition" /etc/os-release '^(NAME|PRETTY_NAME|VARIANT)='
+          nofedora "the same, in the image copy"                /usr/lib/os-release '^(NAME|PRETTY_NAME|VARIANT)='
+          nofedora "the console login banner"                   /etc/issue
+          nofedora "the network login banner"                    /etc/issue.net
+          nofedora "the message of the day"                      /etc/motd
+          nofedora "the old-style release line"                   /etc/fedora-release
+          nofedora "the boot menu's distributor name"             /etc/default/grub '^GRUB_DISTRIBUTOR='
+          nofedora "which splash this machine uses"               /etc/plymouth/plymouthd.conf '^Theme='
+          nofedora "which splash the image falls back to"         /usr/share/plymouth/plymouthd.defaults '^Theme='
+          nofedora "this machine's own name"                      /etc/hostname
+          nofedora "the wallpaper list in Settings > Appearance"  /usr/share/gnome-background-properties/aquarius.xml
+
+          echo "-- our GNOME defaults --"
+          for f in /usr/share/glib-2.0/schemas/zz1-aquarius-*.gschema.override; do
+            nofedora "an AquariusOS default" "${f}"
+          done
+
+          # The theme folder the machine actually boots with. Text files only —
+          # the borrowed grey password-box PNGs are pictures of rectangles and
+          # have no words in them.
+          echo "-- the active boot splash theme --"
+          grep -rIl -i fedora /usr/share/plymouth/themes/aquarius > /tmp/fed-theme.txt 2>/dev/null || true
+          if [ -s /tmp/fed-theme.txt ]; then
+            # ... except our own explanatory notes, which are allowed to discuss
+            # Fedora. Check the settings themselves.
+            still=0
+            while read -r f; do
+              if values_only "${f}" | grep -qi fedora; then
+                bad "a SETTING in ${f} says Fedora:"; values_only "${f}" | grep -i fedora | sed 's/^/       /'
+                still=1
+              fi
+            done < /tmp/fed-theme.txt
+            if [ "${still}" -eq 0 ]; then
+              ok "the boot theme's settings say nothing about Fedora (only its notes do, which is fine)"
+            fi
+          else
+            ok "nothing in the boot theme folder mentions Fedora at all"
+          fi
+
+          echo
+          echo "=============================================================="
+          echo " THE ALLOWLIST — where Fedora is SUPPOSED to still appear"
+          echo "=============================================================="
+          echo "Each of these is deliberate. None is visible to a person using"
+          echo "the machine, and each one would break something if changed."
+          echo
+          # 1. os-release's machine-readable identity. Hundreds of programs and
+          #    scripts branch on ID=fedora to decide which package manager to
+          #    use and which paths to look in. Changing it would make this
+          #    machine unrecognisable to all of them.
+          echo "1. /etc/os-release — the machine-readable identity:"
+          grep -E '^(ID|ID_LIKE|VERSION|VERSION_ID|CPE_NAME|REDHAT_)' /etc/os-release | sed 's/^/     /'
+          if grep -q '^ID=fedora$' /etc/os-release; then ok "ID is still fedora (required, deliberate)"
+          else bad "ID is no longer fedora — software that branches on it would stop recognising this machine"; fi
+
+          # 2. The CPE identifier. Security scanners use it to work out which
+          #    published vulnerabilities apply. AquariusOS really is Fedora 44
+          #    underneath, so telling a scanner otherwise makes it check the
+          #    wrong list — which is a security problem, not a branding one.
+          echo "2. /etc/system-release-cpe — used by vulnerability scanners:"
+          sed 's/^/     /' /etc/system-release-cpe 2>/dev/null || echo "     (not present)"
+
+          # 3. The software sources. These really are Fedora's servers.
+          echo "3. /etc/yum.repos.d/ — the real Fedora and RPM Fusion servers:"
+          ls -1 /etc/yum.repos.d/ 2>/dev/null | sed 's/^/     /' || echo "     (none)"
+
+          # 4. Package names, and the record of what this image was built on.
+          echo "4. Package names and the build record:"
+          echo "     $(rpm -qa 'fedora-*' | tr '\n' ' ')"
+          grep -o '"base-image-name": "[^"]*"' /usr/share/aquarius/image-info.json | sed 's/^/     /'
+
+          # 5. Two picture FILENAMES under /usr/share/pixmaps are Fedora's, on
+          #    purpose: GNOME's Settings > About page opens those exact paths, so
+          #    the only way to brand that page is to put our picture at Fedora's
+          #    filename. The bytes are ours; the name is not. Checked properly by
+          #    the "About page shows OUR logo" step above.
+          echo "5. Fedora-named picture files whose CONTENTS are ours:"
+          ls -1 /usr/share/pixmaps/fedora_logo_med.png /usr/share/pixmaps/fedora_whitelogo_med.png 2>/dev/null | sed 's/^/     /' || true
+
+          echo
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::This image still carries a name it should not. See the FAIL lines above."
+            exit 1
+          fi
+          echo "No stray names. Every visible surface says AquariusOS."
+          SCRIPT
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-names.sh
+
       - name: Check the NVIDIA driver
         if: matrix.nvidia == 1
         run: |

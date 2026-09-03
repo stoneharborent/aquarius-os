@@ -76,9 +76,20 @@ sudo systemctl reboot
 
 ## Step 3 — What you should see
 
-**At the boot menu.** There will be two entries. The top one is the new system;
-the one below it is the old Bazzite AquariusOS, still there, still bootable. If
-you do nothing, the top one starts.
+**At the boot menu.** There will be two entries, and both of them start with the
+words **AquariusOS**. The top one is the new system; the one below it is the old
+Bazzite-based AquariusOS, still there, still bootable. If you do nothing, the
+top one starts.
+
+**While it starts.** This is new since 3 September 2026. You should see the
+**Aquarius mark on a near-black screen with the word AquariusOS under it, and
+three blue dots pulsing left to right below that.** No Fedora logo, and — this
+is the one to look for on a machine with a manufacturer's badge — no ASUS or MSI
+or Dell logo either.
+
+If instead you see a manufacturer's logo, or a small grey spinning circle, then
+the boot splash did not take. That means the boot ramdisk was not rebuilt, and
+[`boot-branding.md`](boot-branding.md) explains what that is and how to check it.
 
 **At the login screen.** The AquariusOS logo. Your username, as before.
 

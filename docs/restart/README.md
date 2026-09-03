@@ -62,7 +62,12 @@ this is starting from an empty room.
 ### What is in it
 
 - **A computer that works.** Graphics, sound, Wi-Fi, Bluetooth, battery,
-  firmware updates, camera cards, Windows drives, a graphical boot screen.
+  firmware updates, camera cards, Windows drives.
+- **A boot screen that is ours.** The Aquarius mark and the word AquariusOS on
+  near-black while the machine starts — no Fedora logo and no computer-maker's
+  badge — plus the name AquariusOS in the boot menu and over a text login
+  prompt. How it works, and the one trap in it:
+  [`boot-branding.md`](boot-branding.md).
 - **Every codec.** The full ffmpeg, the AAC encoder, hardware H.264 and H.265
   decoding, HEIC photos from iPhones. This is the part Fedora leaves out for
   patent reasons and it is the part a video machine cannot live without.
@@ -113,7 +118,7 @@ parts. The comment above that trick in the file explains it properly.
 
 ### 2. `build_files/` — the steps
 
-Eight scripts, numbered in the order they run. The numbers are the point: the
+Nine scripts, numbered in the order they run. The numbers are the point: the
 build log reads in the same order as the folder listing, so when something goes
 wrong you can find the file by its heading.
 
@@ -127,6 +132,7 @@ wrong you can find the file by its heading.
 | `50-aquarius-desktop.sh` | Makes it *ours*: wallpaper, logos, Ice theme, fonts, dock, the right-click ingest menu. |
 | `60-nvidia.sh` | The NVIDIA driver. Does nothing on the AMD/Intel image. The hardest file in the repo — see [`nvidia-notes.md`](nvidia-notes.md). |
 | `70-image-info.sh` | Teaches the system to call itself AquariusOS. |
+| `80-boot-branding.sh` | Everything you see BEFORE the login screen: the Aquarius boot splash, the name in the boot menu, the text login banners — and a rebuild of the boot ramdisk, without which none of it takes effect. ⚠️ Must run after `60-nvidia.sh`; see [`boot-branding.md`](boot-branding.md). |
 | `90-cleanup.sh` | Sweeps up, and refuses to ship an image with two kernels in it. |
 
 ### 3. `system_files/` — files that are copied in as-is
@@ -205,6 +211,7 @@ thing locally. `just` with no arguments lists everything available.
 ## Where to go next
 
 - **Moving the bench machine over:** [`bench-rebase.md`](bench-rebase.md)
+- **How the boot screen and the boot menu are branded:** [`boot-branding.md`](boot-branding.md)
 - **Why the NVIDIA driver is done the way it is:** [`nvidia-notes.md`](nvidia-notes.md)
 - **Why Fedora and not Bazzite/Arch/Ubuntu:** [`../base-distro-reassessment-2026-09.md`](../base-distro-reassessment-2026-09.md)
 - **The plan for R2, R3 and R4:** `ROADMAP.md`, one folder above the repo
