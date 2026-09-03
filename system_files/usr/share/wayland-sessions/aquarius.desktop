@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Aquarius Desktop
+Comment=AquariusOS's own desktop: the Aquarius Shell on labwc
+Exec=/usr/bin/aquarius-session
+TryExec=/usr/bin/aquarius-session
+Type=Application
+DesktopNames=Aquarius
+Keywords=aquarius;shell;wayland;labwc;

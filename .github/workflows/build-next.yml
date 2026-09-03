@@ -691,6 +691,205 @@ jobs:
       #            AquariusOS really is Fedora underneath, and pretending
       #            otherwise breaks package installation and security scanning.
       #            The allowed places are listed, with a reason each, below.
+      # ------------------------------------------------------------------------
+      # The Aquarius Desktop
+      # ------------------------------------------------------------------------
+      # Phase R2 added a SECOND desktop beside GNOME: our own shell, on the
+      # labwc window manager. Two of its three parts are compiled during the
+      # build rather than installed from Fedora, and a compiled part that goes
+      # wrong does not announce itself — it produces an image that builds, that
+      # publishes, and that drops a person straight back to the login screen the
+      # moment they pick "Aquarius Desktop".
+      #
+      # So this step RUNS both programs inside the finished image and reads what
+      # they say. `qs --version` in particular is the exact thing that failed on
+      # the bench on 2026-09-02, when a Quickshell built against a different Qt
+      # died on its first instruction and left an empty desktop for eighteen
+      # minutes with nothing in any log.
+      - name: Check the Aquarius Desktop is really in there
+        run: |
+          set -euo pipefail
+
+          # The commit the image is supposed to have baked in, read from the one
+          # place versions live, and handed to the checker so it can compare.
+          # shellcheck disable=SC1091
+          EXPECT_SHELL_REF="$(grep -E '^AQUARIUS_SHELL_REF=' aquarius-os.env | cut -d'"' -f2)"
+          echo "expecting aquarius-shell ${EXPECT_SHELL_REF}"
+
+          cat > /tmp/verify-session.sh <<'SCRIPT'
+          set -u
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+
+          echo "== the window manager =="
+          if [ -x /usr/bin/labwc ]; then ok "labwc is installed"; else bad "labwc is missing"; fi
+          LABWC_SAYS="$(/usr/bin/labwc --version 2>&1 || true)"
+          echo "       ${LABWC_SAYS}"
+          case "${LABWC_SAYS}" in
+            *0.20.*|*0.2[1-9].*|*0.[3-9][0-9].*)
+              ok "labwc is 0.20 or newer — the release with HDR and colour management" ;;
+            *)
+              bad "labwc reports '${LABWC_SAYS}'. Fedora 44's own 0.9.6 is NOT good enough: no HDR, no colour management, and that is the whole reason this project uses labwc." ;;
+          esac
+
+          echo "== the shell runtime =="
+          if [ -e /usr/bin/qs ]; then ok "the qs command is installed"; else bad "qs is missing"; fi
+          QS_STATUS=0
+          # A build container has no runtime directory and no screen. Give Qt
+          # both, so that what this measures is the program and not the box.
+          export XDG_RUNTIME_DIR=/tmp/aq-verify-runtime
+          mkdir -p "${XDG_RUNTIME_DIR}"; chmod 0700 "${XDG_RUNTIME_DIR}"
+          export QT_QPA_PLATFORM=offscreen
+          QS_SAYS="$(/usr/bin/qs --version 2>&1)" || QS_STATUS=$?
+          echo "       ${QS_SAYS}"
+          if [ "${QS_STATUS}" -ne 0 ]; then
+            bad "qs cannot start (exit ${QS_STATUS}). If that message says 'undefined symbol', Quickshell and Qt in this image do not match and the desktop would never draw a bar."
+          else
+            ok "qs starts"
+            case "${QS_SAYS}" in
+              *0.3*) ok "Quickshell is 0.3.x" ;;
+              *) bad "Quickshell reports '${QS_SAYS}' — expected 0.3.x. 0.2.1 has no Networking or Bluetooth module and the shell imports both." ;;
+            esac
+          fi
+          echo "       built as: $(cat /usr/share/aquarius/quickshell-build.txt 2>/dev/null | tr '\n' ' ')"
+
+          echo "== every Quickshell module the shell imports =="
+          # Derived from the shell's own source, so it cannot drift out of date.
+          grep -rhoE '^import Quickshell[A-Za-z.]*' /usr/share/aquarius/shell 2>/dev/null \
+            | sed 's/^import //' | sort -u > /tmp/imports.txt
+          if [ ! -s /tmp/imports.txt ]; then
+            bad "no Quickshell imports found in the shell — the shell tree is wrong"
+          fi
+          while read -r imp; do
+            p="/usr/lib64/qt6/qml/$(printf '%s' "${imp}" | tr '.' '/')"
+            if [ -f "${p}/qmldir" ]; then ok "${imp}"
+            else bad "${imp} is imported by the shell but was not built into Quickshell"; fi
+          done < /tmp/imports.txt
+
+          echo "== the shell that was baked in =="
+          if [ -s /usr/share/aquarius/shell/shell.qml ]; then
+            ok "the shell is installed"
+            sed 's/^/       /' /usr/share/aquarius/shell-build.txt
+          else
+            bad "/usr/share/aquarius/shell/shell.qml is missing — there is no bar to draw"
+          fi
+          GOT_REF="$(grep -E '^commit=' /usr/share/aquarius/shell-build.txt 2>/dev/null | cut -d= -f2)"
+          if [ "${GOT_REF}" = "${EXPECT_SHELL_REF}" ]; then
+            ok "it is the pinned commit"
+          else
+            bad "the image contains shell commit '${GOT_REF}' but aquarius-os.env pins '${EXPECT_SHELL_REF}'"
+          fi
+          for f in theme/Ice.qml theme/Midnight.qml components/bar/TopBar.qml \
+                   components/dock/Dock.qml components/search/FlowSearch.qml \
+                   components/notifications/NotificationLayer.qml; do
+            if [ -s "/usr/share/aquarius/shell/${f}" ]; then ok "${f}"; else bad "${f} is missing"; fi
+          done
+          for junk in harness tests .git .github; do
+            if [ -e "/usr/share/aquarius/shell/${junk}" ]; then
+              bad "${junk}/ was shipped inside the operating system and should not have been"
+            else
+              ok "${junk}/ was correctly left out of the image"
+            fi
+          done
+
+          echo "== the login screen entry =="
+          ENTRY=/usr/share/wayland-sessions/aquarius.desktop
+          if [ -r "${ENTRY}" ]; then
+            ok "${ENTRY} exists"; sed 's/^/       /' "${ENTRY}"
+          else
+            bad "${ENTRY} is missing — nothing would appear at the login screen"
+          fi
+          grep -q '^Name=Aquarius Desktop$'        "${ENTRY}" && ok "it is called 'Aquarius Desktop'"       || bad "wrong Name="
+          grep -q '^DesktopNames=Aquarius$'        "${ENTRY}" && ok "it names the desktop 'Aquarius'"        || bad "wrong DesktopNames="
+          EXEC="$(grep -E '^Exec=' "${ENTRY}" | cut -d= -f2-)"
+          if [ -x "${EXEC}" ]; then ok "its Exec target ${EXEC} exists and is executable"
+          else bad "its Exec target '${EXEC}' is missing or not executable — picking the session would do nothing"; fi
+
+          # GNOME must still be there. A desktop that REPLACES the fallback
+          # rather than sitting beside it is the one thing the design forbids.
+          if [ -r /usr/share/wayland-sessions/gnome.desktop ]; then
+            ok "the GNOME session is still there to fall back to"
+          else
+            bad "GNOME's session entry has gone — the fallback is gone"
+          fi
+
+          echo "== the scripts a login depends on =="
+          for s in /usr/bin/aquarius-session /usr/libexec/aquarius-shell-start; do
+            if bash -n "${s}" 2>/tmp/synerr; then ok "${s} is valid shell script"
+            else bad "${s} has a syntax error: $(cat /tmp/synerr)"; fi
+          done
+
+          echo "== the window manager's configuration =="
+          for f in rc.xml autostart shutdown environment; do
+            if [ -s "/usr/share/aquarius/labwc/${f}" ]; then ok "labwc/${f}"; else bad "labwc/${f} is missing"; fi
+          done
+          # The corrected form of the summon command. Passing a configuration
+          # name here is the mistake the bench caught on 2026-09-01: qs would
+          # read it as the IPC target name and silently do nothing.
+          if grep -q 'command="qs ipc call search toggle"' /usr/share/aquarius/labwc/rc.xml; then
+            ok "Super+Space summons the search palette, in the corrected form"
+          else
+            bad "the Super+Space binding is not the corrected 'qs ipc call search toggle'"
+          fi
+          grep -q '<action name="Exit" />' /usr/share/aquarius/labwc/rc.xml \
+            && ok "Super+Shift+E leaves the session" || bad "there is no way to leave the session by keyboard"
+
+          echo "== portals =="
+          PC=/usr/share/xdg-desktop-portal/aquarius-portals.conf
+          if [ -r "${PC}" ]; then ok "${PC} exists"; else bad "${PC} is missing — screen recording would silently do nothing"; fi
+          grep -q '^default=gtk$' "${PC}" && ok "default back end is gtk" || bad "default back end is not gtk"
+          grep -q '^org.freedesktop.impl.portal.ScreenCast=wlr$'  "${PC}" && ok "screen recording goes to the wlroots back end" || bad "ScreenCast is not wlr"
+          grep -q '^org.freedesktop.impl.portal.Screenshot=wlr$'  "${PC}" && ok "screenshots go to the wlroots back end"       || bad "Screenshot is not wlr"
+          grep -q '^org.freedesktop.impl.portal.Settings=gtk$'    "${PC}" && ok "light/dark follows the system setting"        || bad "Settings is not gtk"
+          grep -q '^chooser_type=simple$' /etc/xdg/xdg-desktop-portal-wlr/config \
+            && ok "screen recording asks which screen rather than guessing" || bad "no chooser configured for screen recording"
+
+          echo "== packages the session needs =="
+          for pkg in greetd greetd-selinux tuigreet xdg-desktop-portal-wlr \
+                     swaybg slurp wlr-randr brightnessctl zenity \
+                     qt6-qtbase qt6-qtdeclarative qt6-qtwayland qt6-qtsvg \
+                     wlroots libsfdo; do
+            if rpm -q "${pkg}" > /dev/null 2>&1; then
+              ok "${pkg} $(rpm -q --queryformat '%{VERSION}-%{RELEASE}' "${pkg}")"
+            else
+              bad "${pkg} is NOT installed"
+            fi
+          done
+
+          echo "== which login manager is switched on =="
+          if systemctl is-enabled gdm.service > /dev/null 2>&1; then
+            ok "GDM is switched on"
+          else
+            bad "GDM is not switched on — nothing would draw a login screen"
+          fi
+          if systemctl is-enabled greetd.service > /dev/null 2>&1; then
+            bad "greetd is switched on too. Two login managers is a black screen; greetd ships switched OFF on purpose."
+          else
+            ok "greetd is installed but switched off, as intended"
+          fi
+
+          echo "== no library is missing on the finished image =="
+          for b in /usr/bin/labwc /usr/bin/quickshell; do
+            [ -e "${b}" ] || continue
+            if ldd "${b}" 2>&1 | grep -q 'not found'; then
+              bad "${b} is missing libraries:"; ldd "${b}" | grep 'not found' | sed 's/^/       /'
+            else
+              ok "${b} — every library resolves"
+            fi
+          done
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::The Aquarius Desktop in this image is broken. Do not publish it."
+            exit 1
+          fi
+          echo "All Aquarius Desktop checks passed."
+          SCRIPT
+          podman run --rm --pull=never -i \
+            -e EXPECT_SHELL_REF="${EXPECT_SHELL_REF}" \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-session.sh
+
       - name: Check nothing still says Bazzite or Fedora
         run: |
           set -euo pipefail
@@ -732,7 +931,14 @@ jobs:
           # writes into, and which would turn a two-minute check into a
           # twenty-minute one. Everything the build can actually touch is in.
           echo "-- inside text files --"
-          grep -rIil bazzite \
+          # --exclude-dir=shell keeps the Aquarius Shell's own source out of
+          # THIS grep. It gets its own, stricter check immediately below, for
+          # the same reason config files are checked with their comments
+          # stripped: the shell's QML carries long explanatory notes, and
+          # several of them explain what Bazzite's Game Mode does and why the
+          # shell refuses to reimplement it. Explaining Bazzite is not the same
+          # as being branded Bazzite.
+          grep -rIil bazzite --exclude-dir=shell \
             /etc /usr/bin /usr/sbin /usr/libexec /usr/lib/os-release /usr/lib/bootc \
             /usr/lib/systemd /usr/lib/dracut /usr/share/aquarius /usr/share/plymouth \
             /usr/share/glib-2.0/schemas /usr/share/gnome-background-properties \
@@ -744,6 +950,37 @@ jobs:
             head -40 /tmp/bz-text.txt
           else
             ok "no text file in any folder this build writes to mentions Bazzite"
+          fi
+
+          echo "-- inside the Aquarius Shell's own code (comments do not count) --"
+          # The shell is QML. A line starting with // is a note to whoever reads
+          # the file next, and the shell's notes discuss Bazzite at length
+          # because the Game Mode tile exists to hand OFF to Bazzite's own
+          # script rather than reimplement it. What must not appear is Bazzite
+          # in the CODE — a path, a name, a string that a running program uses.
+          #
+          # So: strip the comments, then look.
+          if [ -d /usr/share/aquarius/shell ]; then
+            : > /tmp/bz-shell.txt
+            while IFS= read -r f; do
+              # Drop whole-line // comments and anything after // on a line.
+              # Crude, and deliberately so: it can only ever over-report, and an
+              # over-report is a person reading one line of QML.
+              if sed 's|//.*$||' "${f}" | grep -qi bazzite; then
+                echo "${f}" >> /tmp/bz-shell.txt
+              fi
+            done <<< "$(find /usr/share/aquarius/shell -type f -name '*.qml' -o -type f -name '*.js')"
+            if [ -s /tmp/bz-shell.txt ]; then
+              bad "the shell's CODE (not its notes) mentions Bazzite:"
+              while IFS= read -r f; do
+                echo "       ${f}"
+                sed 's|//.*$||' "${f}" | grep -in bazzite | sed 's/^/         /'
+              done < /tmp/bz-shell.txt
+            else
+              ok "the shell's code says nothing about Bazzite (only its notes do, which is fine)"
+            fi
+          else
+            bad "/usr/share/aquarius/shell does not exist — the desktop's shell is missing"
           fi
 
           echo
@@ -1003,3 +1240,120 @@ jobs:
           echo '```' >> "${GITHUB_STEP_SUMMARY}"
           echo "sudo bootc switch ${IMAGE_REGISTRY}/${IMAGE_NAME}:latest" >> "${GITHUB_STEP_SUMMARY}"
           echo '```' >> "${GITHUB_STEP_SUMMARY}"
+
+  # ============================================================================
+  # The Aquarius Shell's own checks
+  # ============================================================================
+  # The shell lives in its own repository (github.com/stoneharborent/aquarius-shell)
+  # and the image bakes in one exact commit of it, named in aquarius-os.env.
+  #
+  # That repository has a test suite, and it is worth running HERE rather than
+  # only there, for one reason: it is this repository that decides which commit
+  # of the shell ships. Bumping AQUARIUS_SHELL_REF to something broken should
+  # fail the AquariusOS build, not surprise somebody at the login screen.
+  #
+  # What the shell's own script can check without a Linux desktop: that every
+  # QML file's brackets balance, that no compositor-specific import has crept in
+  # (the standardised-protocols law, enforced instead of trusted), that no
+  # component contains a raw colour, that the two themes declare the same set of
+  # colour roles, that nothing points at a path on somebody's laptop, and — the
+  # only part that RUNS code — about seventy assertions about the search
+  # palette's fuzzy matcher and calculator.
+  #
+  # What it cannot check is whether the QML is CORRECT. That needs qmllint with
+  # the matching Quickshell installed, and the matching Quickshell is the one
+  # compiled inside the image above — it does not exist as a package anywhere.
+  # Running qmllint against Fedora's 0.2.1 package would report every use of
+  # Quickshell.Networking and Quickshell.Bluetooth as an unknown module and fail
+  # for the wrong reason. So this job is honest about its size: it is the cheap
+  # gate. The real one is the bench.
+  #
+  # It runs in parallel with the image build and does not block it — a shell
+  # whose structure is wrong should be visible immediately, but the image build
+  # is thirty minutes and there is no sense in queueing behind a shell script.
+  shell_tests:
+    name: The Aquarius Shell's own checks
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Work out which commit of the shell this image ships
+        id: pin
+        run: |
+          set -euo pipefail
+          REPO="$(grep -E '^AQUARIUS_SHELL_REPO=' aquarius-os.env | cut -d'"' -f2)"
+          REF="$(grep -E '^AQUARIUS_SHELL_REF=' aquarius-os.env | cut -d'"' -f2)"
+          if [ -z "${REPO}" ] || [ -z "${REF}" ]; then
+            echo "::error::aquarius-os.env does not name the shell repository and commit."
+            exit 1
+          fi
+          echo "repo=${REPO}" >> "${GITHUB_OUTPUT}"
+          echo "ref=${REF}" >> "${GITHUB_OUTPUT}"
+          echo "shell: ${REPO} @ ${REF}"
+
+      - name: Fetch the shell at that exact commit
+        run: |
+          set -euo pipefail
+          git clone "${{ steps.pin.outputs.repo }}" aquarius-shell
+          cd aquarius-shell
+          git checkout --detach "${{ steps.pin.outputs.ref }}"
+          GOT="$(git rev-parse HEAD)"
+          if [ "${GOT}" != "${{ steps.pin.outputs.ref }}" ]; then
+            echo "::error::asked for ${{ steps.pin.outputs.ref }} and got ${GOT}"
+            exit 1
+          fi
+          git log -1 --format='%h %ad %s' --date=short
+
+      - name: Install what the checks need
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          python3 -m pip install --user pyyaml
+
+      - name: Run the shell's own checks
+        working-directory: aquarius-shell
+        run: ./tests/test-shell.sh
+
+      # The two things this repository needs to be true about the shell, which
+      # the shell's own tests have no reason to check because they are about how
+      # the OPERATING SYSTEM installs it.
+      - name: Check the shell still looks the way the image expects
+        working-directory: aquarius-shell
+        run: |
+          set -euo pipefail
+          fails=0
+
+          echo "== the folders build_files/stage-aquarius-shell.sh copies =="
+          for part in shell.qml components services theme assets; do
+            if [ -e "${part}" ]; then
+              echo "  OK   ${part}"
+            else
+              echo "  FAIL ${part} is gone — the image build copies it by name and would ship a broken shell"
+              fails=1
+            fi
+          done
+
+          echo "== the summon command the labwc key binding sends =="
+          # Both repositories have to agree on this exact string. They were out
+          # of step once already: the OS-side binding passed a configuration name
+          # that qs reads as an IPC target, and Super+Space would have silently
+          # done nothing. If the shell ever renames the target or the function,
+          # this fails here rather than on somebody's desk.
+          if grep -rq 'search' --include='*.qml' components/search/FlowSearch.qml \
+             && grep -q 'IpcHandler' components/search/FlowSearch.qml; then
+            echo "  OK   the search palette still declares an IPC handler"
+          else
+            echo "  FAIL components/search/FlowSearch.qml no longer declares an IpcHandler — Super+Space would do nothing"
+            fails=1
+          fi
+
+          if [ "${fails}" -ne 0 ]; then
+            echo "::error::The shell no longer matches what the AquariusOS image build expects of it."
+            exit 1
+          fi
+          echo "The shell matches what the image build expects."

@@ -1,0 +1,15 @@
+# =============================================================================
+# labwc shutdown — what runs as the window manager is exiting
+# =============================================================================
+# The mirror image of `autostart`. labwc runs this as a shell script when it is
+# preparing to terminate, while WAYLAND_DISPLAY is still valid.
+#
+# All it does is undo the one thing autostart did: tell systemd the graphical
+# session is over, so the portals, the wallpaper, the keyring agent and the
+# shell stop with it instead of lingering as orphans into the next login.
+#
+# Orphans matter more here than they sound. A leftover portal from a previous
+# session is one of the classic causes of "screen recording worked yesterday".
+# =============================================================================
+
+systemctl --user stop graphical-session.target 2>/dev/null || true

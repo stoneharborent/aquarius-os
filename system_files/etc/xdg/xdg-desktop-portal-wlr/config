@@ -1,0 +1,69 @@
+# =============================================================================
+# How screen recording picks which screen to record
+# =============================================================================
+# This file configures xdg-desktop-portal-wlr, the piece that lets OBS and
+# anything else capture the screen in the Aquarius Desktop.
+#
+# WHERE THIS FILE IS READ FROM, in order, first one wins:
+#     ~/.config/xdg-desktop-portal-wlr/aquarius     (your own, per-desktop)
+#     ~/.config/xdg-desktop-portal-wlr/config       (your own)
+#     /etc/xdg/xdg-desktop-portal-wlr/aquarius      (system, per-desktop)
+#     /etc/xdg/xdg-desktop-portal-wlr/config        (system)  <-- this file
+#
+# So anything here can be overridden for one person by copying this file to
+# ~/.config/xdg-desktop-portal-wlr/config and editing that copy. Nothing here
+# is permanent.
+#
+# Source, verified: xdg-desktop-portal-wlr(5).
+# =============================================================================
+
+[screencast]
+
+# -----------------------------------------------------------------------------
+# WHICH SCREEN GETS RECORDED
+# -----------------------------------------------------------------------------
+# When a program asks to record the screen and the machine has more than one,
+# something has to decide which. There are four ways to answer, and the choice
+# below is deliberate:
+#
+#   default   xdg-desktop-portal-wlr hunts for a picker program it recognises
+#             and runs whichever it finds first. Whether that is slurp or
+#             something else depends on what happens to be installed, which
+#             makes the behaviour drift as the image changes.
+#
+#   simple    run exactly the program named in chooser_cmd.  <-- WE USE THIS
+#
+#   dmenu     feed a list of screens to a menu program.
+#
+#   none      do not ask. Record the screen named in output_name, or an
+#             arbitrary one if no name is given.
+#
+# WHY NOT "none", WHICH WOULD SKIP THE PROMPT ENTIRELY.
+# It is tempting: one less click. But on a machine with two monitors — which is
+# most creator machines, including the bench this is developed on — "none" with
+# no output_name records an ARBITRARY screen, with no prompt, no error, and no
+# way to change it except editing this file. Somebody records a forty-minute
+# take of the wrong monitor and finds out afterwards. A one-second drag is a
+# much smaller cost than that.
+#
+# If you have exactly one screen and want the prompt gone, this is the edit:
+#     chooser_type=none
+#     output_name=DP-1        (find yours with:  wlr-randr )
+chooser_type=simple
+
+# slurp draws a dimmed overlay and lets you drag a rectangle or click a screen.
+#   -f %o   report the OUTPUT name rather than pixel coordinates, which is the
+#           format xdg-desktop-portal-wlr expects back
+#   -o      preselect whole screens rather than making you draw a box
+#   -r      restrict the selection to one screen
+chooser_cmd=slurp -f %o -or
+
+# -----------------------------------------------------------------------------
+# Frame rate
+# -----------------------------------------------------------------------------
+# Left unset on purpose. Capping it here would cap it for every program on the
+# machine, including a 60 fps screen recording somebody actually wants. OBS has
+# its own frame-rate setting, which is where that decision belongs.
+#
+# If a low-powered machine struggles, uncomment this:
+# max_fps=30

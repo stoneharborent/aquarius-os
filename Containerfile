@@ -64,6 +64,29 @@ ARG NVIDIA=0
 ARG AKMODS_NVIDIA_IMAGE=ghcr.io/ublue-os/akmods-nvidia-open
 
 # ------------------------------------------------------------------------------
+# The three pieces of the Aquarius Desktop that do not come from Fedora
+# ------------------------------------------------------------------------------
+# Two are compiled from source and one is fetched, and all three are pinned to
+# an exact commit. Real values live in aquarius-os.env; these defaults exist so
+# that a plain `podman build .` still works. Each build script CHECKS the commit
+# it got against the one it was asked for and stops if they differ, so a moved
+# tag upstream cannot silently change what AquariusOS ships.
+#
+# Why we build our own at all is explained at length in the three
+# build_files/stage-*.sh scripts. The short version:
+#   labwc      Fedora 44 has 0.9.6; the HDR and colour-management release is 0.20
+#   Quickshell Fedora's package is a 0.2.1 snapshot missing modules our shell
+#              imports — and building in-image is what stops the Qt version
+#              mismatch that broke the first bench boot
+#   the shell  is ours, and lives in its own repository
+ARG LABWC_VERSION=0.20.2
+ARG LABWC_COMMIT=97f28877a343e062f3178d201f0248cd9c2610cf
+ARG QUICKSHELL_VERSION=v0.3.1
+ARG QUICKSHELL_COMMIT=1a4716cde794a59928d9d9fc15f2afc7a95de360
+ARG AQUARIUS_SHELL_REPO=https://github.com/stoneharborent/aquarius-shell.git
+ARG AQUARIUS_SHELL_REF=70d2afd7f220a88840e4b069d3e77a58fb28f880
+
+# ------------------------------------------------------------------------------
 # Our own files, gathered up so the build can reach them
 # ------------------------------------------------------------------------------
 # This "stage" is not part of the finished OS. It is a scratch pile that the
@@ -100,6 +123,57 @@ FROM ${AKMODS_NVIDIA_IMAGE}:main-${FEDORA_VERSION} AS nvidia-src-1
 FROM nvidia-src-${NVIDIA} AS nvidia-src
 
 # ==============================================================================
+# THE THREE WORKSHOPS
+# ==============================================================================
+# Each of the three stages below is a full, ordinary Fedora container that gets
+# thrown away when the build finishes. Compilers, header files and source code
+# live here and NEVER reach the operating system — a single COPY line further
+# down takes the finished result across and leaves everything else behind.
+#
+# This is the standard way to compile something for a container image, and it is
+# why AquariusOS can ship a program Fedora does not package without also
+# shipping a compiler.
+#
+# `quay.io/fedora/fedora` rather than `fedora-bootc`: the plain Fedora container
+# is the same Fedora 44 userland with none of the bootable-image machinery,
+# which is all a workshop needs. Same release means the compiled programs work
+# on the finished image — this is not two different Fedoras.
+#
+# The three stages are independent of one another, so a build machine with the
+# capacity runs all three at the same time.
+# ------------------------------------------------------------------------------
+
+# Workshop 1 — labwc, the window manager. About two minutes.
+FROM quay.io/fedora/fedora:${FEDORA_VERSION} AS labwc-build
+ARG LABWC_VERSION
+ARG LABWC_COMMIT
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache/libdnf5 \
+    LABWC_VERSION="${LABWC_VERSION}" LABWC_COMMIT="${LABWC_COMMIT}" \
+    /ctx/build_files/stage-labwc.sh
+
+# Workshop 2 — Quickshell, the runtime that draws the bar. The long one:
+# it compiles a Qt application, which is several minutes.
+FROM quay.io/fedora/fedora:${FEDORA_VERSION} AS quickshell-build
+ARG QUICKSHELL_VERSION
+ARG QUICKSHELL_COMMIT
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache/libdnf5 \
+    QUICKSHELL_VERSION="${QUICKSHELL_VERSION}" QUICKSHELL_COMMIT="${QUICKSHELL_COMMIT}" \
+    /ctx/build_files/stage-quickshell.sh
+
+# Workshop 3 — the Aquarius Shell itself. Nothing is compiled; this stage exists
+# to fetch one folder at one exact commit and leave the repository's test suite,
+# development harness and .git folder behind.
+FROM quay.io/fedora/fedora:${FEDORA_VERSION} AS aquarius-shell-src
+ARG AQUARIUS_SHELL_REPO
+ARG AQUARIUS_SHELL_REF
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache/libdnf5 \
+    AQUARIUS_SHELL_REPO="${AQUARIUS_SHELL_REPO}" AQUARIUS_SHELL_REF="${AQUARIUS_SHELL_REF}" \
+    /ctx/build_files/stage-aquarius-shell.sh
+
+# ==============================================================================
 # THE OPERATING SYSTEM ITSELF
 # ==============================================================================
 # quay.io/fedora/fedora-bootc is Fedora's official "image mode" base: a real
@@ -121,7 +195,7 @@ ARG IMAGE_NAME=aquarius-os-next
 ARG IMAGE_VENDOR=stoneharborent
 
 # ------------------------------------------------------------------------------
-# The build, in nine steps
+# The build, in ten steps
 # ------------------------------------------------------------------------------
 # Each RUN below is one layer of the finished image. They are separate on
 # purpose rather than one giant step: a computer downloading an update only has
@@ -168,6 +242,29 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     /ctx/build_files/50-aquarius-desktop.sh
+
+# 5.5 The Aquarius Desktop — our own desktop, added beside GNOME.
+#
+#     First the three finished trees come across from the workshops above. Each
+#     one is laid out exactly like the root of a Linux system, so these are
+#     straight copies with no rearranging:
+#
+#       labwc-build         /usr/bin/labwc and its manual pages
+#       quickshell-build    /usr/bin/qs and the QML modules it provides
+#       aquarius-shell-src  /usr/share/aquarius/shell — the bar, dock, search
+#
+#     Then the build script installs the libraries all of that needs, sets up
+#     the login-screen entry and the portals, and CHECKS THE RESULT by running
+#     both programs and reading what they say. The check that matters most is
+#     `qs --version`: it is the exact thing that failed on the bench on
+#     2026-09-02 and left a person looking at an empty desktop.
+COPY --from=labwc-build /aq-stage/ /
+COPY --from=quickshell-build /aq-stage/ /
+COPY --from=aquarius-shell-src /aq-stage/ /
+
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache/libdnf5 \
+    /ctx/build_files/55-aquarius-session.sh
 
 # 6. NVIDIA. Does nothing at all on the AMD / Intel image.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \

@@ -1,0 +1,114 @@
+#!/usr/bin/bash
+# =============================================================================
+# aquarius-shell-start — run the Aquarius Shell, and SAY SO if it does not run
+# =============================================================================
+# WHY THIS FILE EXISTS
+#
+# On 2026-09-02 the Aquarius Session started on real hardware for the first
+# time. The window manager came up. The bar did not. There was no error, no
+# dialog and no line in the log, because the shell had died before printing
+# anything and a window manager throws its children's output away.
+#
+# Eighteen minutes were spent looking at an empty desktop trying to work out
+# whether anything had happened at all.
+#
+# So this script does three things the plain `qs &` it replaces did not:
+#
+#   1. Every line the shell prints is written to the session log, tagged so it
+#      cannot be confused with the window manager's own output.
+#   2. If the shell exits, that is noticed.
+#   3. If it exits BADLY — a crash, or a start-up failure — a dialog appears on
+#      screen in plain English saying what happened and how to get out.
+#
+# It does NOT restart the shell in a loop. A shell that crashes instantly would
+# turn into a flickering dialog storm, and the honest thing to do is stop and
+# tell somebody.
+# =============================================================================
+
+set -uo pipefail
+
+AQ_LOG="${AQ_LOG:-/dev/null}"
+
+# How long the shell has to stay alive before we call it "started". A shell that
+# runs for a minute and then crashes is a different problem from one that never
+# starts, and the message should not pretend otherwise.
+AQ_STARTUP_SECONDS=20
+
+aq_log() { echo "[shell-start] $*" >> "${AQ_LOG}"; }
+
+aq_log "starting the Aquarius Shell"
+aq_log "  QS_CONFIG_PATH = ${QS_CONFIG_PATH:-(not set!)}"
+
+aq_started_at="${SECONDS}"
+
+# The shell itself. A bare `qs` — the configuration comes from QS_CONFIG_PATH.
+# `sed -u` prefixes every line as it arrives (unbuffered, so a crash does not
+# swallow the last few lines) and appends to the same log the launcher writes.
+# One file holds the whole story of a boot.
+qs 2>&1 | sed -u 's/^/[shell] /' >> "${AQ_LOG}"
+aq_status="${PIPESTATUS[0]}"
+
+aq_ran_for=$(( SECONDS - aq_started_at ))
+aq_log "the shell exited with status ${aq_status} after ${aq_ran_for} second(s)"
+
+# Exit status 0 means somebody deliberately quit the shell — from the search
+# palette's session actions, or by typing `qs ipc call ...`. That is not a
+# failure and does not deserve a dialog.
+if [ "${aq_status}" -eq 0 ]; then
+    aq_log "that was a clean exit; saying nothing"
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# It failed. Say so, on the screen, in words.
+# ---------------------------------------------------------------------------
+if [ "${aq_ran_for}" -lt "${AQ_STARTUP_SECONDS}" ]; then
+    aq_headline="The Aquarius bar could not start."
+    aq_detail="It stopped ${aq_ran_for} second(s) after the desktop came up, which usually means it failed while loading rather than while running."
+else
+    aq_headline="The Aquarius bar has stopped."
+    aq_detail="It ran for ${aq_ran_for} second(s) and then quit unexpectedly."
+fi
+
+aq_message="${aq_headline}
+
+${aq_detail}
+
+YOUR DESKTOP STILL WORKS. The window manager is running, your windows are where you left them, and nothing has been damaged. You just have no bar, no dock and no search.
+
+WHAT YOU CAN DO, IN ORDER OF EFFORT:
+
+ 1. Bring the bar back without logging out.
+    Press Super+Return for a terminal, then type:   qs
+
+ 2. Go back to the login screen and use GNOME instead.
+    Press Super+Shift+E. At the login screen, click the gear or the
+    session name near the password box and choose GNOME. Everything
+    works there exactly as before.
+
+WHAT WENT WRONG IS WRITTEN DOWN:
+
+    ${AQ_LOG}
+
+Look for lines that begin with [shell]. Those are the bar's own words."
+
+# Log it first — the dialog can fail, the log cannot.
+aq_log "----- what the person was told -----"
+printf '%s\n' "${aq_message}" | sed 's/^/[shell-start] /' >> "${AQ_LOG}"
+
+# zenity draws a plain GTK dialog and is part of the image. --width keeps the
+# text from becoming one long line. If zenity is somehow not there, fall back to
+# a desktop notification, and if THAT is not there the log above is all there is
+# — which is still infinitely more than the first boot had.
+if command -v zenity > /dev/null 2>&1; then
+    zenity --error \
+        --title="Aquarius Desktop" \
+        --width=560 \
+        --text="${aq_message}" >> "${AQ_LOG}" 2>&1 &
+elif command -v notify-send > /dev/null 2>&1; then
+    notify-send --urgency=critical "The Aquarius bar could not start" \
+        "Press Super+Shift+E to return to the login screen and pick GNOME. Details: ${AQ_LOG}" \
+        >> "${AQ_LOG}" 2>&1 &
+fi
+
+exit "${aq_status}"

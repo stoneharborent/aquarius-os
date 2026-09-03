@@ -26,6 +26,12 @@ export image_keywords := env_var("IMAGE_KEYWORDS")
 export image_logo_url := env_var("IMAGE_LOGO_URL")
 export default_tag := env_var("DEFAULT_TAG")
 export bib_image := env_var("BIB_IMAGE")
+export labwc_version := env_var("LABWC_VERSION")
+export labwc_commit := env_var("LABWC_COMMIT")
+export quickshell_version := env_var("QUICKSHELL_VERSION")
+export quickshell_commit := env_var("QUICKSHELL_COMMIT")
+export aquarius_shell_repo := env_var("AQUARIUS_SHELL_REPO")
+export aquarius_shell_ref := env_var("AQUARIUS_SHELL_REF")
 
 [private]
 default:
@@ -162,6 +168,14 @@ build $target_image=image_name $tag=default_tag $nvidia="0":
     BUILD_ARGS+=("--build-arg" "AKMODS_NVIDIA_IMAGE={{ akmods_nvidia_image }}")
     BUILD_ARGS+=("--build-arg" "IMAGE_NAME=${target_image}")
     BUILD_ARGS+=("--build-arg" "IMAGE_VENDOR={{ repo_organization }}")
+    # The Aquarius Desktop's three pinned pieces. See aquarius-os.env — the
+    # build scripts check each commit against what they were asked for.
+    BUILD_ARGS+=("--build-arg" "LABWC_VERSION={{ labwc_version }}")
+    BUILD_ARGS+=("--build-arg" "LABWC_COMMIT={{ labwc_commit }}")
+    BUILD_ARGS+=("--build-arg" "QUICKSHELL_VERSION={{ quickshell_version }}")
+    BUILD_ARGS+=("--build-arg" "QUICKSHELL_COMMIT={{ quickshell_commit }}")
+    BUILD_ARGS+=("--build-arg" "AQUARIUS_SHELL_REPO={{ aquarius_shell_repo }}")
+    BUILD_ARGS+=("--build-arg" "AQUARIUS_SHELL_REF={{ aquarius_shell_ref }}")
     LABELS=()
     if [[ -z "$(git status -s)" ]]; then
         GIT_SHA=$(git rev-parse --short HEAD)

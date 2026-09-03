@@ -87,7 +87,7 @@ this is starting from an empty room.
 
 | Missing | Comes back in |
 | --- | --- |
-| The Aquarius Desktop (our own shell), labwc, Quickshell, greetd | **R2** |
+| ~~The Aquarius Desktop (our own shell), labwc, Quickshell, greetd~~ | **shipped in R2** — see [`aquarius-session.md`](aquarius-session.md) |
 | The AquariusOS logo button in the top-left corner of the screen | **R2** (see below) |
 | DaVinci Resolve container, Aquarius Editor, Aquarius Writer, OBS, Blender | **R3** |
 | Steam, Proton, MangoHud — desktop gaming | **R4** |
@@ -119,18 +119,25 @@ parts. The comment above that trick in the file explains it properly.
 
 ### 2. `build_files/` — the steps
 
-Nine scripts, numbered in the order they run. The numbers are the point: the
+Ten numbered scripts, run in order, plus three `stage-` scripts that are not
+part of the operating system at all — they compile or fetch the pieces Fedora
+does not give us, in throwaway containers, and only the results are copied in.
+The numbers on the rest are the point: The numbers are the point: the
 build log reads in the same order as the folder listing, so when something goes
 wrong you can find the file by its heading.
 
 | File | What it does |
 | --- | --- |
+| `stage-labwc.sh` | Not part of the operating system. Compiles the labwc window manager in a throwaway container, because Fedora 44 packages an older one than we need. |
+| `stage-quickshell.sh` | The same, for Quickshell — the runtime that draws our bar. Compiled inside the image so it can never disagree with the image's Qt. |
+| `stage-aquarius-shell.sh` | The same idea again: fetches the Aquarius Shell at one exact commit and copies across only the parts that run. |
 | `aq-lib.sh` | Shared helpers. Read the top of this one first — it explains the "trust content, never timestamps" rule that shapes every check in the repo. |
 | `10-repos.sh` | Adds RPM Fusion, so the next step has real codecs to install. |
 | `20-hardware-media.sh` | Makes it a working computer: graphics, sound, network, power, firmware, filesystems, and every codec. The biggest step. |
 | `30-session.sh` | The invisible layer between "has drivers" and "has a desktop": the login screen, portals, XWayland, Flatpak, fonts, containers. |
 | `40-gnome-desktop.sh` | GNOME — a hand-written short list, with a note on everything deliberately left out. |
 | `50-aquarius-desktop.sh` | Makes it *ours*: wallpaper, logos, Ice theme, fonts, dock, the right-click ingest menu. |
+| `55-aquarius-session.sh` | The **Aquarius Desktop** — our own shell on the labwc window manager, added beside GNOME as a second choice at the login screen. Installs what the two compiled programs need, sets up the portals, and switches greetd off. See [`aquarius-session.md`](aquarius-session.md). |
 | `60-nvidia.sh` | The NVIDIA driver. Does nothing on the AMD/Intel image. The hardest file in the repo — see [`nvidia-notes.md`](nvidia-notes.md). |
 | `70-image-info.sh` | Teaches the system to call itself AquariusOS. |
 | `80-boot-branding.sh` | Everything you see BEFORE the login screen: the Aquarius boot splash, the name in the boot menu, the text login banners — and a rebuild of the boot ramdisk, without which none of it takes effect. ⚠️ Must run after `60-nvidia.sh`; see [`boot-branding.md`](boot-branding.md). |

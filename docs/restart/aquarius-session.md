@@ -1,0 +1,350 @@
+# The Aquarius Desktop — our own desktop, on the login screen
+
+*Written 2026-09-03, for Phase R2. Assumes you have never used Linux.*
+
+---
+
+## In one paragraph
+
+AquariusOS now has **two desktops**. GNOME is the one you have been using: a
+good, finished, ordinary desktop, dressed in Aquarius colours. The **Aquarius
+Desktop** is ours — a top bar, a dock, a search palette, quick settings and
+notifications that we wrote, running on a small window manager called labwc.
+Both appear at the login screen. You pick one, you log in, and if you do not
+like it you log out and pick the other. Nothing about GNOME changed, and nothing
+can take it away.
+
+---
+
+## Picking it
+
+1. Log out, or start the computer.
+2. At the login screen, **click your name first**. The session chooser only
+   appears once a user is selected.
+3. Look for a small **gear icon**, usually at the bottom-right of the screen
+   near the "Sign In" button.
+4. Click it. You will see:
+   - **GNOME** — where you are today
+   - **GNOME on Xorg** — an older way of running GNOME; ignore it
+   - **Aquarius Desktop** — ours
+5. Pick **Aquarius Desktop**, type your password, sign in.
+
+GDM remembers your choice, so the next login goes straight there. Changing back
+is the same four clicks.
+
+---
+
+## What you will see
+
+A wallpaper, and along the top of the screen a thin bar in the Ice light theme:
+the Aquarius mark on the left, the name of whatever window you are using next to
+it, and on the right a cluster of small status glyphs — network, sound, battery
+— and a clock.
+
+A dock, centred along the bottom.
+
+And these keys:
+
+| Key | What it does |
+| --- | --- |
+| **Super + Space** | Opens the search palette. Type to find an application, do a sum, or reach a session action like Log Out. Escape closes it. |
+| **Super + Return** | A terminal. This is the escape hatch — it works even when nothing else does. |
+| **Super + Shift + E** | Leaves the Aquarius Desktop and returns you to the login screen. |
+| **Alt + Tab** | Switch windows. |
+| **Alt + F4** | Close a window. |
+| **Super + arrow keys** | Snap a window to half the screen. |
+
+"Super" is the key with the Windows logo on it, or Command on an Apple keyboard.
+
+Clicking the status glyphs at the top-right opens **Quick Settings**: Wi-Fi,
+Bluetooth, volume, brightness, a Focus toggle. Clicking the clock opens the
+**notification panel**.
+
+---
+
+## If it does not work
+
+**This is the important section, so it is near the top rather than the bottom.**
+
+### The rule
+
+> If the Aquarius Desktop breaks, press **Super + Shift + E**, and at the login
+> screen pick **GNOME**. Everything works exactly as it did before. Nothing has
+> been damaged and nothing needs repairing.
+
+That is the whole safety story, and it does not bend. GNOME is installed
+permanently, it is never modified by any of this, and it does not share a single
+setting with the Aquarius Desktop.
+
+### If the bar does not appear but the wallpaper does
+
+You will get a dialog explaining it, because that is what
+`/usr/libexec/aquarius-shell-start` exists to do. Read it. Then either:
+
+- press **Super + Return** for a terminal and type `qs` to start the bar again,
+  or
+- press **Super + Shift + E** and log in with GNOME.
+
+### If you get a black screen and go straight back to the login screen
+
+The session failed before it drew anything. Log in with **GNOME**, open a
+terminal, and read:
+
+```
+cat ~/.local/state/aquarius-session/session.log
+```
+
+It contains the whole story of the attempt: what was found, what was missing,
+and a loud block of text explaining what went wrong. The previous attempt is
+kept as `session.log.1`, which is enough to compare a login that worked against
+one that did not.
+
+That file is the first thing to look at, always.
+
+---
+
+## What it is made of
+
+Four pieces. Two of them AquariusOS compiles itself, which is unusual and worth
+understanding.
+
+| Piece | What it is | Where it comes from |
+| --- | --- | --- |
+| **labwc 0.20.2** | The window manager. Draws title bars, moves windows, owns the keyboard shortcuts. | **Compiled during the build.** Fedora 44 packages 0.9.6. |
+| **Quickshell 0.3.1** | The runtime that runs our QML and gives it a bar's powers. The command is `qs`. | **Compiled during the build.** Fedora packages a 0.2.1 snapshot. |
+| **The Aquarius Shell** | Our own code: bar, dock, search, quick settings, notifications. | Fetched at a pinned commit from `github.com/stoneharborent/aquarius-shell`. |
+| **The session plumbing** | The launcher, the login-screen entry, the labwc configuration, the portal configuration. | Written in this repository, under `system_files/`. |
+
+### Why we compile labwc ourselves
+
+labwc 0.20 is the release that added **HDR10 and colour management**. Those two
+things are the entire reason this project uses labwc rather than the
+scrollable-tiling alternative it also evaluated. A colour-accurate desktop is
+the point of a machine built for a video editor, and Fedora 44's labwc 0.9.6
+does not have it.
+
+Fedora 45 has 0.20 already (in Rawhide). When AquariusOS moves to Fedora 45 this
+whole compile step is deleted and replaced with one line.
+
+### Why we compile Quickshell ourselves — and the evening it cost
+
+Two reasons. The small one: the shell uses two Quickshell modules
+(`Networking` and `Bluetooth`) that do not exist in 0.2.1, so the Wi-Fi and
+Bluetooth tiles would simply be missing.
+
+The large one is worth reading once, because it explains a whole class of
+problem on this kind of operating system.
+
+On 2 September 2026 the session was tried on the bench for the first time. The
+window manager started. The bar did not. There was no error message anywhere.
+Eighteen minutes went into working out whether anything had happened at all.
+
+What had happened: `quickshell` had been *layered* onto the machine — installed
+on top of the image — and the version Fedora had built was compiled against a
+**newer Qt** than the one inside our image. AquariusOS is an atomic system: the
+Qt in the image cannot be changed by installing something over it. So the
+layered program asked the image's Qt for functions it did not have and died on
+its first instruction:
+
+```
+qs: symbol lookup error: qs: undefined symbol: ... version Qt_6
+```
+
+Building Quickshell **inside** the image, against the image's own Qt, makes that
+impossible by construction: the two are compiled together and shipped together
+and can never drift apart. That is standing decision 2c.
+
+**One practical consequence:** never `rpm-ostree install quickshell` on an
+AquariusOS machine. The image already has one, and a layered copy will shadow it
+and break exactly this way. If somebody already has, undo it:
+
+```bash
+rpm-ostree uninstall quickshell
+systemctl reboot
+```
+
+---
+
+## Screen recording, and why it needs a whole section
+
+Screen recording on a modern Linux desktop goes through a thing called a
+**portal**. A portal is a doorway: OBS is not allowed to read your screen
+directly, so it asks the desktop, and the desktop asks you.
+
+Which piece of software answers that request depends on which desktop you are
+in, and getting it wrong **fails silently**. No error, no dialog — OBS just
+shows an empty list of screens and you assume the program is broken.
+
+So AquariusOS ships a file that says exactly which back end answers which
+question in the Aquarius Desktop:
+
+```
+/usr/share/xdg-desktop-portal/aquarius-portals.conf
+```
+
+- **Screen recording and screenshots → `wlr`.** labwc is built on a library
+  called wlroots and speaks its screen-copy protocol, so the small,
+  purpose-built `xdg-desktop-portal-wlr` can capture it.
+- **Everything else → `gtk`.** File pickers, printing, notifications, the
+  "an app wants permission" prompt, and the light/dark setting.
+
+The GNOME session is completely unaffected — it looks for a differently named
+file and finds its own.
+
+### Which screen gets recorded
+
+When you start a recording, a dimmed overlay appears and you click the screen
+you want. That is `slurp`, and it is configured in
+`/etc/xdg/xdg-desktop-portal-wlr/config`.
+
+It would have been possible to skip that click entirely. It is not skipped on
+purpose: with the click removed, a machine with two monitors records an
+**arbitrary** one, with no prompt and no error, and you find out after the
+forty-minute take. If you have exactly one screen and want the prompt gone, the
+comments in that file give you the two lines to change.
+
+---
+
+## The other login screen: greetd
+
+AquariusOS uses **GDM**, GNOME's login screen. That is not changing yet.
+
+A second login manager called **greetd** is installed, configured and switched
+**off**. It is where this is eventually going — a login screen drawn by the
+Aquarius Shell itself — and it is in the image now so that the switch is two
+commands rather than a rebuild.
+
+To try it:
+
+```bash
+sudo systemctl disable gdm
+sudo systemctl enable greetd
+sudo systemctl reboot
+```
+
+You will get a plain text login screen with a clock, your username filled in,
+and a list of sessions you move through with the arrow keys. It is not pretty
+and it is not meant to be.
+
+To go back:
+
+```bash
+sudo systemctl disable greetd
+sudo systemctl enable gdm
+sudo systemctl reboot
+```
+
+⚠️ **Never enable both.** Exactly one login manager may be switched on;
+two is a black screen with no way in. If that happens, boot the previous version
+of the OS from the boot menu — every AquariusOS update keeps the last one.
+
+---
+
+## Where everything lives on the machine
+
+| Path | What it is |
+| --- | --- |
+| `/usr/share/wayland-sessions/aquarius.desktop` | The entry that makes "Aquarius Desktop" appear at the login screen. |
+| `/usr/bin/aquarius-session` | The launcher the login screen runs. Sets the environment, then starts labwc. Heavily commented — worth reading. |
+| `/usr/share/aquarius/labwc/` | The window manager's configuration: `rc.xml` (key bindings), `autostart`, `shutdown`, `environment`. |
+| `/usr/share/aquarius/shell/` | The Aquarius Shell's QML. |
+| `/usr/libexec/aquarius-shell-start` | Runs the shell, and puts a dialog on screen if it fails. |
+| `/usr/share/xdg-desktop-portal/aquarius-portals.conf` | Which portal back end answers which request. |
+| `/etc/xdg/xdg-desktop-portal-wlr/config` | How screen recording picks a screen. |
+| `/etc/greetd/config.toml` | The alternative login screen, switched off. |
+| `~/.local/state/aquarius-session/session.log` | **The log. Read this first when something is wrong.** |
+| `/usr/share/aquarius/shell-build.txt` | Exactly which commit of the shell this image contains. |
+| `/usr/share/aquarius/quickshell-build.txt` | Which Quickshell, and which Qt it was built against. |
+
+Everything under `/usr` is read-only — that is what makes this operating system
+hard to break. To change something for yourself, copy it into your own
+`~/.config` and edit the copy; both labwc and the portals read your folder
+first.
+
+---
+
+## Changing which version of the shell ships
+
+One line, in `aquarius-os.env`:
+
+```
+AQUARIUS_SHELL_REF="70d2afd7f220a88840e4b069d3e77a58fb28f880"
+```
+
+Change the commit, push, and the next build bakes in the new one. The build
+**checks** that it got that exact commit and stops if it did not, so a moved tag
+upstream cannot quietly change what AquariusOS ships. The same file pins labwc
+and Quickshell the same way.
+
+Every push also runs the shell's own test suite against that commit, in a job
+called *The Aquarius Shell's own checks*. Bumping the pin to something
+structurally broken fails the build rather than surprising somebody at the
+login screen.
+
+---
+
+## What is honestly not finished
+
+Being clear about this matters more than it being short.
+
+- **The shell has never been through a full working day.** Its own repository
+  says so plainly. Individual pieces have been seen working on the bench; a
+  whole day of real editing has not been survived yet. That is R2's exit test.
+- **`qmllint` does not run against the Quickshell we ship.** The CI job runs the
+  shell's structural checks and its JavaScript tests, which is real but is not a
+  QML compiler. The QML checker needs the matching Quickshell installed, and the
+  matching Quickshell is the one compiled inside the image — it exists as a
+  package nowhere. Running the checker against Fedora's 0.2.1 would fail on the
+  two modules 0.2.1 does not have, which would be failing for the wrong reason.
+- **The Vulkan renderer is off.** HDR output eventually needs it. It is not a
+  build switch — it is chosen when the window manager starts, by setting
+  `WLR_RENDERER=vulkan`. It is left at the default because it has not been tried
+  on the NVIDIA driver on the bench. The line to uncomment is in
+  `/usr/share/aquarius/labwc/environment`.
+- **The Game Mode tile in Quick Settings does nothing.** It hands off to a
+  script that only exists on Bazzite, which AquariusOS is no longer built on.
+  It is harmless — it simply will not appear.
+- **The brightness slider needs a laptop.** It reads and writes the backlight
+  through `brightnessctl`, and a desktop monitor has no backlight the computer
+  can control.
+- **There is no lock screen yet, and no display settings panel.** Use
+  `wlr-randr` in a terminal for monitor layout until there is one.
+
+---
+
+## The bench test list
+
+In order. Stop at the first failure and read the log.
+
+1. **Log in.** At GDM, pick **Aquarius Desktop**. It should reach a wallpaper
+   with a bar across the top, not a black screen.
+2. **Look at the bar.** Aquarius mark on the left, the current window's name
+   beside it, status glyphs and a clock on the right.
+3. **Look at the dock**, centred at the bottom.
+4. **Press Super + Space.** The search palette should appear. Type a few letters
+   of an application's name; it should be first in the list. Type `12*12`; it
+   should answer 144. Escape closes it.
+5. **Click the status glyphs.** Quick Settings should open: Wi-Fi, Bluetooth,
+   volume, Focus.
+6. **Make a notification.** In a terminal (Super + Return):
+   `notify-send "Hello" "This is a test"`. A toast should appear. Click the
+   clock; it should be listed in the panel.
+7. **Screen recording.** Install OBS from the software store if it is not there,
+   start it, add a *Screen Capture (PipeWire)* source. A dimmed overlay should
+   appear asking which screen — click one — and OBS should then show the screen.
+   **This is the one that proves the portal configuration.**
+8. **A file dialog.** In any Flatpak application, open a file. The dialog should
+   appear. (This proves the GTK portal is answering.)
+9. **Light and dark.** In a terminal:
+   `gsettings set org.gnome.desktop.interface color-scheme prefer-dark`. The bar
+   should turn Midnight while you watch. Set it back to `default` for Ice.
+10. **The version.** In a terminal: `qs --version` should say 0.3.1, and
+    `labwc --version` should say 0.20.2.
+11. **Leave.** Press **Super + Shift + E**. You should be back at the login
+    screen within a second or two.
+12. **Go back to GNOME.** Pick GNOME at the login screen and confirm it is
+    exactly as it was — same wallpaper, same dock, same everything. This is the
+    check that proves the fallback is intact.
+
+If any of 1–3 fails, the answer is in
+`~/.local/state/aquarius-session/session.log`. Log in with GNOME and read it.

@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!--
+  =============================================================================
+  The Aquarius Desktop — window manager configuration
+  =============================================================================
+  (An XML comment may not contain two hyphens in a row, which is why the rules
+  in this file are drawn with = signs instead of the dashes used everywhere
+  else in the project. It is a quirk of XML, not a change of style.)
+
+  This is the AquariusOS copy of the file in the aquarius-shell repository. It
+  is the same file with the two-compositors question settled: AquariusOS runs
+  labwc, because labwc 0.20 has HDR10 and colour management today and the
+  alternative does not. That is standing decision 2b, 2026-09-02.
+
+  =============================================================================
+  WHY THIS FILE IS SO SHORT
+  =============================================================================
+  <default /> below loads labwc's own key bindings: Alt+Tab to switch windows,
+  Alt+F4 to close, Super+arrows to snap, the volume and brightness keys. Those
+  are good and there is no reason to reinvent them, so this file adds three
+  bindings on top and otherwise gets out of the way.
+
+  =============================================================================
+  TWO RULES THIS FILE OBEYS
+  =============================================================================
+  1. NO COLOURS. labwc's title bars and borders come from an Openbox-style
+     theme, and it would be easy to paste the Ice palette's hex values into a
+     themerc file here. Do not. Colour in the Aquarius Desktop lives in the
+     shell's theme/Ice.qml and theme/Midnight.qml and nowhere else. Two places
+     holding "the Aquarius blue" is how a desktop stops looking designed. When
+     the shell owns window decoration, it will own the colour too.
+
+  2. NO PATHS. The shell is started from the autostart file next to this one,
+     with a bare `qs`, because /usr/bin/aquarius-session exports QS_CONFIG_PATH
+     first. Nothing in this folder names a directory.
+
+  =============================================================================
+  KEY BINDINGS ADDED BY US
+  =============================================================================
+    W-space     open or close the Aquarius search palette
+    W-Return    a terminal
+    W-S-e       leave the desktop and return to the login screen
+
+  "W" is labwc's letter for Super (the Windows / Command key). Its other
+  modifiers are S=shift, C=control, A=alt.
+
+  Format reference: labwc-config(5) and labwc-actions(5), both installed on
+  this machine — type `man 5 labwc-config`.
+  =============================================================================
+-->
+
+<labwc_config>
+
+  <core>
+    <!-- Let the window manager draw title bars rather than each application
+         drawing its own. Fewer competing visual languages on screen. -->
+    <decoration>server</decoration>
+    <gap>8</gap>
+  </core>
+
+  <keyboard>
+
+    <!-- labwc's own defaults: Alt+Tab, Alt+F4, Super+a maximise, Super+arrows
+         snap, plus the volume and brightness keys. Keeping them means this file
+         only has to describe what is different about Aquarius. -->
+    <default />
+
+    <!--
+      The Aquarius search palette.
+
+      This does not launch a program. It sends a message to the shell that is
+      ALREADY running, telling it to show or hide its search box.
+      `qs ipc call <target> <function>` is Quickshell's own mechanism for that.
+      The target "search" and its function "toggle" are declared by the
+      IpcHandler in the shell's components/search/FlowSearch.qml.
+
+      Which shell instance gets the message is not an argument: `qs ipc` picks
+      the instance running the configuration named by QS_CONFIG_PATH, which
+      labwc inherited from the launcher. (Corrected on the bench 2026-09-01 —
+      an earlier version passed "aquarius-shell" as a first positional, which
+      `qs` reads as the TARGET name, and no such target exists. It would have
+      silently done nothing.)
+
+      If the palette does not open, ask the running shell what it offers:
+          qs ipc show
+    -->
+    <keybind key="W-space">
+      <action name="Execute" command="qs ipc call search toggle" />
+    </keybind>
+
+    <!--
+      A terminal, always.
+
+      This is the escape hatch, and it is why it is bound explicitly rather than
+      left to labwc's defaults: if the bar fails, the dialog that appears tells
+      the person to press Super+Return and type `qs`. That instruction has to be
+      true even on a desktop where nothing else is working.
+
+      ptyxis is Fedora's terminal and is part of the AquariusOS image.
+    -->
+    <keybind key="W-Return">
+      <action name="Execute" command="ptyxis" />
+    </keybind>
+
+    <!-- Leave the desktop and go back to the login screen, where GNOME is one
+         click away. This is the "get me out of here" key. -->
+    <keybind key="W-S-e">
+      <action name="Exit" />
+    </keybind>
+
+  </keyboard>
+
+</labwc_config>

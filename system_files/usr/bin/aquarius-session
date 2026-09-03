@@ -1,0 +1,337 @@
+#!/usr/bin/bash
+# =============================================================================
+# aquarius-session — start the Aquarius Desktop
+# =============================================================================
+# WHAT THIS IS, IN ONE SENTENCE
+#   This is the program the login screen runs when you pick "Aquarius Desktop".
+#   It starts a window manager, sets up the environment the rest of the desktop
+#   needs, and the window manager starts the Aquarius Shell inside it.
+#
+# THE SAFETY STORY, WHICH DOES NOT BEND
+#   AquariusOS also has GNOME, and GNOME is untouched by everything here. If the
+#   Aquarius Desktop fails to start, you land back at the login screen, pick
+#   GNOME, and your machine works exactly as it did before. Nothing in this file
+#   can take that away from you.
+#
+# THE THREE THINGS THIS SESSION IS MADE OF
+#   1. labwc — the window manager. It draws the title bars, moves windows
+#      around, and owns the keyboard shortcuts. Configuration lives in
+#      /usr/share/aquarius/labwc/.
+#   2. The Aquarius Shell — the bar at the top, the dock, the search palette,
+#      the quick settings and the notifications. It is QML, run by Quickshell's
+#      `qs` command. The WINDOW MANAGER starts it, not this script, because a
+#      bar started before the window manager would have no screen to attach
+#      itself to.
+#   3. The portals — which we do NOT start. They are started on demand by D-Bus.
+#      All this script has to do is make sure the environment they read is
+#      correct before anything asks for one. That is the XDG_CURRENT_DESKTOP
+#      line below, and it is the single most load-bearing line in this file.
+#
+# WHEN IT GOES WRONG
+#   A failing login session normally gives you a black screen and no
+#   explanation. So everything this script prints is also written to a file:
+#
+#       ~/.local/state/aquarius-session/session.log
+#
+#   Read that file first. Always. The previous run is kept as session.log.1,
+#   which is exactly enough to compare "the time it worked" against "the time
+#   it did not".
+#
+# WHERE THIS FILE CAME FROM
+#   The aquarius-shell repository at github.com/stoneharborent/aquarius-shell
+#   carries the original, written for installing a session by hand onto a
+#   machine without rebuilding it. This is the operating-system copy: same
+#   design, same log, same loud failures, but the paths are fixed because in an
+#   image-based OS they cannot move, and the niri half is gone because
+#   AquariusOS ships labwc (standing decision 2b — labwc 0.20 has HDR and
+#   colour management today and niri does not).
+#
+#   Plain-language walkthrough: /usr/share/doc — or, in the source repository,
+#   docs/restart/aquarius-session.md.
+# =============================================================================
+
+set -euo pipefail
+
+# -----------------------------------------------------------------------------
+# Fixed locations. On an image-based operating system these cannot move, so
+# unlike the repository's version there is no searching for them.
+# -----------------------------------------------------------------------------
+AQ_LABWC_CONFIG_DIR="/usr/share/aquarius/labwc"
+AQ_SHELL_DIR="/usr/share/aquarius/shell"
+
+# -----------------------------------------------------------------------------
+# The log. Everything below this point goes to the terminal AND to the file.
+#
+# AQ_LOG is EXPORTED on purpose, and it is load-bearing.
+#
+# The window manager starts the shell, not this script — and a compositor throws
+# its children's output away. On the first real boot of this session, on
+# 2026-09-02, the shell crashed at start-up and the log contained nothing but
+# the compositor's own lines. Not one word from the thing that failed.
+#
+# The fix is that the autostart file appends the shell's output to THIS file, by
+# name. Exporting the variable is what lets it do that without writing a path of
+# its own.
+# -----------------------------------------------------------------------------
+AQ_STATE_DIR="${XDG_STATE_HOME:-${HOME}/.local/state}/aquarius-session"
+AQ_LOG="${AQ_STATE_DIR}/session.log"
+export AQ_LOG
+
+mkdir -p "${AQ_STATE_DIR}"
+if [ -f "${AQ_LOG}" ]; then
+    mv -f "${AQ_LOG}" "${AQ_LOG}.1"
+fi
+
+exec > >(tee -a "${AQ_LOG}") 2>&1
+
+echo "============================================================"
+echo "  Aquarius Desktop"
+echo "  $(date)"
+echo "  log: ${AQ_LOG}"
+echo "============================================================"
+if [ -r /usr/share/aquarius/shell-build.txt ]; then
+    sed 's/^/  /' /usr/share/aquarius/shell-build.txt
+fi
+if [ -r /usr/share/aquarius/quickshell-build.txt ]; then
+    sed 's/^/  /' /usr/share/aquarius/quickshell-build.txt
+fi
+
+# -----------------------------------------------------------------------------
+# Failing loudly.
+#
+# `die` prints a heading, the reason, and what to do about it — then stops. It
+# is deliberately shouty, because the only person who will ever read it is
+# somebody staring at a login screen wondering what happened.
+# -----------------------------------------------------------------------------
+die() {
+    echo ""
+    echo "------------------------------------------------------------"
+    echo "  THE AQUARIUS DESKTOP COULD NOT START"
+    echo "------------------------------------------------------------"
+    echo "  ${1}"
+    echo ""
+    shift
+    for aq_line in "$@"; do
+        echo "  ${aq_line}"
+    done
+    echo ""
+    echo "  Nothing has been changed on your machine. Log in with GNOME"
+    echo "  and everything works as before."
+    echo ""
+    echo "  This message is also in:"
+    echo "    ${AQ_LOG}"
+    echo "------------------------------------------------------------"
+    exit 1
+}
+
+# -----------------------------------------------------------------------------
+# Is everything here?
+#
+# These checks happen BEFORE anything is started, so a missing piece is a clear
+# sentence rather than a black screen. On AquariusOS every one of these is part
+# of the operating system image, so a failure here does not mean "you forgot to
+# install something" — it means the image itself is wrong, and that is worth
+# saying differently from the way the repository's version says it.
+# -----------------------------------------------------------------------------
+echo ""
+echo "=== Checking the pieces are in the image ==="
+
+aq_missing=""
+aq_need() {
+    if command -v "$1" > /dev/null 2>&1; then
+        echo "  found    $1"
+    else
+        echo "  MISSING  $1 — $2"
+        aq_missing="${aq_missing} $1"
+    fi
+}
+
+aq_need labwc "the window manager"
+aq_need qs "the Quickshell runtime, which draws the bar"
+
+# Deliberately NOT checked here: dbus-daemon. Fedora's session bus is normally
+# dbus-broker, and a machine can have a perfectly working bus with no program
+# called dbus-daemon anywhere on it. The right question is "is there a bus", not
+# "is there a particular program", and that question is asked further down.
+
+if [ -n "${aq_missing}" ]; then
+    die "The AquariusOS image is missing:${aq_missing}" \
+        "These are built into the operating system, so this is not something" \
+        "you can fix by installing a package — the image is wrong." \
+        "" \
+        "Log in with GNOME, and report which names are listed above."
+fi
+
+for aq_dir in "${AQ_LABWC_CONFIG_DIR}" "${AQ_SHELL_DIR}"; do
+    if [ -d "${aq_dir}" ]; then
+        echo "  found    ${aq_dir}"
+    else
+        die "The folder ${aq_dir} is not in this image." \
+            "The Aquarius Desktop is made of two folders and two programs, and" \
+            "one of the folders is not here. Log in with GNOME."
+    fi
+done
+
+# gdbus is how the shell asks the system whether it prefers a light or a dark
+# appearance. Its absence is NOT fatal — the shell simply stays on Ice, its
+# light default. Say so rather than failing.
+if command -v gdbus > /dev/null 2>&1; then
+    echo "  found    gdbus"
+else
+    echo "  note     gdbus is missing; the shell will stay on the Ice light theme."
+fi
+
+# -----------------------------------------------------------------------------
+# Does `qs` actually RUN?
+#
+# THIS CHECK EXISTS BECAUSE OF THE FIRST REAL BOOT, 2026-09-02.
+#
+# The check above only asks "is there a file called qs". There was. It could not
+# start: it had been built against a different version of Qt than the machine
+# had, and it died on its first instruction with a symbol lookup error. The
+# session came up, ran for eighteen minutes, and there was no bar and no
+# explanation, because a program that dies before its first line of output is
+# invisible to a check that only looks for its name.
+#
+# So: run it. `qs --version` loads every Qt library and then prints one line.
+#
+# On AquariusOS this should now be impossible to fail — Quickshell is COMPILED
+# INSIDE the image, against the image's own Qt, precisely so the two can never
+# drift apart. The check stays anyway. It costs a tenth of a second and it is
+# the difference between a sentence and a black screen.
+# -----------------------------------------------------------------------------
+echo ""
+echo "=== Checking the shell runtime can actually start ==="
+
+if command -v timeout > /dev/null 2>&1; then
+    aq_qs_runner=(timeout 10 qs --version)
+else
+    aq_qs_runner=(qs --version)
+fi
+
+aq_qs_status=0
+aq_qs_output="$("${aq_qs_runner[@]}" 2>&1)" || aq_qs_status=$?
+
+if [ "${aq_qs_status}" -eq 0 ]; then
+    echo "  runs     qs — ${aq_qs_output}"
+else
+    die "The Quickshell runtime (qs) is installed but cannot start." \
+        "Running 'qs --version' failed with exit code ${aq_qs_status} and said:" \
+        "" \
+        "  ${aq_qs_output}" \
+        "" \
+        "If that message mentions 'undefined symbol' or 'symbol lookup error'," \
+        "something has layered a different build of quickshell on top of the" \
+        "one in the image. Undo it:" \
+        "" \
+        "  rpm-ostree uninstall quickshell" \
+        "  systemctl reboot" \
+        "" \
+        "AquariusOS builds its own quickshell into the image on purpose, and a" \
+        "layered one will always be compiled against a different Qt."
+fi
+
+# -----------------------------------------------------------------------------
+# Is there a session bus and a runtime directory to hang everything off?
+# -----------------------------------------------------------------------------
+if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
+    die "XDG_RUNTIME_DIR is not set." \
+        "Wayland, D-Bus and the portals all keep their sockets in that folder," \
+        "so nothing can work without it. The login screen normally sets it, so" \
+        "seeing this usually means this script was run by hand from somewhere" \
+        "unusual rather than from the login screen."
+fi
+
+if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && [ ! -S "${XDG_RUNTIME_DIR}/bus" ]; then
+    die "There is no D-Bus session bus." \
+        "The portals, the system tray and the notification service are all" \
+        "D-Bus services. Without a bus, screen recording and file dialogs" \
+        "cannot work at all." \
+        "" \
+        "If you are starting this by hand from a text console, wrap it:" \
+        "  dbus-run-session -- aquarius-session"
+fi
+
+# -----------------------------------------------------------------------------
+# The environment.
+#
+# XDG_CURRENT_DESKTOP is the important one and it is worth understanding why.
+#
+# xdg-desktop-portal decides which back end answers "let me record the screen"
+# or "let me open a file" by reading a configuration file whose NAME comes from
+# this variable. It splits the value on colons, lowercases each name, and for
+# each one looks for <name>-portals.conf.
+#
+# So "Aquarius:wlroots" makes it look for aquarius-portals.conf first — which is
+# the file this image ships at /usr/share/xdg-desktop-portal/. Get this wrong
+# and screen recording silently does nothing: no error, no dialog, OBS just
+# shows an empty list of screens.
+#
+# The second name, "wlroots", is not decoration. labwc is built on the wlroots
+# library, xdg-desktop-portal-wlr's own metadata lists wlroots in its UseIn
+# field, and a good deal of third-party software keys off that word to mean
+# "this desktop speaks the wlr-* protocols".
+#
+# Source, verified: portals.conf(5), xdg-desktop-portal.
+# -----------------------------------------------------------------------------
+export XDG_SESSION_TYPE="wayland"
+export XDG_SESSION_DESKTOP="aquarius"
+export XDG_CURRENT_DESKTOP="Aquarius:wlroots"
+
+# Where the shell's QML lives. Everything downstream depends on this one line:
+# the autostart file starts the shell with a bare `qs`, and the Super+Space key
+# binding reaches the RUNNING shell with a bare `qs ipc call search toggle`.
+# Neither of them names a path, because both inherit this.
+export QS_CONFIG_PATH="${AQ_SHELL_DIR}"
+
+# Qt applications, including the shell, should talk Wayland directly rather than
+# going through XWayland.
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland}"
+
+# Deliberately NOT set: GDK_BACKEND. Setting it globally breaks the screencast
+# portal, and there is no upside.
+
+# -----------------------------------------------------------------------------
+# Hand the environment to systemd and D-Bus.
+#
+# Portals, the keyring and the tray are started ON DEMAND, by systemd's user
+# manager and by D-Bus — not by this script. They inherit the environment they
+# were given when the user session began, which was BEFORE the four exports
+# above. Telling them about the new values is this step, and skipping it is a
+# classic cause of "the file dialog does not open and nothing is logged".
+#
+# WAYLAND_DISPLAY does not exist yet — the window manager has not started. The
+# autostart file does a second pass once it does.
+# -----------------------------------------------------------------------------
+aq_push_env() {
+    if command -v dbus-update-activation-environment > /dev/null 2>&1; then
+        dbus-update-activation-environment --systemd "$@" 2> /dev/null || true
+    else
+        systemctl --user import-environment "$@" 2> /dev/null || true
+    fi
+}
+aq_push_env XDG_SESSION_TYPE XDG_SESSION_DESKTOP XDG_CURRENT_DESKTOP \
+    QS_CONFIG_PATH QT_QPA_PLATFORM AQ_LOG
+
+echo ""
+echo "=== Starting ==="
+echo "  window manager: labwc  ($(labwc --version 2>&1 | head -1))"
+echo "  shell:          ${AQ_SHELL_DIR}"
+echo "  labwc config:   ${AQ_LABWC_CONFIG_DIR}"
+echo "  desktop name:   ${XDG_CURRENT_DESKTOP}"
+echo ""
+
+# -----------------------------------------------------------------------------
+# Hand over to the window manager. It starts the shell itself.
+#
+# -C points labwc at a configuration DIRECTORY; it reads rc.xml, autostart,
+# shutdown and environment from there.
+#
+# Deliberately NOT using labwc's -S/--session flag, which would shut the whole
+# desktop down the moment the command it started exits. That would turn a crash
+# of the bar into a logout, and a bar falling over should not log you out.
+#
+# `exec` replaces this script with labwc, so when labwc exits — which is what
+# Super+Shift+E does — this program ends too, and the login screen comes back.
+# -----------------------------------------------------------------------------
+exec labwc -C "${AQ_LABWC_CONFIG_DIR}"

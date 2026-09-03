@@ -1,0 +1,82 @@
+# =============================================================================
+# labwc autostart — what runs once the window manager is up
+# =============================================================================
+# labwc runs this file as a shell script after it has read rc.xml and the
+# `environment` file next to this one. By that point WAYLAND_DISPLAY exists,
+# which is why the shell can only be started from here and not from
+# /usr/bin/aquarius-session.
+#
+# NO MACHINE-SPECIFIC PATHS IN THIS FILE. The shell is started with a bare `qs`,
+# which finds its configuration through QS_CONFIG_PATH, exported by
+# /usr/bin/aquarius-session before labwc was launched. Same for $AQ_LOG.
+#
+# (This file is the AquariusOS copy of the one in the aquarius-shell repository.
+# The niri equivalent of every line here is in that repository's
+# session/niri/config.kdl, which AquariusOS does not ship.)
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# 1. Tell systemd and D-Bus that a screen now exists.
+#
+# The launcher already pushed XDG_CURRENT_DESKTOP and friends across, but
+# WAYLAND_DISPLAY did not exist yet — labwc had not started. Anything launched
+# on demand from now on (the portals, the keyring, a Flatpak's file dialog)
+# needs it, and a portal that does not know which Wayland display to talk to
+# fails silently rather than loudly.
+# ---------------------------------------------------------------------------
+if command -v dbus-update-activation-environment > /dev/null 2>&1; then
+    dbus-update-activation-environment --systemd WAYLAND_DISPLAY DISPLAY 2>/dev/null || true
+else
+    systemctl --user import-environment WAYLAND_DISPLAY DISPLAY 2>/dev/null || true
+fi
+
+# ---------------------------------------------------------------------------
+# 2. Tell systemd the graphical session has begun.
+#
+# Portals, notification daemons and keyring agents are systemd user services
+# that say "start me with graphical-session.target". labwc ships
+# labwc-session.target, which binds to that target, but labwc does not start it
+# itself — starting it is opt-in, and this line is the opt-in.
+#
+# Without it the portals may never start, and screen recording and file dialogs
+# quietly do nothing.
+# ---------------------------------------------------------------------------
+systemctl --user --no-block start labwc-session.target 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+# 3. The wallpaper.
+#
+# A window manager on its own paints the screen a flat grey. swaybg puts the
+# Aquarius wallpaper behind everything, which matters more than it sounds: the
+# difference between "my computer is broken" and "my computer is starting" is
+# often just whether the screen looks deliberate.
+#
+# This is here rather than in the shell because a wallpaper should survive the
+# shell crashing. If the bar dies you should still be looking at your desktop.
+#
+# --mode fill crops to the screen rather than stretching; -c is the colour
+# behind the image while it loads, and it is the Midnight void from the boot
+# splash so the hand-off from Plymouth has no flash of grey.
+# ---------------------------------------------------------------------------
+if [ -r /usr/share/backgrounds/aquarius/the-pour-ice-3840x2160.png ]; then
+    swaybg -c '#06070C' \
+        -i /usr/share/backgrounds/aquarius/the-pour-ice-3840x2160.png \
+        -m fill >> "${AQ_LOG:-/dev/null}" 2>&1 &
+fi
+
+# ---------------------------------------------------------------------------
+# 4. The Aquarius Shell.
+#
+# Started through a helper rather than directly, for one reason: if the shell
+# fails, somebody has to say so on the screen. The helper runs it, logs it, and
+# if it dies puts a dialog in front of you explaining what happened and how to
+# get out. /usr/libexec/aquarius-shell-start is worth reading — it is short.
+#
+# If the shell crashes, labwc keeps running and you keep your windows. You get a
+# desktop with no bar, which is ugly but survivable, and typing `qs` in a
+# terminal brings it back. That is deliberately better than the alternative,
+# where a broken bar logs you out — and it is why aquarius-session starts labwc
+# without its -S/--session flag, which would tie the window manager's life to
+# the shell's.
+# ---------------------------------------------------------------------------
+/usr/libexec/aquarius-shell-start &
