@@ -17,15 +17,18 @@
 # WHY THE NAME STARTS WITH "zz1"
 #
 # All the files in this folder are read in alphabetical order and the LAST one
-# to mention a setting wins. Bazzite ships its own defaults in files starting
-# "zz0-" (zz0-00, zz0-01, … zz0-20). "zz1" sorts after every one of those, so
-# AquariusOS gets the last word on the handful of things we care about, and
-# Bazzite keeps the last word on everything we do not mention. That is
-# deliberate: their file is full of good gaming decisions we have no reason to
-# re-make.
+# to mention a setting wins. Fedora and the odd package drop their own defaults
+# in here under ordinary names; "zz1" sorts after all of them, so AquariusOS
+# gets the last word on the handful of things we care about and Fedora keeps
+# the last word on everything we do not mention.
 #
-#   ⚠️ Do NOT rename these files to sort before Bazzite's. Everything in them
-#   would silently stop working, with no error anywhere.
+#   ⚠️ Do NOT rename these files to sort earlier. Everything in them would
+#   silently stop working, with no error anywhere.
+#
+# (On the Bazzite line this prefix was fighting a specific set of files called
+# "zz0-…". Those are gone with Bazzite. The prefix stays because the reasoning
+# still holds and because renaming settings files is exactly the kind of change
+# that breaks quietly.)
 #
 # HOW TO CHANGE SOMETHING HERE
 #
@@ -54,10 +57,18 @@
 # "Midnight". Royce chose Ice as the main theme on 2026-08-31, which makes
 # AquariusOS a LIGHT-first desktop — genuinely unusual, and the point.
 #
-# 'default' is GNOME's word for the light appearance. ('prefer-dark' is what
-# Bazzite sets, and this line is what overrides it.) Anyone who wants dark
+# 'default' is GNOME's word for the light appearance. Anyone who wants dark
 # flips one switch in Settings > Appearance and gets Midnight; the dark
 # wallpaper further down is already waiting for them.
+#
+# ⚠️ ON AN EXISTING ACCOUNT THIS LINE CAN LOOK LIKE IT DID NOTHING. A default
+# only applies to a setting nobody has ever touched. An account that has been
+# migrated from another desktop usually HAS touched it — KDE writes this
+# setting when it syncs its GTK appearance — so it comes up dark and this file
+# is not at fault. One command fixes it, for that account:
+#     gsettings reset org.gnome.desktop.interface color-scheme
+# It happened to Royce on the first bench boot (2026-08-31). New accounts are
+# light.
 color-scheme='default'
 
 # The accent colour — the blue on selected text, focused fields and switches.
@@ -70,7 +81,7 @@ color-scheme='default'
 # library every GTK app on the machine draws itself with, forever).
 #
 # So: 'blue', which is #3584e4. It is the nearest of the nine to Aquarius Blue
-# and it is a good match. Bazzite's default is 'purple'; this line replaces it.
+# and it is a good match.
 accent-color='blue'
 
 # The three AquariusOS typefaces. All three already ship in the image —
@@ -135,30 +146,31 @@ secondary-color='#111A2B'
 # ==============================================================================
 # THINGS WE DELIBERATELY DO NOT SET, AND WHY
 # ==============================================================================
-# Every setting NOT mentioned above keeps whatever Bazzite chose for it. That is
-# the point of sorting after them. The ones worth naming, so nobody wonders
-# whether they were forgotten:
+# Every setting NOT mentioned above keeps Fedora's own answer. The ones worth
+# naming, so nobody wonders whether they were forgotten:
 #
-#   enable-hot-corners (false)   Bazzite turns GNOME's top-left hot corner off
-#                                and ships the "hotedge" extension instead,
-#                                which puts the same gesture along the BOTTOM
-#                                edge of the screen. That is a better fit for a
-#                                machine with a dock at the bottom, which ours
-#                                has, so it stays exactly as they set it.
+#   enable-hot-corners           Left at GNOME's own default. On the Bazzite
+#                                line this was switched off because Bazzite
+#                                shipped an extension that moved the same
+#                                gesture to the bottom edge; that extension is
+#                                not packaged by Fedora and is not here, so
+#                                turning the corner off now would remove a
+#                                gesture and replace it with nothing.
 #
-#   button-layout                Bazzite adds minimise and maximise buttons to
-#                                every title bar (stock GNOME has only a close
-#                                button). Royce is coming from KDE, where those
-#                                buttons are always there. Left alone.
-#
-#   sound theme-name ('steam')   Bazzite's gaming sound theme. Not our call to
-#                                make and not worth a fight.
+#   button-layout                Stock GNOME title bars have only a close
+#                                button. Royce is coming from KDE, where
+#                                minimise and maximise are always there, so
+#                                this is a real candidate for a future default
+#                                — but it is a change to how windows behave,
+#                                not how they look, and it belongs in a round
+#                                of decisions made on the bench rather than
+#                                slipped in here.
 #
 #   any GTK or GNOME Shell THEME No shell theme, no GTK theme, no icon-theme
-#                                override. The whole posture of the GNOME line
-#                                is to work WITH GNOME's grain rather than
-#                                repaint it: accent, wallpaper, fonts and a
-#                                small set of extensions, and then stop. Every
-#                                theme we do not ship is a theme that cannot
-#                                break on the next GNOME release.
-#                                Full reasoning: docs/gnome-variants.md.
+#                                override. The whole posture is to work WITH
+#                                GNOME's grain rather than repaint it: accent,
+#                                wallpaper, fonts and a small set of
+#                                extensions, and then stop. Every theme we do
+#                                not ship is a theme that cannot break on the
+#                                next GNOME release.
+#                                Full reasoning: docs/restart/README.md.

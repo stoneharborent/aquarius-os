@@ -4,14 +4,14 @@
 # Read the header of zz1-aquarius-10-look.gschema.override first. It explains
 # what an override file is and why these are only defaults a user always beats.
 #
-# The dock is the Dash to Dock extension. Bazzite does not ship it, so we bake
-# it into the image ourselves from a pinned release — see
-# build_files/gnome-extensions.sh for the download, the checksum and the version
-# it is pinned to. It is switched on in the file before this one.
+# The dock is the Dash to Dock extension, installed from Fedora's own package
+# (gnome-shell-extension-dash-to-dock, version 105 on Fedora 44) in
+# build_files/40-gnome-desktop.sh. It is switched on in the file before this
+# one.
 #
 # ⚠️ EVERY KEY NAME BELOW WAS READ OUT OF THE EXTENSION'S OWN SETTINGS FILE
-# (schemas/org.gnome.shell.extensions.dash-to-dock.gschema.xml in the release we
-# pin), NOT guessed and NOT copied off a forum. That matters more here than
+# (/usr/share/glib-2.0/schemas/org.gnome.shell.extensions.dash-to-dock.gschema.xml,
+# as installed by that package), NOT guessed and NOT copied off a forum. That matters more here than
 # almost anywhere else in the repo: a misspelled key in an override file is not
 # an error, it is silence. glib-compile-schemas would reject an unknown key with
 # --strict, but the setting would simply never apply, the dock would come up
@@ -85,9 +85,9 @@ icon-size-fixed=false
 #
 # show-trash and show-mounts are LEFT AT THEIR DEFAULTS (both on) on purpose.
 # Drives appearing somewhere obvious matters a lot on a machine you plug camera
-# cards into all day, and until the desktop-drive-icons work is redone for GNOME
-# (a G2 item — docs/gnome-variants.md) the dock is the only place they show up
-# at all. Not set here, so not mentioned here.
+# cards into all day, and GNOME has no desktop icons at all, so the dock is the
+# only place a mounted card shows up without opening Files. Not set here, so
+# not mentioned here.
 show-show-apps-button=true
 show-apps-at-top=false
 

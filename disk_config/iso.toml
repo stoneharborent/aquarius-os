@@ -1,36 +1,47 @@
-# ⚠️ CURRENTLY UNUSED — kept on purpose, nothing reads this file today.
+# ==============================================================================
+# AquariusOS installer ISO
+# ==============================================================================
+# This file configures the installer that ends up on the USB stick. It is read
+# by bootc-image-builder, which is what .github/workflows/build-next-iso.yml
+# runs.
 #
-# This file only means something to bootc-image-builder, and bootc-image-builder
-# cannot build ISOs from Bazzite-based images right now. That's a known bug
-# upstream: https://github.com/osbuild/bootc-image-builder/issues/1188
-# (it fails while resolving packages, because it can't read the terra repo's GPG
-# keys through file:// paths).
+# ⚠️ THIS FILE IS LIVE AGAIN, AND IT WAS NOT ON THE BAZZITE LINE.
 #
-# So "anaconda-iso" was removed from .github/workflows/build-disk.yml, and
-# AquariusOS installer ISOs are now built by the separate
-# "Build AquariusOS ISO (Titanoboa)" workflow (.github/workflows/build-iso.yml),
-# which does not read this file at all.
+# On `main` this same file carried a warning saying it was unused, because
+# bootc-image-builder could not build an ISO from a Bazzite-based image — it
+# choked on the Terra repository's signing keys
+# (https://github.com/osbuild/bootc-image-builder/issues/1188). We worked around
+# it with Titanoboa, Universal Blue's live-ISO builder.
 #
-# Leave this file here. If issue 1188 is fixed, adding "anaconda-iso" back to
-# the build-disk.yml matrix makes it live again with no other changes.
+# That bug was about Bazzite's extra software sources. AquariusOS is built on
+# plain Fedora now and has none of them, so the ordinary Fedora installer works
+# and Titanoboa is gone from this branch.
+#
 # ------------------------------------------------------------------------------
-# AquariusOS installer ISO configuration (KDE desktop — matches our Bazzite base).
+# WHAT AN "ANACONDA ISO" ACTUALLY DOES
+# ------------------------------------------------------------------------------
+# It is a normal Fedora installer that, instead of installing packages, installs
+# a whole image. The %post script below is the entire mechanism: when the
+# installer has finished writing the system to disk, it runs
+# `bootc switch`, which points the freshly installed machine at our published
+# image on GitHub as the thing it should be, and should keep updating from.
 #
-# This is the file the ISO build uses. It was created from iso-kde.toml, which is
-# the upstream template's KDE variant. Both the Justfile (`just build-iso`) and
-# .github/workflows/build-disk.yml look for THIS filename (iso.toml).
-#
-# The kickstart line below tells the installer which published image to install onto the
-# machine. The owner segment must be a real GitHub owner (stoneharborent) — if it is ever
-# empty ("ghcr.io//aquarius-os"), the ISO builds fine but installs a malformed reference.
+# ⚠️ The owner segment must be a real GitHub owner. If it is ever empty the
+# reference becomes "ghcr.io//aquarius-os-next", the ISO builds perfectly, and
+# the machine it installs cannot update — which is discovered weeks later.
+# ==============================================================================
 
 [customizations.installer.kickstart]
 contents = """
 %post
-bootc switch --mutate-in-place --transport registry ghcr.io/stoneharborent/aquarius-os:latest
+bootc switch --mutate-in-place --transport registry ghcr.io/stoneharborent/aquarius-os-next:latest
 %end
 """
 
+# The parts of the installer we want. Everything not listed is switched off,
+# which is how the installer stays short: no subscription step (that is a Red
+# Hat Enterprise Linux thing and means nothing here), no software selection
+# (there is nothing to select — the image is the software).
 [customizations.installer.modules]
 enable = [
   "org.fedoraproject.Anaconda.Modules.Storage",

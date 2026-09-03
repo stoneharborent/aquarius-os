@@ -1,0 +1,586 @@
+---
+# ==============================================================================
+# Build AquariusOS (the Fedora bootc line)
+# ==============================================================================
+# This is what turns the recipe into an operating system. It runs on GitHub's
+# computers, so nobody needs a Linux machine to build AquariusOS.
+#
+# For each of the two images it:
+#   1. builds it from the Containerfile
+#   2. INSPECTS THE FINISHED IMAGE and refuses to publish it if it is wrong
+#   3. pushes it to GitHub's container registry
+#   4. signs it, so a machine can prove an update really came from us
+#
+# ⚠️ THIS WORKFLOW ONLY EXISTS ON THE `restart/fedora-bootc` BRANCH, and it only
+# builds from that branch. The Bazzite line has its own workflow on `main` and
+# the two never touch. Nothing here is ever merged into `main`.
+#
+# ⚠️ STEP 2 IS THE POINT. It would be easy to build an image, see no red text,
+# and publish something that boots to a black screen. Every check in the verify
+# job reads the ACTUAL CONTENTS of the finished image — the text in
+# /etc/os-release, the value gsettings reports, the answer rpm gives, the
+# checksum of a picture. Never a file's timestamp: the tooling that packages a
+# bootable image flattens every clock, so a timestamp check passes forever,
+# including when the step it was checking did nothing. We learned that on
+# 2026-08-31 and it is now a rule.
+# ==============================================================================
+
+name: Build AquariusOS (next)
+
+on:
+  push:
+    branches:
+      - restart/fedora-bootc
+    paths-ignore:
+      - '**/*.md'
+  workflow_dispatch:
+
+env:
+  IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  build_push:
+    name: Build and publish (${{ matrix.variant }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: base
+            nvidia: 0
+          - variant: nvidia
+            nvidia: 1
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # GitHub's runners come with a lot of software we do not need, and the
+      # image being built is several gigabytes. Without this the build runs out
+      # of disk half way through, which produces a confusing error a long way
+      # from the real cause.
+      - name: Make room on the build machine
+        uses: ublue-os/remove-unwanted-software@cc0becac701cf642c8f0a6613bbdaf5dc36b259e # v9
+        with:
+          remove-codeql: true
+
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+
+      - name: Check the Justfile is valid
+        run: just check
+
+      - name: Work out what this image is called
+        run: |
+          set -euo pipefail
+          IMAGE_NAME="$(just variant-image-name ${{ matrix.variant }})"
+          NVIDIA="$(just variant-nvidia ${{ matrix.variant }})"
+          DEFAULT_TAG="$(just generate-default-tag)"
+
+          # Sanity check: the Justfile and the workflow matrix have to agree
+          # about whether this variant wants the NVIDIA driver. If they ever
+          # drift, one of the two images gets built as the other and is
+          # published under the wrong name.
+          if [ "${NVIDIA}" != "${{ matrix.nvidia }}" ]; then
+            echo "::error::The Justfile says variant '${{ matrix.variant }}' has NVIDIA=${NVIDIA}, but this workflow says ${{ matrix.nvidia }}. They must agree."
+            exit 1
+          fi
+
+          echo "IMAGE_NAME=${IMAGE_NAME,,}" >> "${GITHUB_ENV}"
+          echo "NVIDIA=${NVIDIA}" >> "${GITHUB_ENV}"
+          echo "DEFAULT_TAG=${DEFAULT_TAG}" >> "${GITHUB_ENV}"
+          echo "IMAGE_REGISTRY=${IMAGE_REGISTRY,,}" >> "${GITHUB_ENV}"
+
+      - name: Build the image
+        id: build-image
+        run: |
+          just build "${IMAGE_NAME}" "${DEFAULT_TAG}" "${NVIDIA}"
+
+      - name: How big is it
+        run: |
+          podman images --format '{{.Repository}}:{{.Tag}}  {{.Size}}'
+
+      # ------------------------------------------------------------------------
+      # THE VERIFICATION
+      # ------------------------------------------------------------------------
+      # Everything below runs INSIDE the finished image, reading it the way a
+      # booted machine would. `podman run --pull=never` guarantees it is looking
+      # at the thing that was just built and not at something downloaded.
+      - name: Check it says AquariusOS
+        run: |
+          set -euo pipefail
+          cat > /tmp/verify-identity.sh <<'SCRIPT'
+          set -u
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+          check() {   # check "<description>" "<pattern>" "<file>"
+            if grep -Eq "$2" "$3"; then ok "$1"; else bad "$1 — /$2/ not found in $3"; fi
+          }
+
+          echo "== /usr/lib/os-release =="
+          cat /usr/lib/os-release
+          echo "== /etc/os-release =="
+          ls -l /etc/os-release
+
+          echo "== checks =="
+          check "NAME is AquariusOS"            '^NAME="AquariusOS"$'            /etc/os-release
+          check "PRETTY_NAME is AquariusOS"     '^PRETTY_NAME="AquariusOS"$'     /etc/os-release
+          check "/usr/lib/os-release agrees"    '^NAME="AquariusOS"$'            /usr/lib/os-release
+          check "LOGO is ours"                  '^LOGO=aquarius-logo$'           /etc/os-release
+          check "DEFAULT_HOSTNAME is aquarius"  '^DEFAULT_HOSTNAME="aquarius"$'  /etc/os-release
+          check "VARIANT_ID is aquarius-os"     '^VARIANT_ID=aquarius-os$'       /etc/os-release
+          check "VARIANT names an edition"      '^VARIANT="(NVIDIA|Desktop) Edition"$' /etc/os-release
+          check "HOME_URL is our repository"    '^HOME_URL="https://github\.com/' /etc/os-release
+          check "ID stays fedora (deliberate)"  '^ID=fedora$'                    /etc/os-release
+
+          if grep -q 'Fedora Linux' /etc/os-release; then
+            bad "os-release still says 'Fedora Linux' somewhere"
+            grep -n 'Fedora Linux' /etc/os-release
+          else
+            ok "nothing in os-release still says 'Fedora Linux'"
+          fi
+
+          # The edition has to match the image being built, or we would publish
+          # the AMD image under the NVIDIA name.
+          if [ "${EXPECTED_NVIDIA}" = "1" ]; then
+            check "this is the NVIDIA edition" '^VARIANT="NVIDIA Edition"$' /etc/os-release
+          else
+            check "this is the Desktop edition" '^VARIANT="Desktop Edition"$' /etc/os-release
+          fi
+
+          INFO=/usr/share/aquarius/image-info.json
+          echo "== ${INFO} =="
+          cat "${INFO}" || echo "(missing!)"
+          if [ ! -f "${INFO}" ]; then
+            bad "${INFO} does not exist"
+          else
+            got_name="$(sed -n 's/.*"image-name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${INFO}" | head -1)"
+            if [ "${got_name}" = "${EXPECTED_IMAGE_NAME}" ]; then
+              ok "image-info.json says image-name is '${got_name}'"
+            else
+              bad "image-info.json says '${got_name}', expected '${EXPECTED_IMAGE_NAME}'"
+            fi
+          fi
+
+          if [ -s /usr/share/icons/hicolor/scalable/apps/aquarius-logo.svg ]; then
+            ok "the AquariusOS icon is installed"
+          else
+            bad "aquarius-logo.svg is missing — os-release names it and it is not there"
+          fi
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::This image does not identify as AquariusOS."
+            exit 1
+          fi
+          echo "All identity checks passed."
+          SCRIPT
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            -e EXPECTED_IMAGE_NAME="${IMAGE_NAME}" \
+            -e EXPECTED_NVIDIA="${NVIDIA}" \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-identity.sh
+
+      - name: Check the software is really in there
+        run: |
+          set -euo pipefail
+          cat > /tmp/verify-packages.sh <<'SCRIPT'
+          set -u
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+
+          echo "== the things this operating system cannot do without =="
+          for pkg in \
+            ffmpeg fdk-aac mesa-va-drivers-freeworld libheif-freeworld \
+            gstreamer1-plugins-bad-freeworld gstreamer1-plugins-ugly \
+            pipewire wireplumber NetworkManager NetworkManager-wifi bluez \
+            tuned-ppd fwupd linux-firmware plymouth btrfs-progs exfatprogs ntfs-3g \
+            gdm gnome-shell mutter gnome-control-center nautilus nautilus-python \
+            ptyxis firefox gnome-software \
+            gnome-shell-extension-dash-to-dock gnome-shell-extension-appindicator \
+            gnome-shell-extension-caffeine gnome-shell-extension-gsconnect \
+            xdg-desktop-portal-gnome xorg-x11-server-Xwayland flatpak \
+            podman toolbox distrobox \
+            rsms-inter-fonts jetbrains-mono-fonts
+          do
+            if rpm -q "${pkg}" > /dev/null 2>&1; then
+              ok "${pkg} $(rpm -q --queryformat '%{VERSION}-%{RELEASE}' "${pkg}")"
+            else
+              bad "${pkg} is NOT installed"
+            fi
+          done
+
+          echo "== ffmpeg can actually encode the patented formats =="
+          ffmpeg -hide_banner -encoders > /tmp/enc.txt 2>&1 || true
+          for enc in libx264 libx265 libfdk_aac; do
+            if grep -qw "${enc}" /tmp/enc.txt; then ok "ffmpeg has ${enc}"
+            else bad "ffmpeg has no ${enc} — this is Fedora's stripped build, not RPM Fusion's"; fi
+          done
+
+          echo "== the login screen and the boot target =="
+          if [ "$(systemctl get-default)" = "graphical.target" ]; then
+            ok "the machine boots to a desktop"
+          else
+            bad "default target is $(systemctl get-default) — this would boot to a text prompt"
+          fi
+          if systemctl is-enabled gdm.service > /dev/null 2>&1; then
+            ok "GDM is switched on"
+          else
+            bad "GDM is not switched on — nothing would draw a login screen"
+          fi
+          if [ -r /usr/share/wayland-sessions/gnome.desktop ]; then
+            ok "there is a GNOME session for GDM to offer"
+          else
+            bad "no /usr/share/wayland-sessions/gnome.desktop — the login screen would have nothing to log into"
+          fi
+
+          echo "== Flathub is configured in the image, not in /var =="
+          if [ -s /usr/share/flatpak/remotes.d/flathub.flatpakrepo ]; then
+            ok "Flathub is preconfigured"
+            grep -E '^(Url|Title)=' /usr/share/flatpak/remotes.d/flathub.flatpakrepo | sed 's/^/       /'
+          else
+            bad "Flathub is not preconfigured — the app store would be empty"
+          fi
+
+          echo "== the ingest helper =="
+          if /usr/bin/aq-ingest --version; then ok "aq-ingest runs"; else bad "aq-ingest does not run"; fi
+          if [ -r /usr/share/nautilus-python/extensions/aquarius_editor_ready.py ]; then
+            ok "the 'Make Editor-Ready' right-click menu is installed"
+          else
+            bad "the 'Make Editor-Ready' right-click menu is missing"
+          fi
+
+          echo "== exactly one kernel =="
+          ls -1 /usr/lib/modules/
+          n="$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d | wc -l)"
+          if [ "$n" -eq 1 ]; then ok "one kernel: $(ls -1 /usr/lib/modules/)"
+          else bad "$n kernels in the image — a bootable image must have exactly one"; fi
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::This image is missing software it cannot work without."
+            exit 1
+          fi
+          echo "All package checks passed."
+          SCRIPT
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-packages.sh
+
+      - name: Check the desktop comes up as Ice-light AquariusOS
+        run: |
+          set -euo pipefail
+          cat > /tmp/verify-look.sh <<'SCRIPT'
+          set -u
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+
+          SCHEMAS=/usr/share/glib-2.0/schemas
+          echo "== our settings files =="
+          ls -l "${SCHEMAS}"/zz1-aquarius-* || echo "(none!)"
+
+          for f in zz1-aquarius-10-look zz1-aquarius-20-shell zz1-aquarius-30-dash-to-dock; do
+            if [ -r "${SCHEMAS}/${f}.gschema.override" ]; then ok "${f} is installed"
+            else bad "${SCHEMAS}/${f}.gschema.override is missing"; fi
+          done
+
+          # Ours must sort last, or somebody else's answer wins and every
+          # AquariusOS default is silently ignored.
+          first_ours="$(ls "${SCHEMAS}"/zz1-aquarius-*.gschema.override 2>/dev/null | sort | head -1)"
+          last_theirs="$(ls "${SCHEMAS}"/*.gschema.override 2>/dev/null | grep -v 'zz1-aquarius' | sort | tail -1)"
+          if [ -n "${last_theirs}" ]; then
+            if [ "$(printf '%s\n%s\n' "$(basename "${last_theirs}")" "$(basename "${first_ours}")" | sort | tail -1)" = "$(basename "${first_ours}")" ]; then
+              ok "our settings sort after everyone else's (last theirs: $(basename "${last_theirs}"))"
+            else
+              bad "$(basename "${last_theirs}") sorts after ours and would overwrite our defaults"
+            fi
+          else
+            ok "no other override files in the image — ours are the only ones"
+          fi
+
+          if [ -s "${SCHEMAS}/gschemas.compiled" ]; then
+            ok "the settings index exists"
+          else
+            bad "${SCHEMAS}/gschemas.compiled is missing — every AquariusOS default would be ignored"
+          fi
+
+          # ---------------------------------------------------------------
+          # THE CHECK THAT MATTERS: ask the finished image what its settings
+          # ARE, exactly as a brand-new user account will on first login.
+          # ---------------------------------------------------------------
+          echo "== reading the settings back out of the image =="
+          want() {   # want <group> <setting> <expected>
+            got="$(GSETTINGS_BACKEND=memory gsettings get "$1" "$2" 2>/dev/null || echo '<error>')"
+            if [ "${got}" = "$3" ]; then ok "$1 $2 = ${got}"
+            else bad "$1 $2 is ${got}, expected $3"; fi
+          }
+          want org.gnome.desktop.interface color-scheme "'default'"
+          want org.gnome.desktop.interface accent-color "'blue'"
+          want org.gnome.desktop.interface font-name "'Inter 11'"
+          want org.gnome.desktop.interface monospace-font-name "'JetBrains Mono 10'"
+          want org.gnome.desktop.background picture-options "'zoom'"
+          want org.gnome.shell.extensions.dash-to-dock dock-position "'BOTTOM'"
+          want org.gnome.shell.extensions.dash-to-dock dock-fixed "true"
+          want org.gnome.shell.extensions.dash-to-dock intellihide "false"
+
+          echo "  ---- for the log ----"
+          GSETTINGS_BACKEND=memory gsettings get org.gnome.desktop.background picture-uri || true
+          GSETTINGS_BACKEND=memory gsettings get org.gnome.desktop.background picture-uri-dark || true
+          GSETTINGS_BACKEND=memory gsettings get org.gnome.shell favorite-apps || true
+          GSETTINGS_BACKEND=memory gsettings get org.gnome.shell enabled-extensions || true
+
+          echo "== every pinned app really exists =="
+          GSETTINGS_BACKEND=memory gsettings get org.gnome.shell favorite-apps \
+            | tr -d "[]' " | tr ',' '\n' | grep -v '^$' > /tmp/favs.txt || true
+          while read -r fav; do
+            if [ -r "/usr/share/applications/${fav}" ]; then ok "dock: ${fav}"
+            else bad "dock: ${fav} is pinned but not installed"; fi
+          done < /tmp/favs.txt
+
+          echo "== every enabled extension really exists =="
+          GSETTINGS_BACKEND=memory gsettings get org.gnome.shell enabled-extensions \
+            | tr -d "[]' " | tr ',' '\n' | grep -v '^$' > /tmp/exts.txt || true
+          while read -r ext; do
+            if [ -r "/usr/share/gnome-shell/extensions/${ext}/metadata.json" ]; then ok "extension: ${ext}"
+            else bad "extension: ${ext} is switched on but not installed"; fi
+          done < /tmp/exts.txt
+
+          echo "== the wallpaper =="
+          for f in /usr/share/backgrounds/aquarius/the-pour-ice-3840x2160.png \
+                   /usr/share/backgrounds/aquarius/the-pour-midnight-3840x2160.png; do
+            if [ -s "$f" ]; then ok "$(basename "$f") ($(stat -c '%s' "$f") bytes)"
+            else bad "$f is missing — the desktop would come up a flat colour"; fi
+          done
+          if [ -r /usr/share/gnome-background-properties/aquarius.xml ]; then
+            ok "the wallpaper is listed in Settings > Appearance"
+          else
+            bad "/usr/share/gnome-background-properties/aquarius.xml is missing"
+          fi
+
+          echo "== the fonts are findable =="
+          for face in Inter "JetBrains Mono" Sora; do
+            if fc-list | grep -qi "${face}"; then ok "${face}"
+            else bad "${face} is not findable — the interface would fall back to a default"; fi
+          done
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::The AquariusOS look is not correctly applied in this image."
+            exit 1
+          fi
+          echo "All appearance checks passed."
+          SCRIPT
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-look.sh
+
+      # The two pictures on the Settings > About page are files we replace.
+      # Comparing their checksums against the ones in branding/ is the only way
+      # to know ours went in — the file names are Fedora's, so the page looks
+      # perfectly normal either way.
+      - name: Check the About page shows OUR logo
+        run: |
+          set -euo pipefail
+          LIGHT_SUM="$(sha256sum system_files/usr/share/aquarius/branding/aquarius-about-logo.png | awk '{print $1}')"
+          DARK_SUM="$(sha256sum system_files/usr/share/aquarius/branding/aquarius-about-logo-white.png | awk '{print $1}')"
+          echo "In the repository:"
+          echo "  light ${LIGHT_SUM}"
+          echo "  dark  ${DARK_SUM}"
+          cat > /tmp/verify-logos.sh <<'SCRIPT'
+          set -u
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+          got_light="$(sha256sum /usr/share/pixmaps/fedora_logo_med.png | awk '{print $1}')"
+          got_dark="$(sha256sum /usr/share/pixmaps/fedora_whitelogo_med.png | awk '{print $1}')"
+          echo "In the image:"
+          echo "  light ${got_light}"
+          echo "  dark  ${got_dark}"
+          if [ "${got_light}" = "${WANT_LIGHT}" ]; then ok "the light About-page logo is ours"
+          else bad "the light About-page logo is NOT ours — the page still shows Fedora's"; fi
+          if [ "${got_dark}" = "${WANT_DARK}" ]; then ok "the dark About-page logo is ours"
+          else bad "the dark About-page logo is NOT ours — the page still shows Fedora's in dark mode"; fi
+
+          # And that the Settings app still reads those two files at all. If
+          # Fedora ever moves them, replacing them becomes a no-op that nothing
+          # would otherwise notice.
+          for want in /usr/share/pixmaps/fedora_logo_med.png /usr/share/pixmaps/fedora_whitelogo_med.png; do
+            if grep -a -q "${want}" /usr/bin/gnome-control-center; then
+              ok "the Settings app still reads ${want}"
+            else
+              bad "the Settings app no longer mentions ${want} — replacing it does nothing now"
+            fi
+          done
+
+          echo "== the login screen logo =="
+          if [ -s /usr/share/aquarius/branding/aquarius-logo.png ]; then ok "the login-screen logo file is installed"
+          else bad "/usr/share/aquarius/branding/aquarius-logo.png is missing"; fi
+          if grep -a -q '/usr/share/aquarius/branding/aquarius-logo.png' /etc/dconf/db/gdm; then
+            ok "the compiled login-screen settings really name our logo"
+          else
+            bad "/etc/dconf/db/gdm does not name our logo — the login screen would be blank there"
+          fi
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::This image is not wearing the AquariusOS logos."
+            exit 1
+          fi
+          echo "All branding checks passed."
+          SCRIPT
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            -e WANT_LIGHT="${LIGHT_SUM}" \
+            -e WANT_DARK="${DARK_SUM}" \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-logos.sh
+
+      - name: Check the NVIDIA driver
+        if: matrix.nvidia == 1
+        run: |
+          set -euo pipefail
+          cat > /tmp/verify-nvidia.sh <<'SCRIPT'
+          set -u
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+
+          echo "== the driver packages =="
+          for pkg in kmod-nvidia nvidia-driver egl-wayland nvidia-container-toolkit; do
+            if rpm -q "${pkg}" > /dev/null 2>&1; then
+              ok "${pkg} $(rpm -q --queryformat '%{VERSION}-%{RELEASE}' "${pkg}")"
+            else
+              bad "${pkg} is NOT installed"
+            fi
+          done
+
+          # The kernel module and the driver come from the same source and MUST
+          # be the same version. A mismatch is the classic black screen.
+          k="$(rpm -q --queryformat '%{VERSION}' kmod-nvidia 2>/dev/null || echo none)"
+          d="$(rpm -q --queryformat '%{VERSION}' nvidia-driver 2>/dev/null || echo none)"
+          if [ "$k" = "$d" ] && [ "$k" != "none" ]; then
+            ok "kernel module and driver are both version ${k}"
+          else
+            bad "kernel module is ${k} but the driver is ${d}"
+          fi
+
+          # And the module file has to be filed under the kernel that is
+          # actually in this image, not the one it was built on.
+          KERNEL="$(rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core)"
+          echo "== kernel in this image: ${KERNEL} =="
+          ls -1 /usr/lib/modules/
+          if compgen -G "/usr/lib/modules/${KERNEL}/extra/nvidia*" > /dev/null; then
+            ok "the NVIDIA modules are filed under ${KERNEL}"
+            ls -l /usr/lib/modules/"${KERNEL}"/extra/nvidia* | sed 's/^/       /'
+          else
+            bad "no nvidia* modules under /usr/lib/modules/${KERNEL}/extra — the driver would not load"
+            find /usr/lib/modules -name 'nvidia*' | head -20
+          fi
+
+          echo "== boot options =="
+          cat /usr/lib/bootc/kargs.d/10-aquarius-nvidia.toml || echo "(missing!)"
+          if grep -q 'nvidia-drm.modeset=1' /usr/lib/bootc/kargs.d/10-aquarius-nvidia.toml 2>/dev/null; then
+            ok "nvidia-drm.modeset=1 is set — Wayland will start"
+          else
+            bad "nvidia-drm.modeset=1 is not set — a Wayland desktop on NVIDIA would not start"
+          fi
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::The NVIDIA layer in this image is not correct."
+            exit 1
+          fi
+          echo "All NVIDIA checks passed."
+          SCRIPT
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-nvidia.sh
+
+      # And the opposite: the AMD/Intel image must NOT have picked up the
+      # NVIDIA driver. If the conditional-stage trick in the Containerfile ever
+      # breaks, this is what notices.
+      - name: Check the AMD/Intel image has no NVIDIA driver in it
+        if: matrix.nvidia == 0
+        run: |
+          set -euo pipefail
+          podman run --rm --pull=never \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" -c '
+              if rpm -q kmod-nvidia > /dev/null 2>&1; then
+                echo "::error::The AMD/Intel image contains the NVIDIA kernel module. The Containerfile stage selection is broken."
+                exit 1
+              fi
+              echo "  OK   no NVIDIA driver on the AMD/Intel image (correct)"
+            '
+
+      # ------------------------------------------------------------------------
+      # PUBLISHING
+      # ------------------------------------------------------------------------
+      - name: Work out the tags to publish under
+        id: tags
+        run: |
+          alias_tags="$(just generate-build-tags "${IMAGE_NAME}" "${DEFAULT_TAG}")"
+          echo "Publishing as: ${alias_tags}"
+          echo "alias_tags=${alias_tags}" >> "${GITHUB_OUTPUT}"
+
+      - name: Apply the tags
+        env:
+          ALIAS_TAGS: ${{ steps.tags.outputs.alias_tags }}
+        run: just tag-images "${IMAGE_NAME}" "${DEFAULT_TAG}" "${ALIAS_TAGS}"
+
+      - name: Sign in to GitHub's container registry
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish
+        id: push-image
+        env:
+          ALIAS_TAGS: ${{ steps.tags.outputs.alias_tags }}
+        run: |
+          set -euox pipefail
+          for tag in ${ALIAS_TAGS}; do
+            podman push --digestfile=/tmp/digestfile \
+              "${IMAGE_NAME}:${tag}" "${IMAGE_REGISTRY}/${IMAGE_NAME}:${tag}"
+          done
+          digest="$(< /tmp/digestfile)"
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: 'v3.1.2'
+
+      # Signing is what lets a machine prove an update really came from us and
+      # was not swapped out on the way. The private key is a repository secret
+      # called SIGNING_SECRET; the matching public half is cosign.pub in this
+      # repository, and it is the same pair the Bazzite line uses.
+      - name: Sign the published image
+        env:
+          COSIGN_EXPERIMENTAL: false
+          COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
+          DIGEST: ${{ steps.push-image.outputs.digest }}
+        run: |
+          cosign sign -y \
+            --new-bundle-format=false \
+            --use-signing-config=false \
+            --key env://COSIGN_PRIVATE_KEY \
+            "${IMAGE_REGISTRY}/${IMAGE_NAME}@${DIGEST}"
+
+      - name: What was published
+        run: |
+          echo "### ${IMAGE_NAME}" >> "${GITHUB_STEP_SUMMARY}"
+          echo "" >> "${GITHUB_STEP_SUMMARY}"
+          echo "Published to \`${IMAGE_REGISTRY}/${IMAGE_NAME}\`" >> "${GITHUB_STEP_SUMMARY}"
+          echo "" >> "${GITHUB_STEP_SUMMARY}"
+          echo "To put it on a machine already running AquariusOS:" >> "${GITHUB_STEP_SUMMARY}"
+          echo '```' >> "${GITHUB_STEP_SUMMARY}"
+          echo "sudo bootc switch ${IMAGE_REGISTRY}/${IMAGE_NAME}:latest" >> "${GITHUB_STEP_SUMMARY}"
+          echo '```' >> "${GITHUB_STEP_SUMMARY}"

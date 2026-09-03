@@ -4,30 +4,26 @@
 # This is completely separate from the image-build workflows: it does not build a
 # container, it just installs ffmpeg + libheif on a plain Ubuntu runner and runs the
 # Python test suite. Every fixture is synthesized with ffmpeg, so no media is committed.
+#
+# NOTE (restart, 2026-09-03): the old tests/test_desktop.py went with the Bazzite
+# line. It worked by looking for particular lines of text inside build_files/build.sh
+# and inside the KDE right-click menu file, and neither of those exists any more.
+# What it was trying to prove — that the ingest tool and its right-click menu really
+# end up installed and working — is now proved directly against the finished image
+# in .github/workflows/build-next.yml, which is a stronger check than reading a
+# build script. The old file is still on `main` if you want to see it.
 name: aq-ingest tests
 
 on:
   pull_request:
     paths:
       - 'ingest/**'
-      # The right-click menu and the lines that install the tool into the image are
-      # part of what these tests check (tests/test_desktop.py), so a change to either
-      # has to re-run them.
-      - 'system_files/usr/share/kio/servicemenus/**'
-      - 'build_files/build.sh'
-      - 'Containerfile'
       - '.github/workflows/ingest-tests.yml'
   push:
     branches:
-      - main
+      - restart/fedora-bootc
     paths:
       - 'ingest/**'
-      # The right-click menu and the lines that install the tool into the image are
-      # part of what these tests check (tests/test_desktop.py), so a change to either
-      # has to re-run them.
-      - 'system_files/usr/share/kio/servicemenus/**'
-      - 'build_files/build.sh'
-      - 'Containerfile'
       - '.github/workflows/ingest-tests.yml'
   workflow_dispatch:
 

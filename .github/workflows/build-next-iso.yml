@@ -1,0 +1,201 @@
+---
+# ==============================================================================
+# Build an AquariusOS installer ISO
+# ==============================================================================
+# An ISO is the file you write to a USB stick to install AquariusOS on a
+# computer that is not running it yet. If the machine ALREADY runs AquariusOS
+# you do not need this at all — `sudo bootc switch …` is faster and reversible.
+# See docs/restart/bench-rebase.md.
+#
+# HOW TO RUN IT
+#   1. GitHub → this repository → Actions
+#   2. "Build AquariusOS ISO (next)" in the left-hand list
+#   3. "Run workflow", pick the variant, press the green button
+#   4. Wait (20-40 minutes), then download the ISO from the run's Artifacts
+#
+# It is manual-only on purpose. An ISO is several gigabytes, it takes half an
+# hour of a build machine, and it is needed a handful of times a year — building
+# one on every push would be a lot of electricity for nothing.
+#
+# ⚠️ THE IMAGE MUST BE PUBLISHED FIRST. This workflow takes an image that is
+# already on ghcr.io and turns it into an installer. It does not build one. If
+# the build workflow has never finished green, there is nothing here to wrap.
+#
+# ------------------------------------------------------------------------------
+# WHY THIS IS SIMPLER THAN THE ONE ON `main`
+# ------------------------------------------------------------------------------
+# The Bazzite line could not use the ordinary Fedora installer: bootc-image-
+# builder choked on the extra software sources Bazzite carries
+# (osbuild/bootc-image-builder#1188), so we used Titanoboa, Universal Blue's
+# live-ISO builder, and then had to undress its Bazzite-flavoured live session.
+#
+# AquariusOS is plain Fedora now and has none of those sources, so the standard
+# tool works. This whole workflow is one action call.
+#
+# A note on that tool: bootc-image-builder was archived in June 2026 and folded
+# into osbuild's image-builder. The old form still works through a compatibility
+# wrapper and it is what Universal Blue's own template still uses, so it is what
+# we use. Expect to revisit this once in the next year.
+# ==============================================================================
+
+name: Build AquariusOS ISO (next)
+
+on:
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: "Which one? base = AMD or Intel graphics. nvidia = any RTX card."
+        required: true
+        default: nvidia
+        type: choice
+        options:
+          - base
+          - nvidia
+      tag:
+        description: "Which build. Leave as 'latest' unless you want a specific dated one."
+        required: false
+        default: latest
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.variant }}
+  cancel-in-progress: true
+
+jobs:
+  build-iso:
+    name: Build the installer ISO (${{ inputs.variant }})
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+      id-token: write
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Make room on the build machine
+        uses: ublue-os/remove-unwanted-software@cc0becac701cf642c8f0a6613bbdaf5dc36b259e # v9
+        with:
+          remove-codeql: true
+
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+
+      - name: Work out which image to wrap
+        id: names
+        env:
+          VARIANT: ${{ inputs.variant }}
+          TAG: ${{ inputs.tag }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          IMAGE_NAME="$(just variant-image-name "${VARIANT}")"
+          IMAGE_REF="ghcr.io/${OWNER}/${IMAGE_NAME}:${TAG:-latest}"
+          IMAGE_REF="${IMAGE_REF,,}"
+
+          echo "This ISO will install: ${IMAGE_REF}"
+
+          {
+            echo "image-ref=${IMAGE_REF}"
+            echo "image-name=${IMAGE_NAME,,}"
+            echo "iso-basename=${IMAGE_NAME,,}-${TAG:-latest}-amd64.iso"
+            echo "user-uid=$(id -u)"
+            echo "user-gid=$(id -g)"
+          } >> "${GITHUB_OUTPUT}"
+
+      # The kickstart inside disk_config/iso.toml names the image the installed
+      # machine will follow for updates. If that ever drifts from the image this
+      # ISO actually installs, the machine comes up as the wrong variant and
+      # nobody finds out until it updates. So it is checked here, once, cheaply.
+      - name: Check the installer points at the right image
+        env:
+          IMAGE_REF: ${{ steps.names.outputs.image-ref }}
+          IMAGE_NAME: ${{ steps.names.outputs.image-name }}
+        run: |
+          set -euo pipefail
+          echo "disk_config/iso.toml says:"
+          grep -n 'bootc switch' disk_config/iso.toml
+          if grep -q "ghcr.io/.*/${IMAGE_NAME}:latest" disk_config/iso.toml; then
+            echo "  OK   the installer will point the machine at ${IMAGE_NAME}"
+          else
+            echo "::error::disk_config/iso.toml does not name '${IMAGE_NAME}'. The ISO would install one image and then update to a different one."
+            exit 1
+          fi
+
+      - name: Sign in to GitHub's container registry
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build the ISO
+        id: build
+        uses: osbuild/bootc-image-builder-action@8661cd3832544ad68c12dcde8681b13ab0f56a8d # main
+        with:
+          builder-image: "quay.io/centos-bootc/bootc-image-builder:latest"
+          config-file: ./disk_config/iso.toml
+          image: ${{ steps.names.outputs.image-ref }}
+          chown: ${{ steps.names.outputs.user-uid }}:${{ steps.names.outputs.user-gid }}
+          types: anaconda-iso
+          additional-args: --use-librepo=True
+
+      # A checksum file next to the ISO. Writing a corrupted ISO to a USB stick
+      # produces an installer that fails halfway through with a confusing error;
+      # checking the number first takes ten seconds.
+      - name: Add a checksum next to it
+        env:
+          OUT: ${{ steps.build.outputs.output-directory }}
+        run: |
+          set -euxo pipefail
+          find "${OUT}" -name '*.iso' -print
+          cd "${OUT}"
+          for iso in $(find . -name '*.iso'); do
+            sha256sum "${iso}" | tee "${iso}-CHECKSUM"
+          done
+          ls -lhR .
+
+      - name: Upload the ISO
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.names.outputs.iso-basename }}
+          path: ${{ steps.build.outputs.output-directory }}
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          overwrite: true
+
+      - name: What to do with it
+        run: |
+          {
+            echo "### AquariusOS installer ISO — ${{ inputs.variant }}"
+            echo ""
+            echo "Download it from the **Artifacts** section at the bottom of this run's page."
+            echo ""
+            echo "It installs \`${{ steps.names.outputs.image-ref }}\`."
+            echo ""
+            echo "Write it to a USB stick (Fedora Media Writer, balenaEtcher or \`dd\`), boot the"
+            echo "computer from that stick, and follow the installer."
+            echo ""
+            echo "⚠️ Installing **erases the disk you point it at**. If the machine already runs"
+            echo "AquariusOS you do not need this — use \`sudo bootc switch\` instead, which is"
+            echo "reversible. See \`docs/restart/bench-rebase.md\`."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: If this failed, here is what to check
+        if: failure()
+        run: |
+          {
+            echo "### The ISO build failed"
+            echo ""
+            echo "The usual causes, in order of likelihood:"
+            echo ""
+            echo "1. **The image is not published yet.** This workflow wraps an image that already"
+            echo "   exists at \`${{ steps.names.outputs.image-ref }}\`. Check that"
+            echo "   \"Build AquariusOS (next)\" has finished green at least once."
+            echo "2. **The package is private.** A newly published package on GitHub is private"
+            echo "   until somebody makes it public — one click, once, on the package's page."
+            echo "3. **Out of disk.** An ISO is several gigabytes and the build machine is not"
+            echo "   large. The log will say 'no space left on device'."
+          } >> "${GITHUB_STEP_SUMMARY}"
