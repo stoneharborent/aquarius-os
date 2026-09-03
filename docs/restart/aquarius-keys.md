@@ -289,20 +289,21 @@ It is written in sentences.
 
 ---
 
-## Known gap in the Aquarius Session (labwc)
+## The Aquarius Session (labwc) — gap now closed
 
 **On GNOME — which is what AquariusOS boots into today — everything above
 works.** GNOME already listens for Super-Tab and Super-` and does exactly the
 Mac thing with them.
 
-labwc, the compositor behind the Aquarius Session, puts window switching on
-Alt-Tab instead, so **Command-Tab and Command-` do nothing there yet.**
+labwc, the compositor behind the Aquarius Session, put window switching on
+Alt-Tab only, so **Command-Tab did nothing there** — the same keystroke working
+on one AquariusOS desktop and not the other.
 
-The fix is two lines in the `aquarius-shell` repository, which is not this one's
-to edit. The proposal, for whoever picks it up:
+**Fixed 2026-09-03** in the `aquarius-shell` repository (commit `8822088`,
+which this image now pins), in the two places proposed here:
 
 ```xml
-<!-- in session/labwc/rc.xml, in the <keyboard> block -->
+<!-- session/labwc/rc.xml, in the <keyboard> block -->
 <keybind key="W-Tab">
   <action name="NextWindow" />
 </keybind>
@@ -311,18 +312,33 @@ to edit. The proposal, for whoever picks it up:
 </keybind>
 ```
 
-A second, smaller proposal for the same repository — this one AquariusOS already
-works around, so it is a tidiness fix rather than a bug:
+`NextWindow` and `PreviousWindow` are labwc's own actions — the ones its default
+Alt-Tab is built from — so holding Command and tapping Tab walks the window
+list with the switcher on screen, the way it does on a Mac. Alt-Tab still works.
+
+The second change, in the same commit:
 
 ```bash
-# in session/labwc/autostart, BEFORE the line that starts labwc-session.target
+# session/labwc/autostart, BEFORE the line that starts labwc-session.target
 dbus-update-activation-environment --systemd --all
 ```
 
 Without it, services that start with the graphical session — ours, and the
 portals — do not inherit `WAYLAND_DISPLAY` or `XDG_CURRENT_DESKTOP` from the
-session. `/usr/libexec/aquarius-keys-run` finds them itself rather than failing,
-but every other session service has to solve the same problem on its own.
+session.
+
+Worth being precise about what that fixed and where. **AquariusOS was never
+broken by it**: this image ships its own copies of the session files (the shell
+repo's `session/` folder is not installed), and both halves already pushed the
+environment across — `/usr/bin/aquarius-session` sends `XDG_CURRENT_DESKTOP`
+before labwc starts, and the image's `labwc/autostart` sends `WAYLAND_DISPLAY`
+once labwc has made one. So this was a real fix for a session run straight from
+a clone of the shell repo, and a consistency fix for us: the two copies now
+describe the same session.
+
+`/usr/libexec/aquarius-keys-run` still asks its three questions rather than
+trusting one variable, because a service that has to run on a desktop nobody has
+written yet should degrade to a sensible guess.
 
 ---
 

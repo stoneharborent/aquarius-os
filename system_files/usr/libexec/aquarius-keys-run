@@ -113,9 +113,16 @@ fi
 #
 # ⚠️ AND SOMETIMES IT IS EMPTY. A systemd user service only sees the variables
 # that the desktop pushed into the user's systemd manager when it started, and
-# not every desktop remembers to push them. GNOME does. The Aquarius Session
-# currently does not (as of aquarius-shell 70d2afd) — a one-line fix in that
-# repository, written up in docs/restart/aquarius-keys.md.
+# not every desktop remembers to push them. GNOME does. Both halves of the
+# Aquarius Session do now too: /usr/bin/aquarius-session pushes
+# XDG_CURRENT_DESKTOP before it starts labwc, and this image's labwc autostart
+# pushes WAYLAND_DISPLAY once labwc has created one. The aquarius-shell repo's
+# own copy of the session gained the same thing on 2026-09-03 (commit 8822088),
+# so a session run straight from a clone now behaves the same way.
+#
+# The three questions below are kept anyway. This service has to work on a
+# desktop nobody has written yet, and an empty variable should degrade to a
+# sensible guess rather than to a keyboard that silently stops remapping.
 #
 # So rather than trusting one variable, this asks three questions in order:
 # the variable, then systemd's own copy of the environment, then simply
