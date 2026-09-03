@@ -262,7 +262,7 @@ case "${AQ_LABWC_SAYS}" in
 esac
 
 # --- Quickshell ---------------------------------------------------------------
-if [ -e /usr/bin/qs ]; then
+if [ -e /usr/bin/qs ] || [ -L /usr/bin/qs ]; then
     ok "the qs command is installed"
 else
     bad "/usr/bin/qs is missing — the COPY from the Quickshell build stage did not land"
@@ -349,40 +349,76 @@ fi
 # THE CHECK THAT CATCHES THE EXPENSIVE MISTAKE.
 #
 # The shell's QML says `import Quickshell.Networking`. If Quickshell was built
-# with that feature switched off, the module directory does not exist, and the
-# failure happens at LOGIN — the shell refuses to start, the screen has no bar,
-# and the reason is one line deep in a log.
+# with that feature switched off, the shell refuses to start — at LOGIN, on a
+# screen with no bar, with the reason one line deep in a log.
 #
-# So: read the shell's own import lines, and check every Quickshell module it
-# asks for is really installed. This cannot drift, because it is derived from
-# the shell's source rather than from a list somebody maintains here.
-say "Every Quickshell module the shell imports is installed"
-AQ_QML_ROOT="/usr/lib64/qt6/qml"
+# ⚠️ The obvious way to check does not work, and it is worth knowing why.
+# Quickshell does not install its QML modules as folders on disk the way every
+# other Qt application does; it compiles each one into the program itself. The
+# finished install is two files. So there is no folder to look for, and looking
+# for one is what failed the first build of this step on 2026-09-03.
+#
+# What the Quickshell build stage DOES leave behind is a record of every feature
+# it was told to compile, read out of the build's own configuration:
+# /usr/share/aquarius/quickshell-build.txt. This reads the shell's import lines
+# and checks that record for each one. The table below is the only place the two
+# vocabularies meet, and it is deliberately written out in full rather than
+# guessed at from the names.
+say "Every Quickshell module the shell imports was built in"
+
+AQ_QS_RECORD="/usr/share/aquarius/quickshell-build.txt"
+AQ_QS_FEATURES="$(grep -E '^features=' "${AQ_QS_RECORD}" 2> /dev/null | cut -d= -f2- || true)"
+echo "  the Quickshell build record says: ${AQ_QS_FEATURES:-(nothing)}"
+
+# import Quickshell.X  ->  the CMake feature that provides it
+aq_feature_for_import() {
+    case "$1" in
+        Quickshell)                           echo "" ;;              # the core; always there
+        Quickshell.Io)                        echo "" ;;              # core
+        Quickshell.Widgets)                   echo "" ;;              # core
+        Quickshell.Wayland)                   echo "WAYLAND" ;;
+        Quickshell.Networking)                echo "NETWORK" ;;
+        Quickshell.Bluetooth)                 echo "BLUETOOTH" ;;
+        Quickshell.Services.Notifications)    echo "SERVICE_NOTIFICATIONS" ;;
+        Quickshell.Services.Pipewire)         echo "SERVICE_PIPEWIRE" ;;
+        Quickshell.Services.SystemTray)       echo "SERVICE_STATUS_NOTIFIER" ;;
+        Quickshell.Services.UPower)           echo "SERVICE_UPOWER" ;;
+        Quickshell.Services.Mpris)            echo "SERVICE_MPRIS" ;;
+        Quickshell.Services.Greetd)           echo "SERVICE_GREETD" ;;
+        *)                                    echo "UNKNOWN" ;;
+    esac
+}
 
 if [ "${AQ_SHELL_PRESENT}" -eq 0 ]; then
     echo "  skipped — there is no shell in this image to read imports from."
-    echo "  Quickshell's own modules were already checked in its build stage."
-fi
-
-if [ "${AQ_SHELL_PRESENT}" -eq 1 ]; then
+    echo "  The Quickshell build stage checked its own feature list already."
+else
     grep -rhoE '^import Quickshell[A-Za-z.]*' "${AQ_SHELL_DIR}" 2> /dev/null \
         | sed 's/^import //' | sort -u > /tmp/aq-imports.txt
     if [ ! -s /tmp/aq-imports.txt ]; then
         bad "no Quickshell imports found anywhere in ${AQ_SHELL_DIR} — the shell tree looks wrong"
     fi
-else
-    : > /tmp/aq-imports.txt
-fi
 
-while read -r aq_import; do
-    aq_path="${AQ_QML_ROOT}/$(printf '%s' "${aq_import}" | tr '.' '/')"
-    if [ -f "${aq_path}/qmldir" ]; then
-        ok "${aq_import}"
-    else
-        bad "${aq_import} — the shell imports it and Quickshell was not built with it (looked for ${aq_path}/qmldir)"
-    fi
-done < /tmp/aq-imports.txt
-rm -f /tmp/aq-imports.txt
+    while read -r aq_import; do
+        aq_feat="$(aq_feature_for_import "${aq_import}")"
+        case "${aq_feat}" in
+            "")
+                ok "${aq_import} (part of Quickshell itself)"
+                ;;
+            UNKNOWN)
+                bad "${aq_import} — the shell imports a module this build script has never heard of. Add it to the table in 55-aquarius-session.sh so it can be checked."
+                ;;
+            *)
+                if printf '%s' "${AQ_QS_FEATURES}" | grep -q "${aq_feat}=ON"; then
+                    ok "${aq_import} (built in as ${aq_feat})"
+                else
+                    bad "${aq_import} — Quickshell was built WITHOUT ${aq_feat}, so the shell would refuse to start"
+                fi
+                ;;
+        esac
+    done < /tmp/aq-imports.txt
+    rm -f /tmp/aq-imports.txt
+fi
 
 # The external commands the shell shells out to. None of these is fatal — the
 # shell fences each one — but a missing one means a slider or a menu entry that

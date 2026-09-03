@@ -734,7 +734,8 @@ jobs:
           esac
 
           echo "== the shell runtime =="
-          if [ -e /usr/bin/qs ]; then ok "the qs command is installed"; else bad "qs is missing"; fi
+          # qs is a symlink to quickshell; -e follows it, -L does not.
+          if [ -e /usr/bin/qs ] || [ -L /usr/bin/qs ]; then ok "the qs command is installed"; else bad "qs is missing"; fi
           QS_STATUS=0
           # A build container has no runtime directory and no screen. Give Qt
           # both, so that what this measures is the program and not the box.
@@ -783,16 +784,31 @@ jobs:
               fi
             done
             echo "== every Quickshell module the shell imports =="
-            grep -rhoE '^import Quickshell[A-Za-z.]*' /usr/share/aquarius/shell 2>/dev/null \
-              | sed 's/^import //' | sort -u > /tmp/imports.txt
-            if [ ! -s /tmp/imports.txt ]; then
-              bad "no Quickshell imports found in the shell — the shell tree is wrong"
-            fi
-            while read -r imp; do
-              p="/usr/lib64/qt6/qml/$(printf '%s' "${imp}" | tr '.' '/')"
-              if [ -f "${p}/qmldir" ]; then ok "${imp}"
-              else bad "${imp} is imported by the shell but was not built into Quickshell"; fi
-            done < /tmp/imports.txt
+            # Quickshell compiles its QML modules INTO the program rather than
+            # installing folders for them, so there is nothing on disk to look
+            # for. What there is, is the build's own record of which features it
+            # compiled. The mapping from an import line to a feature name lives
+            # in build_files/55-aquarius-session.sh and is checked there in full;
+            # this repeats the two that are new in 0.3 and would silently remove
+            # the Wi-Fi and Bluetooth tiles if they ever went missing.
+            FEATURES="$(grep -E '^features=' /usr/share/aquarius/quickshell-build.txt 2>/dev/null | cut -d= -f2-)"
+            echo "       ${FEATURES}"
+            for pair in "Quickshell.Networking:NETWORK" "Quickshell.Bluetooth:BLUETOOTH" \
+                        "Quickshell.Services.Notifications:SERVICE_NOTIFICATIONS" \
+                        "Quickshell.Services.Pipewire:SERVICE_PIPEWIRE" \
+                        "Quickshell.Services.SystemTray:SERVICE_STATUS_NOTIFIER" \
+                        "Quickshell.Services.UPower:SERVICE_UPOWER" \
+                        "Quickshell.Wayland:WAYLAND"; do
+              imp="${pair%%:*}"; feat="${pair##*:}"
+              if ! grep -rqE "^import ${imp}\$" /usr/share/aquarius/shell 2>/dev/null; then
+                continue
+              fi
+              if printf '%s' "${FEATURES}" | grep -q "${feat}=ON"; then
+                ok "${imp} (built in as ${feat})"
+              else
+                bad "${imp} is imported by the shell but Quickshell was built without ${feat}"
+              fi
+            done
           else
             echo "::warning::This image has no Aquarius Shell — /usr/share/aquarius/shell-build.txt says why. The Aquarius Desktop starts and explains itself on screen. Make the shell repository public and rebuild to bake it in."
             echo "  NOTE the Aquarius Shell is not in this image. Everything else"

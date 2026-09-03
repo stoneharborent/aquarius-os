@@ -198,8 +198,7 @@ DESTDIR="${AQ_STAGE}" cmake --install build
 rm -fv "${AQ_STAGE}"/usr/share/applications/*quickshell*.desktop || true
 
 say "What is being copied into AquariusOS"
-find "${AQ_STAGE}" -maxdepth 6 -type d -name 'Quickshell*' | sort | sed 's/^/  /'
-find "${AQ_STAGE}/usr/bin" -mindepth 1 | sort | sed 's/^/  /'
+find "${AQ_STAGE}" -mindepth 1 \( -type f -o -type l \) | sort | sed "s|${AQ_STAGE}||; s/^/  /"
 echo "  total size: $(du -sh "${AQ_STAGE}" | cut -f1)"
 
 # ------------------------------------------------------------------------------
@@ -207,46 +206,106 @@ echo "  total size: $(du -sh "${AQ_STAGE}" | cut -f1)"
 # ------------------------------------------------------------------------------
 say "Checking what was actually built"
 
-if [ -e "${AQ_STAGE}/usr/bin/qs" ]; then
+# ⚠️ `qs` is a SYMLINK to `quickshell`, and it points at /usr/bin/quickshell —
+# the path on the FINISHED machine, which does not exist here in the workshop.
+# So `[ -e ]`, which follows symlinks, says no. `[ -L ]` asks the right
+# question. (This cost one build on 2026-09-03: the file was right there in the
+# listing above and the check said it was missing.)
+if [ -L "${AQ_STAGE}/usr/bin/qs" ] || [ -e "${AQ_STAGE}/usr/bin/qs" ]; then
     ok "the qs command was built"
 else
     bad "there is no ${AQ_STAGE}/usr/bin/qs — the build produced nothing usable"
+fi
+if [ -x "${AQ_STAGE}/usr/bin/quickshell" ]; then
+    ok "the quickshell program was built"
+else
+    bad "there is no ${AQ_STAGE}/usr/bin/quickshell"
     aq_finish "Quickshell build stage"
 fi
 
-# The QML modules. Each of these directories is one `import Quickshell.Something`
-# line in the Aquarius Shell. A module that was switched off at configure time
-# leaves no directory here, and the failure it would cause on a real machine is
-# the shell refusing to start with "module not installed" — after login, on a
-# black screen. Catching it here costs nothing.
-say "The QML modules the Aquarius Shell imports"
-AQ_QML_DIR="${AQ_STAGE}/usr/lib64/qt6/qml/Quickshell"
+# ------------------------------------------------------------------------------
+# Which features were built in
+# ------------------------------------------------------------------------------
+# ⚠️ THE OBVIOUS CHECK DOES NOT WORK HERE, AND THIS IS WHY.
+#
+# Every other Qt application in the world installs its QML modules as folders
+# full of files: /usr/lib64/qt6/qml/Something/qmldir and so on. Quickshell does
+# not. It compiles each module into the program itself as a static library —
+# the build log is full of lines like "Linking CXX static library
+# libquickshell-networkplugin_init.a" — and the finished install is TWO FILES:
+# the program and a symlink to it.
+#
+# So "is the folder there" is not a question that can be asked. Checking for
+# those folders is what failed the first build of this stage on 2026-09-03: it
+# looked for modules that, by design, do not exist on disk.
+#
+# What CAN be read is the build's own record of which features it was told to
+# compile. CMakeCache.txt holds the answer to every -D switch, including the
+# defaults for the ones we did not name, and Quickshell stops the build outright
+# if a switched-on feature is missing a library. So: cache says ON + the build
+# finished = the feature is in the program.
+say "The features the Aquarius Shell needs"
 
-if [ -d "${AQ_QML_DIR}" ]; then
-    ok "Quickshell's QML modules were installed to /usr/lib64/qt6/qml/Quickshell"
-    find "${AQ_QML_DIR}" -maxdepth 2 -name qmldir | sed "s|${AQ_STAGE}||; s/^/       /" | sort
-else
-    bad "no QML modules at ${AQ_QML_DIR} — CMAKE_INSTALL_LIBDIR is probably wrong"
-fi
+AQ_CACHE="/src/build/CMakeCache.txt"
 
-# The exact module list the shell's QML asks for, taken from its import lines.
-for aq_mod in \
-    "Io" \
-    "Widgets" \
-    "Wayland" \
-    "Networking" \
-    "Bluetooth" \
-    "Services/Notifications" \
-    "Services/Pipewire" \
-    "Services/SystemTray" \
-    "Services/UPower"
-do
-    if [ -f "${AQ_QML_DIR}/${aq_mod}/qmldir" ]; then
-        ok "Quickshell.$(printf '%s' "${aq_mod}" | tr '/' '.') is present"
+# Each line is: the CMake switch, then the `import Quickshell.X` line in the
+# shell that stops working without it.
+#
+#   WAYLAND                       Quickshell.Wayland — and everything else. A
+#                                 bar that cannot speak Wayland is not a bar.
+#   WAYLAND_WLR_LAYERSHELL        what lets the bar stick to the top of the
+#                                 screen instead of being an ordinary window
+#   WAYLAND_TOPLEVEL_MANAGEMENT   the name of the active window in the bar, and
+#                                 the running-application dots in the dock
+#   WAYLAND_SESSION_LOCK          the lock screen (not built yet, but the
+#                                 protocol has to be there for it)
+#   SCREENCOPY                    thumbnails of windows
+#   NETWORK                       Quickshell.Networking — the Wi-Fi tile
+#   BLUETOOTH                     Quickshell.Bluetooth — the Bluetooth tile
+#   SERVICE_NOTIFICATIONS         Quickshell.Services.Notifications — the shell
+#                                 IS the notification service for this session
+#   SERVICE_PIPEWIRE              Quickshell.Services.Pipewire — volume
+#   SERVICE_STATUS_NOTIFIER       Quickshell.Services.SystemTray — the tray
+#   SERVICE_UPOWER                Quickshell.Services.UPower — battery
+#   SERVICE_PAM                   the lock screen's password check
+#   SERVICE_POLKIT                the "an app wants permission" dialog, which
+#                                 this session has no other provider for
+#   SOCKETS                       `qs ipc` — which is how Super+Space reaches
+#                                 the running shell. Without it the search
+#                                 palette cannot be summoned at all.
+AQ_FEATURES="WAYLAND WAYLAND_WLR_LAYERSHELL WAYLAND_TOPLEVEL_MANAGEMENT \
+WAYLAND_SESSION_LOCK SCREENCOPY NETWORK BLUETOOTH SERVICE_NOTIFICATIONS \
+SERVICE_PIPEWIRE SERVICE_STATUS_NOTIFIER SERVICE_UPOWER SERVICE_PAM \
+SERVICE_POLKIT SOCKETS"
+
+AQ_FEATURE_RECORD=""
+for aq_feat in ${AQ_FEATURES}; do
+    aq_value="$(grep -E "^${aq_feat}:BOOL=" "${AQ_CACHE}" | cut -d= -f2 || true)"
+    if [ "${aq_value}" = "ON" ]; then
+        ok "${aq_feat}"
+        AQ_FEATURE_RECORD="${AQ_FEATURE_RECORD}${aq_feat}=ON "
     else
-        bad "Quickshell.$(printf '%s' "${aq_mod}" | tr '/' '.') is MISSING — a feature was switched off that the shell needs"
+        bad "${aq_feat} is '${aq_value:-not in the build at all}' — the shell needs it (see the note above for what stops working)"
+        AQ_FEATURE_RECORD="${AQ_FEATURE_RECORD}${aq_feat}=${aq_value:-MISSING} "
     fi
 done
+
+# And the four we deliberately turned off, so that a future change that quietly
+# turns one back on is visible rather than a mystery size increase.
+say "The features we deliberately left out"
+for aq_feat in CRASH_HANDLER HYPRLAND I3 X11; do
+    aq_value="$(grep -E "^${aq_feat}:BOOL=" "${AQ_CACHE}" | cut -d= -f2 || true)"
+    echo "  ${aq_feat}=${aq_value:-(absent)}"
+done
+
+# A second, independent look at the same question: the module names Qt registers
+# are compiled into the program as text, so they can be read straight out of the
+# binary. This is reported rather than enforced — it depends on how Qt happens
+# to store those names — but when it agrees with the list above, that is two
+# different methods giving the same answer.
+say "Module names found inside the program itself"
+grep -ao 'Quickshell\.[A-Za-z.]*' "${AQ_STAGE}/usr/bin/quickshell" \
+    | sort -u | sed 's/^/  /' | head -40 || echo "  (none readable this way)"
 
 # Libraries. Same reasoning as the labwc stage: a missing runtime library here
 # means the finished image would ship a program that cannot start.
@@ -270,6 +329,7 @@ install -d -m 0755 "${AQ_STAGE}/usr/share/aquarius"
     echo "quickshell_version=${AQ_QS_VERSION}"
     echo "quickshell_commit=${AQ_QS_COMMIT}"
     echo "built_against_qt=$(rpm -q --queryformat '%{VERSION}' qt6-qtbase)"
+    echo "features=${AQ_FEATURE_RECORD}"
 } > "${AQ_STAGE}/usr/share/aquarius/quickshell-build.txt"
 cat "${AQ_STAGE}/usr/share/aquarius/quickshell-build.txt" | sed 's/^/  /'
 
