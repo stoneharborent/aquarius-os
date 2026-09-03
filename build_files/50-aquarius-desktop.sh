@@ -63,13 +63,13 @@ cp -avf /ctx/system_files/. /
 # application able to see it.
 say "Rebuilding the font index"
 fc-cache --system-only --force
-if fc-list | grep -qi "Sora"; then
+if aq_output_has "Sora" fc-list; then
     ok "Sora is installed and findable"
 else
     bad "Sora is on disk but no application can find it — the font index did not rebuild"
 fi
 for want in Inter "JetBrains Mono"; do
-    if fc-list | grep -qi "${want}"; then
+    if aq_output_has "${want}" fc-list; then
         ok "${want} is installed and findable"
     else
         bad "${want} is not findable — the interface would fall back to a default face"
@@ -122,7 +122,7 @@ else
 fi
 
 for want in "${ABOUT_LOGO_DEST_LIGHT}" "${ABOUT_LOGO_DEST_DARK}"; do
-    if printf '%s\n' "${CC_PIXMAP_PATHS}" | grep -qx "${want}"; then
+    if printf '%s\n' "${CC_PIXMAP_PATHS}" > /tmp/aq-cc-paths.txt && grep -qx "${want}" /tmp/aq-cc-paths.txt; then
         ok "the Settings app really does read ${want}"
     else
         echo "AQUARIUS ERROR: this image's Settings app does not mention ${want}." >&2
@@ -450,7 +450,7 @@ fi
 # container lint` will not catch.
 say "Permissions on the files we shipped"
 find /usr/share/aquarius /usr/share/backgrounds/aquarius \
-    ! -type l -perm -o+w 2> /dev/null | head -20 > /tmp/aq-world-writable.txt
+    ! -type l -perm -o+w > /tmp/aq-world-writable.txt 2> /dev/null || true
 if [ ! -s /tmp/aq-world-writable.txt ]; then
     ok "nothing we shipped is world-writable"
 else

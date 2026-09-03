@@ -105,9 +105,10 @@ esac
 # Printing the whole tree costs nothing and is the single most useful thing in
 # the log when Universal Blue changes their layout.
 say "What is in the NVIDIA parts box"
-find "${AKMODS}" -maxdepth 3 | head -60
+find "${AKMODS}" -maxdepth 3 > /tmp/aq-akmods-tree.txt 2>/dev/null || true
+head -60 /tmp/aq-akmods-tree.txt
 echo "..."
-echo "RPM count: $(find "${AKMODS}" -name '*.rpm' | wc -l)"
+echo "RPM count: $(find "${AKMODS}" -name '*.rpm' -printf . 2>/dev/null | wc -c)"
 
 # The box carries a small file describing itself: which kernel, which driver
 # version. Everything below reads from it rather than guessing from filenames.
@@ -196,7 +197,7 @@ say "Installing the NVIDIA driver"
 # enabled dnf may pick a mixture of the two, which does not work. Switching RPM
 # Fusion off for the length of this step is what Universal Blue's own installer
 # does for the same reason. It goes back on afterwards.
-if aq_dnf repolist --all | grep -q rpmfusion; then
+if aq_output_has rpmfusion aq_dnf repolist --all; then
     echo "Temporarily switching RPM Fusion off so the two NVIDIA drivers cannot mix."
     aq_dnf config-manager setopt "rpmfusion*".enabled=0
 fi
@@ -242,7 +243,7 @@ fi
 # later `dnf install` on this machine cannot pull an unexpected driver update.
 say "Putting the software sources back the way they were"
 aq_dnf config-manager setopt "fedora-nvidia*".enabled=0 nvidia-container-toolkit.enabled=0
-if aq_dnf repolist --all | grep -q rpmfusion; then
+if aq_output_has rpmfusion aq_dnf repolist --all; then
     aq_dnf config-manager setopt "rpmfusion*".enabled=1
 fi
 
@@ -334,10 +335,12 @@ if [ -d "${AQ_MODDIR}" ]; then
     ok "the module directory for ${KERNEL_VERSION} exists"
     if compgen -G "${AQ_MODDIR}/extra/nvidia*" > /dev/null; then
         ok "the NVIDIA kernel modules are filed under this image's kernel"
-        ls -l "${AQ_MODDIR}"/extra/nvidia* | sed 's/^/       /'
+        ls -l "${AQ_MODDIR}"/extra/nvidia* > /tmp/aq-nvidia-mods.txt 2>&1 || true
+        sed 's/^/       /' /tmp/aq-nvidia-mods.txt
     else
         bad "no nvidia* modules under ${AQ_MODDIR}/extra — the driver would not load"
-        find /usr/lib/modules -name 'nvidia*' | head -20
+        find /usr/lib/modules -name 'nvidia*' > /tmp/aq-nvidia-find.txt 2>/dev/null || true
+        head -20 /tmp/aq-nvidia-find.txt
     fi
 else
     bad "there is no ${AQ_MODDIR} — the kernel and the driver do not agree after all"

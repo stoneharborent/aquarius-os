@@ -255,7 +255,9 @@ aq_installed \
 # version number, and differs only in what it can do.
 say "Asking ffmpeg what it can actually encode"
 if aq_have ffmpeg; then
-    ffmpeg -hide_banner -version | head -3
+    ffmpeg -hide_banner -version > /tmp/aq-ffmpeg-version.txt 2>&1 || true
+    head -3 /tmp/aq-ffmpeg-version.txt
+    rm -f /tmp/aq-ffmpeg-version.txt
     ffmpeg -hide_banner -encoders > /tmp/aq-encoders.txt 2>&1 || true
     ffmpeg -hide_banner -decoders > /tmp/aq-decoders.txt 2>&1 || true
 

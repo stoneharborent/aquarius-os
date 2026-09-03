@@ -104,11 +104,58 @@ aq_file_has() {
 }
 
 # ------------------------------------------------------------------------------
+# aq_output_has <pattern> <command> [arguments...]
+# ------------------------------------------------------------------------------
+# "Does this command's output mention this?"
+#
+# ⚠️ THE REASON THIS EXISTS IS A TRAP THAT COST US THE FIRST BUILD OF THE
+# RESTART (2026-09-03), AND IT LOOKS LIKE NOTHING.
+#
+# The obvious way to write this is:
+#
+#     if fc-list | grep -qi "Inter"; then
+#
+# and it is wrong in a script that uses `set -o pipefail`, which every script in
+# this folder does. Here is what actually happens:
+#
+#   1. grep finds the match and exits IMMEDIATELY, because that is what -q means.
+#   2. fc-list is still writing, discovers nobody is reading, and is killed by
+#      the operating system with a "broken pipe" signal.
+#   3. `pipefail` says "report the whole pipeline as failed if ANY part of it
+#      failed" — and fc-list did fail, in step 2.
+#   4. So the `if` takes the ELSE branch. Finding the thing you were looking for
+#      makes the check report that it is missing.
+#
+# On the first restart build this reported that Inter, JetBrains Mono and Sora
+# were all missing from an image that contained all three.
+#
+# This helper runs the command to completion, keeps its output, and then greps
+# that. No pipe, no signal, no lie.
+aq_output_has() { # aq_output_has <pattern> <command> [args...]
+    local pattern="$1"
+    shift
+    local tmp
+    tmp="$(mktemp)"
+    "$@" > "${tmp}" 2> /dev/null || true
+    if grep -qi -- "${pattern}" "${tmp}"; then
+        rm -f "${tmp}"
+        return 0
+    fi
+    rm -f "${tmp}"
+    return 1
+}
+
+# ------------------------------------------------------------------------------
 # aq_dnf <arguments...>  — install things
 # ------------------------------------------------------------------------------
 # On Fedora 44 the `dnf` command IS dnf5, but some images also ship it under the
 # name `dnf5`. This picks whichever exists so the scripts do not care.
-AQ_DNF="$(command -v dnf5 || command -v dnf)"
+# The `|| echo dnf` at the end is not laziness: with `set -e`, an assignment
+# whose command substitution exits non-zero kills the script on the spot, and
+# `command -v` exits non-zero when it finds nothing. Falling back to the plain
+# name means a machine without either one fails later, at the point of use,
+# with a message about dnf — rather than here, silently, with no output at all.
+AQ_DNF="$(command -v dnf5 2> /dev/null || command -v dnf 2> /dev/null || echo dnf)"
 aq_dnf() {
     "${AQ_DNF}" -y "$@"
 }

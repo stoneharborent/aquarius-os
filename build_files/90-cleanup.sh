@@ -45,7 +45,7 @@ for d in /usr/lib/modules/*/; do
     fi
 done
 
-AQ_KERNEL_COUNT="$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d | wc -l)"
+AQ_KERNEL_COUNT="$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf . | wc -c)"
 if [ "${AQ_KERNEL_COUNT}" -eq 1 ]; then
     ok "exactly one kernel in the image (${AQ_KERNEL})"
 else
@@ -91,7 +91,8 @@ say "Making sure none of the build's own files shipped"
 for stray in /build_files /system_files /ingest; do
     if [ -e "${stray}" ]; then
         bad "${stray} exists in the finished image — it should only ever have been mounted"
-        ls -la "${stray}" | head -10
+        ls -la "${stray}" > /tmp/aq-stray.txt 2>&1 || true
+        head -10 /tmp/aq-stray.txt
     else
         ok "${stray} is not in the image (correct)"
     fi
@@ -105,8 +106,11 @@ done
 say "Size of the finished image"
 du -sh /usr 2> /dev/null || true
 echo "The ten largest things under /usr:"
-du -sh /usr/* 2> /dev/null | sort -rh | head -10
+du -sh /usr/* 2> /dev/null > /tmp/aq-usr-sizes.txt || true
+sort -rh /tmp/aq-usr-sizes.txt > /tmp/aq-usr-sorted.txt || true
+head -10 /tmp/aq-usr-sorted.txt
+rm -f /tmp/aq-usr-sizes.txt /tmp/aq-usr-sorted.txt
 echo
-echo "Packages installed: $(rpm -qa | wc -l)"
+echo "Packages installed: $(rpm -qa --queryformat '.' | wc -c)"
 
 aq_finish "Cleanup"

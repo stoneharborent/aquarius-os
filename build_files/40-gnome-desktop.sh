@@ -270,7 +270,8 @@ done
 
 # Dash to Dock has to declare support for THIS GNOME Shell or the shell refuses
 # to load it — silently, with no dock and no error message anywhere.
-AQ_SHELL_MAJOR="$(gnome-shell --version | awk '{print $3}' | cut -d. -f1)"
+gnome-shell --version > /tmp/aq-shell-version.txt
+AQ_SHELL_MAJOR="$(awk '{print $3}' /tmp/aq-shell-version.txt | cut -d. -f1)"
 AQ_D2D_META="/usr/share/gnome-shell/extensions/dash-to-dock@micxgx.gmail.com/metadata.json"
 if [ -r "${AQ_D2D_META}" ]; then
     if python3 - "${AQ_D2D_META}" "${AQ_SHELL_MAJOR}" <<'PY'; then
