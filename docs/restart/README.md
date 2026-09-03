@@ -74,6 +74,8 @@ this is starting from an empty room.
   Resolve itself, and the NVIDIA container toolkit already wired in.
 - **`aq-ingest`**, the "Make Editor-Ready" right-click menu — the one feature no
   other operating system ships.
+- **btrfs by default**, declared inside the image, so every installer agrees:
+  snapshots and transparent compression on a machine that stores video.
 
 ### What is NOT in it yet, and when it arrives
 

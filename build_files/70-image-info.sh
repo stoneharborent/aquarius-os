@@ -159,6 +159,49 @@ echo "  (What /etc/hostname says during a build is the build container's own"
 echo "   name and means nothing. It is not committed into the image.)"
 
 # ------------------------------------------------------------------------------
+# Which filesystem a fresh install should use
+# ------------------------------------------------------------------------------
+# ⚠️ WITHOUT THIS, YOU CANNOT BUILD AN INSTALLER AT ALL. The very first attempt
+# at an ISO (2026-09-03) got all the way to the builder and stopped with:
+#
+#     error: cannot build manifest: no default root filesystem type specified
+#     in container, please use "--rootfs" to set manually
+#
+# The reason is a real difference between where we came from and where we are.
+# Bazzite was a finished desktop distribution and had already answered this
+# question. Fedora's bare bootable image has not — it is a base for other people
+# to build on, and "which filesystem should a machine be installed with" is one
+# of the things it deliberately leaves to whoever builds on it. That is us.
+#
+# The answer is btrfs, and it is not an arbitrary pick:
+#
+#   * it can take instant snapshots, which pairs with an OS that already rolls
+#     back the system half — snapshots cover the home half too;
+#   * it compresses transparently, which on a machine holding video is real disk
+#     space rather than a rounding error;
+#   * it is what Fedora Workstation has installed by default since Fedora 33, so
+#     it is the best-tested path on this hardware, and it is what the Bazzite
+#     line was already using.
+#
+# Putting it in the IMAGE rather than passing --rootfs on a command line means
+# every way of installing this OS gets the same answer: our ISO build, a
+# `bootc install to-disk` somebody runs by hand, anything later. Files here are
+# merged in alphabetical order, so the "20-" prefix leaves room for Fedora to
+# ship a "00-" default and for a future variant to override with a higher one.
+say "Which filesystem a fresh install should use"
+install -d -m 0755 /usr/lib/bootc/install
+cat > /usr/lib/bootc/install/20-aquarius.toml << 'EOF'
+# AquariusOS installs onto btrfs: snapshots and transparent compression, and it
+# is what Fedora Workstation has used by default since Fedora 33.
+# Set here, in the image, so that every installer agrees without being told.
+[install.filesystem.root]
+type = "btrfs"
+EOF
+cat /usr/lib/bootc/install/20-aquarius.toml
+aq_file_has /usr/lib/bootc/install/20-aquarius.toml \
+    '^type = "btrfs"$' "a fresh install knows to use btrfs"
+
+# ------------------------------------------------------------------------------
 # Check the identity actually applied
 # ------------------------------------------------------------------------------
 say "Checking the AquariusOS identity"

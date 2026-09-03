@@ -259,6 +259,14 @@ jobs:
             bad "the 'Make Editor-Ready' right-click menu is missing"
           fi
 
+          echo "== a fresh install knows which filesystem to use =="
+          cat /usr/lib/bootc/install/20-aquarius.toml || echo "(missing!)"
+          if grep -q '^type = "btrfs"$' /usr/lib/bootc/install/20-aquarius.toml 2>/dev/null; then
+            ok "the image tells an installer to use btrfs"
+          else
+            bad "no root filesystem type in the image — no installer ISO can be built from it"
+          fi
+
           echo "== exactly one kernel =="
           ls -1 /usr/lib/modules/
           n="$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d | wc -l)"

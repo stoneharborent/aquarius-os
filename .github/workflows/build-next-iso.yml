@@ -238,7 +238,10 @@ jobs:
           image: ${{ steps.names.outputs.image-ref }}
           chown: ${{ steps.names.outputs.user-uid }}:${{ steps.names.outputs.user-gid }}
           types: anaconda-iso
-          additional-args: --use-librepo=True
+          # --rootfs repeats what the image itself already declares in
+          # /usr/lib/bootc/install/20-aquarius.toml. Saying it twice costs
+          # nothing and means a mistake in one place is not a failed ISO.
+          additional-args: --use-librepo=True --rootfs=btrfs
 
       # A checksum file next to the ISO. Writing a corrupted ISO to a USB stick
       # produces an installer that fails halfway through with a confusing error;
