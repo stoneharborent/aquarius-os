@@ -1,0 +1,51 @@
+# =============================================================================
+# Aquarius Keys — Windows mode
+# =============================================================================
+# This is the "leave my keyboard alone" profile. It is what you get after
+#
+#     aq keys windows
+#
+# and it does nothing at all: Copy is Control-C, Paste is Control-V, the
+# Windows key is the Windows key. Exactly like every other Linux computer and
+# very nearly like Windows itself.
+#
+# -----------------------------------------------------------------------------
+# WHY THIS FILE HAS NO RULES IN IT, AND WHY IT EXISTS ANYWAY
+# -----------------------------------------------------------------------------
+# Windows mode is not "different shortcuts". It is "our shortcuts are switched
+# off", because the shortcuts Linux already has are the Windows-style ones. So
+# there is genuinely nothing to write here.
+#
+# The file exists for two reasons:
+#
+#   1. It is the place to put a Windows-mode tweak if one ever turns out to be
+#      wanted. Add a `keymap:` block below exactly as in mac.yaml, and it will
+#      be picked up on the next login with no other change anywhere.
+#
+#   2. It makes the two modes the same shape, so `aq keys mac` and
+#      `aq keys windows` are genuinely the same operation with a different
+#      file name, rather than one being a special case in the code.
+#
+# -----------------------------------------------------------------------------
+# WHAT ACTUALLY HAPPENS IN WINDOWS MODE
+# -----------------------------------------------------------------------------
+# /usr/libexec/aquarius-keys-run reads this file, sees that it contains no
+# rules, and does NOT start the remapper at all. That is deliberate and it is a
+# safety property, not an optimisation: the remapper works by taking exclusive
+# control of your keyboard and re-typing everything through a second, invented
+# keyboard. Doing that for zero rules would put a moving part between you and
+# your keys for no benefit whatsoever.
+#
+# So in Windows mode there is nothing between your keyboard and your computer.
+# `systemctl --user status aquarius-keys` will show the service as finished
+# rather than running, and that is correct, not a fault.
+#
+# The moment you add a real rule below, the run script notices and starts the
+# remapper as normal. Nothing else has to change.
+# =============================================================================
+
+# An empty list of key-position swaps.
+modmap: []
+
+# An empty list of shortcut rules.
+keymap: []

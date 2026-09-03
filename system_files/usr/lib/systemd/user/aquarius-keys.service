@@ -1,0 +1,67 @@
+# =============================================================================
+# aquarius-keys — Mac-style keyboard shortcuts, started when you log in
+# =============================================================================
+# WHAT A "USER SERVICE" IS
+#
+# systemd is the part of Linux that starts things. Most of what it starts
+# belongs to the whole computer (the network, the login screen). A USER service
+# belongs to one logged-in person: it starts when they log in, stops when they
+# log out, and runs as them, with no special powers.
+#
+# That is the right shape for this. Keyboard shortcuts are a personal setting,
+# one person on the machine can have Mac keys while another has Windows keys,
+# and nothing here needs to run as the administrator.
+#
+# -----------------------------------------------------------------------------
+# HOW TO CONTROL IT BY HAND
+# -----------------------------------------------------------------------------
+#   aq keys status                        the friendly version — start here
+#   systemctl --user status aquarius-keys is it running?
+#   systemctl --user restart aquarius-keys pick up an edited settings file
+#   systemctl --user stop aquarius-keys    stop it until the next login
+#   systemctl --user mask --now aquarius-keys
+#                                          turn it off permanently, for you
+#   systemctl --user unmask aquarius-keys  undo that
+#   journalctl --user -u aquarius-keys -b  what it said this time it started
+#
+# -----------------------------------------------------------------------------
+# WHY THERE IS NO "ENABLE" STEP
+# -----------------------------------------------------------------------------
+# AquariusOS ships this switched ON. That is done by a link in the image at
+#   /usr/lib/systemd/user/graphical-session.target.wants/aquarius-keys.service
+# which means "start this whenever a graphical session begins". Shipping the
+# link inside the read-only half of the system, rather than switching it on in
+# /etc at install time, is what makes it true on every machine, on the first
+# boot, without an installer step that could be skipped.
+#
+# The cost of that choice: `systemctl --user disable` has nothing in /etc to
+# remove, so it does not turn this off. `mask` does, which is the command in
+# the list above and the one the documentation gives.
+# =============================================================================
+
+[Unit]
+Description=Aquarius Keys — Mac-style keyboard shortcuts
+Documentation=file:///usr/share/aquarius/keys/mac.yaml
+
+# PartOf: if the graphical session ends, this ends with it. Without this the
+# remapper could outlive the desktop and keep hold of the keyboard.
+PartOf=graphical-session.target
+After=graphical-session.target
+
+# If it fails five times in ten seconds, stop trying. A remapper that cannot
+# start is a nuisance; one that retries forever fills the log and hides the
+# real error at the top of it.
+StartLimitIntervalSec=10
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/aquarius-keys-run
+
+# Restart if it CRASHES, but not if it exits cleanly. Exiting cleanly is what
+# happens in Windows mode, where there is deliberately nothing to do.
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

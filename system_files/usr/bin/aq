@@ -1,0 +1,234 @@
+#!/usr/bin/bash
+# =============================================================================
+# aq — the AquariusOS command
+# =============================================================================
+# WHAT THIS IS
+#
+# A friendly front door for the settings AquariusOS adds on top of Fedora,
+# written so that every message is a sentence rather than a code.
+#
+# RIGHT NOW IT DOES ONE THING: keyboard shortcut style.
+#
+#     aq keys mac        use Mac-style shortcuts (Command-C to copy)
+#     aq keys windows    use the normal Linux ones (Control-C to copy)
+#     aq keys status     which am I using, and is it working?
+#
+# It is deliberately small. FEATURES 005 in the AquariusOS plan describes a
+# fuller `aq` — `aq status`, `aq snapshot` — and that is a later job. This is
+# the first subcommand of it, built because Aquarius Keys needed a switch and a
+# person should not have to edit a file and restart a service by hand.
+#
+# ⚠️ IF YOU ADD A SUBCOMMAND, ADD IT TO usage() TOO. A command nobody can
+# discover is a command nobody uses.
+# =============================================================================
+
+set -uo pipefail
+
+AQ_CONF_DIR="${XDG_CONFIG_HOME:-${HOME:-/tmp}/.config}/aquarius"
+AQ_CONF="${AQ_CONF_DIR}/keys.conf"
+AQ_PROFILE_DIR="/usr/share/aquarius/keys"
+AQ_SERVICE="aquarius-keys.service"
+
+# -----------------------------------------------------------------------------
+# usage — printed by `aq`, `aq --help`, and anything it does not understand
+# -----------------------------------------------------------------------------
+usage() {
+    cat << 'EOF'
+aq — the AquariusOS command
+
+USAGE
+    aq keys mac         Use Mac-style keyboard shortcuts.
+                        Copy is Command-C, quit is Command-Q, search is
+                        Command-Space. On a PC keyboard, "Command" is the key
+                        next to the space bar (the one labelled Alt).
+
+    aq keys windows     Use the normal Linux and Windows shortcuts.
+                        Copy is Control-C. Nothing about your keyboard is
+                        changed at all.
+
+    aq keys status      Say which style is switched on, whether it is actually
+                        running, and where to look if it is not.
+
+    aq --help           This message.
+    aq --version        Which AquariusOS this is.
+
+NOTES
+    Switching takes effect straight away. You do not have to log out.
+    The setting is yours alone — another person on this computer keeps theirs.
+    The full guide is at:
+        https://github.com/stoneharborent/aquarius-os
+        docs/restart/aquarius-keys.md
+EOF
+}
+
+keys_usage() {
+    cat << 'EOF'
+aq keys — choose how keyboard shortcuts work
+
+    aq keys mac         Mac-style. Copy is Command-C. (The AquariusOS default.)
+    aq keys windows     The normal Linux ones. Copy is Control-C.
+    aq keys status      What is switched on, and is it running?
+EOF
+}
+
+# -----------------------------------------------------------------------------
+# read_mode — what does the settings file say right now?
+# -----------------------------------------------------------------------------
+# A missing file means Mac, because Mac is the AquariusOS default. That rule is
+# written in exactly one other place — /usr/libexec/aquarius-keys-run — and the
+# two have to agree.
+read_mode() {
+    local mode=""
+    if [ -r "${AQ_CONF}" ]; then
+        mode="$(sed -n 's/^[[:space:]]*mode[[:space:]]*=[[:space:]]*\([a-zA-Z]*\).*/\1/p' "${AQ_CONF}" | tail -n 1)"
+    fi
+    case "${mode}" in
+        mac | windows) printf '%s\n' "${mode}" ;;
+        *) printf 'mac\n' ;;
+    esac
+}
+
+# -----------------------------------------------------------------------------
+# set_mode — write the file, then apply it
+# -----------------------------------------------------------------------------
+set_mode() {
+    local mode="$1"
+
+    if [ ! -r "${AQ_PROFILE_DIR}/${mode}.yaml" ]; then
+        echo "aq: this copy of AquariusOS has no '${mode}' keyboard profile in" >&2
+        echo "    ${AQ_PROFILE_DIR}. That is a fault in the operating system," >&2
+        echo "    not in anything you typed." >&2
+        return 1
+    fi
+
+    mkdir -p "${AQ_CONF_DIR}" || {
+        echo "aq: could not create ${AQ_CONF_DIR}." >&2
+        return 1
+    }
+
+    # The whole file is rewritten rather than edited, so that a file somebody
+    # has half-edited by hand cannot end up with two mode= lines that disagree.
+    cat > "${AQ_CONF}" << EOF
+# Written by 'aq keys ${mode}'. Edit by hand if you like, or run 'aq keys' again.
+#   mode=mac      Mac-style shortcuts. Copy is Command-C.  (the default)
+#   mode=windows  The normal Linux ones. Copy is Control-C.
+mode=${mode}
+EOF
+
+    echo "Keyboard shortcuts are now ${mode^} style."
+    if [ "${mode}" = "mac" ]; then
+        echo "  Copy is Command-C. Quit is Command-Q. Search is Command-Space."
+        echo "  On a PC keyboard, Command is the key next to the space bar."
+    else
+        echo "  Copy is Control-C. Nothing is remapped; your keyboard is untouched."
+    fi
+
+    apply
+}
+
+# -----------------------------------------------------------------------------
+# apply — restart the service so the new setting takes hold immediately
+# -----------------------------------------------------------------------------
+apply() {
+    if ! command -v systemctl > /dev/null 2>&1; then
+        echo "  (No systemctl here, so nothing was restarted. The new setting"
+        echo "   takes effect the next time you log in.)"
+        return 0
+    fi
+
+    if systemctl --user restart "${AQ_SERVICE}" 2> /dev/null; then
+        echo "  Applied. You do not need to log out."
+        return 0
+    fi
+
+    echo "  Saved, but it could not be applied right now — which is normal if"
+    echo "  you are not logged in at the screen (over SSH, for example)."
+    echo "  It takes effect the next time you log in."
+}
+
+# -----------------------------------------------------------------------------
+# status
+# -----------------------------------------------------------------------------
+status() {
+    local mode
+    mode="$(read_mode)"
+
+    echo "Keyboard shortcuts"
+    echo "  Style     : ${mode^}"
+    if [ -r "${AQ_CONF}" ]; then
+        echo "  Set in    : ${AQ_CONF}"
+    else
+        echo "  Set in    : nothing written yet, so the AquariusOS default (Mac) applies"
+    fi
+    echo "  Rules from: ${AQ_PROFILE_DIR}/${mode}.yaml"
+
+    local desktop="${XDG_CURRENT_DESKTOP:-not set}"
+    echo "  Desktop   : ${desktop}"
+
+    if ! command -v systemctl > /dev/null 2>&1; then
+        echo "  Running   : cannot tell — there is no systemctl here."
+        return 0
+    fi
+
+    local state
+    state="$(systemctl --user is-active "${AQ_SERVICE}" 2> /dev/null)"
+    case "${state}" in
+        active)
+            echo "  Running   : yes"
+            ;;
+        inactive | "")
+            if [ "${mode}" = "windows" ]; then
+                echo "  Running   : no — and that is correct. Windows style means"
+                echo "              nothing is remapped, so nothing needs to run."
+            else
+                echo "  Running   : no."
+                echo "              If you are logged in at the screen, something is wrong."
+                echo "              See what it said:  journalctl --user -u aquarius-keys -b"
+                echo "              Start it again:    systemctl --user start aquarius-keys"
+            fi
+            ;;
+        failed)
+            echo "  Running   : NO — it tried to start and failed."
+            echo "              Read the reason:  journalctl --user -u aquarius-keys -b"
+            ;;
+        *)
+            echo "  Running   : ${state}"
+            ;;
+    esac
+}
+
+# -----------------------------------------------------------------------------
+# Which subcommand?
+# -----------------------------------------------------------------------------
+case "${1:-}" in
+    "" | -h | --help | help)
+        usage
+        ;;
+    --version | -V)
+        if [ -r /usr/share/aquarius/image-info.json ]; then
+            sed -n 's/.*"version-pretty"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+                /usr/share/aquarius/image-info.json
+        else
+            echo "AquariusOS (version unknown — /usr/share/aquarius/image-info.json is missing)"
+        fi
+        ;;
+    keys)
+        case "${2:-}" in
+            mac | windows) set_mode "$2" ;;
+            status | "") status ;;
+            -h | --help | help) keys_usage ;;
+            *)
+                echo "aq: '${2}' is not something 'aq keys' knows how to do." >&2
+                echo >&2
+                keys_usage >&2
+                exit 1
+                ;;
+        esac
+        ;;
+    *)
+        echo "aq: '${1}' is not an aq command." >&2
+        echo >&2
+        usage >&2
+        exit 1
+        ;;
+esac

@@ -1,0 +1,280 @@
+#!/usr/bin/bash
+# =============================================================================
+# aquarius-keys-run — start the right keyboard remapper, with the right profile
+# =============================================================================
+# WHAT THIS IS
+#
+# This is the small script that the aquarius-keys service runs when you log in.
+# It is not meant to be run by hand. It answers three questions and then hands
+# over to the remapper:
+#
+#   1. Mac mode or Windows mode?      — from ~/.config/aquarius/keys.conf
+#   2. Which desktop am I in?         — decides WHICH remapper to run
+#   3. Is there anything to do?       — a profile with no rules means "no"
+#
+# The friendly way to change any of this is the `aq keys` command. Try
+# `aq keys --help`.
+#
+# Plain-English guide to the whole feature: docs/restart/aquarius-keys.md in
+# the os-image repository.
+# =============================================================================
+
+set -uo pipefail
+
+AQ_PROFILE_DIR="/usr/share/aquarius/keys"
+AQ_CONF="${XDG_CONFIG_HOME:-${HOME:-/tmp}/.config}/aquarius/keys.conf"
+
+# -----------------------------------------------------------------------------
+# say — one line of explanation into the log
+# -----------------------------------------------------------------------------
+# Everything this script prints ends up in the system journal, which is where
+# somebody debugging "my shortcuts stopped working" will look:
+#
+#     journalctl --user -u aquarius-keys -b
+#
+# So it is written as sentences, not as codes.
+say() { echo "aquarius-keys: $*"; }
+
+# =============================================================================
+# 1. MAC MODE OR WINDOWS MODE
+# =============================================================================
+# The answer lives in one line of one file: `mode=mac` or `mode=windows`.
+#
+# ⚠️ IF THE FILE IS MISSING, THE ANSWER IS MAC. That is the whole point of the
+# feature — Mac shortcuts are the AquariusOS default, so an account that has
+# never been told anything gets them. A new account created by the installer
+# gets the file from /etc/skel; an account that predates this feature does not,
+# and still gets Mac keys, which is correct.
+# =============================================================================
+AQ_MODE="mac"
+
+if [ -r "${AQ_CONF}" ]; then
+    # Read only the mode= line, ignore comments and anything else in the file,
+    # take the last one if somebody wrote it twice, and trim spaces.
+    conf_mode="$(sed -n 's/^[[:space:]]*mode[[:space:]]*=[[:space:]]*\([a-zA-Z]*\).*/\1/p' "${AQ_CONF}" | tail -n 1)"
+    case "${conf_mode}" in
+        mac | windows)
+            AQ_MODE="${conf_mode}"
+            say "mode is '${AQ_MODE}', from ${AQ_CONF}"
+            ;;
+        "")
+            say "${AQ_CONF} has no 'mode=' line in it — using Mac mode."
+            ;;
+        *)
+            say "${AQ_CONF} says mode=${conf_mode}, which is not a mode this"
+            say "computer knows about. The only answers are 'mac' and 'windows'."
+            say "Using Mac mode. Fix it with:  aq keys mac   or   aq keys windows"
+            ;;
+    esac
+else
+    say "no ${AQ_CONF} yet — using Mac mode, which is the AquariusOS default."
+fi
+
+AQ_PROFILE="${AQ_PROFILE_DIR}/${AQ_MODE}.yaml"
+
+if [ ! -r "${AQ_PROFILE}" ]; then
+    say "ERROR: the profile ${AQ_PROFILE} is missing from this image."
+    say "That is a bug in the operating system, not in your settings."
+    exit 1
+fi
+
+# =============================================================================
+# 2. IS THERE ANYTHING TO DO?
+# =============================================================================
+# A profile with no rules in it means "leave the keyboard alone" — that is what
+# windows.yaml is. In that case we must NOT start the remapper.
+#
+# This is a safety property and not a shortcut. The remapper works by taking
+# exclusive control of the keyboard and re-typing every key through a second,
+# invented keyboard. Putting that between a person and their keys for zero
+# rules would add a way for typing to break and give nothing back.
+#
+# The test is simply "does the file contain any list entries" — every rule
+# block in a profile begins with `- name:` or `- remap:`.
+# =============================================================================
+if ! grep -Eq '^[[:space:]]*-[[:space:]]+(name|remap):' "${AQ_PROFILE}"; then
+    say "${AQ_MODE} mode has no rules in it, so nothing is being remapped."
+    say "Your keyboard behaves exactly as Linux ships it. This is not an error."
+    exit 0
+fi
+
+# =============================================================================
+# 3. WHICH DESKTOP, AND THEREFORE WHICH REMAPPER
+# =============================================================================
+# Some rules only apply in certain apps, so the remapper has to be able to ask
+# "which window is focused?". Every desktop answers that differently, so there
+# are two copies of the remapper, each built to ask one desktop:
+#
+#   /usr/bin/xremap-wlroots   for the Aquarius Session (labwc)
+#   /usr/bin/xremap-gnome     for GNOME
+#
+# The desktop announces itself in XDG_CURRENT_DESKTOP. In the Aquarius Session
+# that is "aquarius-labwc:aquarius:wlroots"; on GNOME it is "GNOME".
+#
+# ⚠️ AND SOMETIMES IT IS EMPTY. A systemd user service only sees the variables
+# that the desktop pushed into the user's systemd manager when it started, and
+# not every desktop remembers to push them. GNOME does. The Aquarius Session
+# currently does not (as of aquarius-shell 70d2afd) — a one-line fix in that
+# repository, written up in docs/restart/aquarius-keys.md.
+#
+# So rather than trusting one variable, this asks three questions in order:
+# the variable, then systemd's own copy of the environment, then simply
+# "which compositor is running right now?".
+# =============================================================================
+aq_desktop="${XDG_CURRENT_DESKTOP:-}"
+
+if [ -z "${aq_desktop}" ] && command -v systemctl > /dev/null 2>&1; then
+    aq_desktop="$(systemctl --user show-environment 2> /dev/null \
+        | sed -n 's/^XDG_CURRENT_DESKTOP=//p' | tail -n 1)"
+fi
+
+aq_binary=""
+case "${aq_desktop}" in
+    *[Gg][Nn][Oo][Mm][Ee]*)
+        aq_binary="/usr/bin/xremap-gnome"
+        say "desktop is '${aq_desktop}' — using the GNOME build."
+        ;;
+    ?*)
+        # Anything else that named itself: the Aquarius Session, labwc, niri,
+        # sway, wayfire. All of them speak the wlroots way of asking.
+        aq_binary="/usr/bin/xremap-wlroots"
+        say "desktop is '${aq_desktop}' — using the wlroots build."
+        ;;
+    *)
+        # Nothing said anything. Look at what is actually running.
+        if pgrep -x gnome-shell > /dev/null 2>&1; then
+            aq_binary="/usr/bin/xremap-gnome"
+            say "nothing named the desktop, but GNOME Shell is running — using the GNOME build."
+        else
+            aq_binary="/usr/bin/xremap-wlroots"
+            say "nothing named the desktop and GNOME Shell is not running —"
+            say "using the wlroots build, which is what the Aquarius Session needs."
+        fi
+        ;;
+esac
+
+if [ ! -x "${aq_binary}" ]; then
+    say "ERROR: ${aq_binary} is missing from this image."
+    say "That is a bug in the operating system, not in your settings."
+    exit 1
+fi
+
+# =============================================================================
+# 3b. MAKE SURE "WHICH APP IS FOCUSED?" CAN ACTUALLY BE ANSWERED
+# =============================================================================
+# ⚠️ THIS SECTION IS WHY COMMAND-C DOES NOT KILL YOUR RENDER.
+#
+# The terminal exception in mac.yaml — "in a terminal, Command-C is copy, and
+# the physical Control-C is still the interrupt" — only works if the remapper
+# can tell that the focused window IS a terminal. If it cannot, that rule never
+# fires, and Command-C in a terminal becomes Control-C, which interrupts
+# whatever is running.
+#
+# So both desktops get the one thing they need, here, before anything starts.
+# =============================================================================
+case "${aq_binary}" in
+
+    */xremap-wlroots)
+        # The wlroots way of asking is a question put to the compositor over
+        # the Wayland connection, so WAYLAND_DISPLAY has to be set. A systemd
+        # user service only inherits variables the desktop pushed into systemd
+        # when it started, and the Aquarius Session does not do that yet.
+        #
+        # Rather than fail, find the socket. There is normally exactly one, in
+        # the per-login folder that Wayland puts its sockets in.
+        if [ -z "${WAYLAND_DISPLAY:-}" ] && [ -n "${XDG_RUNTIME_DIR:-}" ]; then
+            for aq_sock in "${XDG_RUNTIME_DIR}"/wayland-[0-9]*; do
+                case "${aq_sock}" in
+                    *.lock) continue ;;
+                esac
+                [ -S "${aq_sock}" ] || continue
+                WAYLAND_DISPLAY="$(basename "${aq_sock}")"
+                export WAYLAND_DISPLAY
+                say "WAYLAND_DISPLAY was not set; found the session's own socket '${WAYLAND_DISPLAY}'."
+                break
+            done
+        fi
+        if [ -z "${WAYLAND_DISPLAY:-}" ]; then
+            say "WARNING: no Wayland connection was found, so the remapper cannot"
+            say "tell which app is focused. The terminal exception will not work."
+        fi
+        ;;
+
+    */xremap-gnome)
+        # GNOME's Wayland desktop does not let any program ask which window is
+        # focused — that door is closed for everyone, for security reasons.
+        # The remapper's author writes a small GNOME add-on that answers on its
+        # behalf; AquariusOS ships it, but GNOME only loads an add-on that the
+        # account has switched on.
+        #
+        # So switch it on, for this account, if it is not already. This touches
+        # only this user's own settings — it does not change the image and it
+        # does not touch anybody else's desktop — and doing nothing here would
+        # mean shipping the terminal exception switched off.
+        aq_ext="xremap@k0kubun.com"
+        if [ -d "/usr/share/gnome-shell/extensions/${aq_ext}" ] \
+            && command -v gnome-extensions > /dev/null 2>&1; then
+            # `enable` on an add-on that is already on does nothing and reports
+            # success, so this is safe to run at every single login.
+            if gnome-extensions enable "${aq_ext}" 2> /dev/null; then
+                say "the GNOME add-on that reports the focused app is switched on."
+                say "(It is called 'Xremap' in the Extensions app. Turning it off there"
+                say " stops the app-specific rules, including the terminal exception.)"
+            else
+                say "WARNING: could not switch on the GNOME add-on '${aq_ext}'."
+                say "App-specific rules, including the terminal exception, will not work."
+                say "Try:  gnome-extensions enable ${aq_ext}"
+            fi
+        else
+            say "WARNING: the GNOME add-on '${aq_ext}' is not installed in this image."
+            say "App-specific rules, including the terminal exception, will not work."
+        fi
+        ;;
+esac
+
+# =============================================================================
+# 4. CAN WE ACTUALLY READ THE KEYBOARD?
+# =============================================================================
+# The remapper needs two things that ordinary programs do not:
+#
+#   /dev/input/event*   to see the keys you press
+#   /dev/uinput         to invent a keyboard of its own and type the
+#                       replacements through it
+#
+# AquariusOS grants both to whoever is logged in at the screen, through a udev
+# rule the image ships (/usr/lib/udev/rules.d/70-aquarius-input.rules). If that
+# has not worked, the remapper's own error is fairly cryptic, so we check first
+# and say something a person can act on.
+#
+# This is a warning, not a refusal: it is possible for the check to be wrong
+# and the remapper to work anyway, and we would rather try than give up.
+# =============================================================================
+if [ ! -w /dev/uinput ]; then
+    say "WARNING: this account cannot write to /dev/uinput, so remapping will"
+    say "probably fail. The usual cause is logging in over SSH or from a second"
+    say "seat — the permission is granted to whoever is logged in at the screen."
+    say "If you ARE at the screen and this keeps happening, the fallback is to"
+    say "join the input group, which grants it permanently:"
+    say "    sudo usermod -aG input \$USER      (then log out and back in)"
+fi
+
+# =============================================================================
+# 5. GO
+# =============================================================================
+# --watch=device  notice keyboards plugged in after login and remap them too.
+#                 Without this, a keyboard connected after you log in behaves
+#                 like a normal PC keyboard and nothing says why.
+#
+# --no-window-logging  do not write the name and title of every window you
+#                 focus into the system journal. Window titles include document
+#                 names, and a permanent record of them is not something an
+#                 operating system should keep by default. When you DO need to
+#                 know an app's name — to add it to the exclusion list — remove
+#                 this flag temporarily, or run
+#                     xremap-wlroots --list-windows
+#
+# `exec` replaces this script with the remapper, so systemd watches the real
+# program rather than a shell wrapper around it.
+# =============================================================================
+say "starting ${aq_binary} with ${AQ_PROFILE}"
+exec "${aq_binary}" --watch=device --no-window-logging "${AQ_PROFILE}"
