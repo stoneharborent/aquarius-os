@@ -314,6 +314,24 @@ aq_file_has "${AQ_CLI}" 'Keyboards :' \
 aq_file_has "${AQ_CLI}" 'reset-failed' \
     "'aq keys mac' clears an earlier failure before restarting, so it cannot report success over a service that did not start"
 
+# The two commands the service and the run script shell out to. Neither is
+# fatal — the ExecStartPre lines are prefixed with `-`, and pgrep is fenced —
+# but a missing one quietly removes a piece of the 2026-09-03 fix, so it should
+# be a decision rather than a surprise.
+say "The commands the keyboard service uses"
+for aq_cmd in pkill pgrep; do
+    if aq_have "${aq_cmd}"; then
+        ok "${aq_cmd} ($(command -v "${aq_cmd}"))"
+    else
+        bad "${aq_cmd} is missing — a leftover remapper could not be cleared out of the way"
+    fi
+done
+if [ -x /usr/bin/pkill ]; then
+    ok "/usr/bin/pkill is exactly where the service file says it is"
+else
+    bad "the service file runs /usr/bin/pkill and there is nothing there — the ExecStartPre lines would do nothing"
+fi
+
 # The keyboards on Royce's bench are a Logitech K780 and a Razer Cynosa Chroma
 # Pro. Both are ordinary PC keyboards and BOTH must get the PC swap — neither
 # should be caught by the Apple exclusion. Checking the exclusion is exactly the
@@ -381,11 +399,24 @@ if aq_have systemd-analyze; then
     #                                   ConditionUser= or RestartPreventExitStatus=
     #                                   would silently un-do the 2026-09-03 fix.
     #   "Failed to parse"               the file is not readable at all.
-    if printf '%s' "${aq_verify}" | grep -Eqi "unknown (key|lvalue)|failed to parse"; then
+    # ⚠️ AND CHECK THAT IT ACTUALLY LOOKED. Observed in the 2026-09-03 build:
+    # inside a container systemd-analyze cannot start a manager at all —
+    #
+    #   Failed to lookup RuntimeDirectory path: No such device or address
+    #   Failed to initialize manager: No such device or address
+    #
+    # — so it never reaches the file, prints no complaint, and a check that only
+    # looks for complaints reports a confident OK over a tool that did nothing.
+    # A green tick nobody earned is worse than no tick, so say which happened.
+    if printf '%s' "${aq_verify}" | grep -Eqi "failed to initialize manager|failed to lookup runtimedirectory"; then
+        echo "  note   systemd-analyze could not start inside this container, so it"
+        echo "         did not read the file. The line-by-line checks above are"
+        echo "         what actually guard this unit."
+    elif printf '%s' "${aq_verify}" | grep -Eqi "unknown (key|lvalue)|failed to parse"; then
         bad "systemd cannot understand part of ${UNIT} (see above). A setting it"
         bad "cannot read is a setting that does nothing, silently."
     else
-        ok "systemd understands every line of the service file"
+        ok "systemd read the service file and understood every line of it"
     fi
 fi
 

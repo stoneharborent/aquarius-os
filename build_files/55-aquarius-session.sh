@@ -133,6 +133,13 @@ say "The session's own programs"
 # zenity                  draws the dialog that appears if the bar fails to
 #                         start. See /usr/libexec/aquarius-shell-start.
 # libnotify               notify-send, the fallback if even zenity is missing.
+# procps-ng               pgrep and pkill. Named here rather than relied on as
+#                         somebody else's dependency, because two pieces of the
+#                         2026-09-03 keyboard fix use them: the service clears a
+#                         leftover remapper out of the way with pkill before
+#                         starting, and the run script asks pgrep whether GNOME
+#                         Shell is really running before believing the
+#                         environment that says it is.
 aq_dnf install \
     xdg-desktop-portal-wlr \
     swaybg \
@@ -140,7 +147,8 @@ aq_dnf install \
     wlr-randr \
     brightnessctl \
     zenity \
-    libnotify
+    libnotify \
+    procps-ng
 
 # dbus-tools carries dbus-update-activation-environment, which is how the
 # launcher hands the session's environment to systemd and D-Bus so the portals
@@ -566,7 +574,10 @@ fi
 # told over the standard wlr-output-management protocol, which is what wlr-randr
 # speaks. Without it the helper decides correctly and can do nothing about it.
 if aq_have wlr-randr; then
-    ok "wlr-randr is installed ($(wlr-randr --version 2>&1 | head -1))"
+    # Deliberately NOT `wlr-randr --version`: the tool does not have that
+    # option, and asking for it prints its usage and exits non-zero, which
+    # would turn a passing check into a confusing one.
+    ok "wlr-randr is installed at $(command -v wlr-randr)"
 else
     bad "wlr-randr is missing — the helper could work out the right scale and would have no way to apply it"
 fi
