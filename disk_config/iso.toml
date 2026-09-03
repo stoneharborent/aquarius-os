@@ -47,6 +47,31 @@
 # the machine it installs cannot update — which is discovered weeks later.
 # ==============================================================================
 
+# ------------------------------------------------------------------------------
+# What the USB stick calls itself
+# ------------------------------------------------------------------------------
+# `volume_id` is the name written onto the disc image itself. It is what shows up
+# when the stick is plugged into a Mac or a Windows machine, and — this is the
+# useful part — the installer's own boot menu is built from it too, so the first
+# screen a person sees when booting the stick says AQUARIUSOS instead of
+# "Fedora-bootc-…".
+#
+# ⚠️ Only capital letters, digits, `-` and `_` are allowed here. It is an old
+# format with old rules; a space or a lower-case letter is rejected.
+#
+# WHAT THIS DOES NOT CHANGE, and what it would take:
+#   The installer program itself (Anaconda) still shows Fedora's logo on its own
+#   pages, because that artwork lives inside the installer's own runtime, which
+#   is assembled by the ISO builder and is not this operating system. Changing it
+#   means shipping a replacement for Fedora's artwork package inside that
+#   runtime, which the ISO builder gives us no way to do. It is ten minutes of
+#   somebody's life, once, on the way to a machine that then says AquariusOS
+#   everywhere forever. See docs/restart/boot-branding.md.
+[customizations.iso]
+volume_id = "AQUARIUSOS"
+application_id = "AquariusOS"
+publisher = "Stone Harbor Entertainment"
+
 [customizations.installer.kickstart]
 contents = """
 %post

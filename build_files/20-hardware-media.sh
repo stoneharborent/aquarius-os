@@ -185,8 +185,26 @@ aq_dnf install \
 # Boot appearance and memory
 # ------------------------------------------------------------------------------
 # Plymouth is the graphical boot splash. Without it, starting the computer shows
-# a wall of white text. Our own boot artwork is a later job; a stock theme now
-# means the boot looks finished rather than broken.
+# a wall of white text.
+#
+# The AquariusOS splash itself is built in step 8 (build_files/80-boot-branding.sh
+# — read that file's header for how the whole boot path is branded). These are
+# the parts it is built out of:
+#
+#   plymouth                   the splash program itself
+#   plymouth-system-theme      Fedora's default theme. We do NOT use it — we
+#                              replace it — but it is what a bare image falls
+#                              back to, and having it means step 8 has something
+#                              to compare ours against.
+#   plymouth-plugin-two-step   the drawing plug-in our theme uses. See the long
+#                              note in system_files/.../aquarius.plymouth for
+#                              why this one and not the scripting plug-in.
+#   plymouth-plugin-label      draws TEXT on the splash. Without it the
+#                              "type your disk password" prompt would appear
+#                              as a box with no words in it.
+#   plymouth-theme-spinner     Fedora's plain grey password-box pictures, which
+#                              step 8 borrows rather than re-drawing. Also what
+#                              Fedora's own default theme takes its artwork from.
 #
 # zram-generator-defaults turns a slice of memory into compressed swap. It is
 # what Fedora ships on every desktop edition and it is the difference between
@@ -196,6 +214,8 @@ aq_dnf install \
     plymouth \
     plymouth-system-theme \
     plymouth-plugin-two-step \
+    plymouth-plugin-label \
+    plymouth-theme-spinner \
     zram-generator-defaults
 
 # ------------------------------------------------------------------------------
@@ -243,6 +263,9 @@ aq_installed \
     fwupd \
     linux-firmware \
     plymouth \
+    plymouth-plugin-two-step \
+    plymouth-plugin-label \
+    plymouth-theme-spinner \
     zram-generator-defaults \
     btrfs-progs \
     exfatprogs \

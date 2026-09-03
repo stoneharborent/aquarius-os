@@ -121,7 +121,7 @@ ARG IMAGE_NAME=aquarius-os-next
 ARG IMAGE_VENDOR=stoneharborent
 
 # ------------------------------------------------------------------------------
-# The build, in seven steps
+# The build, in nine steps
 # ------------------------------------------------------------------------------
 # Each RUN below is one layer of the finished image. They are separate on
 # purpose rather than one giant step: a computer downloading an update only has
@@ -175,12 +175,29 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     NVIDIA="${NVIDIA}" /ctx/build_files/60-nvidia.sh
 
-# 7. Identity, then cleanup. The OS learns to call itself AquariusOS, and then
-#    every temporary file the build made is swept up.
+# 7. Identity. The OS learns to call itself AquariusOS.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     IMAGE_NAME="${IMAGE_NAME}" IMAGE_VENDOR="${IMAGE_VENDOR}" NVIDIA="${NVIDIA}" \
-    /ctx/build_files/70-image-info.sh \
-    && /ctx/build_files/90-cleanup.sh
+    /ctx/build_files/70-image-info.sh
+
+# 8. The boot path: the Aquarius splash screen, the name in the boot menu, the
+#    text login banners, and then a rebuild of the boot ramdisk so that all of
+#    it is really used.
+#
+#    ⚠️ THIS STEP MUST STAY AFTER STEP 6, AND DO NOT REORDER IT.
+#    It rebuilds the boot ramdisk, and a boot ramdisk is built for one exact
+#    kernel version. Step 6 sometimes REPLACES this image's kernel (the NVIDIA
+#    driver only works with the kernel it was compiled against). Run this before
+#    that and the NVIDIA image ends up with a ramdisk for a kernel that no
+#    longer exists — an image that builds, publishes, and then will not start.
+#    The file's own header explains it at length.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache/libdnf5 \
+    /ctx/build_files/80-boot-branding.sh
+
+# 9. Cleanup. Every temporary file the build made is swept up.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    /ctx/build_files/90-cleanup.sh
 
 # ------------------------------------------------------------------------------
 # The final check
