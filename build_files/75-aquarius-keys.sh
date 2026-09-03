@@ -265,8 +265,78 @@ aq_file_has "${UNIT}" '^ExecStart=/usr/libexec/aquarius-keys-run$' \
     "the service runs the right program"
 aq_file_has "${UNIT}" '^WantedBy=graphical-session\.target$' \
     "the service belongs to the graphical session"
-aq_file_has "${UNIT}" '^Restart=on-failure$' \
-    "the service restarts itself if it crashes"
+aq_file_has "${UNIT}" '^PartOf=graphical-session\.target$' \
+    "the service ends when the desktop does, rather than outliving it"
+
+# ------------------------------------------------------------------------------
+# ⚠️ EVERY LINE BELOW IS A FIX FOR THE BENCH BUG OF 2026-09-03, AND EVERY ONE OF
+# THEM IS ONE EDIT AWAY FROM BEING LOST AGAIN.
+# ------------------------------------------------------------------------------
+# What happened, in one paragraph: a second remapper — the LOGIN SCREEN's, run
+# from the same "switched on" link, because that link lives in /usr and applies
+# to every account including gdm's — already had hold of both of Royce's
+# keyboards. Ours was refused each one with "Device or resource busy", ended up
+# holding nothing, and sat there while systemctl reported it active. Every
+# shortcut was dead and it looked exactly like Windows mode.
+#
+# The full story is in docs/restart/aquarius-keys.md, under "It came up in
+# Windows mode".
+aq_file_has "${UNIT}" '^ConditionUser=!@system$' \
+    "the LOGIN SCREEN does not run this — the 2026-09-03 root cause (a system account's remapper held the keyboards)"
+aq_file_has "${UNIT}" '^Restart=always$' \
+    "it keeps trying — a keyboard that is busy for a few seconds must not cost you your shortcuts for the whole session"
+aq_file_has "${UNIT}" '^RestartSec=2$' \
+    "it tries again two seconds later"
+aq_file_has "${UNIT}" '^StartLimitIntervalSec=0$' \
+    "it never gives up (the rate limiter that would stop it is switched off on purpose)"
+aq_file_has "${UNIT}" '^RestartPreventExitStatus=64 78$' \
+    "the two exits that mean 'retrying cannot help' are named: nothing to do (64) and broken image (78)"
+aq_file_has "${UNIT}" '^ExecStartPre=-/usr/bin/pkill --uid %U --exact xremap-wlroots$' \
+    "any leftover remapper of this person's own is cleared out of the way first"
+
+# The run script's half of the same fix.
+aq_file_has "${RUN_SCRIPT}" 'ignore=xremap' \
+    "a leftover 'xremap' virtual keyboard can never be auto-selected as the only device (event16 on the bench)"
+aq_file_has "${RUN_SCRIPT}" 'resource busy' \
+    "a refused keyboard is treated as a failure of the run, so systemd retries — the bench's --watch dead end"
+aq_file_has "${RUN_SCRIPT}" 'No device was selected' \
+    "holding no keyboards at all is treated as a failure too"
+aq_file_has "${RUN_SCRIPT}" 'remapping .* keyboard' \
+    "it says how many keyboards it actually has hold of, so 'running' and 'working' can be told apart"
+aq_file_has "${RUN_SCRIPT}" 'aq_wait 30 "GNOME Shell to be ready"' \
+    "on GNOME it waits for the shell before asking it to switch the add-on on"
+aq_file_has "${RUN_SCRIPT}" 'gnome-extensions info' \
+    "and waits for that add-on to finish loading, not merely to be switched on"
+
+# And the front door has to be able to answer the question Royce could not.
+aq_file_has "${AQ_CLI}" 'Keyboards :' \
+    "'aq keys status' reports how many keyboards are being remapped"
+aq_file_has "${AQ_CLI}" 'reset-failed' \
+    "'aq keys mac' clears an earlier failure before restarting, so it cannot report success over a service that did not start"
+
+# The keyboards on Royce's bench are a Logitech K780 and a Razer Cynosa Chroma
+# Pro. Both are ordinary PC keyboards and BOTH must get the PC swap — neither
+# should be caught by the Apple exclusion. Checking the exclusion is exactly the
+# four Apple-only entries is how a future "and Logitech" typo gets caught here
+# rather than on a machine.
+say "The Apple exclusion catches Apple keyboards and nothing else"
+# Only the FIRST `not:` block — the one in the modmap, which is the keyboard
+# exclusion. There is a second `not:` further down for applications, and a range
+# match would run straight into it.
+aq_apple_entries="$(awk '/^ *not:/ { inside = 1; next }
+                         inside && /^ *remap:/ { exit }
+                         inside && /^ *- / { sub(/^ *- */, ""); gsub(/"/, ""); print }' \
+    "${KEYS_DIR}/mac.yaml")"
+echo "${aq_apple_entries}" | sed 's/^/    /'
+aq_apple_expected="ids:0x05ac:0x0000
+ids:0x004c:0x0000
+Apple
+Magic Keyboard"
+if [ "${aq_apple_entries}" = "${aq_apple_expected}" ]; then
+    ok "only Apple's own devices are excluded — a Logitech K780 and a Razer Cynosa both get Mac keys"
+else
+    bad "the Apple exclusion list has changed. It must be exactly Apple's two maker numbers, 'Apple' and 'Magic Keyboard' — anything broader would silently stop remapping an ordinary PC keyboard."
+fi
 
 # ------------------------------------------------------------------------------
 # ⚠️ WHY THE "SWITCHED ON" LINK IS IN /usr AND NOT /etc
@@ -299,7 +369,24 @@ fi
 # output is printed and only a hard parse failure is treated as a fault.
 if aq_have systemd-analyze; then
     say "systemd's own opinion of the service file"
-    systemd-analyze verify --user "${UNIT}" 2>&1 | sed 's/^/  /' || true
+    aq_verify="$(systemd-analyze verify --user "${UNIT}" 2>&1 || true)"
+    printf '%s\n' "${aq_verify}" | sed 's/^/  /'
+
+    # Most of what systemd-analyze says in a container is noise about units that
+    # only exist on a real machine. Two things are NOT noise, and both mean the
+    # file would be ignored at somebody's login:
+    #
+    #   "Unknown key"/"Unknown lvalue"  a setting spelled wrong. systemd skips
+    #                                   the line and starts anyway, so a typo in
+    #                                   ConditionUser= or RestartPreventExitStatus=
+    #                                   would silently un-do the 2026-09-03 fix.
+    #   "Failed to parse"               the file is not readable at all.
+    if printf '%s' "${aq_verify}" | grep -Eqi "unknown (key|lvalue)|failed to parse"; then
+        bad "systemd cannot understand part of ${UNIT} (see above). A setting it"
+        bad "cannot read is a setting that does nothing, silently."
+    else
+        ok "systemd understands every line of the service file"
+    fi
 fi
 
 # ==============================================================================
@@ -339,6 +426,27 @@ else
     bad "aq keys status failed"
 fi
 echo "---"
+
+# `aq display` is the other half of the 2026-09-03 work. It has to survive being
+# run in a container with no screen at all, because that is very close to being
+# run over SSH, which is a thing people do.
+echo "--- aq display status ---"
+if "${AQ_CLI}" display status; then
+    ok "aq display status works with no screen attached"
+else
+    bad "aq display status failed"
+fi
+echo "---"
+if "${AQ_CLI}" display --help > /dev/null; then
+    ok "aq display --help works"
+else
+    bad "aq display --help failed"
+fi
+if "${AQ_CLI}" display scale banana > /dev/null 2>&1; then
+    bad "aq display accepted 'banana' as a size"
+else
+    ok "aq display refuses a size that is not a number"
+fi
 
 # The default, in both of the two places it is written.
 aq_file_has "${SKEL_CONF}" '^mode=mac$' \

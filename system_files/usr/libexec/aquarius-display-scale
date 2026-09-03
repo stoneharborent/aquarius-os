@@ -1,0 +1,521 @@
+#!/usr/bin/python3
+# =============================================================================
+# aquarius-display-scale — make the screen the right size, at every login
+# =============================================================================
+# WHAT PROBLEM THIS SOLVES, IN PLAIN ENGLISH
+#
+# A modern monitor has far more dots on it than an old one. On a 4K screen, a
+# letter drawn "30 dots tall" is physically tiny. So every desktop multiplies
+# everything it draws by a number — the SCALE — and 4K screens normally want
+# 125%, 150% or 200% rather than 100%.
+#
+# GNOME does this for you: there is a slider in Settings called Scale, and it
+# remembers your answer. The Aquarius Session did NOT. It started every screen
+# at 100%, which is why the desktop looked correct and read far too small on
+# Royce's 55" 4K monitor on 2026-09-03. GNOME on the same machine had been set
+# to 125% the whole time, and nobody had told our session.
+#
+# This program is the missing piece. It runs once, early in the session, and
+# tells the window manager what scale each screen should be at.
+#
+# ------------------------------------------------------------------------------
+# WHERE THE ANSWER COMES FROM — THREE PLACES, IN THIS ORDER
+# ------------------------------------------------------------------------------
+#   1. YOUR OWN SETTING.   ~/.config/aquarius/display.conf
+#                          Written by `aq display scale 1.25`. If it is there,
+#                          it wins. Nothing else gets a vote.
+#
+#   2. WHAT YOU TOLD GNOME. ~/.config/monitors.xml
+#                          GNOME writes this file when you move the Scale
+#                          slider. Reading it means the Aquarius Session
+#                          inherits the answer you already gave, on the first
+#                          login, without being asked twice.
+#
+#   3. A GUESS FROM THE MONITOR ITSELF.
+#                          Only if neither of the above exists. The monitor
+#                          reports how many dots it has and how big it is in
+#                          millimetres; those two numbers give dots-per-inch,
+#                          and DPI is the honest way to ask "is this screen
+#                          dense or just large?".
+#
+# WHY THAT ORDER AND NOT ANOTHER — THE 55-INCH LESSON
+#   Royce's monitor is a Samsung Odyssey Ark: 55 inches, 3840x2160. Work out its
+#   DPI and you get about 80, which is LOWER than an ordinary 1080p office
+#   monitor. On the numbers alone the right answer is 100%. He runs it at 125%,
+#   because he sits further back from a 55" screen than the arithmetic assumes.
+#
+#   That is the whole argument for the order above. A guess is a last resort. A
+#   person who has already answered the question should never be asked again,
+#   and should never be overruled.
+#
+# ------------------------------------------------------------------------------
+# HOW IT APPLIES THE ANSWER
+# ------------------------------------------------------------------------------
+# Through `wlr-randr`, the standard command-line tool for changing monitor
+# settings on this family of window managers. labwc has no monitor settings in
+# its own configuration file on purpose: it expects a program to tell it, over
+# the standard wlr-output-management protocol, which is what wlr-randr speaks.
+#
+# Fractional scales — 1.25, 1.5, 1.75 — work properly here. labwc 0.20 supports
+# the fractional-scale protocol, so an application that understands it (every
+# GTK4 and Qt6 program) is told "draw yourself at 1.25" and draws crisply.
+# Older applications are drawn at the next whole number up and shrunk, which is
+# slightly soft but never broken.
+#
+# ------------------------------------------------------------------------------
+# RUNNING IT BY HAND
+# ------------------------------------------------------------------------------
+#   aquarius-display-scale              work it out and apply it
+#   aquarius-display-scale --dry-run    say what it WOULD do, change nothing
+#   aquarius-display-scale --explain    the same, with the reasoning spelled out
+#   aquarius-display-scale --status     what each screen is set to right now
+#
+# The friendly front door is `aq display`. Try `aq display --help`.
+#
+# Plain-English guide: docs/restart/aquarius-display.md in the os-image
+# repository, and /usr/share/doc on the machine.
+# =============================================================================
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import xml.etree.ElementTree as ET
+
+# The scales we are willing to choose on our own. Every one of these is a value
+# GNOME's own Settings panel offers, which matters: a person who later moves the
+# GNOME slider should find the same numbers on both desktops.
+LADDER = (1.0, 1.25, 1.5, 1.75, 2.0)
+
+# The lowest and highest we will ever apply, however we arrived at the number.
+# A scale of 0.1 makes a desktop nobody can read; a scale of 12 makes one where
+# the top bar is taller than the screen and the settings cannot be reached to
+# undo it. Both are one typo away, so both are fenced off.
+SCALE_MIN = 0.5
+SCALE_MAX = 3.0
+
+
+def say(message):
+    """One line into the session log. Sentences, not codes."""
+    print("aquarius-display-scale: %s" % message, flush=True)
+
+
+# =============================================================================
+# READING THE MONITORS THAT ARE PLUGGED IN
+# =============================================================================
+# wlr-randr can answer in two ways. Newer versions print JSON, which is exact.
+# Older ones print a human-readable list, which we can still read. Both are
+# handled, because an operating system should not fall over because a tool it
+# calls is one version older than expected.
+
+
+def outputs_from_json(text):
+    """Turn `wlr-randr --json` into our own simple list of screens."""
+    screens = []
+    for entry in json.loads(text):
+        current = None
+        for mode in entry.get("modes", []):
+            if mode.get("current"):
+                current = mode
+                break
+        physical = entry.get("physical_size", {}) or {}
+        screens.append({
+            "name": entry.get("name", ""),
+            "description": entry.get("description", "") or "",
+            "width": int((current or {}).get("width", 0) or 0),
+            "height": int((current or {}).get("height", 0) or 0),
+            "refresh": float((current or {}).get("refresh", 0) or 0),
+            "mm_width": int(physical.get("width", 0) or 0),
+            "mm_height": int(physical.get("height", 0) or 0),
+            "scale": float(entry.get("scale", 1.0) or 1.0),
+            "enabled": bool(entry.get("enabled", True)),
+        })
+    return screens
+
+
+# The plain-text shape we are reading, for anyone maintaining this later:
+#
+#   DP-1 "Samsung Electric Company Odyssey Ark 0x00012345 (DP-1)"
+#     Physical size: 1210x680 mm
+#     Enabled: yes
+#     Modes:
+#       3840x2160 px, 59.996999 Hz (preferred, current)
+#     Position: 0,0
+#     Scale: 1.000000
+_TEXT_HEAD = re.compile(r'^(\S+)\s+"(.*)"\s*$')
+_TEXT_PHYS = re.compile(r'^\s*Physical size:\s*(\d+)x(\d+)\s*mm', re.I)
+_TEXT_ENABLED = re.compile(r'^\s*Enabled:\s*(\w+)', re.I)
+_TEXT_SCALE = re.compile(r'^\s*Scale:\s*([\d.]+)', re.I)
+_TEXT_MODE = re.compile(r'^\s*(\d+)x(\d+)\s*px,\s*([\d.]+)\s*Hz(.*)$', re.I)
+
+
+def outputs_from_text(text):
+    """Turn wlr-randr's human-readable output into the same simple list."""
+    screens = []
+    current = None
+    for line in text.splitlines():
+        head = _TEXT_HEAD.match(line)
+        if head:
+            current = {
+                "name": head.group(1),
+                "description": head.group(2),
+                "width": 0, "height": 0, "refresh": 0.0,
+                "mm_width": 0, "mm_height": 0,
+                "scale": 1.0, "enabled": True,
+            }
+            screens.append(current)
+            continue
+        if current is None:
+            continue
+        found = _TEXT_PHYS.match(line)
+        if found:
+            current["mm_width"] = int(found.group(1))
+            current["mm_height"] = int(found.group(2))
+            continue
+        found = _TEXT_ENABLED.match(line)
+        if found:
+            current["enabled"] = found.group(1).lower() in ("yes", "true")
+            continue
+        found = _TEXT_SCALE.match(line)
+        if found:
+            current["scale"] = float(found.group(1))
+            continue
+        found = _TEXT_MODE.match(line)
+        if found and "current" in found.group(4).lower():
+            current["width"] = int(found.group(1))
+            current["height"] = int(found.group(2))
+            current["refresh"] = float(found.group(3))
+    return screens
+
+
+def read_outputs(runner=None):
+    """Ask wlr-randr what is plugged in. Returns [] if it cannot be asked."""
+    runner = runner or _run
+    text = runner(["wlr-randr", "--json"])
+    if text is not None:
+        try:
+            return outputs_from_json(text)
+        except (ValueError, KeyError):
+            say("wlr-randr's JSON could not be read; falling back to its plain output.")
+    text = runner(["wlr-randr"])
+    if text is None:
+        return []
+    return outputs_from_text(text)
+
+
+def _run(command):
+    """Run a command and return what it printed, or None if it failed."""
+    try:
+        done = subprocess.run(command, capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode != 0:
+        return None
+    return done.stdout
+
+
+# =============================================================================
+# PLACE 1 — YOUR OWN SETTING
+# =============================================================================
+# ~/.config/aquarius/display.conf is a plain list of name=value lines:
+#
+#     scale=1.25          every screen
+#     scale.DP-2=1.0      this one screen only, overriding the line above
+#     ui=1.15             how big the Aquarius Shell's own design is drawn
+#
+# The `ui` line is NOT read here. It is read by /usr/bin/aquarius-session, which
+# hands it to the shell as AQ_UI_SCALE. The two are deliberately different
+# things and the documentation is careful about it: `scale` makes EVERYTHING on
+# the screen bigger, including other people's applications; `ui` makes only our
+# own bar and dock bigger, and is for tuning the design.
+
+
+def read_conf(path):
+    values = {}
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.split("#", 1)[0].strip()
+                if "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                values[key.strip()] = value.strip()
+    except OSError:
+        return {}
+    return values
+
+
+def scale_from_conf(values, output_name):
+    """The user's own answer for this screen, or None if they have not given one."""
+    for key in ("scale.%s" % output_name, "scale"):
+        if key in values:
+            try:
+                return clamp(float(values[key]))
+            except ValueError:
+                say("display.conf has %s=%s, which is not a number — ignoring it."
+                    % (key, values[key]))
+    return None
+
+
+# =============================================================================
+# PLACE 2 — WHAT YOU TOLD GNOME
+# =============================================================================
+# ~/.config/monitors.xml is GNOME's saved monitor arrangement. It holds one
+# <configuration> block per arrangement it has ever seen — desk with two
+# screens, laptop on its own, and so on — and each block lists the screens by
+# their connector name (DP-1, HDMI-A-1) with the scale chosen for each.
+#
+# So the job is: find the block that matches what is plugged in NOW, and read
+# the scales out of it. If none matches exactly, the first block is used, which
+# is GNOME's own most-recent arrangement and is a better guess than nothing.
+
+
+def scales_from_monitors_xml(text, connected_names):
+    """
+    Read GNOME's saved scales.
+
+    Returns a dictionary of connector name -> scale, and the reason string
+    describing which configuration block was used. An empty dictionary means
+    "this file has nothing to say about the screens that are plugged in".
+    """
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        return {}, "monitors.xml could not be read (it is not valid XML)"
+
+    blocks = []
+    for configuration in root.findall("configuration"):
+        scales = {}
+        for logical in configuration.findall("logicalmonitor"):
+            scale_node = logical.find("scale")
+            if scale_node is None or not (scale_node.text or "").strip():
+                continue
+            try:
+                scale = float(scale_node.text.strip())
+            except ValueError:
+                continue
+            for monitor in logical.findall("monitor"):
+                spec = monitor.find("monitorspec")
+                if spec is None:
+                    continue
+                connector = spec.find("connector")
+                if connector is None or not (connector.text or "").strip():
+                    continue
+                scales[connector.text.strip()] = clamp(scale)
+        if scales:
+            blocks.append(scales)
+
+    if not blocks:
+        return {}, "monitors.xml has no saved scales in it"
+
+    wanted = set(connected_names)
+    for scales in blocks:
+        if set(scales) == wanted:
+            return scales, "your GNOME display setting for exactly these screens"
+    for scales in blocks:
+        if wanted and wanted.issubset(set(scales)):
+            return scales, "your GNOME display setting for an arrangement that includes these screens"
+    return blocks[0], "your most recent GNOME display setting (the screen names do not match exactly)"
+
+
+# =============================================================================
+# PLACE 3 — THE GUESS
+# =============================================================================
+# THE RULE, WRITTEN OUT SO IT CAN BE ARGUED WITH
+#
+# Dots per inch is worked out from two things the monitor reports: how many dots
+# tall the picture is, and how many millimetres tall the glass is.
+#
+#     dpi = pixels_tall / (millimetres_tall / 25.4)
+#
+#   under 110 dpi   ->  100%   an ordinary desktop monitor. Also a 55" 4K (80)
+#                              and a 49" ultrawide (108). Big is not dense.
+#   110 to 149      ->  125%   a 27" 4K-ish panel, a dense 1440p laptop
+#   150 to 189      ->  150%   a 32" 8K-wide, a 24" 4K
+#   190 to 239      ->  175%   most "retina" laptop screens
+#   240 and over    ->  200%   a very dense laptop or tablet panel
+#
+# IF THE MONITOR DOES NOT SAY HOW BIG IT IS — and cheap ones, and every virtual
+# machine, do not — there is no honest DPI to work with. Then, and only then, we
+# fall back to counting dots: 2000 or more tall means 100% would be painful, so
+# 200%; anything less is left at 100%. That is a coarse rule and it is meant to
+# be: the right fix is `aq display scale`, and the log says so.
+
+
+def dpi_of(screen):
+    if screen["height"] <= 0 or screen["mm_height"] <= 0:
+        return None
+    return screen["height"] / (screen["mm_height"] / 25.4)
+
+
+def scale_from_guess(screen):
+    """Our own best guess for this screen, with the reason we chose it."""
+    dpi = dpi_of(screen)
+    if dpi is None:
+        if screen["height"] >= 2000:
+            return 2.0, ("this screen does not report its physical size, and it is "
+                         "%d dots tall — guessing 200%%" % screen["height"])
+        return 1.0, ("this screen does not report its physical size — leaving it at 100%")
+
+    if dpi < 110:
+        scale = 1.0
+    elif dpi < 150:
+        scale = 1.25
+    elif dpi < 190:
+        scale = 1.5
+    elif dpi < 240:
+        scale = 1.75
+    else:
+        scale = 2.0
+    return scale, ("worked out from the monitor: %dx%d dots on %dx%d mm of glass, "
+                   "which is about %d dots per inch"
+                   % (screen["width"], screen["height"],
+                      screen["mm_width"], screen["mm_height"], round(dpi)))
+
+
+def clamp(scale):
+    return max(SCALE_MIN, min(SCALE_MAX, scale))
+
+
+# =============================================================================
+# PUTTING THE THREE TOGETHER
+# =============================================================================
+
+
+def decide(screens, conf, monitors_xml_text):
+    """
+    Work out the scale for every screen, and why.
+
+    Returns a list of (screen, scale, reason). Nothing is applied here — this
+    function only decides, which is what makes it testable without a monitor.
+    """
+    connected = [s["name"] for s in screens if s["enabled"]]
+    gnome_scales, gnome_reason = ({}, "")
+    if monitors_xml_text:
+        gnome_scales, gnome_reason = scales_from_monitors_xml(monitors_xml_text, connected)
+
+    decisions = []
+    for screen in screens:
+        if not screen["enabled"]:
+            continue
+        name = screen["name"]
+
+        mine = scale_from_conf(conf, name)
+        if mine is not None:
+            decisions.append((screen, mine, "your own setting in display.conf"))
+            continue
+
+        if name in gnome_scales:
+            decisions.append((screen, gnome_scales[name], gnome_reason))
+            continue
+
+        guess, reason = scale_from_guess(screen)
+        decisions.append((screen, guess, reason))
+    return decisions
+
+
+def apply(decisions, dry_run, runner=None):
+    """Tell the window manager. One wlr-randr call per screen that needs one."""
+    runner = runner or _run
+    changed = 0
+    for screen, scale, reason in decisions:
+        name = screen["name"]
+        # Floating-point numbers are never exactly equal, so compare loosely.
+        if abs(screen["scale"] - scale) < 0.001:
+            say("%s is already at %g%% — %s" % (name, scale * 100, reason))
+            continue
+        say("%s: %g%% -> %g%% — %s" % (name, screen["scale"] * 100, scale * 100, reason))
+        if dry_run:
+            continue
+        if runner(["wlr-randr", "--output", name, "--scale", "%g" % scale]) is None:
+            say("WARNING: could not set the scale on %s. The desktop still works;"
+                " everything on it is just the wrong size." % name)
+            say("         Try it by hand:  wlr-randr --output %s --scale %g" % (name, scale))
+        else:
+            changed += 1
+    return changed
+
+
+# =============================================================================
+# THE COMMAND ITSELF
+# =============================================================================
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        prog="aquarius-display-scale",
+        description="Set each screen to the right size for the Aquarius Desktop.")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="say what would happen and change nothing")
+    parser.add_argument("--explain", action="store_true",
+                        help="the same as --dry-run, with the reasoning")
+    parser.add_argument("--status", action="store_true",
+                        help="what each screen is set to right now")
+    # The two below exist so that this program can be tested without a monitor,
+    # in a container, in CI. They are not for people.
+    parser.add_argument("--outputs-from", metavar="FILE",
+                        help=argparse.SUPPRESS)
+    parser.add_argument("--monitors-xml", metavar="FILE",
+                        help=argparse.SUPPRESS)
+    parser.add_argument("--conf", metavar="FILE", help=argparse.SUPPRESS)
+    args = parser.parse_args(argv)
+
+    conf_path = args.conf or os.path.join(
+        os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
+        "aquarius", "display.conf")
+    monitors_path = args.monitors_xml or os.path.join(
+        os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
+        "monitors.xml")
+
+    if args.outputs_from:
+        with open(args.outputs_from, "r", encoding="utf-8") as handle:
+            raw = handle.read()
+        screens = outputs_from_json(raw) if raw.lstrip().startswith("[") \
+            else outputs_from_text(raw)
+    else:
+        screens = read_outputs()
+
+    if not screens:
+        say("no screens were found. That normally means this was run outside the")
+        say("Aquarius Session — wlr-randr can only answer from inside a running")
+        say("desktop. Nothing has been changed.")
+        return 0
+
+    if args.status:
+        for screen in screens:
+            dpi = dpi_of(screen)
+            print("%s  %dx%d @ %.0fHz  scale %g%s%s"
+                  % (screen["name"], screen["width"], screen["height"],
+                     screen["refresh"], screen["scale"],
+                     ("  (%d dpi)" % round(dpi)) if dpi else "",
+                     "" if screen["enabled"] else "  [off]"))
+            if screen["description"]:
+                print("    %s" % screen["description"])
+        return 0
+
+    conf = read_conf(conf_path)
+
+    monitors_text = ""
+    try:
+        with open(monitors_path, "r", encoding="utf-8") as handle:
+            monitors_text = handle.read()
+    except OSError:
+        pass
+
+    decisions = decide(screens, conf, monitors_text)
+
+    if args.explain:
+        print("Where each answer came from, in the order they are asked:")
+        print("  1. %s%s" % (conf_path, "" if conf else "   (not written yet)"))
+        print("  2. %s%s" % (monitors_path, "" if monitors_text else "   (not there)"))
+        print("  3. the monitor's own reported size")
+        print("")
+
+    apply(decisions, dry_run=args.dry_run or args.explain)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

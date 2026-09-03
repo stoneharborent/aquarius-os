@@ -276,8 +276,18 @@ work.
 8. **Switch live**: `aq keys windows`, then immediately Control-C to copy in
    Firefox — no logging out. Then `aq keys mac` and check Command-C again.
 9. **DaVinci Resolve** — its own shortcuts must be completely unaffected.
-10. **`aq keys status`** — should say Mac, say it is running, and name the
-    desktop.
+10. **`aq keys status`** — should say Mac, say it is running, name the desktop,
+    and — this line is new — say **how many keyboards it has hold of**. On the
+    bench that should be two: the K780 and the Razer. "Running: yes" with no
+    keyboards listed is the 2026-09-03 failure, and it now says so out loud.
+11. **The two-session regression check.** This is the one that would have caught
+    the 2026-09-03 bug, so do it every time:
+    - log into **GNOME**, check Command-C copies in Firefox
+    - log out, log into the **Aquarius Desktop**
+    - open a terminal and run `aq keys status` **immediately**
+    - it must say running, with both keyboards, without you touching
+      `aq keys` at all
+    - Command-C must copy in Firefox straight away
 
 If something does not work, the first thing to read is always:
 
@@ -286,6 +296,106 @@ journalctl --user -u aquarius-keys -b
 ```
 
 It is written in sentences.
+
+---
+
+## ⚠️ "It came up in Windows mode" — the 2026-09-03 bug, and what it really was
+
+**This is the most useful page in this document, because the symptom lies.**
+
+At the first login of the bench test, Royce found the keyboard behaving as
+though Mac mode were switched off. Running `aq keys mac` fixed it, and
+everything worked from then on. That looks exactly like a setting having been
+wrong.
+
+**The setting was never wrong.** `aq keys status` said Mac. The file said Mac.
+The default with no file at all is Mac. What had actually happened is in the
+journal, and it is this:
+
+```
+Selecting devices from the following list:
+  /dev/input/event16: xremap
+  /dev/input/event18: Keyboard K780 Keyboard
+  /dev/input/event3 : Razer Razer Cynosa Chroma Pro Keyboard
+Selected keyboards automatically since --device options weren't specified:
+  /dev/input/event16: xremap
+Error: Device or resource busy (os error 16). Another program might have
+grabbed the device: 'Keyboard K780 Keyboard'
+Error: Device or resource busy (os error 16). Another program might have
+grabbed the device: 'Razer Razer Cynosa Chroma Pro Keyboard'
+No device was selected, but --watch is waiting for new devices.
+```
+
+Read it slowly, because every line of it matters:
+
+1. **A second remapper was already running**, and it had taken hold of both real
+   keyboards. Its own invented keyboard — the device literally called `xremap`
+   on `event16` — was sitting in the list.
+2. **Both of Royce's real keyboards were refused**, one after the other, with
+   "Device or resource busy". The remapper ended up holding *nothing*.
+3. **It then sat there**. `--watch` waits for keyboards it has *never seen*; it
+   does not go back and try again on one it was refused. Ten seconds later the
+   other remapper let go and nothing noticed.
+4. **The service stayed "active" the whole time.** `systemctl status` was green.
+   Every shortcut was dead.
+
+So "running" and "working" were two different questions, and nothing on the
+machine could tell them apart. That is why it read as Windows mode: from the
+outside, a remapper holding no keyboards and a remapper deliberately doing
+nothing are identical.
+
+### Where the second remapper came from
+
+The login screen. GDM draws it from an account called `gdm`, which runs a real
+GNOME session of its own, reaches `graphical-session.target` like any other
+session, and — because it is the session on screen — is granted the keyboard
+permission. The link that switches this service on lives in `/usr/lib`, which
+applies to **every** account on the machine, so the login screen was starting a
+remapper too and holding the keyboards until it finished going away.
+
+### The five things that changed because of it
+
+1. **The login screen no longer runs this at all.** The service now carries
+   `ConditionUser=!@system`, which means "people, not the machine's own
+   plumbing". That removes the cause. It is also just correct: Command-Q at a
+   password prompt should do nothing.
+2. **A failed grab is now a failure**, not a note in a log. The run script reads
+   what the remapper prints, and "resource busy" or "No device was selected"
+   ends the run.
+3. **So systemd tries again**, every two seconds, forever — `Restart=always`
+   with the give-up limit switched off. On the bench that would have succeeded
+   on about the fifth attempt, ten seconds in, with nobody noticing anything.
+4. **The leftover `xremap` device can never be chosen.** The remapper is now
+   started with `--ignore=xremap`, so a stray invented keyboard cannot be picked
+   as the only device available, whoever left it behind.
+5. **`aq keys status` now answers the real question.** It says how many
+   keyboards are actually being remapped and what they are called, and shows the
+   last thing that went wrong. "Running: yes / Keyboards: none" is now a visible
+   state instead of an invisible one.
+
+### How to check it, exactly
+
+```
+journalctl --user -u aquarius-keys -b
+```
+
+- `remapping 2 keyboard(s): Keyboard K780 Keyboard, Razer …` — working.
+- `PROBLEM: another program is holding the keyboard` — the retry is in progress;
+  wait five seconds and look again.
+- The same PROBLEM line repeating for minutes — something on this machine is
+  genuinely holding the keyboard. Find it with `sudo fuser -v /dev/input/event*`.
+
+The friendly version of all of that is `aq keys status`.
+
+### One note about these two keyboards
+
+The Logitech K780 and the Razer Cynosa Chroma Pro are both ordinary PC
+keyboards, so **both get the PC swap** — the key beside the space bar becomes
+Command. Neither is caught by the Apple exclusion in `mac.yaml`, which only
+skips devices reporting Apple's maker numbers (`0x05ac`, `0x004c`) or with
+"Apple" or "Magic Keyboard" in the name. That is the intended behaviour for
+both, and it is worth knowing so that a future "why did my keyboard not get
+remapped" has a place to start.
 
 ---
 

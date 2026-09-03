@@ -309,6 +309,40 @@ export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland}"
 # portal, and there is no upside.
 
 # -----------------------------------------------------------------------------
+# HOW BIG THE AQUARIUS SHELL DRAWS ITSELF
+#
+# ⚠️ THIS IS NOT THE SAME THING AS THE SCREEN SCALE, AND THE DIFFERENCE MATTERS.
+#
+#   The SCREEN SCALE makes everything on the monitor bigger — your browser,
+#   DaVinci Resolve, our bar, all of it. It is a property of the monitor, the
+#   window manager applies it, and /usr/libexec/aquarius-display-scale sets it
+#   from the labwc autostart file a moment from now.
+#
+#   AQ_UI_SCALE makes ONLY OUR OWN BAR AND DOCK bigger, and touches nothing
+#   else. It exists because "the shell reads small" and "the screen is set too
+#   small" are two different complaints with two different fixes, and on the
+#   bench on 2026-09-03 they arrived together and were easy to confuse.
+#
+#   It is a design knob. It lets Royce try the bar at 1.15 or 1.25 on the real
+#   machine, in seconds, and decide whether our base sizes are right — without
+#   an edit, a rebuild, or somebody on a Mac guessing for him.
+#
+# Set with `aq display ui 1.25`, which writes ui=1.25 into the file below.
+# Absent, unreadable or nonsense means 1, which is the design exactly as drawn.
+# The shell clamps it to 0.5–3 as well, so a typo here cannot produce a bar
+# taller than the screen.
+# -----------------------------------------------------------------------------
+AQ_DISPLAY_CONF="${XDG_CONFIG_HOME:-${HOME}/.config}/aquarius/display.conf"
+if [ -r "${AQ_DISPLAY_CONF}" ]; then
+    AQ_UI_FROM_CONF="$(sed -n 's/^[[:space:]]*ui[[:space:]]*=[[:space:]]*\([0-9.]*\).*/\1/p' \
+        "${AQ_DISPLAY_CONF}" | tail -n 1)"
+    if [ -n "${AQ_UI_FROM_CONF}" ]; then
+        export AQ_UI_SCALE="${AQ_UI_FROM_CONF}"
+        echo "  the Aquarius bar and dock will be drawn at ${AQ_UI_SCALE}x (from ${AQ_DISPLAY_CONF})"
+    fi
+fi
+
+# -----------------------------------------------------------------------------
 # Hand the environment to systemd and D-Bus.
 #
 # Portals, the keyring and the tray are started ON DEMAND, by systemd's user

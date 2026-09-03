@@ -7,11 +7,16 @@
 # A friendly front door for the settings AquariusOS adds on top of Fedora,
 # written so that every message is a sentence rather than a code.
 #
-# RIGHT NOW IT DOES ONE THING: keyboard shortcut style.
+# RIGHT NOW IT DOES TWO THINGS: keyboard shortcut style, and screen size.
 #
 #     aq keys mac        use Mac-style shortcuts (Command-C to copy)
 #     aq keys windows    use the normal Linux ones (Control-C to copy)
 #     aq keys status     which am I using, and is it working?
+#
+#     aq display scale 1.25   make everything on the screen 125% size
+#     aq display ui 1.15      make the Aquarius bar and dock 115% size
+#     aq display auto         forget both, work it out automatically again
+#     aq display status       what the screens are set to right now
 #
 # It is deliberately small. FEATURES 005 in the AquariusOS plan describes a
 # fuller `aq` — `aq status`, `aq snapshot` — and that is a later job. This is
@@ -26,8 +31,10 @@ set -uo pipefail
 
 AQ_CONF_DIR="${XDG_CONFIG_HOME:-${HOME:-/tmp}/.config}/aquarius"
 AQ_CONF="${AQ_CONF_DIR}/keys.conf"
+AQ_DISPLAY_CONF="${AQ_CONF_DIR}/display.conf"
 AQ_PROFILE_DIR="/usr/share/aquarius/keys"
 AQ_SERVICE="aquarius-keys.service"
+AQ_DISPLAY_HELPER="/usr/libexec/aquarius-display-scale"
 
 # -----------------------------------------------------------------------------
 # usage — printed by `aq`, `aq --help`, and anything it does not understand
@@ -47,7 +54,23 @@ USAGE
                         changed at all.
 
     aq keys status      Say which style is switched on, whether it is actually
-                        running, and where to look if it is not.
+                        running, how many keyboards it has hold of, and where
+                        to look if something is wrong.
+
+    aq display scale N  Make EVERYTHING on the screen N times its normal size.
+                        This is the setting GNOME calls "Scale". On a 4K
+                        monitor, try 1.25 or 1.5. Applies straight away.
+
+    aq display ui N     Make only the AQUARIUS BAR AND DOCK N times their
+                        normal size, and leave your applications alone. This is
+                        for tuning our own design; takes effect at the next
+                        login.
+
+    aq display auto     Forget both of the above and work the size out
+                        automatically again.
+
+    aq display status   What each screen is, what size it is set to, and where
+                        that answer came from.
 
     aq --help           This message.
     aq --version        Which AquariusOS this is.
@@ -136,6 +159,13 @@ apply() {
         return 0
     fi
 
+    # Clear any earlier failure first. A unit that has failed can carry a
+    # "stop trying, you have failed too often" mark, and `restart` on a unit
+    # wearing that mark does nothing at all — which would make this command
+    # print "Applied" over the top of nothing happening. Resetting first is
+    # harmless when there is nothing to reset.
+    systemctl --user reset-failed "${AQ_SERVICE}" 2> /dev/null || true
+
     if systemctl --user restart "${AQ_SERVICE}" 2> /dev/null; then
         echo "  Applied. You do not need to log out."
         return 0
@@ -183,16 +213,245 @@ status() {
             else
                 echo "  Running   : no."
                 echo "              If you are logged in at the screen, something is wrong."
-                echo "              See what it said:  journalctl --user -u aquarius-keys -b"
                 echo "              Start it again:    systemctl --user start aquarius-keys"
             fi
             ;;
         failed)
             echo "  Running   : NO — it tried to start and failed."
-            echo "              Read the reason:  journalctl --user -u aquarius-keys -b"
             ;;
         *)
             echo "  Running   : ${state}"
+            ;;
+    esac
+
+    # -------------------------------------------------------------------------
+    # ⚠️ "RUNNING" AND "WORKING" ARE DIFFERENT QUESTIONS. THIS IS THE 2026-09-03
+    # LESSON AND IT IS WHY THE REST OF THIS FUNCTION EXISTS.
+    # -------------------------------------------------------------------------
+    # On the bench the service was running, `systemctl status` said active, and
+    # not one shortcut worked — because another program had hold of both
+    # keyboards and this one had ended up holding none. It looked exactly like
+    # Windows mode. Royce had no way to tell the difference, and should never
+    # have to guess again.
+    #
+    # So the two things that actually matter are printed here: how many
+    # keyboards it has hold of, and the last thing that went wrong.
+    if [ "${mode}" = "windows" ]; then
+        return 0
+    fi
+
+    local log grabbed problem
+    log="$(journalctl --user -u "${AQ_SERVICE}" -b --no-pager 2> /dev/null)"
+
+    if [ -z "${log}" ]; then
+        echo "  Keyboards : cannot tell — there is nothing in this boot's log."
+        return 0
+    fi
+
+    grabbed="$(printf '%s\n' "${log}" | grep -o 'remapping [0-9]* keyboard(s): .*' | tail -n 1)"
+    if [ -n "${grabbed}" ] && [ "${state}" = "active" ]; then
+        echo "  Keyboards : ${grabbed#remapping }"
+    elif [ "${state}" = "active" ]; then
+        echo "  Keyboards : none reported yet. If it has only just started that is"
+        echo "              normal; give it five seconds and ask again."
+    fi
+
+    problem="$(printf '%s\n' "${log}" | grep -E 'PROBLEM:|resource busy|No device was selected|ERROR:' | tail -n 1)"
+    if [ -n "${problem}" ]; then
+        echo "  Last issue: ${problem#*aquarius-keys: }"
+    fi
+
+    echo ""
+    echo "  The last few lines it wrote:"
+    printf '%s\n' "${log}" | tail -n 5 | sed 's/^/    /'
+    echo ""
+    echo "  All of it:  journalctl --user -u aquarius-keys -b"
+}
+
+
+# =============================================================================
+# aq display — how big everything on the screen is
+# =============================================================================
+# TWO DIFFERENT SIZES, AND KEEPING THEM APART IS THE WHOLE POINT OF THIS HELP
+# TEXT.
+#
+#   scale   makes EVERYTHING bigger: your applications, your web browser,
+#           DaVinci Resolve, and our bar along with them. It is the same
+#           setting GNOME calls "Scale" in its Displays panel, and it is what
+#           a 4K monitor normally needs.
+#
+#   ui      makes ONLY the Aquarius bar, dock, search and panels bigger, and
+#           leaves every application exactly as it was. It is a way of asking
+#           "is our own design drawn too small?" without changing anything
+#           else on the screen.
+#
+# A person who says "everything is too small" wants `scale`. A person who says
+# "the bar is too small but everything else is fine" wants `ui`.
+# =============================================================================
+
+display_usage() {
+    cat << 'EOF'
+aq display — how big things are drawn on your screen
+
+    aq display scale 1.25   Everything on the screen at 125% size. This is the
+                            same setting GNOME calls "Scale". Applies now.
+    aq display ui 1.15      Only the Aquarius bar and dock at 115% size.
+                            Applies at your next login.
+    aq display auto         Forget both, and work the size out automatically.
+    aq display status       What each screen is set to, and why.
+
+    Sizes between 0.5 and 3 are accepted. The useful ones are 1, 1.25, 1.5,
+    1.75 and 2 — the same list GNOME offers.
+EOF
+}
+
+# Read one setting out of display.conf.
+display_get() {
+    local key="$1"
+    [ -r "${AQ_DISPLAY_CONF}" ] || return 0
+    sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*\([0-9.]*\).*/\1/p" \
+        "${AQ_DISPLAY_CONF}" | tail -n 1
+}
+
+# Write one setting into display.conf, leaving any other setting alone.
+display_set() {
+    local key="$1" value="$2" tmp
+
+    mkdir -p "${AQ_CONF_DIR}" || {
+        echo "aq: could not create ${AQ_CONF_DIR}." >&2
+        return 1
+    }
+
+    tmp="${AQ_DISPLAY_CONF}.new.$$"
+    {
+        cat << 'EOF'
+# How big things are drawn on this screen. Written by 'aq display'.
+#
+#   scale=1.25   everything on the screen at 125% — applications and all
+#   ui=1.15      only the Aquarius bar and dock at 115%
+#
+# Delete a line to go back to working it out automatically, or run
+#   aq display auto
+EOF
+        if [ -r "${AQ_DISPLAY_CONF}" ]; then
+            grep -E '^[[:space:]]*(scale|ui|scale\.[^=]*)[[:space:]]*=' "${AQ_DISPLAY_CONF}" \
+                | grep -vE "^[[:space:]]*${key}[[:space:]]*=" || true
+        fi
+        if [ -n "${value}" ]; then
+            echo "${key}=${value}"
+        fi
+    } > "${tmp}" || return 1
+    mv -f "${tmp}" "${AQ_DISPLAY_CONF}"
+}
+
+# Is this a number we are willing to use?
+display_check_number() {
+    local value="$1"
+    case "${value}" in
+        "" | *[!0-9.]* | *.*.*)
+            echo "aq: '${value}' is not a number. Try:  aq display ${2} 1.25" >&2
+            return 1
+            ;;
+    esac
+    # `awk` rather than bash, because bash cannot compare 1.25 with 0.5.
+    if ! awk -v v="${value}" 'BEGIN { exit !(v >= 0.5 && v <= 3.0) }'; then
+        echo "aq: ${value} is outside the range this accepts (0.5 to 3)." >&2
+        echo "    Below 0.5 nothing is readable; above 3 the bar is taller than" >&2
+        echo "    most screens and you could not reach this command to undo it." >&2
+        return 1
+    fi
+}
+
+display_apply_now() {
+    if [ ! -x "${AQ_DISPLAY_HELPER}" ]; then
+        echo "  (${AQ_DISPLAY_HELPER} is missing from this image, so nothing was"
+        echo "   applied. It takes effect at your next login.)"
+        return 0
+    fi
+    if "${AQ_DISPLAY_HELPER}"; then
+        return 0
+    fi
+    echo "  Saved, but it could not be applied right now — which is normal if you"
+    echo "  are not in the Aquarius Desktop (over SSH, or in GNOME, where GNOME's"
+    echo "  own Displays panel is in charge). It applies at your next login."
+}
+
+display_status() {
+    echo "Screen size"
+    local scale ui
+    scale="$(display_get scale)"
+    ui="$(display_get ui)"
+
+    if [ -n "${scale}" ]; then
+        echo "  Everything: ${scale} — your own setting, from ${AQ_DISPLAY_CONF}"
+    else
+        echo "  Everything: worked out automatically (no setting of your own)."
+        if [ -r "${HOME:-/root}/.config/monitors.xml" ]; then
+            echo "              Your GNOME display setting is read first, if it fits."
+        fi
+    fi
+
+    if [ -n "${ui}" ]; then
+        echo "  Aquarius  : ${ui} — the bar and dock only, from ${AQ_DISPLAY_CONF}"
+    else
+        echo "  Aquarius  : 1 — the bar and dock at the size they were designed."
+    fi
+
+    echo ""
+    if [ ! -x "${AQ_DISPLAY_HELPER}" ]; then
+        return 0
+    fi
+
+    local screens
+    screens="$("${AQ_DISPLAY_HELPER}" --status 2>&1)"
+
+    # Outside the Aquarius Desktop — over SSH, or in GNOME — there is nothing to
+    # ask, and the helper says so. Printing its explanation of a decision it did
+    # not make would just be the same sentence twice.
+    if [ -z "${screens}" ] || printf '%s' "${screens}" | grep -q "no screens were found"; then
+        echo "  No screens to report on. Screen sizes can only be read from"
+        echo "  inside the Aquarius Desktop, not over SSH and not from GNOME."
+        return 0
+    fi
+
+    printf '%s\n' "${screens}"
+    echo ""
+    echo "  Where each answer comes from:"
+    "${AQ_DISPLAY_HELPER}" --explain 2>&1 | sed 's/^/  /' || true
+}
+
+display() {
+    case "${1:-}" in
+        scale)
+            display_check_number "${2:-}" scale || return 1
+            display_set scale "$2" || return 1
+            echo "Everything on the screen is now drawn at ${2} times normal size."
+            display_apply_now
+            ;;
+        ui)
+            display_check_number "${2:-}" ui || return 1
+            display_set ui "$2" || return 1
+            echo "The Aquarius bar and dock are now set to ${2} times normal size."
+            echo "  This one takes effect the next time you log in — the bar reads the"
+            echo "  setting once, when it starts."
+            ;;
+        auto)
+            display_set scale "" || return 1
+            display_set ui "" || return 1
+            echo "Both settings are cleared. The size is worked out automatically again."
+            display_apply_now
+            ;;
+        status | "")
+            display_status
+            ;;
+        -h | --help | help)
+            display_usage
+            ;;
+        *)
+            echo "aq: '${1}' is not something 'aq display' knows how to do." >&2
+            echo >&2
+            display_usage >&2
+            return 1
             ;;
     esac
 }
@@ -211,6 +470,9 @@ case "${1:-}" in
         else
             echo "AquariusOS (version unknown — /usr/share/aquarius/image-info.json is missing)"
         fi
+        ;;
+    display)
+        display "${2:-}" "${3:-}"
         ;;
     keys)
         case "${2:-}" in

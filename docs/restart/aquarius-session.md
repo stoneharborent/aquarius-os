@@ -311,6 +311,8 @@ of the OS from the boot menu — every AquariusOS update keeps the last one.
 | `/usr/share/aquarius/labwc/` | The window manager's configuration: `rc.xml` (key bindings), `autostart`, `shutdown`, `environment`. |
 | `/usr/share/aquarius/shell/` | The Aquarius Shell's QML. |
 | `/usr/libexec/aquarius-shell-start` | Runs the shell, and puts a dialog on screen if it fails. |
+| `/usr/libexec/aquarius-display-scale` | Sets each monitor to the right size at login. Without it every screen stays at 100% and a 4K desktop is tiny. Guide: [`aquarius-display.md`](aquarius-display.md). |
+| `~/.config/aquarius/display.conf` | Your own screen-size answers, written by `aq display`. |
 | `/usr/share/xdg-desktop-portal/aquarius-portals.conf` | Which portal back end answers which request. |
 | `/etc/xdg/xdg-desktop-portal-wlr/config` | How screen recording picks a screen. |
 | `/etc/greetd/config.toml` | The alternative login screen, switched off. |
@@ -330,7 +332,7 @@ first.
 One line, in `aquarius-os.env`:
 
 ```
-AQUARIUS_SHELL_REF="88220883363980874d5f82c5657763add3db8a91"
+AQUARIUS_SHELL_REF="6eea5cde57d0cc91f83c1c3f7dfca13a9e4169dd"
 ```
 
 Change the commit, push, and the next build bakes in the new one. The build
@@ -369,8 +371,17 @@ Being clear about this matters more than it being short.
 - **The brightness slider needs a laptop.** It reads and writes the backlight
   through `brightnessctl`, and a desktop monitor has no backlight the computer
   can control.
-- **There is no lock screen yet, and no display settings panel.** Use
-  `wlr-randr` in a terminal for monitor layout until there is one.
+- **There is no lock screen yet, and no display settings panel.** Screen SIZE
+  is now handled — see [`aquarius-display.md`](aquarius-display.md) and
+  `aq display` — but monitor *layout* (which screen is left of which) still
+  means `wlr-randr` in a terminal.
+- **X11 applications are not scaled, and nothing can scale them.** On a screen
+  set to 125% or 150%, a program running through XWayland — DaVinci Resolve is
+  the one that matters here — is either drawn at its normal size or blown up
+  and slightly soft. That is a limit of X11 itself; GNOME and KDE have exactly
+  the same problem and no desktop solves it. Resolve's own answer is
+  Preferences → User → UI Settings → **UI Display Scale**, and it is the right
+  one to use.
 
 ---
 

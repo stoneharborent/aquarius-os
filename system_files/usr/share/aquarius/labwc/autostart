@@ -44,6 +44,67 @@ fi
 systemctl --user --no-block start labwc-session.target 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
+# 2b. Check that it actually happened, and repair it if it did not.
+#
+# ⚠️ THIS EXISTS BECAUSE OF THE BENCH TEST, 2026-09-03, WHEN THE KEYBOARD
+# REMAPPER DID NOT START AT THE FIRST LOGIN AND NOTHING SAID WHY.
+#
+# `start` above is fire-and-forget: --no-block means "do not wait", and the
+# `|| true` means "and do not complain either". Both are right — a login must
+# not hang because a target is slow — but between them they turn a failure into
+# silence, and silence is what made that evening expensive.
+#
+# labwc-session.target is BOUND to graphical-session.target, so starting the
+# first should start the second, and everything that says "start me with the
+# graphical session" then starts too. This checks that the chain really
+# happened, says so plainly in the session log either way, and does not simply
+# hope.
+# ---------------------------------------------------------------------------
+aq_tries=0
+while [ "${aq_tries}" -lt 20 ]; do
+    if systemctl --user is-active graphical-session.target > /dev/null 2>&1; then
+        break
+    fi
+    sleep 0.5
+    aq_tries=$((aq_tries + 1))
+done
+
+if systemctl --user is-active graphical-session.target > /dev/null 2>&1; then
+    echo "[session] graphical-session.target is active."
+else
+    echo "[session] WARNING: graphical-session.target did not start."
+    echo "[session] Anything that waits for it — the keyboard remapper, the"
+    echo "[session] keyring, some portals — would never run. Starting the"
+    echo "[session] keyboard remapper by hand so at least the shortcuts work."
+    systemctl --user reset-failed aquarius-keys.service 2>/dev/null || true
+    systemctl --user start aquarius-keys.service 2>/dev/null || true
+fi >> "${AQ_LOG:-/dev/null}" 2>&1
+
+# ---------------------------------------------------------------------------
+# 2c. Make the screen the right SIZE.
+#
+# ⚠️ THIS IS THE 2026-09-03 "EVERYTHING IS TINY" FIX.
+#
+# labwc starts every monitor at 100%, always. On a 4K screen that makes the
+# whole desktop physically tiny — which is exactly what Royce saw on the bench,
+# on a 55" 4K monitor that GNOME had been running at 125% for weeks.
+#
+# The helper works out the right size and applies it. Where it gets the answer
+# from, in order: your own `aq display scale` setting, then the scale you
+# already chose in GNOME (~/.config/monitors.xml), then the monitor's own
+# reported size. The full explanation is in the top of the helper and in
+# docs/restart/aquarius-display.md.
+#
+# It runs AFTER the target above, because a screen that changes size while the
+# portals are starting is a screen the portals may measure wrong, and BEFORE
+# the shell, because the bar should be drawn once, at the right size, rather
+# than drawn small and then jump.
+# ---------------------------------------------------------------------------
+if [ -x /usr/libexec/aquarius-display-scale ]; then
+    /usr/libexec/aquarius-display-scale >> "${AQ_LOG:-/dev/null}" 2>&1 || true
+fi
+
+# ---------------------------------------------------------------------------
 # 3. The wallpaper.
 #
 # A window manager on its own paints the screen a flat grey. swaybg puts the

@@ -35,6 +35,25 @@ AQ_CONF="${XDG_CONFIG_HOME:-${HOME:-/tmp}/.config}/aquarius/keys.conf"
 # So it is written as sentences, not as codes.
 say() { echo "aquarius-keys: $*"; }
 
+# -----------------------------------------------------------------------------
+# THE TWO EXIT CODES THAT MEAN "DO NOT TRY AGAIN"
+# -----------------------------------------------------------------------------
+# The service restarts this script every two seconds, forever, on any failure —
+# because at login the keyboards can be busy for a moment and giving up would
+# leave a person with no shortcuts and no explanation.
+#
+# Two situations must NOT retry, because retrying cannot possibly help, and both
+# are named in the service file beside RestartPreventExitStatus=:
+#
+#   64  Nothing to do on purpose (Windows mode has no rules in it).
+#   78  The image is broken — something that is part of the operating system is
+#       missing.
+#
+# Any other non-zero exit means "try again in two seconds", which is what we
+# want for a keyboard that somebody else is briefly holding.
+AQ_EXIT_NOTHING_TO_DO=64
+AQ_EXIT_BROKEN=78
+
 # =============================================================================
 # 1. MAC MODE OR WINDOWS MODE
 # =============================================================================
@@ -75,7 +94,7 @@ AQ_PROFILE="${AQ_PROFILE_DIR}/${AQ_MODE}.yaml"
 if [ ! -r "${AQ_PROFILE}" ]; then
     say "ERROR: the profile ${AQ_PROFILE} is missing from this image."
     say "That is a bug in the operating system, not in your settings."
-    exit 1
+    exit "${AQ_EXIT_BROKEN}"
 fi
 
 # =============================================================================
@@ -95,7 +114,82 @@ fi
 if ! grep -Eq '^[[:space:]]*-[[:space:]]+(name|remap):' "${AQ_PROFILE}"; then
     say "${AQ_MODE} mode has no rules in it, so nothing is being remapped."
     say "Your keyboard behaves exactly as Linux ships it. This is not an error."
-    exit 0
+    exit "${AQ_EXIT_NOTHING_TO_DO}"
+fi
+
+# =============================================================================
+# 2b. WAIT UNTIL THERE IS ACTUALLY A DESKTOP TO ATTACH TO
+# =============================================================================
+# ⚠️ THIS SECTION EXISTS BECAUSE OF THE BENCH TEST, 2026-09-03.
+#
+# systemd starts this service the moment the graphical session begins. "Begins"
+# is earlier than you think: the window manager may not have made its screen
+# yet, and the desktop may not have finished telling systemd its own name. A
+# remapper that starts into that gap picks the wrong answers and then runs
+# happily with them, which is worse than not starting at all.
+#
+# So: wait, briefly and out loud, for the two things the rest of this script
+# depends on. Neither wait is allowed to hang a login — each gives up after
+# thirty seconds, says so, and carries on with what it has.
+
+# aq_wait <seconds> <sentence> <command...>
+#   Run the command about twice a second until it succeeds. Returns 0 the moment
+#   it does, and 1 if the time runs out. Says one line either way, because a
+#   silent wait is indistinguishable from a hang.
+aq_wait() {
+    local limit="$1"; shift
+    local what="$1"; shift
+    local waited=0
+    if "$@" > /dev/null 2>&1; then
+        return 0
+    fi
+    say "waiting for ${what}..."
+    while [ "${waited}" -lt "$((limit * 2))" ]; do
+        sleep 0.5
+        waited=$((waited + 1))
+        if "$@" > /dev/null 2>&1; then
+            say "${what} is ready (after about $((waited / 2)) seconds)."
+            return 0
+        fi
+    done
+    say "WARNING: gave up waiting for ${what} after ${limit} seconds."
+    return 1
+}
+
+# --- 1. a screen -------------------------------------------------------------
+# Every desktop this runs on is a Wayland desktop, and a Wayland desktop has a
+# socket in the runtime folder. Its existence is the simplest honest answer to
+# "has the desktop drawn anything yet".
+aq_have_wayland() {
+    [ -n "${WAYLAND_DISPLAY:-}" ] && return 0
+    [ -n "${XDG_RUNTIME_DIR:-}" ] || return 1
+    local sock
+    for sock in "${XDG_RUNTIME_DIR}"/wayland-[0-9]*; do
+        case "${sock}" in
+            *.lock) continue ;;
+        esac
+        [ -S "${sock}" ] && return 0
+    done
+    return 1
+}
+
+aq_wait 30 "the desktop's screen" aq_have_wayland || true
+
+# --- 2. the desktop's name ---------------------------------------------------
+# XDG_CURRENT_DESKTOP is how the next section decides which of the two
+# remappers to run, and getting it wrong means running the GNOME one on labwc,
+# where it exits immediately. The desktop pushes the value into systemd's user
+# manager when it starts; this service may have been started first.
+#
+# So if it is not here yet, wait for it — and take it from the user manager,
+# which is where the desktop puts it.
+aq_desktop_from_systemd() {
+    systemctl --user show-environment 2> /dev/null \
+        | sed -n 's/^XDG_CURRENT_DESKTOP=//p' | tail -n 1 | grep -q .
+}
+
+if [ -z "${XDG_CURRENT_DESKTOP:-}" ] && command -v systemctl > /dev/null 2>&1; then
+    aq_wait 30 "the desktop to say what it is called" aq_desktop_from_systemd || true
 fi
 
 # =============================================================================
@@ -138,8 +232,25 @@ fi
 aq_binary=""
 case "${aq_desktop}" in
     *[Gg][Nn][Oo][Mm][Ee]*)
-        aq_binary="/usr/bin/xremap-gnome"
-        say "desktop is '${aq_desktop}' — using the GNOME build."
+        # ⚠️ ONE MORE QUESTION BEFORE TRUSTING THAT.
+        #
+        # The user manager remembers the last thing it was told, and it is not
+        # emptied between logins within one boot. So an account that logged into
+        # GNOME earlier and is now in the Aquarius Session can still have the
+        # word GNOME sitting in its environment. Believing it would run the
+        # GNOME remapper on labwc, where it exits immediately and every shortcut
+        # silently stops working.
+        #
+        # GNOME Shell is the thing that would actually be there. Ask.
+        if pgrep -x gnome-shell > /dev/null 2>&1; then
+            aq_binary="/usr/bin/xremap-gnome"
+            say "desktop is '${aq_desktop}' — using the GNOME build."
+        else
+            aq_binary="/usr/bin/xremap-wlroots"
+            say "the environment says '${aq_desktop}', but GNOME Shell is not"
+            say "running — so this is not GNOME. Using the wlroots build, which"
+            say "is what the Aquarius Session needs."
+        fi
         ;;
     ?*)
         # Anything else that named itself: the Aquarius Session, labwc, niri,
@@ -163,7 +274,7 @@ esac
 if [ ! -x "${aq_binary}" ]; then
     say "ERROR: ${aq_binary} is missing from this image."
     say "That is a bug in the operating system, not in your settings."
-    exit 1
+    exit "${AQ_EXIT_BROKEN}"
 fi
 
 # =============================================================================
@@ -221,6 +332,31 @@ case "${aq_binary}" in
         aq_ext="xremap@k0kubun.com"
         if [ -d "/usr/share/gnome-shell/extensions/${aq_ext}" ] \
             && command -v gnome-extensions > /dev/null 2>&1; then
+
+            # ⚠️ WAIT FOR GNOME SHELL BEFORE ASKING IT FOR ANYTHING.
+            #
+            # `gnome-extensions enable` is a message to GNOME Shell over the
+            # session bus. Sent before GNOME Shell has answered the bus, it
+            # fails — and a login is exactly when that race is most likely,
+            # because systemd starts this service and GNOME starts its shell at
+            # very nearly the same moment.
+            #
+            # `busctl --user status` asks the bus "is this name being served",
+            # which is the cheapest true test. gdbus does the same job on a
+            # machine without busctl.
+            aq_shell_on_the_bus() {
+                if command -v busctl > /dev/null 2>&1; then
+                    busctl --user status org.gnome.Shell > /dev/null 2>&1
+                elif command -v gdbus > /dev/null 2>&1; then
+                    gdbus introspect --session --dest org.gnome.Shell \
+                        --object-path /org/gnome/Shell > /dev/null 2>&1
+                else
+                    # Nothing to ask with. Do not block the login over it.
+                    return 0
+                fi
+            }
+            aq_wait 30 "GNOME Shell to be ready" aq_shell_on_the_bus || true
+
             # `enable` on an add-on that is already on does nothing and reports
             # success, so this is safe to run at every single login.
             if gnome-extensions enable "${aq_ext}" 2> /dev/null; then
@@ -231,6 +367,22 @@ case "${aq_binary}" in
                 say "WARNING: could not switch on the GNOME add-on '${aq_ext}'."
                 say "App-specific rules, including the terminal exception, will not work."
                 say "Try:  gnome-extensions enable ${aq_ext}"
+            fi
+
+            # Switched on is not the same as loaded and running. GNOME loads an
+            # add-on a moment after being told to, and the remapper needs it
+            # LOADED before it asks its first question. So wait for the state
+            # GNOME reports to become ACTIVE.
+            aq_ext_active() {
+                gnome-extensions info "${aq_ext}" 2> /dev/null \
+                    | grep -qi "State:.*ACTIVE"
+            }
+            if aq_wait 30 "the GNOME add-on to finish loading" aq_ext_active; then
+                :
+            else
+                say "The app-specific rules — including the terminal exception —"
+                say "may not work in this session. Check with:"
+                say "    gnome-extensions info ${aq_ext}"
             fi
         else
             say "WARNING: the GNOME add-on '${aq_ext}' is not installed in this image."
@@ -268,9 +420,24 @@ fi
 # =============================================================================
 # 5. GO
 # =============================================================================
+# THE FLAGS, AND WHY EACH ONE IS THERE
+#
 # --watch=device  notice keyboards plugged in after login and remap them too.
 #                 Without this, a keyboard connected after you log in behaves
 #                 like a normal PC keyboard and nothing says why.
+#
+#                 ⚠️ IT DOES NOT RE-TRY A KEYBOARD IT ALREADY FAILED TO TAKE.
+#                 That is the 2026-09-03 bug in one line, and it is why the
+#                 watcher below exists.
+#
+# --ignore=xremap  never take hold of a remapper's own invented keyboard.
+#                 xremap works by inventing a keyboard of its own and typing
+#                 the replacements through it, and that invented keyboard is
+#                 called "xremap". If a previous one has not finished going
+#                 away, its leftover device is still in the list — and on the
+#                 bench it was AUTOMATICALLY SELECTED as the only keyboard
+#                 available, while the two real keyboards were refused. Naming
+#                 it here means it can never be chosen, whoever left it behind.
 #
 # --no-window-logging  do not write the name and title of every window you
 #                 focus into the system journal. Window titles include document
@@ -280,8 +447,156 @@ fi
 #                 this flag temporarily, or run
 #                     xremap-wlroots --list-windows
 #
-# `exec` replaces this script with the remapper, so systemd watches the real
-# program rather than a shell wrapper around it.
+# The `=` in --watch=device and --ignore=xremap is not a style choice. Both
+# options accept a LIST, so written with a space the option would swallow the
+# profile file name that follows it as another value.
 # =============================================================================
 say "starting ${aq_binary} with ${AQ_PROFILE}"
-exec "${aq_binary}" --watch=device --no-window-logging "${AQ_PROFILE}"
+
+aq_args=(--watch=device --ignore=xremap --no-window-logging "${AQ_PROFILE}")
+
+# =============================================================================
+# 6. WATCHING IT TAKE HOLD OF THE KEYBOARDS
+# =============================================================================
+# ⚠️ THIS WHOLE SECTION EXISTS BECAUSE OF THE BENCH TEST, 2026-09-03, AND IT IS
+# THE ACTUAL FIX FOR "IT CAME UP IN WINDOWS MODE".
+#
+# WHAT HAPPENED
+#   A remapper belonging to the LOGIN SCREEN was still holding both of Royce's
+#   keyboards when the session's own remapper started. It printed:
+#
+#     Error: Device or resource busy (os error 16). Another program might have
+#     grabbed the device: 'Keyboard K780 Keyboard'
+#     ...
+#     No device was selected, but --watch is waiting for new devices.
+#
+#   and then sat there, holding nothing, for eleven minutes. The service was
+#   running. `systemctl status` said active. Every shortcut was dead. From the
+#   outside it was indistinguishable from Windows mode — which is exactly what
+#   Royce reported it as, and he was right to.
+#
+#   The other remapper let go ten seconds later. Nothing noticed, because
+#   --watch only waits for keyboards it has never seen; it does not go back and
+#   try again on one it was refused.
+#
+# WHAT THIS DOES ABOUT IT
+#   Reads what the remapper prints, and treats "busy" or "nothing selected" as
+#   a failure of the whole run rather than a note in a log. The service then
+#   restarts it two seconds later (Restart=always, no give-up limit), and keeps
+#   doing that until the keyboards are free — which on the bench would have been
+#   the fifth attempt, about ten seconds in, with nobody noticing.
+#
+#   It also counts what was taken and says so in one clear sentence, so that
+#   `aq keys status` can answer "is it actually remapping anything?" instead of
+#   only "is the service running?". Those turned out to be different questions.
+#
+# THE COST, STATED PLAINLY
+#   All-or-nothing. If one keyboard out of three is busy, the run fails and
+#   retries rather than remapping the other two. That is deliberate: a computer
+#   where one of your keyboards has Mac shortcuts and another does not is more
+#   confusing than one that is briefly not ready, and the retry makes "briefly"
+#   the normal case.
+
+# The pipe the remapper's output comes back through. In the per-login runtime
+# folder, which is cleaned up automatically when you log out.
+aq_pipe="${XDG_RUNTIME_DIR:-/tmp}/aquarius-keys-output.$$"
+rm -f "${aq_pipe}"
+
+if ! mkfifo -m 0600 "${aq_pipe}" 2> /dev/null; then
+    # No pipe, no watching. Rather than fail, do the old thing — run the
+    # remapper directly — and say that the safety net is not there.
+    say "NOTE: could not create ${aq_pipe}, so the grab-failure watcher is off."
+    exec "${aq_binary}" "${aq_args[@]}"
+fi
+
+"${aq_binary}" "${aq_args[@]}" > "${aq_pipe}" 2>&1 &
+aq_child=$!
+
+aq_cleanup() {
+    kill "${aq_child}" 2> /dev/null
+    rm -f "${aq_pipe}"
+}
+trap aq_cleanup EXIT INT TERM
+
+exec 3< "${aq_pipe}"
+
+aq_phase=""          # which part of the remapper's output we are reading
+aq_count=0           # how many keyboards it chose
+aq_names=""          # and what they are called
+aq_said_summary=0    # so the summary is printed once, not once per line
+aq_problem=""        # empty means all well
+
+aq_summary() {
+    [ "${aq_said_summary}" -eq 1 ] && return 0
+    aq_said_summary=1
+    if [ "${aq_count}" -gt 0 ]; then
+        say "remapping ${aq_count} keyboard(s): ${aq_names}"
+        say "Mac-style shortcuts are live. Command-C copies."
+    fi
+}
+
+while true; do
+    if IFS= read -r -t 5 -u 3 aq_line; then
+        printf '%s\n' "${aq_line}"
+
+        case "${aq_line}" in
+            *"Selecting devices from the following list"*)
+                aq_phase="listing"
+                ;;
+            *"Selected"*"since --device options weren't specified"* | *"Selected devices"*)
+                aq_phase="chosen"
+                ;;
+            */dev/input/event*)
+                if [ "${aq_phase}" = "chosen" ]; then
+                    aq_count=$((aq_count + 1))
+                    aq_names="${aq_names}${aq_names:+, }${aq_line#*: }"
+                fi
+                ;;
+        esac
+
+        # NOTE: the summary is NOT printed here, when the list of keyboards
+        # ends. It is printed only after five quiet seconds, further down.
+        # The reason is in the first run of this watcher on a fake failure: the
+        # list of chosen keyboards is printed BEFORE the remapper tries to take
+        # hold of them, so announcing "remapping 2 keyboards" at that point is a
+        # claim we have not checked. Five seconds of silence afterwards is the
+        # cheapest honest proof that the grabs actually succeeded.
+
+        case "${aq_line}" in
+            *"resource busy"*)      aq_problem="busy" ;;
+            *"No device was selected"*) aq_problem="none" ;;
+        esac
+
+        if [ -n "${aq_problem}" ]; then
+            break
+        fi
+    else
+        # Nothing for five seconds. Either the remapper is quietly working —
+        # which is the normal, happy case — or it has finished and closed the
+        # pipe. Say the summary once, then check which.
+        aq_summary
+        kill -0 "${aq_child}" 2> /dev/null || break
+    fi
+done
+
+if [ -n "${aq_problem}" ]; then
+    kill "${aq_child}" 2> /dev/null
+    wait "${aq_child}" 2> /dev/null
+    say ""
+    if [ "${aq_problem}" = "busy" ]; then
+        say "PROBLEM: another program is holding the keyboard, so the shortcuts"
+        say "are not working yet. The usual cause is the login screen's own copy"
+        say "of the remapper, which lets go a few seconds after you log in."
+    else
+        say "PROBLEM: no keyboard could be taken hold of, so nothing is being"
+        say "remapped and the shortcuts are not working yet."
+    fi
+    say "Trying again in two seconds. This normally fixes itself; if these lines"
+    say "keep repeating, run:  aq keys status"
+    exit 1
+fi
+
+wait "${aq_child}"
+aq_code=$?
+say "the remapper stopped (exit ${aq_code})."
+exit "${aq_code}"

@@ -48,20 +48,84 @@ Documentation=file:///usr/share/aquarius/keys/mac.yaml
 PartOf=graphical-session.target
 After=graphical-session.target
 
-# If it fails five times in ten seconds, stop trying. A remapper that cannot
-# start is a nuisance; one that retries forever fills the log and hides the
-# real error at the top of it.
-StartLimitIntervalSec=10
-StartLimitBurst=5
+# -----------------------------------------------------------------------------
+# ⚠️ THE LOGIN SCREEN MUST NOT RUN THIS. THIS LINE IS THE 2026-09-03 BUG FIX.
+# -----------------------------------------------------------------------------
+# The "switched on" link above lives in /usr/lib/systemd/user, which applies to
+# EVERY user on the machine who gets a graphical session — and the login screen
+# is one of those. GDM draws the login screen from an account called `gdm`,
+# which runs a real GNOME session of its own, reaches graphical-session.target
+# like anybody else, and is the active seat while it is on screen — so the
+# keyboard permission is granted to it too.
+#
+# The result, found on the bench on 2026-09-03: an xremap belonging to the login
+# screen had already taken hold of both of Royce's keyboards. When he logged in
+# and the session's OWN remapper started, every keyboard it tried to take was
+# answered "Device or resource busy", it ended up holding nothing, and the
+# desktop behaved as though Mac mode were switched off. It looked exactly like
+# "it came up in Windows mode". It was not: it was two of these fighting.
+#
+# `!@system` means "not a system account" — every account below the ordinary
+# user number, which is where gdm and every other service account lives. So
+# this now runs for people and not for the machine's own plumbing.
+#
+# The second reason it is right, quite apart from the bug: remapping the keys of
+# a login screen is not a feature anybody asked for. Command-Q at a password
+# prompt should do nothing at all.
+ConditionUser=!@system
+
+# NO GIVING UP. See Restart= below — this unit is deliberately allowed to retry
+# forever, so the rate limiter that would normally stop it is switched off.
+# A keyboard remapper that silently stops is worse than one that keeps trying.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
+
+# -----------------------------------------------------------------------------
+# Clear the way first.
+# -----------------------------------------------------------------------------
+# If a remapper of ours is somehow still running for this person — a previous
+# session that has not finished letting go, a copy started by hand from a
+# terminal — it is holding the keyboards and the new one cannot. Ending it is
+# always the right answer, because there must only ever be one.
+#
+# The leading `-` means "carry on even if this fails", and it usually does
+# fail: nothing to kill is the normal case, and pkill reports that as an error.
+#
+# This cannot reach the login screen's copy — that belongs to a different
+# account — which is why ConditionUser= above is the real fix and this is the
+# tidy-up beside it.
+ExecStartPre=-/usr/bin/pkill --uid %U --exact xremap-wlroots
+ExecStartPre=-/usr/bin/pkill --uid %U --exact xremap-gnome
+
 ExecStart=/usr/libexec/aquarius-keys-run
 
-# Restart if it CRASHES, but not if it exits cleanly. Exiting cleanly is what
-# happens in Windows mode, where there is deliberately nothing to do.
-Restart=on-failure
+# -----------------------------------------------------------------------------
+# Restart=always, and why it changed from `on-failure` on 2026-09-03.
+# -----------------------------------------------------------------------------
+# The keyboards can be busy for a few seconds at login while the previous
+# session lets go of them. A remapper that tries once, fails, and stops leaves a
+# person with no shortcuts and no explanation. One that tries again every two
+# seconds is holding the keyboard about four seconds later and nobody notices
+# anything happened.
+#
+# So: always, forever, with the rate limiter off (see StartLimitIntervalSec
+# above). The journal records every attempt and says why each one failed, so a
+# loop that genuinely cannot succeed is loud rather than invisible.
+Restart=always
 RestartSec=2
+
+# The two exits that mean "do not try again, trying again cannot help":
+#
+#   64  Nothing to do ON PURPOSE. Windows mode has no rules in it, so there is
+#       deliberately nothing to remap and nothing to run. Restarting that every
+#       two seconds forever would be a busy loop over a decision.
+#   78  The image is broken — a profile or a program that should be part of the
+#       operating system is missing. No amount of retrying installs it.
+#
+# Every other failure retries.
+RestartPreventExitStatus=64 78
 
 [Install]
 WantedBy=graphical-session.target

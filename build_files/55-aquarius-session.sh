@@ -514,6 +514,181 @@ aq_file_has "${AQ_LABWC_DIR}/rc.xml" '<action name="Exit" />' \
 aq_file_has "${AQ_LABWC_DIR}/autostart" 'aquarius-shell-start' \
     "the window manager starts the shell through the helper that reports failures"
 
+# ==============================================================================
+# 6b. SCREEN SIZE — the 2026-09-03 "everything is tiny" fix
+# ==============================================================================
+# labwc starts every monitor at 100%, always. On Royce's 55" 4K bench monitor
+# that made the whole desktop physically tiny, while GNOME on the same machine
+# had been running it at 125% for weeks.
+#
+# /usr/libexec/aquarius-display-scale is what closes that gap: at every login it
+# works out the right size and applies it with wlr-randr, taking the answer from
+# the person's own setting first, then from the scale they already chose in
+# GNOME, and only then from the monitor's own reported size.
+#
+# Everything below RUNS it. A scaling rule that is subtly wrong produces a
+# desktop that is the wrong size on somebody's machine weeks later, with no
+# error anywhere, so the arithmetic is exercised here against fixed examples.
+say "Screen size — the display-scale helper"
+
+AQ_DISPLAY_HELPER="/usr/libexec/aquarius-display-scale"
+
+# It is a Python program, so ask Python whether it is even readable before
+# running it. A syntax error here would mean every screen silently stays at 100%.
+if python3 -m py_compile "${AQ_DISPLAY_HELPER}" 2> /dev/null; then
+    ok "the display-scale helper is valid Python"
+else
+    bad "the display-scale helper has a syntax error — every screen would stay at 100%"
+fi
+
+# The autostart file is a shell script that labwc runs at every login. A syntax
+# error in it does not stop labwc; it stops everything AFTER the bad line, which
+# on this file means the wallpaper, the screen size and the bar.
+if bash -n "${AQ_LABWC_DIR}/autostart"; then
+    ok "the window manager's autostart file is valid shell"
+else
+    bad "${AQ_LABWC_DIR}/autostart has a syntax error — the bar would not start"
+fi
+
+if [ -x "${AQ_DISPLAY_HELPER}" ]; then
+    ok "${AQ_DISPLAY_HELPER} is installed and executable"
+else
+    chmod 0755 "${AQ_DISPLAY_HELPER}" 2> /dev/null || true
+    if [ -x "${AQ_DISPLAY_HELPER}" ]; then
+        ok "${AQ_DISPLAY_HELPER} is installed (permissions corrected here)"
+    else
+        bad "${AQ_DISPLAY_HELPER} is missing — every screen would stay at 100%"
+    fi
+fi
+
+# wlr-randr is the ONLY way this image can change a monitor's scale. labwc has
+# no monitor settings in its own configuration file, by design: it expects to be
+# told over the standard wlr-output-management protocol, which is what wlr-randr
+# speaks. Without it the helper decides correctly and can do nothing about it.
+if aq_have wlr-randr; then
+    ok "wlr-randr is installed ($(wlr-randr --version 2>&1 | head -1))"
+else
+    bad "wlr-randr is missing — the helper could work out the right scale and would have no way to apply it"
+fi
+
+# The autostart file has to actually call it, and the launcher has to pass the
+# shell's own size knob through. Both are one line, and both are easy to lose.
+aq_file_has "${AQ_LABWC_DIR}/autostart" 'aquarius-display-scale' \
+    "the window manager sets the screen size at login"
+aq_file_has "${AQ_LAUNCHER}" 'AQ_UI_SCALE' \
+    "the launcher passes the bar's own size setting to the shell"
+
+# ------------------------------------------------------------------------------
+# THE ARITHMETIC, RUN AGAINST FIXED EXAMPLES
+# ------------------------------------------------------------------------------
+# Three cases, and the middle one is the whole reason the order exists:
+#
+#   1. Royce's Odyssey Ark with his GNOME setting present  -> 125%
+#      (his answer, inherited, without being asked twice)
+#   2. The same monitor with NO saved setting              -> 100%
+#      (a 55" 4K is 81 dpi — LOWER than an office monitor. The guess alone
+#      would leave it at 100%, which is why the guess is asked last.)
+#   3. The same monitor with his own `aq display scale`    -> 150%
+#      (his own setting beats everything, including GNOME's)
+say "Checking the scaling rule against real examples"
+
+AQ_T="$(mktemp -d)"
+
+cat > "${AQ_T}/ark.json" << 'JSON'
+[{"name":"DP-1","description":"Samsung Odyssey Ark",
+  "physical_size":{"width":1210,"height":680},
+  "enabled":true,"scale":1.0,
+  "modes":[{"width":3840,"height":2160,"refresh":59.997,"current":true}]}]
+JSON
+
+cat > "${AQ_T}/monitors.xml" << 'XML'
+<monitors version="2">
+  <configuration>
+    <logicalmonitor>
+      <x>0</x><y>0</y><scale>1.25</scale><primary>yes</primary>
+      <monitor>
+        <monitorspec><connector>DP-1</connector><vendor>SAM</vendor>
+          <product>Odyssey Ark</product><serial>0x1</serial></monitorspec>
+        <mode><width>3840</width><height>2160</height><rate>59.997</rate></mode>
+      </monitor>
+    </logicalmonitor>
+  </configuration>
+</monitors>
+XML
+
+echo "scale=1.5" > "${AQ_T}/display.conf"
+
+aq_scale_case() { # aq_scale_case "<what>" "<monitors.xml>" "<display.conf>" "<expected>"
+    local what="$1" monitors="$2" conf="$3" want="$4" got
+    got="$("${AQ_DISPLAY_HELPER}" --dry-run \
+        --outputs-from "${AQ_T}/ark.json" \
+        --monitors-xml "${monitors}" \
+        --conf "${conf}" 2>&1)"
+    if printf '%s' "${got}" | grep -q -- "${want}"; then
+        ok "${what}"
+    else
+        bad "${what} — expected '${want}' in the answer, got:"
+        printf '%s\n' "${got}" | sed 's/^/       /'
+    fi
+}
+
+aq_scale_case "a saved GNOME scale is inherited (125%, Royce's bench setting)" \
+    "${AQ_T}/monitors.xml" /nonexistent "125%"
+aq_scale_case "with nothing saved, a 55-inch 4K is left at 100% (81 dpi — the reason the guess is asked LAST)" \
+    /nonexistent /nonexistent "100%"
+aq_scale_case "your own 'aq display scale' beats the GNOME setting (150%)" \
+    "${AQ_T}/monitors.xml" "${AQ_T}/display.conf" "150%"
+
+# The other end of the ladder: a dense laptop panel must NOT be left at 100%.
+cat > "${AQ_T}/laptop.json" << 'JSON'
+[{"name":"eDP-1","description":"a 14-inch 2880x1800 laptop panel",
+  "physical_size":{"width":302,"height":189},
+  "enabled":true,"scale":1.0,
+  "modes":[{"width":2880,"height":1800,"refresh":60.0,"current":true}]}]
+JSON
+if "${AQ_DISPLAY_HELPER}" --dry-run --outputs-from "${AQ_T}/laptop.json" \
+    --monitors-xml /nonexistent --conf /nonexistent 2>&1 | grep -q "200%"; then
+    ok "a dense laptop panel (242 dpi) is scaled up to 200%"
+else
+    bad "a dense laptop panel was not scaled up — the ladder's top end is wrong"
+fi
+
+# A monitor that does not report its size cannot be measured. It must degrade to
+# something usable rather than to a crash — every virtual machine looks like this.
+cat > "${AQ_T}/nosize.json" << 'JSON'
+[{"name":"Virtual-1","description":"a virtual machine's screen",
+  "physical_size":{"width":0,"height":0},
+  "enabled":true,"scale":1.0,
+  "modes":[{"width":1920,"height":1080,"refresh":60.0,"current":true}]}]
+JSON
+if "${AQ_DISPLAY_HELPER}" --dry-run --outputs-from "${AQ_T}/nosize.json" \
+    --monitors-xml /nonexistent --conf /nonexistent 2>&1 \
+    | grep -q "does not report its physical size"; then
+    ok "a monitor that will not say how big it is degrades politely"
+else
+    bad "a monitor with no reported size did not produce the documented fallback"
+fi
+
+# And the human-readable half of wlr-randr's output, which is what an older
+# version of the tool prints instead of JSON.
+cat > "${AQ_T}/plain.txt" << 'TEXT'
+DP-1 "Samsung Odyssey Ark 0x0001 (DP-1)"
+  Physical size: 1210x680 mm
+  Enabled: yes
+  Modes:
+    3840x2160 px, 59.996999 Hz (preferred, current)
+  Position: 0,0
+  Scale: 1.000000
+TEXT
+if "${AQ_DISPLAY_HELPER}" --dry-run --outputs-from "${AQ_T}/plain.txt" \
+    --monitors-xml "${AQ_T}/monitors.xml" --conf /nonexistent 2>&1 | grep -q "125%"; then
+    ok "wlr-randr's plain-text output is read as well as its JSON"
+else
+    bad "the plain-text reader is broken — an older wlr-randr would leave every screen at 100%"
+fi
+
+rm -rf "${AQ_T}"
+
 say "Portals"
 if [ -r "${AQ_PORTAL_CONF}" ]; then
     ok "${AQ_PORTAL_CONF} exists"

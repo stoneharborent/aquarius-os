@@ -1328,7 +1328,51 @@ jobs:
           WANTS=/usr/lib/systemd/user/graphical-session.target.wants/aquarius-keys.service
           check "the service runs the right program" '^ExecStart=/usr/libexec/aquarius-keys-run$' "${UNIT}"
           check "it belongs to the graphical session" '^WantedBy=graphical-session\.target$'      "${UNIT}"
-          check "it restarts itself if it crashes"    '^Restart=on-failure$'                     "${UNIT}"
+          check "it ends when the desktop does"       '^PartOf=graphical-session\.target$'       "${UNIT}"
+
+          # ---- the 2026-09-03 bench bug, checked in the finished image ------
+          # A second remapper — the LOGIN SCREEN's, started from the same link,
+          # because that link applies to every account including gdm's — had
+          # taken hold of both keyboards. Ours was refused each one with
+          # "Device or resource busy", held nothing, and reported itself active
+          # the whole time. It looked exactly like Windows mode.
+          # Every line below is part of the fix and every one is one edit from
+          # being lost. See docs/restart/aquarius-keys.md.
+          check "the login screen does not run this"  '^ConditionUser=!@system$'                 "${UNIT}"
+          check "it keeps retrying rather than giving up" '^Restart=always$'                     "${UNIT}"
+          check "it retries two seconds later"        '^RestartSec=2$'                           "${UNIT}"
+          check "the give-up limit is switched off"   '^StartLimitIntervalSec=0$'                "${UNIT}"
+          check "the two do-not-retry exits are named" '^RestartPreventExitStatus=64 78$'        "${UNIT}"
+          check "a leftover remapper is cleared first" '^ExecStartPre=-/usr/bin/pkill'           "${UNIT}"
+
+          RUNNER=/usr/libexec/aquarius-keys-run
+          check "a leftover 'xremap' device can never be chosen" 'ignore=xremap'        "${RUNNER}"
+          check "a refused keyboard fails the run"    'resource busy'                   "${RUNNER}"
+          check "holding no keyboards fails the run"  'No device was selected'          "${RUNNER}"
+          check "it says how many keyboards it has"   'remapping .* keyboard'           "${RUNNER}"
+          check "on GNOME it waits for the shell"     'GNOME Shell to be ready'         "${RUNNER}"
+          check "and for the add-on to finish loading" 'gnome-extensions info'          "${RUNNER}"
+          check "'aq keys status' reports the keyboards" 'Keyboards :'                  /usr/bin/aq
+
+          echo "== how big things are on the screen =="
+          # labwc starts every monitor at 100%. On a 55" 4K bench monitor that
+          # made the whole desktop tiny, while GNOME had been running the same
+          # screen at 125% for weeks. See docs/restart/aquarius-display.md.
+          if [ -x /usr/libexec/aquarius-display-scale ]; then
+            ok "the display-scale helper is installed"
+          else
+            bad "/usr/libexec/aquarius-display-scale is missing — every screen would stay at 100%"
+          fi
+          if command -v wlr-randr > /dev/null 2>&1; then
+            ok "wlr-randr is installed (the only way to apply a scale here)"
+          else
+            bad "wlr-randr is missing — the right scale could be worked out and never applied"
+          fi
+          check "the window manager sets the size at login" 'aquarius-display-scale' \
+            /usr/share/aquarius/labwc/autostart
+          check "the launcher passes the bar's own size knob" 'AQ_UI_SCALE' \
+            /usr/bin/aquarius-session
+          check "'aq display' is in the command" 'aq display scale' /usr/bin/aq
           if [ -L "${WANTS}" ] && [ -e "${WANTS}" ]; then
             ok "switched on by default — ${WANTS} -> $(readlink "${WANTS}")"
           else
@@ -1611,6 +1655,18 @@ jobs:
             echo "  OK   the search palette still declares an IPC handler"
           else
             echo "  FAIL components/search/FlowSearch.qml no longer declares an IpcHandler — Super+Space would do nothing"
+            fails=1
+          fi
+
+          echo "== the size knob the session sets =="
+          # /usr/bin/aquarius-session exports AQ_UI_SCALE from the person's
+          # display.conf, and the shell is the only thing that reads it. If the
+          # shell ever stops reading it, the OS would keep exporting a variable
+          # into a void and `aq display ui` would silently do nothing.
+          if grep -q 'AQ_UI_SCALE' theme/Theme.qml; then
+            echo "  OK   theme/Theme.qml still reads AQ_UI_SCALE"
+          else
+            echo "  FAIL theme/Theme.qml no longer reads AQ_UI_SCALE — 'aq display ui' would do nothing at all"
             fails=1
           fi
 
