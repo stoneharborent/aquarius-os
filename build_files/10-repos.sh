@@ -49,6 +49,23 @@ cat /usr/lib/os-release
 echo "Kernel in this image: $(rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core 2> /dev/null || echo '(none — that would be very wrong)')"
 
 # ------------------------------------------------------------------------------
+# The tool for switching repositories on and off
+# ------------------------------------------------------------------------------
+# ⚠️ `dnf config-manager` IS NOT IN THE BARE FEDORA IMAGE. On a normal Fedora
+# desktop it is always there, so nobody thinks of it as a separate thing; on the
+# bootable base image it is a plugin that has to be installed, and without it
+# every `dnf config-manager` call dies with:
+#
+#     Unknown argument "config-manager" for command "dnf5".
+#
+# The NVIDIA step needs it — it has to switch RPM Fusion off while it installs
+# the NVIDIA driver, so that dnf cannot mix RPM Fusion's driver with Universal
+# Blue's. Installing it here means every later step can rely on it. (Found the
+# hard way on the second CI run of the restart, 2026-09-03.)
+say "The repository-management plugin"
+aq_dnf install dnf5-plugins
+
+# ------------------------------------------------------------------------------
 # Add RPM Fusion
 # ------------------------------------------------------------------------------
 # These two packages contain nothing but the repository definition and the key
@@ -68,7 +85,7 @@ aq_dnf install \
 # produces a "no match for argument" three steps later, which is a much less
 # obvious message.
 say "Checking the repositories are enabled"
-aq_installed rpmfusion-free-release rpmfusion-nonfree-release
+aq_installed rpmfusion-free-release rpmfusion-nonfree-release dnf5-plugins
 
 echo "Every repository this image can now see:"
 aq_dnf repolist --all || true

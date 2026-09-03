@@ -141,12 +141,22 @@ fi
 say "Hostname"
 echo "  DEFAULT_HOSTNAME is '${IMAGE_HOSTNAME}' — a machine with no name of its"
 echo "  own comes up as 'aquarius'. Anything set at install time still wins."
-if [ -s /etc/hostname ]; then
-    bad "/etc/hostname exists in the image — that would overrule the user's own choice"
-    cat /etc/hostname
-else
-    ok "no /etc/hostname baked into the image (correct)"
-fi
+#
+# ⚠️ DO NOT ADD A CHECK HERE FOR /etc/hostname BEING ABSENT. There was one, and
+# it failed the second CI run of the restart (2026-09-03) on an image that was
+# perfectly correct.
+#
+# The reason is that /etc/hostname is not ours during a build. The container
+# tooling writes the BUILD CONTAINER's own name into it for the duration of each
+# step — the failing run found "d40c5518d241" in there, which is a container id,
+# not anything this repository put on disk — and removes it again when the step
+# is committed. So the file is visible from inside the build, is not in the
+# finished image, and cannot be usefully inspected from either side.
+#
+# What actually decides the hostname is DEFAULT_HOSTNAME in os-release, which is
+# checked below with everything else.
+echo "  (What /etc/hostname says during a build is the build container's own"
+echo "   name and means nothing. It is not committed into the image.)"
 
 # ------------------------------------------------------------------------------
 # Check the identity actually applied
