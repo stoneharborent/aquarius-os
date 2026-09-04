@@ -149,7 +149,196 @@ Which is Part B.
 
 # Part B — our own login screen
 
-Not written yet in this document. It lands on the same branch as this file.
+**It is in the image. It is switched OFF. Turning it on is one command.**
+
+## What it looks like
+
+```
+                          09:42
+                    Friday 4 September
+
+           ┌──────────────────────────────────────┐
+           │             ◭  AquariusOS            │
+           │                                      │
+           │                ( RA )                │
+           │           ‹  Royce Adkins  ›         │
+           │                                      │
+           │   ┌──────────────────────────────┐   │
+           │   │ ••••••••                     │   │
+           │   └──────────────────────────────┘   │
+           │   Password:                          │
+           │                                      │
+           │          ◇ Aquarius Desktop          │
+           └──────────────────────────────────────┘
+
+      Enter to sign in  ·  Esc to start over  ·  ← → for another desktop
+```
+
+On "The Pour" — the Ice wallpaper — with the Aquarius mark, the Aquarius
+typefaces, the Aquarius colours and the Aquarius spacing, because it is drawn by
+the Aquarius Shell out of the same design files as the desktop. That is the
+whole point: the screen you log in at and the desktop you land on are one thing.
+
+## What each key does
+
+| Key | What it does |
+| --- | --- |
+| **Enter** | Sign in. |
+| **Escape** | Start over — empties the box and forgets the attempt. |
+| **↑ ↓** | A different account. Only when there is more than one. |
+| **← →** | A different desktop — Aquarius Desktop or GNOME. |
+| **Tab** | The same as →. |
+
+The hints are written on the screen, under the card, because this is the one
+screen in the whole computer where you cannot open Settings to find out.
+
+## How to try it
+
+```bash
+sudo aq login use greetd
+sudo systemctl reboot
+```
+
+## How to go back
+
+```bash
+sudo aq login use gdm
+sudo systemctl reboot
+```
+
+That second command works **from a text console too**. If the new login screen
+ever gives you trouble, press **Ctrl+Alt+F3**, log in at the text prompt, and run
+it. And `aq login status` says which one is switched on and whether the other is
+ready.
+
+## Why it cannot lock you out
+
+This is the part worth reading before you switch, because switching login
+managers is the classic way to lock yourself out of a Linux computer: the new
+one fails to start, the login manager restarts it, and you are looking at a
+flickering black screen with no way to type anything.
+
+**Three things stop that here.**
+
+1. **If the graphical login screen fails to start, it falls through to a plain
+   text one by itself.** `/usr/libexec/aquarius-greeter` runs the graphical
+   screen and, if that comes back with an error, runs `tuigreet` instead — the
+   text login screen that has been in the image since R2. Ugly, and completely
+   usable. You log in, you type `sudo aq login use gdm`, you restart.
+2. **GNOME is one keypress away at the login screen itself.** The pill under the
+   password box says which desktop is about to start; ← and → change it. So even
+   if the Aquarius Desktop is the thing misbehaving, GNOME is right there.
+3. **GDM is still installed and is still the default.** Nothing was removed.
+   `aq login use gdm` puts everything back exactly as it was.
+
+And underneath all three: AquariusOS keeps the previous version of itself.
+Holding the boot menu and picking the older entry undoes an update entirely.
+
+## How it works, in order
+
+```
+greetd                    the login manager. Draws nothing at all. Its one job
+  │                       is to run a program and to be the only thing on the
+  │                       computer that checks passwords.
+  └─ /usr/libexec/aquarius-greeter
+       │                  our launcher — and the safety net above
+       └─ labwc           a window manager, because the login screen is a
+            │             Wayland program and needs something to draw into
+            └─ /usr/libexec/aquarius-greeter-shell
+                 │        sets the screen size, then starts the login screen
+                 └─ qs -p /usr/share/aquarius/shell/greeter/greeter.qml
+                          the login screen itself
+```
+
+When you log in successfully, the login screen asks greetd to start your desktop
+and then exits. labwc was started with `-s`, which means "shut down when that
+finishes", so the whole chain unwinds and greetd has the screen back to start
+your desktop on.
+
+### Why labwc and not something smaller
+
+`cage` is the obvious choice — it is a window manager built for exactly this,
+running one program full screen. It does not implement the **layer-shell**
+protocol (an open request since 2019), and layer-shell is how the login screen
+covers the whole screen with nothing able to appear over it. labwc implements
+it, and it is already in this image for the Aquarius Desktop, so it is one fewer
+program to keep working.
+
+### Where it gets its size
+
+The same place GDM now does: `/etc/xdg/monitors.xml`, written by
+`/usr/libexec/aquarius-gdm-display` (Part A). The login screen runs as its own
+user with no home folder worth reading, so it is pointed at the system-wide copy
+instead. One answer, three places that need it, one program that carries it.
+
+If you ever want the *login screen* at a different size from the desktop, put a
+single line in `/var/lib/aquarius/greeter-display.conf`:
+
+```
+scale=1.5
+```
+
+### Where it gets the accounts and the desktops
+
+`/usr/libexec/aquarius-greeter-info` — a small program that prints them as one
+line of JSON. Run it yourself:
+
+```bash
+/usr/libexec/aquarius-greeter-info --people
+/usr/libexec/aquarius-greeter-info --desktops
+```
+
+Accounts come from `/etc/passwd` (anyone with a real login shell and an ordinary
+user number). Desktops come from `/usr/share/wayland-sessions/`, which is where
+both the Aquarius Desktop and GNOME describe themselves. The Aquarius Desktop is
+listed first, which is what makes it the default.
+
+## What is NOT done yet
+
+Written down so nobody has to guess whether it was forgotten.
+
+- **No fingerprint reader.** greetd can carry it — it arrives as another
+  question, the same way a password does — but it has never been tried here.
+- **No on-screen keyboard.** So this is not yet a login screen for a machine
+  with no keyboard plugged into it.
+- **No accessibility menu.** GDM has one; this does not. That is a real
+  step backwards from GDM, and it is one of the reasons GDM stays installed and
+  stays the default.
+- **No restart or shut down buttons.** They need a permissions conversation the
+  login screen's own user does not have set up yet. The power button on the case
+  still works.
+- **No photographs on the accounts** — initials in a blue circle instead. The
+  reasoning is in `greeter/GreeterAvatar.qml` in the shell repository; the short
+  version is that those picture files have a long history of being unreadable,
+  and making them round would mean an extra import whose absence would stop the
+  *whole login screen* loading. Bad trade for a decoration.
+- **One monitor gets the card.** The others show the wallpaper. Nothing is
+  black, but the clock and the password box are on the first screen only.
+- **Nobody has looked at it on real hardware.** Which is the next line.
+
+## The bench list — what to check when you switch it on
+
+In order, and stop at the first one that is wrong:
+
+1. `sudo aq login status` — does it agree that GDM is on now, and say the
+   AquariusOS one is ready?
+2. `sudo aq login use greetd`, then `sudo systemctl reboot`.
+3. **Does a login screen appear at all?** If it is a plain blue-and-grey text
+   screen, the graphical one failed and fell back — that is the safety net
+   working. `journalctl -u greetd -b` says why.
+4. **Is it the right size on the 55" monitor?** This is the whole reason for the
+   work. If it is tiny, `sudo /usr/libexec/aquarius-gdm-display --status` says
+   what it thinks the answer is.
+5. **Does typing work?** The password box should have the cursor without you
+   clicking anything.
+6. **Does a wrong password say so** and let you try again, rather than going
+   quiet?
+7. **Does a right password start the Aquarius Desktop?**
+8. **Do ← and → change the desktop pill**, and does picking GNOME start GNOME?
+9. **Escape** — does it clear the box and let you start again?
+10. Log out. Does it come back to the same screen?
+11. `sudo aq login use gdm`, restart, and check GDM comes back — because the way
+    out matters more than the way in.
 
 ---
 
@@ -167,4 +356,18 @@ Not written yet in this document. It lands on the same branch as this file.
 | `/etc/xdg/monitors.xml` | the copy of your display arrangement the login screen reads |
 | `/var/lib/aquarius/display-scale` | one number: the scale, for our own greeter to read |
 
-Build steps that put them there: `build_files/50-aquarius-desktop.sh`, section 4.
+And Part B's:
+
+| Path | What it is |
+| --- | --- |
+| `/etc/greetd/config.toml` | greetd's own settings. Names our launcher and the user it runs as. |
+| `/usr/libexec/aquarius-greeter` | The launcher — and the safety net that falls back to a text login screen. **Read this one.** |
+| `/usr/libexec/aquarius-greeter-shell` | Sets the screen size, then starts the login screen. |
+| `/usr/libexec/aquarius-greeter-info` | Prints the accounts and the desktops. Runnable by hand. |
+| `/usr/share/aquarius/greeter-labwc/` | The login screen's own window manager configuration — deliberately almost empty. Not the desktop's. |
+| `/usr/share/aquarius/shell/greeter/` | The login screen itself, in QML. Comes from the aquarius-shell repository. |
+| `/var/lib/aquarius/greeter-display.conf` | Optional. A different screen size for the login screen alone. |
+
+Build steps that put them there: `build_files/50-aquarius-desktop.sh` section 4
+(Part A), `build_files/55-aquarius-session.sh` section 3 (Part B). The login
+screen's own design notes are in the shell repository at `docs/greeter.md`.

@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!--
+  =============================================================================
+  The AquariusOS login screen — window manager configuration
+  =============================================================================
+  (An XML comment may not contain two hyphens in a row, which is why the rules
+  in this file are drawn with = signs.)
+
+  This is NOT the desktop's configuration. The desktop's is one folder over, at
+  /usr/share/aquarius/labwc/, and it is a different thing on purpose: that one
+  sets up a desktop somebody works in, and this one sets up the smallest
+  possible surface for one full-screen program to draw a login box on.
+
+  =============================================================================
+  WHY IT IS ALMOST EMPTY
+  =============================================================================
+  The login screen covers the whole screen and there is nothing else running.
+  There are no windows to move, no title bars to draw, no menu to open, and no
+  keyboard shortcuts that should do anything at all. Everything below is
+  therefore a subtraction.
+
+  What is deliberately NOT here, and why:
+
+    the default key bindings   Alt+Tab, Alt+F4 and the rest. There is one window
+                               and it must not be closable. Leaving out
+                               <default /> is what removes them.
+
+    a right-click menu         labwc's own root menu offers Terminal, Reconfigure
+                               and Exit. On a login screen those are three ways
+                               for somebody who has not logged in to do something
+                               they should not be able to do.
+
+    colour                     the same rule as the desktop's configuration.
+                               Colour in AquariusOS lives in the shell's
+                               theme/Ice.qml and nowhere else. Nothing here draws
+                               anything a person can see.
+
+  =============================================================================
+  WHAT IS HERE
+  =============================================================================
+    decoration none            do not draw title bars. There is one window and
+                               it is the whole screen.
+    gap 0                      no reserved space at the edges.
+
+  Format reference: labwc-config(5), installed on this machine.
+  =============================================================================
+-->
+
+<labwc_config>
+
+  <core>
+    <decoration>none</decoration>
+    <gap>0</gap>
+  </core>
+
+  <keyboard>
+    <!--
+      No <default /> and no bindings of our own: nothing the keyboard does
+      belongs to the window manager here. Every key goes to the login screen,
+      which is the only program running.
+    -->
+  </keyboard>
+
+  <mouse>
+    <!--
+      Likewise. Without a <context name="Root"> menu binding there is no
+      right-click menu, which is exactly what a login screen should have.
+    -->
+  </mouse>
+
+</labwc_config>

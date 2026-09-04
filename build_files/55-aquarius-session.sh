@@ -42,13 +42,20 @@
 # ------------------------------------------------------------------------------
 # ONE THING THAT IS DELIBERATELY NOT SWITCHED ON: greetd
 # ------------------------------------------------------------------------------
-# greetd is a small modern login manager, and it is where the Aquarius Desktop
-# is eventually going — a login screen drawn by our own shell. It is INSTALLED
-# by this step and DISABLED. GDM stays the login screen, because GDM is what has
-# been proven on the bench and because the GNOME fallback expects it.
+# greetd is a small modern login manager, and since 2026-09-04 it has a real
+# AquariusOS login screen behind it — the Aquarius Shell's own greeter, on the
+# Ice wallpaper, with the Aquarius mark. It is INSTALLED, FULLY CONFIGURED, and
+# SWITCHED OFF. GDM is still the login screen this image boots to.
 #
-# Switching over is two commands, documented in docs/restart/aquarius-session.md
-# and printed at the bottom of this script's log. Switching back is two more.
+# That is not caution for its own sake. Nobody has looked at the new login
+# screen on real hardware yet, and the way you find out that a login screen does
+# not work is by not being able to log in. So it ships ready and off, Royce
+# tries it on the bench with one command, and the day he says yes the default
+# moves.
+#
+# Switching over is ONE command now — `sudo aq login use greetd` — and switching
+# back is the same command with `gdm` on the end, typed from a text console if
+# it has to be. The plain-English guide is docs/restart/login.md.
 # ==============================================================================
 
 # shellcheck source=build_files/aq-lib.sh
@@ -215,46 +222,180 @@ say "Writing greetd's configuration"
 install -d -m 0755 /etc/greetd
 cat > /etc/greetd/config.toml <<'AQ_GREETD_CONF'
 # =============================================================================
-# greetd — an alternative login screen for AquariusOS
+# greetd — the AquariusOS login screen
 # =============================================================================
-# THIS IS NOT SWITCHED ON. AquariusOS uses GDM, the GNOME login screen. This
-# file is here, configured and ready, for the day the Aquarius Desktop has a
-# login screen of its own.
+# ⚠️ THIS IS NOT SWITCHED ON. Out of the box AquariusOS boots to GDM, GNOME's
+# login screen. This file is here, configured and ready, for the day the
+# AquariusOS login screen has been looked at on real hardware and approved.
 #
-# To switch to greetd (and back), see docs/restart/aquarius-session.md. It is
-# two commands each way and both are reversible.
+# To try it:      sudo aq login use greetd     then restart
+# To go back:     sudo aq login use gdm        then restart
 #
-# WHAT IT WOULD DO IF SWITCHED ON
-#   greetd itself draws nothing. It starts one program, on one virtual terminal,
-#   and that program asks for the password. The program named below is tuigreet,
-#   a text login screen that lists the sessions it finds and lets you pick one
-#   with the arrow keys. It is not pretty, and it is not meant to be — a
-#   graphical greeter drawn by the Aquarius Shell is the eventual answer, and
-#   this is the honest interim.
+# Both commands work from a text console (Ctrl+Alt+F3) if the graphical screen
+# is not cooperating, and `aq login status` says which one is switched on.
+#
+# WHAT HAPPENS WHEN IT IS SWITCHED ON
+#   greetd itself draws nothing. It runs ONE program on one virtual terminal and
+#   is the only thing on the computer that checks passwords. The program below
+#   is ours: it starts a window manager, and inside it the Aquarius Shell draws
+#   the login screen — the Ice wallpaper, the clock, the Aquarius mark, and a
+#   password box.
+#
+#   If that fails for any reason, /usr/libexec/aquarius-greeter falls through to
+#   a plain text login screen rather than leaving you at a black one. Read the
+#   top of that file: the safety net is the most important thing in it.
 # =============================================================================
 
 [terminal]
 # Which virtual terminal the login screen appears on. 1 is the one a PC shows
-# after boot.
+# after it has finished starting up.
 vt = 1
 
 [default_session]
-# --remember          fill in the last username automatically
-# --remember-session  and the session they last chose
-# --asterisks         show * as the password is typed, so a person can see that
-#                     the keyboard is working at all
-# --time              a clock, which is the cheapest possible signal that the
-#                     machine is alive
-# --sessions          where to find the things that can be logged into. Both
-#                     "Aquarius Desktop" and "GNOME" live in the first folder;
-#                     the second is where a hand-installed session would go.
-command = "tuigreet --remember --remember-session --asterisks --time --sessions /usr/share/wayland-sessions:/usr/local/share/wayland-sessions"
+# The whole login screen, top to bottom. Its own header draws the diagram.
+command = "/usr/libexec/aquarius-greeter"
 
-# greetd runs the login screen as its own unprivileged user, so a bug in the
-# greeter is not a bug running as root. The greetd package creates this user.
+# greetd runs the login screen as an unprivileged user of its own, so a bug in
+# the login screen is not a bug running as root.
+#
+# ⚠️ THE USER IS CALLED "greetd" ON FEDORA, NOT "greeter". Almost every guide on
+# the internet says `user = "greeter"`, because that is Arch Linux's name for
+# it. Fedora's package creates `greetd`, with a home folder at /var/lib/greetd.
+# Putting the wrong name here gives a login screen that never starts, and the
+# reason lands in the journal rather than on the screen.
 user = "greetd"
+
+# -----------------------------------------------------------------------------
+# THE PLAIN TEXT LOGIN SCREEN, IF YOU WANT IT ON PURPOSE
+# -----------------------------------------------------------------------------
+# tuigreet is in this image and is what the line above falls back to on its own
+# if the graphical screen fails. To use it deliberately — while working on the
+# graphical one, say — replace the `command` line above with this and restart:
+#
+#   command = "tuigreet --remember --remember-session --asterisks --time --sessions /usr/share/wayland-sessions:/usr/local/share/wayland-sessions"
 AQ_GREETD_CONF
 chmod 0644 /etc/greetd/config.toml
+
+# It has to be readable by the login manager and it has to parse. A broken TOML
+# file here is a login screen that never appears, with the reason in a log
+# nobody can reach because they cannot log in.
+if python3 -c "import tomllib,sys; tomllib.load(open('/etc/greetd/config.toml','rb'))" 2> /dev/null; then
+    ok "greetd's configuration is valid TOML"
+else
+    bad "/etc/greetd/config.toml does not parse — switching to greetd would give a machine nobody can log into"
+fi
+aq_file_has /etc/greetd/config.toml '^command = "/usr/libexec/aquarius-greeter"$' \
+    "greetd is pointed at the AquariusOS login screen"
+aq_file_has /etc/greetd/config.toml '^user = "greetd"$' \
+    "it runs as the user Fedora's package actually creates (greetd, not greeter)"
+
+# ------------------------------------------------------------------------------
+# The login screen's own pieces
+# ------------------------------------------------------------------------------
+say "The AquariusOS login screen"
+
+# The two launchers shipped in system_files/. Executable, or greetd runs a file
+# it is not allowed to run and the machine shows a black screen.
+chmod 0755 /usr/libexec/aquarius-greeter /usr/libexec/aquarius-greeter-shell
+for aq_f in /usr/libexec/aquarius-greeter /usr/libexec/aquarius-greeter-shell; do
+    if [ -x "${aq_f}" ]; then
+        ok "$(basename "${aq_f}") is installed and executable"
+    else
+        bad "${aq_f} is missing or not executable"
+    fi
+    if bash -n "${aq_f}"; then
+        ok "$(basename "${aq_f}") is valid shell"
+    else
+        bad "${aq_f} does not parse as shell"
+    fi
+done
+
+# ⚠️ The helper that lists the accounts and the desktops lives in the SHELL
+# repository, beside the login screen that reads it, and is copied out to
+# /usr/libexec here. That is on purpose: the QML and the program it runs are one
+# feature and must never be two versions of one feature. The path is a contract
+# between the two repositories and the shell's own tests check its half.
+#
+# ⚠️ A MISSING SHELL IS A WARNING, NOT A FAILURE — the same rule section 6
+# applies further down, and for the same reason: a container build cannot read a
+# private repository, and an image without the shell in it is still a usable
+# image. Everything in this block is therefore skipped, loudly, if the shell is
+# not here. (The greetd configuration above is still written, because the day
+# the shell arrives it should already be pointed at.)
+AQ_GREETER_SHELL_HERE=0
+if [ -s "${AQ_SHELL_DIR}/shell.qml" ]; then
+    AQ_GREETER_SHELL_HERE=1
+else
+    echo "  NOTE   the Aquarius Shell is not in this image, so there is no"
+    echo "         login screen to install either. Switching to greetd would"
+    echo "         land on the plain text login screen, which still works."
+fi
+
+AQ_GREETER_INFO_SRC="${AQ_SHELL_DIR}/greeter/aquarius-greeter-info"
+if [ "${AQ_GREETER_SHELL_HERE}" -eq 0 ]; then
+    :
+elif [ -r "${AQ_GREETER_INFO_SRC}" ]; then
+    install -D -m 0755 "${AQ_GREETER_INFO_SRC}" /usr/libexec/aquarius-greeter-info
+    ok "the account-and-desktop lister was installed from the shell"
+else
+    bad "${AQ_GREETER_INFO_SRC} is not in the shell tree — the login screen would show no accounts at all"
+fi
+
+if [ -x /usr/libexec/aquarius-greeter-info ]; then
+    # Run it. It is Python, and a missing import or a typo would otherwise only
+    # show up as an empty login screen on somebody's desk.
+    if /usr/libexec/aquarius-greeter-info > /tmp/aq-greeter-info.json 2>&1; then
+        ok "it runs"
+    else
+        bad "it does not run:"
+        sed 's/^/       /' /tmp/aq-greeter-info.json
+    fi
+    if python3 -c "
+import json, sys
+data = json.load(open('/tmp/aq-greeter-info.json'))
+for key in ('people', 'desktops'):
+    if not isinstance(data.get(key), list):
+        sys.exit(1)
+print('  OK   it prints %d account(s) and %d desktop(s)'
+      % (len(data['people']), len(data['desktops'])))
+" 2> /dev/null; then
+        :
+    else
+        bad "what it printed is not the answer the login screen reads"
+    fi
+    # Inside a build container there are no accounts and there ARE two desktop
+    # files, so the desktops list is the half that has a right answer here.
+    if grep -q '"id": "aquarius"' /tmp/aq-greeter-info.json; then
+        ok "the Aquarius Desktop is one of the desktops it offers"
+    else
+        bad "the Aquarius Desktop is not in the list the login screen would show"
+    fi
+    rm -f /tmp/aq-greeter-info.json
+fi
+
+# The login screen's own window manager configuration. Not the desktop's — see
+# the long note at the top of the file itself.
+chmod 0755 /usr/share/aquarius/greeter-labwc
+chmod 0644 /usr/share/aquarius/greeter-labwc/*
+aq_file_has /usr/share/aquarius/greeter-labwc/rc.xml '<decoration>none</decoration>' \
+    "the login screen's window manager draws no title bars"
+if python3 -c "import xml.etree.ElementTree as e; e.parse('/usr/share/aquarius/greeter-labwc/rc.xml')" 2> /dev/null; then
+    ok "its configuration is well-formed XML"
+else
+    bad "/usr/share/aquarius/greeter-labwc/rc.xml is not valid XML — labwc would ignore it silently"
+fi
+
+# The QML the whole thing draws. Copied in with the rest of the shell.
+if [ "${AQ_GREETER_SHELL_HERE}" -eq 1 ]; then
+    for aq_f in greeter/greeter.qml greeter/qmldir greeter/GreeterState.qml \
+        greeter/GreeterWindow.qml greeter/GreeterCard.qml greeter/GreeterField.qml; do
+        if [ -s "${AQ_SHELL_DIR}/${aq_f}" ]; then
+            ok "${aq_f}"
+        else
+            bad "${AQ_SHELL_DIR}/${aq_f} is missing — the login screen would not draw"
+        fi
+    done
+fi
 
 # ------------------------------------------------------------------------------
 # Which login screen is switched on
@@ -1053,9 +1194,11 @@ fi
 aq_installed greetd greetd-selinux tuigreet xdg-desktop-portal-wlr
 
 echo
-echo "  To switch this machine to greetd later:"
-echo "    sudo systemctl disable gdm && sudo systemctl enable greetd && sudo systemctl reboot"
-echo "  And back again:"
-echo "    sudo systemctl disable greetd && sudo systemctl enable gdm && sudo systemctl reboot"
+echo "  To try the AquariusOS login screen:"
+echo "    sudo aq login use greetd    then restart"
+echo "  And to go back to GNOME's:"
+echo "    sudo aq login use gdm       then restart"
+echo "  Either command works from a text console (Ctrl+Alt+F3)."
+echo "  The guide: docs/restart/login.md"
 
 aq_finish "The Aquarius Desktop"

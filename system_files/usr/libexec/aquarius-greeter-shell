@@ -1,0 +1,68 @@
+#!/usr/bin/bash
+# =============================================================================
+# aquarius-greeter-shell — set the screen size, then draw the login screen
+# =============================================================================
+# This runs INSIDE the window manager that /usr/libexec/aquarius-greeter
+# started, which is the only place a Wayland display exists to talk to. Two
+# lines of work, in this order, and the order is the point.
+#
+#   1. SET THE SCREEN SIZE. labwc starts every monitor at 100%, always. On a 4K
+#      screen that makes everything physically tiny — the exact complaint that
+#      started this whole piece of work on 2026-09-04. This is the same helper
+#      the Aquarius Desktop uses at every login, pointed at the system-wide copy
+#      of the display arrangement instead of a home folder, because the greeter
+#      runs as its own user and has no home folder worth reading.
+#
+#      That system-wide copy is written by /usr/libexec/aquarius-gdm-display —
+#      the same file that fixes GDM's size. One answer, three places that need
+#      it, one program that carries it.
+#
+#   2. DRAW THE LOGIN SCREEN. `exec` replaces this script with it, so that when
+#      the login screen exits, this exits, and labwc — started with -s — shuts
+#      down with it. That chain is what lets greetd take the screen back and
+#      start somebody's desktop.
+#
+# ⚠️ STEP 1 IS NOT ALLOWED TO STOP STEP 2. A login screen that is the wrong size
+# is inconvenient; a login screen that never appears is a computer nobody can
+# use. Every failure here is a line in the log and nothing more.
+# =============================================================================
+
+set -uo pipefail
+
+AQ_GREETER_QML="/usr/share/aquarius/shell/greeter/greeter.qml"
+AQ_SCALE_HELPER="/usr/libexec/aquarius-display-scale"
+
+# The system-wide display arrangement, copied here from whoever last set a scale
+# in Settings > Displays. See /usr/libexec/aquarius-gdm-display.
+AQ_SYSTEM_MONITORS="/etc/xdg/monitors.xml"
+
+# An optional override for the login screen alone, for the case where the login
+# screen wants a different size from the desktop. Same format as
+# ~/.config/aquarius/display.conf — one `scale=1.5` line is enough. It does not
+# exist unless somebody creates it.
+AQ_GREETER_CONF="/var/lib/aquarius/greeter-display.conf"
+
+echo "--- setting the screen size for the login screen ---"
+if [ -x "${AQ_SCALE_HELPER}" ]; then
+    "${AQ_SCALE_HELPER}" \
+        --monitors-xml "${AQ_SYSTEM_MONITORS}" \
+        --conf "${AQ_GREETER_CONF}" \
+        || echo "  the screen size could not be set. Carrying on at 100%."
+else
+    echo "  ${AQ_SCALE_HELPER} is missing. Carrying on at 100%."
+fi
+
+echo "--- starting the login screen ---"
+if [ ! -r "${AQ_GREETER_QML}" ]; then
+    echo "  ${AQ_GREETER_QML} is not there."
+    echo "  That means the image was built without the Aquarius Shell in it."
+    echo "  /usr/share/aquarius/shell-build.txt says why."
+    # Exiting non-zero is what makes /usr/libexec/aquarius-greeter fall back to
+    # the text login screen, which is the whole reason it checks.
+    exit 1
+fi
+
+# -p takes the file to run. Everything the login screen needs — the theme, the
+# Aquarius mark — is beside it in the same tree, found by ordinary relative
+# imports, so there are no other paths to set.
+exec /usr/bin/qs -p "${AQ_GREETER_QML}"

@@ -634,6 +634,190 @@ jobs:
             --entrypoint /usr/bin/bash \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-login.sh
 
+      # Part B of the same photograph: our OWN login screen, drawn by the
+      # Aquarius Shell on top of greetd. It ships fully configured and SWITCHED
+      # OFF — Royce turns it on with one command once he has seen it work — so
+      # this step checks two different things at once: that every piece of it is
+      # in the image, and that none of it has been switched on by accident.
+      #
+      # ⚠️ THE "SWITCHED OFF" HALF IS NOT PAPERWORK. Two login managers both
+      # enabled is a black screen with no way in, and a build that shipped that
+      # would be a build that bricks the bench.
+      - name: Check the AquariusOS login screen is ready and switched off
+        run: |
+          set -euo pipefail
+          cat > /tmp/verify-greeter.sh <<'SCRIPT'
+          set -u
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+
+          echo "== exactly one login manager is switched on =="
+          if systemctl is-enabled gdm.service > /dev/null 2>&1; then
+            ok "GDM is switched on (this image still boots to GNOME's login screen)"
+          else
+            bad "GDM is not switched on — this image would boot to a text prompt"
+          fi
+          if systemctl is-enabled greetd.service > /dev/null 2>&1; then
+            bad "greetd is switched on TOO. Two login managers is a black screen with no way in."
+          else
+            ok "greetd is installed and switched off, as intended"
+          fi
+
+          echo "== greetd is configured, and configured for OUR greeter =="
+          if [ -r /etc/greetd/config.toml ]; then
+            ok "/etc/greetd/config.toml exists"
+          else
+            bad "/etc/greetd/config.toml is missing"
+          fi
+          # It has to PARSE. A broken TOML file here is a login screen that
+          # never appears, with the reason in a log nobody can reach because
+          # they cannot log in.
+          if python3 -c "import tomllib; tomllib.load(open('/etc/greetd/config.toml','rb'))" 2>/dev/null; then
+            ok "it is valid TOML"
+          else
+            bad "/etc/greetd/config.toml does not parse"
+          fi
+          if grep -q '^command = "/usr/libexec/aquarius-greeter"$' /etc/greetd/config.toml; then
+            ok "it runs the AquariusOS login screen"
+          else
+            bad "greetd is not pointed at /usr/libexec/aquarius-greeter"
+          fi
+          # Fedora's greetd package creates a user called "greetd". Almost every
+          # guide on the internet says "greeter", which is Arch's name for it,
+          # and the wrong name here is a login screen that never starts.
+          if grep -q '^user = "greetd"$' /etc/greetd/config.toml; then
+            ok "it runs as 'greetd' — the user Fedora's package actually creates"
+          else
+            bad "greetd's config names a user other than 'greetd'"
+          fi
+          if getent passwd greetd > /dev/null 2>&1; then
+            ok "that user exists in this image"
+          else
+            bad "there is no 'greetd' user — the login screen could not start as it"
+          fi
+
+          echo "== the login screen's own pieces =="
+          for f in /usr/libexec/aquarius-greeter \
+                   /usr/libexec/aquarius-greeter-shell \
+                   /usr/libexec/aquarius-greeter-info; do
+            if [ -x "$f" ]; then ok "$(basename "$f") is installed and executable"
+            else bad "$f is missing or not executable"; fi
+          done
+          for f in /usr/libexec/aquarius-greeter /usr/libexec/aquarius-greeter-shell; do
+            if bash -n "$f" 2>/dev/null; then ok "$(basename "$f") is valid shell"
+            else bad "$f does not parse as shell"; fi
+          done
+
+          # Run the account-and-desktop lister for real. There are no ordinary
+          # user accounts in a build container, so an empty people list is the
+          # correct answer — but there ARE two session files, and the Aquarius
+          # Desktop must be one of them and must be first, because the login
+          # screen shows the first one as the default.
+          echo "  ---- what it says about this image ----"
+          /usr/libexec/aquarius-greeter-info --desktops | sed 's/^/       /'
+          if python3 - <<'PY'
+          import json, subprocess, sys
+          done = subprocess.run(["/usr/libexec/aquarius-greeter-info"],
+                                capture_output=True, text=True)
+          if done.returncode != 0:
+              print("  FAIL it exited %d: %s" % (done.returncode, done.stderr.strip()))
+              sys.exit(1)
+          data = json.loads(done.stdout)
+          names = [d["id"] for d in data["desktops"]]
+          if "aquarius" not in names:
+              print("  FAIL the Aquarius Desktop is not in the list: %s" % names)
+              sys.exit(1)
+          if names[0] != "aquarius":
+              print("  FAIL the Aquarius Desktop is not first, so it would not be "
+                    "the default: %s" % names)
+              sys.exit(1)
+          if "gnome" not in " ".join(names).lower():
+              print("  FAIL GNOME is not offered as an alternative: %s" % names)
+              sys.exit(1)
+          print("  OK   it offers %s, Aquarius Desktop first" % names)
+          sys.exit(0)
+          PY
+          then :; else bad "the account-and-desktop lister did not answer the way the login screen needs"; fi
+
+          echo "== the login screen's window manager configuration =="
+          if [ -r /usr/share/aquarius/greeter-labwc/rc.xml ]; then
+            ok "/usr/share/aquarius/greeter-labwc/rc.xml is installed"
+          else
+            bad "/usr/share/aquarius/greeter-labwc/rc.xml is missing"
+          fi
+          if python3 -c "import xml.etree.ElementTree as e; e.parse('/usr/share/aquarius/greeter-labwc/rc.xml')" 2>/dev/null; then
+            ok "it is well-formed XML (labwc ignores a broken one in silence)"
+          else
+            bad "the login screen's rc.xml is not valid XML"
+          fi
+          # No default key bindings on a login screen: there is one window and
+          # it must not be closable by Alt+F4.
+          if grep -q '<default */>' /usr/share/aquarius/greeter-labwc/rc.xml; then
+            bad "the login screen's window manager loads labwc's default key bindings — Alt+F4 would close the login screen"
+          else
+            ok "it loads no default key bindings"
+          fi
+
+          echo "== the login screen itself =="
+          GREETER_DIR=/usr/share/aquarius/shell/greeter
+          for f in greeter.qml qmldir GreeterState.qml GreeterWindow.qml \
+                   GreeterCard.qml GreeterField.qml GreeterAvatar.qml \
+                   GreeterStepArrow.qml GreeterDesktopPill.qml; do
+            if [ -s "${GREETER_DIR}/${f}" ]; then ok "${f}"
+            else bad "${GREETER_DIR}/${f} is missing — the login screen would not draw"; fi
+          done
+          # The singleton has to be declared or the whole thing fails to load
+          # with a message that does not mention qmldir.
+          if grep -q '^singleton GreeterState ' "${GREETER_DIR}/qmldir"; then
+            ok "GreeterState is declared a singleton"
+          else
+            bad "${GREETER_DIR}/qmldir does not declare GreeterState"
+          fi
+          # And the path the QML calls has to be the path the image installed.
+          if grep -q '/usr/libexec/aquarius-greeter-info' "${GREETER_DIR}/GreeterState.qml"; then
+            ok "the login screen calls the helper at the path this image installs it to"
+          else
+            bad "the login screen and the image disagree about where the account lister lives"
+          fi
+
+          echo "== the Quickshell in this image can talk to greetd =="
+          # Without SERVICE_GREETD the greeter's very first import fails, the
+          # file refuses to load, and greetd shows a black screen. The build
+          # stage records which features were compiled in.
+          if grep -q 'SERVICE_GREETD=ON' /usr/share/aquarius/quickshell-build.txt; then
+            ok "Quickshell was built with the greetd service in it"
+          else
+            bad "Quickshell was built WITHOUT SERVICE_GREETD — the login screen could never load"
+            sed 's/^/       /' /usr/share/aquarius/quickshell-build.txt || true
+          fi
+
+          echo "== the switch, and the way back =="
+          if bash -n /usr/bin/aq 2>/dev/null; then ok "aq is valid shell"
+          else bad "/usr/bin/aq does not parse as shell"; fi
+          if /usr/bin/aq login --help > /dev/null 2>&1; then
+            ok "'aq login --help' works"
+          else
+            bad "'aq login' is not there — there would be no supported way to switch or switch back"
+          fi
+          echo "  ---- what 'aq login status' says about this image ----"
+          /usr/bin/aq login status 2>&1 | sed 's/^/       /' || true
+          if /usr/bin/aq login status 2>/dev/null | grep -qi "GNOME's login screen"; then
+            ok "it agrees that this image boots to GDM"
+          else
+            bad "'aq login status' does not report GDM as the login screen"
+          fi
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::The AquariusOS login screen is not correctly set up in this image."
+            exit 1
+          fi
+          echo "All AquariusOS login screen checks passed."
+          SCRIPT
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-greeter.sh
+
       # ------------------------------------------------------------------------
       # THE BOOT PATH
       # ------------------------------------------------------------------------

@@ -152,7 +152,7 @@ git log -1 --format='    %h  %ad  %s' --date=short
 # ------------------------------------------------------------------------------
 # Copying only what runs
 # ------------------------------------------------------------------------------
-# In:  the QML, the theme, the services, the logo assets.
+# In:  the QML, the theme, the services, the logo assets, the login screen.
 # Out: harness/ (the development tool for running the shell in a window),
 #      tests/ (checks that run on a developer's machine), docs/, .github/,
 #      session/ (the OS image ships its own copies of those, adapted to system
@@ -160,7 +160,11 @@ git log -1 --format='    %h  %ad  %s' --date=short
 say "Copying the parts that run"
 install -d -m 0755 "${AQ_DEST}"
 
-for aq_part in shell.qml components services theme assets; do
+# greeter/ is the login screen — this repository's SECOND entry point. It shares
+# theme/ and the Aquarius mark with the desktop and is otherwise its own thing.
+# It travels with the shell rather than living here because it IS the shell,
+# wearing a different hat, and the two must never disagree about a colour.
+for aq_part in shell.qml components services theme assets greeter; do
     if [ ! -e "/src/${aq_part}" ]; then
         bad "the shell repository has no '${aq_part}' — its layout changed and this script has not caught up"
         continue
@@ -215,6 +219,18 @@ for aq_f in theme/qmldir theme/Theme.qml theme/Ice.qml theme/Midnight.qml; do
         ok "${aq_f}"
     else
         bad "${aq_f} is missing — the shell would start with no colours defined"
+    fi
+done
+
+# The login screen's own front door and the one piece of it that thinks. The
+# helper beside them is copied out to /usr/libexec by 55-aquarius-session.sh,
+# because that is where greetd's greeter will look for it.
+for aq_f in greeter/greeter.qml greeter/qmldir greeter/GreeterState.qml \
+    greeter/aquarius-greeter-info; do
+    if [ -s "${AQ_DEST}/${aq_f}" ]; then
+        ok "${aq_f}"
+    else
+        bad "${aq_f} is missing — the login screen would not start"
     fi
 done
 

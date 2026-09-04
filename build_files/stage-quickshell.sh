@@ -268,6 +268,16 @@ AQ_CACHE="/src/build/CMakeCache.txt"
 #   SERVICE_STATUS_NOTIFIER       Quickshell.Services.SystemTray — the tray
 #   SERVICE_UPOWER                Quickshell.Services.UPower — battery
 #   SERVICE_PAM                   the lock screen's password check
+#   SERVICE_GREETD                Quickshell.Services.Greetd — THE LOGIN SCREEN.
+#                                 Without it the greeter's very first import
+#                                 fails, the whole file refuses to load, and
+#                                 greetd shows a black screen with no way in.
+#                                 This check stands in for a probe: the login
+#                                 screen cannot be probed the way the desktop
+#                                 can, because there is no greetd socket on a
+#                                 developer's machine and no session to run qs
+#                                 inside. A cache that says ON plus a build that
+#                                 finished is the proof.
 #   SERVICE_POLKIT                the "an app wants permission" dialog, which
 #                                 this session has no other provider for
 #   SOCKETS                       `qs ipc` — which is how Super+Space reaches
@@ -276,7 +286,7 @@ AQ_CACHE="/src/build/CMakeCache.txt"
 AQ_FEATURES="WAYLAND WAYLAND_WLR_LAYERSHELL WAYLAND_TOPLEVEL_MANAGEMENT \
 WAYLAND_SESSION_LOCK SCREENCOPY NETWORK BLUETOOTH SERVICE_NOTIFICATIONS \
 SERVICE_PIPEWIRE SERVICE_STATUS_NOTIFIER SERVICE_UPOWER SERVICE_PAM \
-SERVICE_POLKIT SOCKETS"
+SERVICE_GREETD SERVICE_POLKIT SOCKETS"
 
 AQ_FEATURE_RECORD=""
 for aq_feat in ${AQ_FEATURES}; do

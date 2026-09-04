@@ -1,0 +1,139 @@
+#!/usr/bin/bash
+# =============================================================================
+# aquarius-greeter — the AquariusOS login screen, start to finish
+# =============================================================================
+# WHAT STARTS WHAT, IN ORDER
+#
+#   greetd                 the login manager. Draws nothing at all; its job is
+#                          to run ONE program on one virtual terminal and to be
+#                          the only thing on the computer that checks passwords.
+#     └─ this script       named in /etc/greetd/config.toml
+#          └─ labwc        a window manager. Needed because the login screen is
+#                          a Wayland program and a Wayland program needs
+#                          something to draw into.
+#               └─ aquarius-greeter-shell
+#                          sets the screen size, then starts the login screen
+#                    └─ qs -p …/greeter/greeter.qml
+#                          the login screen itself: the Ice wallpaper, the
+#                          clock, the card, the password box.
+#
+# When somebody logs in successfully, the login screen asks greetd to start
+# their desktop and then exits. `labwc -s` means "run this and shut down when it
+# finishes", so labwc exits too, this script ends, and greetd is free to start
+# the desktop on the same screen.
+#
+# -----------------------------------------------------------------------------
+# ⚠️ THE SAFETY NET, WHICH IS THE MOST IMPORTANT THING IN THIS FILE
+# -----------------------------------------------------------------------------
+# The classic way to lock yourself out of a Linux computer is to switch to a
+# login manager whose greeter does not start. greetd runs it, it fails, greetd
+# runs it again, and you are looking at a flickering black screen with no way to
+# type anything.
+#
+# So if the graphical login screen fails to start, this script does NOT let that
+# happen. It falls straight through to `tuigreet`, a plain text login screen
+# that has been in the image since R2 — ugly, and completely usable. You can log
+# in, and then you can run `sudo aq login use gdm` and go back to GDM.
+#
+# That means a broken login screen costs you a nice-looking screen and nothing
+# else. It is why this file exists at all rather than naming labwc directly in
+# greetd's configuration.
+#
+# -----------------------------------------------------------------------------
+# WHY labwc AND NOT cage
+# -----------------------------------------------------------------------------
+# cage is the obvious choice — it is a window manager built for exactly this,
+# running one program full screen. It does not implement the layer-shell
+# protocol (an open request since 2019), and layer-shell is how the login screen
+# covers the whole screen with nothing able to appear over it. labwc implements
+# it, is already in this image for the Aquarius Desktop, and is therefore one
+# fewer program to keep working.
+# =============================================================================
+
+set -uo pipefail
+
+AQ_LABWC_CONFIG_DIR="/usr/share/aquarius/greeter-labwc"
+AQ_GREETER_SHELL="/usr/libexec/aquarius-greeter-shell"
+
+# Everything printed here goes to greetd's own journal, which is where somebody
+# debugging a login screen will look:
+#     journalctl -u greetd -b
+echo "=== The AquariusOS login screen is starting ==="
+echo "  window manager: labwc"
+echo "  configuration:  ${AQ_LABWC_CONFIG_DIR}"
+echo "  greeter:        ${AQ_GREETER_SHELL}"
+echo "  running as:     $(id -un) ($(id -u))"
+
+# XDG_RUNTIME_DIR is where a Wayland compositor puts its socket. It is created
+# by systemd-logind when greetd's PAM stack opens a session for this user, so it
+# should already be here — but a compositor started without one fails with a
+# message that does not mention it, and a line saying so in the log is cheaper
+# than an evening.
+if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
+    echo "  WARNING: XDG_RUNTIME_DIR is not set. labwc will probably refuse to"
+    echo "           start. That normally means /etc/pam.d/greetd-greeter is"
+    echo "           missing its pam_systemd line."
+fi
+
+# What kind of session this is, for anything that asks. Not many things do at a
+# login screen, but a Qt program reads the first one.
+export XDG_SESSION_TYPE="wayland"
+export XDG_CURRENT_DESKTOP="Aquarius:wlroots"
+export QT_QPA_PLATFORM="wayland"
+
+# Qt draws its own window decorations badly and the login screen has none, so
+# this stops Qt looking for a decoration plugin it does not need.
+export QT_WAYLAND_DISABLE_WINDOWDECORATION="1"
+
+AQ_STATUS=0
+if [ ! -x /usr/bin/labwc ]; then
+    echo "  labwc is not installed. Falling straight through to the text login."
+    AQ_STATUS=127
+elif [ ! -x "${AQ_GREETER_SHELL}" ]; then
+    echo "  ${AQ_GREETER_SHELL} is missing. Falling through to the text login."
+    AQ_STATUS=127
+else
+    # -C  the configuration folder to read (rc.xml and environment)
+    # -s  run this, and shut the window manager down when it finishes
+    #
+    # Deliberately NOT `exec labwc`: this script has to still be here afterwards
+    # to decide whether what happened was a success or a reason to fall back.
+    /usr/bin/labwc -C "${AQ_LABWC_CONFIG_DIR}" -s "${AQ_GREETER_SHELL}" \
+        || AQ_STATUS=$?
+fi
+
+if [ "${AQ_STATUS}" -eq 0 ]; then
+    echo "=== The login screen finished normally ==="
+    exit 0
+fi
+
+# -----------------------------------------------------------------------------
+# The safety net
+# -----------------------------------------------------------------------------
+echo
+echo "  ============================================================"
+echo "  THE GRAPHICAL LOGIN SCREEN DID NOT START (exit ${AQ_STATUS})"
+echo "  ============================================================"
+echo "  Falling back to the plain text login screen so that this"
+echo "  computer can still be logged into."
+echo
+echo "  To go back to the GNOME login screen, log in and run:"
+echo "      sudo aq login use gdm"
+echo "  and restart."
+echo
+echo "  What went wrong is in the lines above this one:"
+echo "      journalctl -u greetd -b"
+echo "  ============================================================"
+echo
+
+if [ -x /usr/bin/tuigreet ]; then
+    exec /usr/bin/tuigreet \
+        --remember --remember-session --asterisks --time \
+        --sessions /usr/share/wayland-sessions:/usr/local/share/wayland-sessions
+fi
+
+# tuigreet is in the image and this should be unreachable. agreety is greetd's
+# own bare login: prompt, username, password, nothing else. It is the last
+# thing standing between a mistake here and a computer nobody can log into.
+echo "  tuigreet is missing too. Using greetd's own bare login prompt."
+exec /usr/bin/agreety --cmd /usr/bin/aquarius-session

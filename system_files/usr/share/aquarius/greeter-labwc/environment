@@ -1,0 +1,19 @@
+# =============================================================================
+# The AquariusOS login screen — window manager environment
+# =============================================================================
+# This file is NOT a shell script. labwc parses it itself, one NAME=value per
+# line. A line starting with '#' is a comment; trailing comments are not
+# supported.
+#
+# It is empty on purpose. Everything that matters — XDG_SESSION_TYPE,
+# XDG_CURRENT_DESKTOP, QT_QPA_PLATFORM — is already set by
+# /usr/libexec/aquarius-greeter before labwc is started, and labwc passes its
+# own environment on to everything it runs. Setting the same variable in two
+# places is how the two end up disagreeing.
+#
+# The one thing worth knowing: the SCREEN SIZE is not set here. labwc has no
+# monitor settings in its configuration at all, by design — it expects a program
+# to tell it over the standard protocol. /usr/libexec/aquarius-greeter-shell
+# does that, with the same helper the desktop uses, just before it starts the
+# login screen.
+# =============================================================================
