@@ -9,8 +9,23 @@
 # yet, grant the handful of extra permissions creator apps need, and say so on
 # screen while it happens.
 #
-# Run by aquarius-flatpak-preinstall.service, as root, shortly after the
-# machine first gets online.
+# ------------------------------------------------------------------------------
+# WHO RUNS THIS, AND WHEN — read this before assuming it runs at boot
+# ------------------------------------------------------------------------------
+# It has four ways in, and only one of them happens on its own:
+#
+#   --catalog          the app list with names and descriptions, for the
+#                      chooser window at first login. Reads only.
+#   --list             the same list, IDs alone. Reads only.
+#   --overrides-only   ONLY the extra permissions, none of the installing. This
+#                      is the one that happens by itself, at every boot, run by
+#                      aquarius-flatpak-overrides.service.
+#   (no arguments)     install EVERYTHING on the list. Needs root. Run by hand,
+#                      by `aq apps install --all`, or by starting
+#                      aquarius-flatpak-preinstall.service — which is shipped
+#                      deliberately NOT switched on, because ten gigabytes of
+#                      other people's software is not ours to decide on. The
+#                      chooser asks; this is the "give me the lot" path.
 #
 # ------------------------------------------------------------------------------
 # THE FOUR RULES THIS SCRIPT FOLLOWS, IN ORDER OF IMPORTANCE
