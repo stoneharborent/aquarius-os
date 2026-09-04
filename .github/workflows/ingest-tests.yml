@@ -18,6 +18,7 @@ on:
   pull_request:
     paths:
       - 'ingest/**'
+      - 'system_files/usr/share/nautilus-python/**'
       - '.github/workflows/ingest-tests.yml'
   push:
     branches:
@@ -27,8 +28,13 @@ on:
       # thing standing between a rules-engine change and a silently wrong
       # conversion of somebody's footage.
       - restart/r3-apps
+      # The 2026-09-04 bench bug: the "Make Editor-Ready" right-click menu was
+      # missing in Files because the extension refused to load. Its test lives
+      # in ingest/tests/, so this branch runs these tests too.
+      - restart/nautilus-fix
     paths:
       - 'ingest/**'
+      - 'system_files/usr/share/nautilus-python/**'
       - '.github/workflows/ingest-tests.yml'
   workflow_dispatch:
 
@@ -73,6 +79,32 @@ jobs:
       - name: Run the test suite
         working-directory: ingest
         run: python3 -m unittest discover -s tests -t . -v
+
+      # ----------------------------------------------------------------------
+      # The Files right-click menu, loaded for real.
+      #
+      # This runner is Ubuntu and the OS is Fedora, so this is not the same
+      # machine the menu ships on — the check that counts runs INSIDE the
+      # finished image, in build-next.yml. What this one adds is the other half
+      # of the fix: Ubuntu's Files offers extension interface 4.0 and Fedora 44's
+      # offers 4.1, and after the 2026-09-04 bug the extension has to work on
+      # both instead of demanding one of them. This is the 4.0 half.
+      #
+      # It runs with /usr/bin/python3 on purpose. The Python installed above by
+      # setup-python has none of GNOME's libraries, so the test would skip
+      # itself there and prove nothing. AQ_NAUTILUS_REQUIRED=1 makes a skip an
+      # error, so this can never go quiet.
+      # ----------------------------------------------------------------------
+      - name: Install GNOME's Files libraries for the right-click menu test
+        run: |
+          sudo apt-get install -y python3-gi gir1.2-nautilus-4.0
+          /usr/bin/python3 -c "import gi; gi.require_version('Nautilus', '4.0'); \
+            from gi.repository import Nautilus; print('Nautilus 4.0 interface is loadable')"
+
+      - name: Check the "Make Editor-Ready" menu loads and offers itself for a video
+        env:
+          AQ_NAUTILUS_REQUIRED: '1'
+        run: /usr/bin/python3 ingest/tests/test_nautilus_extension.py
 
       - name: Fail if the HEIC tests were skipped
         working-directory: ingest
