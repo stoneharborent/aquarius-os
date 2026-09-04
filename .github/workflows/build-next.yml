@@ -1791,6 +1791,36 @@ jobs:
           echo "-- what the chooser will show --"
           awk -F'\t' '$6=="runtime:no" {printf "     [%s] %-28s %s\n", ($5=="recommended:yes" ? "x" : " "), $2, $4}' /tmp/catalog.txt
 
+          # ------------------------------------------------------------------
+          # `aq apps` — the same job in a terminal
+          # ------------------------------------------------------------------
+          # It must be discoverable (in `aq --help`) and it must agree with the
+          # catalog rather than carry a list of its own.
+          if aq --help 2>&1 | grep -q 'aq apps'; then ok "'aq apps' is in aq's own help"
+          else bad "'aq apps' is not mentioned by 'aq --help' — nobody would find it"; fi
+
+          AQ_LISTED="$(aq apps list 2>/dev/null | grep -c 'installed\|^  -')"
+          if [ "${AQ_LISTED}" -eq "${VISIBLE}" ]; then
+            ok "'aq apps list' shows the same ${AQ_LISTED} apps as the catalog"
+          else
+            bad "'aq apps list' shows ${AQ_LISTED} apps but the catalog has ${VISIBLE}"
+          fi
+
+          if aq apps status >/tmp/aqstatus.txt 2>&1; then ok "'aq apps status' runs"
+          else bad "'aq apps status' failed:"; sed 's/^/       /' /tmp/aqstatus.txt; fi
+          if grep -q 'flatpak preinstall -y --system' /tmp/aqstatus.txt; then
+            ok "and it names the rescue command when apps are missing"
+          else
+            bad "'aq apps status' does not tell somebody how to install the missing apps"
+          fi
+
+          # A plug-in must never be installable by name — it belongs to an app.
+          if aq apps install com.obsproject.Studio.Plugin.Gstreamer >/dev/null 2>&1; then
+            bad "'aq apps install' accepted a plug-in as though it were an app"
+          else
+            ok "'aq apps install' refuses a plug-in and points at the app it belongs to"
+          fi
+
           # ====================================================================
           # 3. THE EXTRA PERMISSIONS
           # ====================================================================

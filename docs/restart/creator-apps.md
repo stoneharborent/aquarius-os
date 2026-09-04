@@ -370,6 +370,30 @@ capture cards, the plug-ins — is unaffected either way.
 
 ---
 
+## Doing it from a terminal — `aq apps`
+
+The chooser at first login is the main way to pick. Afterwards, this is the
+same job typed out:
+
+```
+aq apps list                     what is suggested, and what you have
+aq apps status                   how many you have, and what to do if some are missing
+aq apps install org.kde.krita    add one you skipped
+aq apps install --all            everything on the list (a large download)
+```
+
+`aq apps list` prints the app's ID on the left — that is what `install` wants.
+The five OBS plug-ins are not listed, because they are not choices: they arrive
+with OBS Studio and asking for one by name is refused, with a note saying which
+app it belongs to.
+
+You will be asked for your password once, by the desktop's own prompt. That is
+Flatpak asking, not us: the apps are installed **for the whole computer** for
+the reason given under *One thing worth knowing about how this works*, and
+nothing here ever runs `sudo` on your behalf.
+
+---
+
 ## When something goes wrong
 
 ### "The apps never arrived"

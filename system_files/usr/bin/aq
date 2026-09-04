@@ -25,6 +25,9 @@
 #     aq resolve shell        a terminal inside its container
 #     aq resolve update       install a newer Resolve over the top
 #     aq resolve remove       delete the container
+#     aq apps list            which creator apps you have
+#     aq apps install ID      install one you skipped
+#
 #     aq ingest FILE…         make camera files editable
 #     aq ingest watch on      watch ~/Videos/Ingest and do it automatically
 #
@@ -101,6 +104,10 @@ USAGE
     aq ingest watch off Stop watching.
     aq ingest watch status
                         Is it watching, what, and what happened last.
+
+    aq apps list        The creator apps AquariusOS suggests, and whether you
+                        have each one. 'aq apps install <id>' adds one you
+                        skipped; 'aq apps status' says how many you have.
 
     aq --help           This message.
     aq --version        Which AquariusOS this is.
@@ -926,6 +933,200 @@ ingest() {
     "${AQ_INGEST_CMD}" "$@"
 }
 
+# =============================================================================
+# aq apps — the creator apps from Flathub
+# =============================================================================
+# WHAT THIS IS FOR
+#
+# AquariusOS suggests sixteen things from Flathub: eleven apps and five OBS
+# plug-ins that come with OBS Studio. The chooser window at the first login is
+# how most people will pick from them. This is the same job in a terminal, for
+# afterwards: what did I end up with, and give me the one I skipped.
+#
+# IT DOES NOT KEEP ITS OWN LIST. Every answer here comes from asking
+# /usr/libexec/aquarius-flatpak-preinstall --catalog, which reads the one list
+# the operating system ships. There is no second copy to fall out of step.
+#
+# WHY IT NEVER SAYS sudo. Installing for the whole computer is a thing Flatpak
+# already knows how to ask permission for: it hands the job to a small system
+# service, and the desktop asks you for your password the same way the app
+# store does. So `aq apps install` is an ordinary command run as an ordinary
+# person. Whole-computer rather than just-for-me matters, and it is not a
+# detail: the permissions that let OBS reach your camera and capture card only
+# apply to whole-computer installs.
+# =============================================================================
+
+AQ_APPS_HELPER="/usr/libexec/aquarius-flatpak-preinstall"
+AQ_APPS_SERVICE="aquarius-flatpak-preinstall.service"
+AQ_APPS_STAMP="/etc/aquarius/flatpak-preinstall-done"
+
+apps_usage() {
+    cat << 'EOF'
+aq apps — the creator apps that come from Flathub
+
+    aq apps list        Every app AquariusOS suggests, and whether you have it.
+    aq apps status      How many you have, and what to do if some are missing.
+    aq apps install ID [ID...]
+                        Install one or more of them. Use the ID from the left
+                        of 'aq apps list'. Any plug-ins an app needs come with
+                        it. You will be asked for your password once.
+    aq apps install --all
+                        Install everything on the list. This is the big one —
+                        roughly ten gigabytes.
+
+    Nothing here is compulsory. An app you never install costs you nothing, and
+    an app you uninstall stays uninstalled — AquariusOS will not put it back.
+EOF
+}
+
+# The one source of truth, asked once per command.
+apps_catalog() {
+    if [ ! -x "${AQ_APPS_HELPER}" ]; then
+        echo "aq: ${AQ_APPS_HELPER} is missing from this copy of AquariusOS." >&2
+        echo "    That is a fault in the operating system, not in anything you typed." >&2
+        return 1
+    fi
+    "${AQ_APPS_HELPER}" --catalog
+}
+
+# What is on this computer right now. Asked of Flatpak, never remembered.
+apps_have() { flatpak list --system --columns=application 2> /dev/null || true; }
+
+apps_list() {
+    local cat have
+    cat="$(apps_catalog)" || return 1
+    have="$(apps_have)"
+    # The two lists are fed to awk as one stream with a marker between them,
+    # rather than through -v, because an awk variable cannot hold newlines.
+    printf '%s\n===\n%s\n' "${have}" "${cat}" | awk -F'\t' '
+        !seen && $0 == "===" { seen = 1; next }
+        !seen { if ($0 != "") got[$0] = 1; next }
+        # Plug-ins are not choices — they arrive with the app they belong to.
+        $6 == "runtime:no" {
+            printf "  %-11s %-38s %s\n", (got[$1] ? "installed" : "-"), $1, $2
+            printf "  %-11s %-38s %s\n", "", "", $3
+        }
+    '
+    echo
+    echo "  To install one:  aq apps install <the middle column>"
+}
+
+apps_status() {
+    local cat have total got id
+    cat="$(apps_catalog)" || return 1
+    have="$(apps_have)"
+    total=0
+    got=0
+    while IFS=$'\t' read -r id _; do
+        [ -n "${id}" ] || continue
+        total=$((total + 1))
+        printf '%s\n' "${have}" | grep -qx "${id}" && got=$((got + 1))
+    done <<< "${cat}"
+
+    echo "Creator apps"
+    echo "  ${got} of the ${total} apps and plug-ins AquariusOS suggests are installed."
+
+    # Did the "install the lot" service ever run, and how did it end? On a
+    # normal machine the answer is "no", because the chooser does the job.
+    if systemctl is-failed --quiet "${AQ_APPS_SERVICE}" 2> /dev/null; then
+        echo "  The bulk installer FAILED. What it said:"
+        systemctl status --no-pager --lines=5 "${AQ_APPS_SERVICE}" 2> /dev/null \
+            | sed 's/^/    /'
+    elif [ -r "${AQ_APPS_STAMP}" ]; then
+        echo "  The bulk installer has run and finished."
+    else
+        echo "  The bulk installer has not run (normal — the chooser installs what you pick)."
+    fi
+
+    if [ "${got}" -lt "${total}" ]; then
+        echo
+        echo "  Missing something you wanted? Either:"
+        echo "      aq apps install <id>              just that one"
+        echo "      sudo flatpak preinstall -y --system   everything on the list"
+    fi
+}
+
+apps_install() {
+    local cat have refs=() id line want ok_id
+    [ "$#" -gt 0 ] || { apps_usage; return 1; }
+
+    if [ "$1" = "--all" ]; then
+        # Flatpak's own command, because it is the one that honours "an app you
+        # removed on purpose stays removed". Ours never would.
+        echo "Installing everything AquariusOS suggests. This is a large download."
+        flatpak preinstall -y --system
+        return $?
+    fi
+
+    cat="$(apps_catalog)" || return 1
+
+    for want in "$@"; do
+        ok_id=0
+        while IFS=$'\t' read -r id _ _ _ _ rt req branch; do
+            [ -n "${id}" ] || continue
+            # The app itself, named exactly.
+            if [ "${id}" = "${want}" ]; then
+                if [ "${rt}" = "runtime:yes" ]; then
+                    echo "aq: ${want} is a plug-in, not an app. It is installed" >&2
+                    echo "    automatically with ${req#requires:}." >&2
+                    return 1
+                fi
+                refs+=("${id}")
+                ok_id=1
+            fi
+            # And any plug-in that belongs to it, with the exact version line
+            # the list names — a plug-in on the wrong branch installs nothing
+            # and says nothing.
+            if [ "${req}" = "requires:${want}" ]; then
+                refs+=("${id}//${branch#branch:}")
+            fi
+        done <<< "${cat}"
+
+        if [ "${ok_id}" -eq 0 ]; then
+            echo "aq: '${want}' is not one of the apps AquariusOS suggests." >&2
+            echo "    'aq apps list' shows the ones it does." >&2
+            return 1
+        fi
+    done
+
+    # Already here? Leave it alone and say so, rather than making Flatpak say it.
+    have="$(apps_have)"
+    line=()
+    for id in "${refs[@]}"; do
+        if printf '%s\n' "${have}" | grep -qx "${id%%//*}"; then
+            echo "  ${id%%//*} is already installed."
+        else
+            line+=("${id}")
+        fi
+    done
+    if [ "${#line[@]}" -eq 0 ]; then
+        echo "Nothing to do — everything you asked for is already here."
+        return 0
+    fi
+
+    echo "Installing: ${line[*]}"
+    echo "You will be asked for your password once, by the desktop itself."
+    flatpak install -y --system flathub "${line[@]}"
+}
+
+apps() {
+    case "${1:-}" in
+        "" | -h | --help | help) apps_usage ;;
+        list) apps_list ;;
+        status) apps_status ;;
+        catalog) apps_catalog ;;
+        install)
+            shift
+            apps_install "$@"
+            ;;
+        *)
+            echo "aq: '${1}' is not something 'aq apps' knows how to do." >&2
+            echo "    It understands: list, status, install." >&2
+            return 1
+            ;;
+    esac
+}
+
 # -----------------------------------------------------------------------------
 # Which subcommand?
 # -----------------------------------------------------------------------------
@@ -951,6 +1152,10 @@ case "${1:-}" in
     ingest)
         shift
         ingest "$@"
+        ;;
+    apps)
+        shift
+        apps "$@"
         ;;
     keys)
         case "${2:-}" in
