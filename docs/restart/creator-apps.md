@@ -323,9 +323,18 @@ own source code rather than assumed.
 On AquariusOS `/var` belongs to the machine rather than to the operating
 system, so anything written there during a build is thrown away on first boot.
 The permission files therefore ship read-only inside the image and are copied
-into place on the machine, once, by the same service that installs the apps —
-and **it never overwrites a file that is already there**, so anything you set
-yourself survives every update.
+into place on the machine by a small service of their own,
+`aquarius-flatpak-overrides.service`, which runs at every boot — and **it never
+overwrites a file that is already there**, so anything you set yourself
+survives every update.
+
+That service exists separately for a reason worth knowing. Until 2026-09-04 the
+permissions were granted by the same service that installed the apps. Once the
+chooser took over the installing, an app could arrive with no permissions behind
+it: OBS would install perfectly and then not see a camera, with nothing anywhere
+saying why. The permissions do not care who installed the app, or whether it is
+installed yet — a permission file for an app you never chose simply sits there
+doing nothing — so they were separated out and left switched on.
 
 ### And this is why the apps are installed for the whole computer
 

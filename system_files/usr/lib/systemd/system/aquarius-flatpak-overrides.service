@@ -1,0 +1,57 @@
+# ==============================================================================
+# AquariusOS — put the creator apps' extra permissions in place
+# ==============================================================================
+# PLAIN ENGLISH
+#
+# Some creator apps need permission that Flathub's default sandbox does not
+# grant — OBS Studio cannot see a camera or a capture card without it. Those
+# permission files ship inside the operating system, and this service copies
+# them onto the machine.
+#
+# ------------------------------------------------------------------------------
+# WHY THIS IS A SERVICE OF ITS OWN, AND NOT PART OF THE INSTALLER
+# ------------------------------------------------------------------------------
+# It used to be part of it: the same service installed the apps and granted the
+# permissions, in that order. That stopped working on 2026-09-04, when the
+# installing moved to the app chooser at first login so that a person picks
+# their own apps. The apps then arrive from the chooser — and the permissions
+# would have arrived from nobody at all. OBS would install perfectly and then
+# not see a camera, with nothing anywhere saying why.
+#
+# So the permissions were separated from the installing. They do not depend on
+# who installed the app, or on whether it is installed yet: a permission file
+# for an app that is not here does nothing and costs nothing, and is simply
+# waiting if that app is ever added.
+#
+# It runs at every boot rather than once, because the work is "copy a file if it
+# is not already there". A file that exists is left exactly as it is — that is
+# the whole rule — so a second run changes nothing.
+#
+# ⚠️ A FILE YOU HAVE CHANGED IS NEVER TOUCHED. If you have used Flatseal or
+#    `flatpak override`, that file is yours, and it stays yours through every
+#    update of the operating system.
+# ==============================================================================
+
+[Unit]
+Description=Grant the AquariusOS creator apps their extra permissions
+Documentation=file:///usr/share/aquarius/flatpak-overrides/README.md
+Documentation=https://github.com/stoneharborent/aquarius-os/blob/main/docs/restart/creator-apps.md
+
+# /var/lib/flatpak is where these go, so the disk has to be there first.
+After=local-fs.target
+
+# Nothing to do on a system without Flatpak.
+ConditionPathExists=/usr/bin/flatpak
+ConditionPathExists=/usr/share/aquarius/flatpak-overrides
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/aquarius-flatpak-preinstall --overrides-only
+RemainAfterExit=yes
+
+# It copies a handful of small text files. If that fails, the machine still
+# starts normally and the next boot tries again.
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

@@ -55,6 +55,7 @@ APP_ROOT="/usr/lib/aquarius"
 PREINSTALL_FILE="/usr/share/flatpak/preinstall.d/aquarius-creator-apps.preinstall"
 OVERRIDE_DIR="/usr/share/aquarius/flatpak-overrides"
 PREINSTALL_SERVICE="aquarius-flatpak-preinstall.service"
+OVERRIDE_SERVICE="aquarius-flatpak-overrides.service"
 CATALOG_FILE="/usr/share/aquarius/apps/catalog.ini"
 
 # ------------------------------------------------------------------------------
@@ -851,6 +852,22 @@ if systemctl is-enabled "${PREINSTALL_SERVICE}" > /dev/null 2>&1; then
     bad "${PREINSTALL_SERVICE} is switched on — it would download every app before anybody was asked; the chooser is supposed to ask first"
 else
     ok "${PREINSTALL_SERVICE} is not switched on (correct — the chooser asks first)"
+fi
+
+# ------------------------------------------------------------------------------
+# The permissions, which ARE switched on
+# ------------------------------------------------------------------------------
+# These have to reach the machine no matter who installs the apps. While the
+# installer ran at boot it did both jobs; now that a person picks their apps in
+# the chooser, an app could arrive with no permissions behind it — OBS would
+# install perfectly and then not see a camera, with nothing saying why. So the
+# permissions are their own service, and it IS enabled.
+say "The permissions service (which does run at every boot)"
+systemctl enable "${OVERRIDE_SERVICE}"
+if systemctl is-enabled "${OVERRIDE_SERVICE}" > /dev/null 2>&1; then
+    ok "${OVERRIDE_SERVICE} is switched on"
+else
+    bad "${OVERRIDE_SERVICE} is not switched on — OBS would not be able to see a camera or a capture card"
 fi
 
 # The parser, run against the real shipped list, exactly as it will run on a

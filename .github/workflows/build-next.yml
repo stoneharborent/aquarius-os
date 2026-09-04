@@ -1698,6 +1698,38 @@ jobs:
           if [ -x /usr/libexec/aquarius-flatpak-preinstall ]; then ok "the installer script is there and runnable"
           else bad "/usr/libexec/aquarius-flatpak-preinstall is missing"; fi
 
+          # The permissions, on the other hand, MUST be switched on. They are a
+          # separate service precisely because the apps now arrive from the
+          # chooser: an app installed by somebody else's hand still needs them,
+          # and OBS with no camera permission is a silent failure.
+          if systemctl is-enabled aquarius-flatpak-overrides.service >/dev/null 2>&1; then
+            ok "the permissions service is switched on"
+          else
+            bad "aquarius-flatpak-overrides.service is not switched on — OBS would install and then not see a camera"
+          fi
+
+          # And it must actually do the copying when run.
+          rm -rf /var/lib/flatpak/overrides
+          /usr/libexec/aquarius-flatpak-preinstall --overrides-only >/tmp/ovr.txt 2>&1
+          COPIED="$(find /var/lib/flatpak/overrides -type f 2>/dev/null | wc -l)"
+          SHIPPED="$(find /usr/share/aquarius/flatpak-overrides -type f ! -name '*.md' | wc -l)"
+          if [ "${COPIED}" -eq "${SHIPPED}" ] && [ "${COPIED}" -gt 0 ]; then
+            ok "--overrides-only put all ${COPIED} permission files in place"
+          else
+            bad "--overrides-only placed ${COPIED} of ${SHIPPED} permission files:"
+            sed 's/^/       /' /tmp/ovr.txt
+          fi
+
+          # A permission somebody set themselves is never overwritten.
+          printf '[Context]\nfilesystems=home;\n' > /var/lib/flatpak/overrides/com.obsproject.Studio
+          /usr/libexec/aquarius-flatpak-preinstall --overrides-only >/dev/null 2>&1
+          if grep -q '^filesystems=home;$' /var/lib/flatpak/overrides/com.obsproject.Studio; then
+            ok "a permission file somebody edited themselves is left alone"
+          else
+            bad "it overwrote a permission file the person had set — Flatseal changes would be lost at every boot"
+          fi
+          rm -rf /var/lib/flatpak/overrides
+
           # ------------------------------------------------------------------
           # RUN THE REAL PARSER AGAINST THE REAL FILE
           # ------------------------------------------------------------------

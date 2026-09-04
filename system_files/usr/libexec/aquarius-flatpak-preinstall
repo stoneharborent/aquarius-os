@@ -287,6 +287,53 @@ count_installed() {         # count_installed <id> <id> ...
     printf '%s\n' "${n}"
 }
 
+# ------------------------------------------------------------------------------
+# copy_overrides — the extra permissions creator apps need
+# ------------------------------------------------------------------------------
+# Flatpak reads system-wide permission overrides from ONE place and it is not
+# in the image: /var/lib/flatpak/overrides/. On AquariusOS /var belongs to the
+# machine rather than to the operating system, so anything written there during
+# a build is thrown away at first boot. The files therefore ship read-only in
+# the image and are copied here, on the machine.
+#
+# ⚠️ A FILE THAT ALREADY EXISTS IS NEVER TOUCHED. If you have ever run
+# `flatpak override` or changed permissions in Flatseal, that file is yours and
+# it stays yours through every system update.
+#
+# ⚠️ THIS MUST NOT DEPEND ON THE APPS BEING INSTALLED BY US. Since 2026-09-04
+#    the apps arrive when a person picks them in the chooser, not from this
+#    script — but the permissions still have to be in place, or OBS cannot see
+#    a camera or a capture card and there is no message saying why. So this is
+#    also run on its own, at every boot, by
+#    aquarius-flatpak-overrides.service, through --overrides-only. Writing a
+#    file that is already there is not an error and not a change, so running it
+#    every boot costs nothing.
+#
+# The full explanation of what each one grants and why:
+#   /usr/share/aquarius/flatpak-overrides/README.md
+copy_overrides() {
+    local src name
+    [ -d "${OVERRIDE_SRC}" ] || return 0
+    say "granting the extra permissions creator apps need"
+    mkdir -p "${OVERRIDE_DST}"
+    for src in "${OVERRIDE_SRC}"/*; do
+        [ -f "${src}" ] || continue
+        name="$(basename "${src}")"
+        case "${name}" in
+            README.md | *.md) continue ;;
+        esac
+        if [ -e "${OVERRIDE_DST}/${name}" ]; then
+            say "  ${name}: a permission file already exists here — leaving yours alone"
+            continue
+        fi
+        if install -m 0644 "${src}" "${OVERRIDE_DST}/${name}"; then
+            say "  ${name}: granted"
+        else
+            say "  ${name}: could not be written (will be tried again)"
+        fi
+    done
+}
+
 # ==============================================================================
 # 0. Asking it a question instead of setting it to work
 # ==============================================================================
@@ -306,11 +353,18 @@ case "${1:-}" in
         catalog
         exit $?
         ;;
+    --overrides-only)
+        # Just the permissions, none of the installing. This is what
+        # aquarius-flatpak-overrides.service runs at every boot.
+        copy_overrides
+        exit 0
+        ;;
     -h | --help)
-        say "usage: $0 [--list | --catalog]"
+        say "usage: $0 [--list | --catalog | --overrides-only]"
         say "  no arguments   install every app on the list (needs root)"
         say "  --list         print the app IDs on the list, one per line, and stop"
         say "  --catalog      print the list with names and descriptions, and stop"
+        say "  --overrides-only  only put the creator apps' extra permissions in place"
         exit 0
         ;;
 esac
@@ -448,26 +502,7 @@ fi
 #
 # The full explanation of what each one grants and why:
 #   /usr/share/aquarius/flatpak-overrides/README.md
-if [ -d "${OVERRIDE_SRC}" ]; then
-    say "granting the extra permissions creator apps need"
-    mkdir -p "${OVERRIDE_DST}"
-    for src in "${OVERRIDE_SRC}"/*; do
-        [ -f "${src}" ] || continue
-        name="$(basename "${src}")"
-        case "${name}" in
-            README.md | *.md) continue ;;
-        esac
-        if [ -e "${OVERRIDE_DST}/${name}" ]; then
-            say "  ${name}: a permission file already exists here — leaving yours alone"
-            continue
-        fi
-        if install -m 0644 "${src}" "${OVERRIDE_DST}/${name}"; then
-            say "  ${name}: granted"
-        else
-            say "  ${name}: could not be written (will be tried again)"
-        fi
-    done
-fi
+copy_overrides
 
 # ==============================================================================
 # 6. What happened, in one sentence
