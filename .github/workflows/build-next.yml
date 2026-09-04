@@ -460,10 +460,20 @@ jobs:
           GSETTINGS_BACKEND=memory gsettings get org.gnome.shell enabled-extensions || true
 
           echo "== every pinned app really exists =="
+          # ⚠️ ONE NAMED EXCEPTION SINCE 2026-09-04, and it is the same one that
+          # build_files/50-aquarius-desktop.sh and the creator-apps check carry.
+          # Aquarius Editor is pinned here and is NOT in the image: it is a
+          # four-gigabyte download and its menu entry lands in each person's own
+          # ~/.local/share/applications/ when they install it. It stays pinned on
+          # purpose — GNOME does not draw a name it cannot resolve, so there is no
+          # dead square, and the icon appears in its usual seat the moment the app
+          # arrives. Named, never a wildcard, so a real typo still fails.
           GSETTINGS_BACKEND=memory gsettings get org.gnome.shell favorite-apps \
             | tr -d "[]' " | tr ',' '\n' | grep -v '^$' > /tmp/favs.txt || true
           while read -r fav; do
             if [ -r "/usr/share/applications/${fav}" ]; then ok "dock: ${fav}"
+            elif [ "${fav}" = "aquarius-editor.desktop" ]; then
+              ok "dock: ${fav} (installed into each person's home folder on request)"
             else bad "dock: ${fav} is pinned but not installed"; fi
           done < /tmp/favs.txt
 
