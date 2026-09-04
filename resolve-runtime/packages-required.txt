@@ -74,6 +74,20 @@ ocl-icd
 fontconfig
 freetype
 
+# --- The mouse pointer -------------------------------------------------------
+# ⚠️ THIS IS THE "THE CURSOR INSIDE RESOLVE LOOKS WRONG" FIX, and it is half of
+# it. Resolve is an X11 application, and an X11 application draws its pointer by
+# reading a theme NAME out of the environment and then looking for that theme ON
+# ITS OWN DISK. The launcher passes the name and a search path that reaches the
+# host's themes through /run/host — but a path that has to reach outside the
+# container is a path that can be wrong, and when it is wrong X falls back to a
+# tiny black arrow from 1987.
+#
+# So the default theme is also installed IN HERE. Belt and braces, a couple of
+# megabytes, and it means the common case — somebody using the pointer
+# AquariusOS ships — cannot break however the mount is arranged.
+adwaita-cursor-theme
+
 # --- GLib, and why its version is the whole point of this image --------------
 # Resolve ships its own copy of GLib 2.68 inside /opt/resolve/libs. On a
 # fast-moving distribution the SYSTEM pango is built against GLib 2.80+, asks

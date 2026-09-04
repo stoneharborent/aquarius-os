@@ -74,10 +74,23 @@
 #
 #     1  Checking your graphics card
 #     2  Finding your download
-#     3  Downloading the Rocky Linux runtime
-#     4  Building the container
+#     3  Downloading the environment Resolve runs in
+#     4  Setting that environment up
 #     5  Installing DaVinci Resolve
 #     6  Adding it to your apps
+#
+# ⚠️ NOTE THE WORDING. None of the six says "Rocky Linux" any more, and that is
+# Royce's rule from the bench test on 2026-09-04: a person installing a video
+# editor is not helped by being told which Linux is inside the box. The comments
+# in this file still say Rocky, because whoever maintains it does need to know.
+# Everything a USER reads says "environment". The same rule applies to the
+# window, to notifications, and to the .desktop files.
+#
+# REMOVING walks three steps on the same channel, so one window can read either:
+#
+#     1  Removing DaVinci Resolve from your apps
+#     2  Deleting the environment it ran in
+#     3  Keeping your projects and settings  (or deleting them, with --purge)
 #
 # TWO QUESTIONS THE WINDOW ASKS BEFORE IT STARTS ANYTHING, so that it is never
 # guessing where this script would look or what this script would find:
@@ -116,10 +129,18 @@ INPUT=""
 QUERY=""
 DRY_RUN="${AQ_RESOLVE_DRY_RUN:-0}"
 PROGRESS_FD="${AQ_PROGRESS_FD:-}"
+# Removing: --purge also deletes the person's own Resolve settings and project
+# database. It is off unless asked for, every single time, and the two windows
+# that can ask for it both default it to off.
+PURGE=0
+ASSUME_YES=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --update) MODE="update" ;;
+        --remove | --uninstall) MODE="remove" ;;
+        --purge) PURGE=1 ;;
+        --yes | -y) ASSUME_YES=1 ;;
         --dry-run) DRY_RUN=1 ;;
         --gpu-summary) QUERY="gpu" ;;
         --find-installer) QUERY="find" ;;
@@ -162,7 +183,10 @@ if [ -n "${PROGRESS_FD}" ]; then
     fi
 fi
 
+# Installing walks six steps; removing walks three. Both use the same channel
+# and the same words for it, which is what lets one window read either.
 STEP_TOTAL=6
+[ "${MODE}" = "remove" ] && STEP_TOTAL=3
 
 progress() {
     [ "${PROGRESS_OPEN}" = "1" ] || return 0
@@ -331,6 +355,180 @@ case "${QUERY}" in
 esac
 
 # ==============================================================================
+# REMOVING IT AGAIN
+# ==============================================================================
+# `aq resolve remove`, and the "Remove DaVinci Resolve" window, both end up
+# here. It lives in this script rather than in `aq` for the same reason the
+# installing does: ONE PLACE OWNS THE CONTAINER, and a window and a terminal
+# that do the same job must not be two implementations of it.
+#
+# THE THING THIS HAS TO GET RIGHT, ABOVE EVERYTHING ELSE:
+#
+#   YOUR PROJECTS AND YOUR MEDIA ARE NOT IN THE CONTAINER. They are in your
+#   ordinary folders, which the container only borrows while it is running. So
+#   deleting the container deletes Resolve and nothing of yours.
+#
+#   The one exception is Resolve's own database — the project library, its
+#   settings, your keyboard customisations — which Resolve keeps in
+#   ~/.local/share/DaVinciResolve. That IS yours, it is small, and it is what
+#   makes a reinstall feel like the same computer. So it is KEPT unless somebody
+#   deliberately asks for it to go, with --purge, which both windows leave
+#   unticked.
+#
+# Three steps, on the same progress channel as installing, so one window can
+# read either.
+if [ "${MODE}" = "remove" ]; then
+    RESOLVE_DB="${XDG_DATA_HOME:-${HOME}/.local/share}/DaVinciResolve"
+    APPS_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/applications"
+
+    echo ""
+    echo "=================================================================="
+    if [ "${DRY_RUN}" = "1" ]; then
+        echo " A REHEARSAL — nothing is being removed"
+    else
+        echo " Removing DaVinci Resolve from AquariusOS"
+    fi
+    echo "=================================================================="
+    echo ""
+    echo "This removes DaVinci Resolve and the separate environment it ran in."
+    echo ""
+    echo "YOUR PROJECTS AND MEDIA ARE NOT IN THERE. They are in your ordinary"
+    echo "folders, which that environment only borrowed while it was running."
+    echo "Nothing you have made is touched by this."
+    echo ""
+    if [ "${PURGE}" = "1" ]; then
+        echo "You have also asked for your Resolve settings and project database"
+        echo "to be deleted:"
+        echo "    ${RESOLVE_DB}"
+        echo ""
+    else
+        echo "Your Resolve settings and project database are being KEPT, so that"
+        echo "installing it again picks up where you left off."
+        echo ""
+    fi
+
+    # Nothing exists and nothing is asked. Said plainly rather than treated as
+    # a failure — "there was nothing to remove" is a fine outcome.
+    if [ "${DRY_RUN}" != "1" ] \
+        && ! podman container exists "${CONTAINER}" 2> /dev/null; then
+        echo "There is nothing to remove — DaVinci Resolve is not set up on this"
+        echo "computer."
+        if [ "${PURGE}" = "1" ] && [ -d "${RESOLVE_DB}" ]; then
+            echo "Your Resolve settings folder is still here, and you asked for it"
+            echo "to go, so that is being done."
+        else
+            progress "STEP 1/3 Nothing to remove"
+            progress "DONE"
+            exit 0
+        fi
+    fi
+
+    # Ask, unless somebody already answered. The windows always pass --yes,
+    # because they asked in a dialog before they got here.
+    if [ "${ASSUME_YES}" != "1" ] && [ "${DRY_RUN}" != "1" ]; then
+        read -r -p "Remove it? [y/N] " reply
+        case "${reply}" in
+            [yY]*) ;;
+            *)
+                echo "Nothing was changed."
+                exit 0
+                ;;
+        esac
+        echo ""
+    fi
+
+    # --------------------------------------------------------------------------
+    # 1. The menu entries go FIRST
+    # --------------------------------------------------------------------------
+    # An icon left behind that starts something which no longer exists is worse
+    # than no icon: it is a computer that lies to you. So they go before the
+    # thing they point at, not after.
+    step 1 "Removing DaVinci Resolve from your apps"
+    removed=0
+    if [ -d "${APPS_DIR}" ]; then
+        while IFS= read -r entry; do
+            [ -n "${entry}" ] || continue
+            # Only entries that point at OUR launcher. Somebody who also has
+            # Resolve installed another way keeps their own.
+            grep -q 'aquarius-resolve-launch\|aquarius-resolve-run' "${entry}" || continue
+            if [ "${DRY_RUN}" = "1" ]; then
+                echo "  would remove ${entry}"
+                removed=$((removed + 1))
+            elif rm -f "${entry}"; then
+                removed=$((removed + 1))
+            fi
+        done < <(find "${APPS_DIR}" -maxdepth 1 -type f \
+            \( -iname '*resolve*.desktop' \
+            -o -iname '*davinci*.desktop' \
+            -o -iname '*blackmagic*.desktop' \) 2> /dev/null | sort)
+    fi
+    echo "  ${removed} menu entries removed."
+    [ "${DRY_RUN}" = "1" ] || update-desktop-database "${APPS_DIR}" > /dev/null 2>&1 || true
+
+    # --------------------------------------------------------------------------
+    # 2. The environment itself
+    # --------------------------------------------------------------------------
+    step 2 "Deleting the environment it ran in"
+    if [ "${DRY_RUN}" = "1" ]; then
+        echo "  would delete the '${CONTAINER}' container."
+    elif podman container exists "${CONTAINER}" 2> /dev/null; then
+        echo "  Deleting '${CONTAINER}'. This takes a moment."
+        if ! distrobox rm --force "${CONTAINER}"; then
+            fail "The environment could not be deleted. Nothing else was changed. Try again, or from a terminal: distrobox rm --force ${CONTAINER}"
+            echo "" >&2
+            echo "It could not be deleted." >&2
+            echo "From a terminal:  distrobox rm --force ${CONTAINER}" >&2
+            exit 1
+        fi
+        rm -f "${RECORD}"
+        echo "  Gone."
+    else
+        echo "  There was no environment to delete."
+    fi
+
+    # --------------------------------------------------------------------------
+    # 3. Your own settings — kept, unless you said otherwise
+    # --------------------------------------------------------------------------
+    if [ "${PURGE}" = "1" ]; then
+        step 3 "Deleting your Resolve settings and project database"
+        if [ "${DRY_RUN}" = "1" ]; then
+            echo "  would delete ${RESOLVE_DB}"
+        elif [ -d "${RESOLVE_DB}" ]; then
+            if rm -rf "${RESOLVE_DB}"; then
+                echo "  Deleted ${RESOLVE_DB}"
+            else
+                fail "Resolve was removed, but your settings folder could not be deleted. Nothing else is wrong."
+                echo "Could not delete ${RESOLVE_DB}" >&2
+                exit 1
+            fi
+        else
+            echo "  There was no settings folder to delete."
+        fi
+    else
+        step 3 "Keeping your projects and settings"
+        echo "  Your Resolve settings and project database are still here:"
+        echo "    ${RESOLVE_DB}"
+        echo "  Install Resolve again and it picks up where you left off."
+    fi
+
+    progress "DONE"
+    echo ""
+    echo "=================================================================="
+    if [ "${DRY_RUN}" = "1" ]; then
+        echo " Rehearsal finished. Nothing was removed and nothing was changed."
+    else
+        echo " Done. DaVinci Resolve has been removed."
+    fi
+    echo "=================================================================="
+    echo ""
+    echo "The downloaded environment image is still on this computer, so setting"
+    echo "Resolve up again is quick. To reclaim that space as well:"
+    echo "    podman image prune -a"
+    echo ""
+    exit 0
+fi
+
+# ==============================================================================
 # The rehearsal
 # ==============================================================================
 # --dry-run walks the same six steps and changes nothing whatsoever. It exists
@@ -354,13 +552,13 @@ if [ "${DRY_RUN}" = "1" ]; then
     step 2 "Finding your download"
     echo "  Pretending a download was found in ${DOWNLOADS}."
     sleep 0.3
-    step 3 "Downloading the Rocky Linux runtime"
+    step 3 "Downloading the environment Resolve runs in"
     for p in 0 25 50 75 100; do
         pct "${p}"
         echo "  ...pretending to download: ${p}%"
         sleep 0.2
     done
-    step 4 "Building the container"
+    step 4 "Setting that environment up"
     echo "  Pretending to create the container."
     sleep 0.3
     step 5 "Installing DaVinci Resolve"
@@ -393,17 +591,13 @@ echo "DaVinci Resolve is made by Blackmagic Design. Their licence does not"
 echo "allow anyone else to hand out the installer, so you download it from"
 echo "them and this does the rest."
 echo ""
-echo "Resolve does not run directly on AquariusOS, and that is on purpose."
-echo "It carries its own copy of a library called GLib from 2021, and on any"
-echo "modern Linux that clashes with the system's own and Resolve dies before"
-echo "its window opens. It is the single most common reason people give up on"
-echo "Resolve on Linux."
+echo "Resolve runs inside its own protected environment on this computer, so"
+echo "it stays stable across updates and cannot clash with anything else you"
+echo "have installed. That is the single most common reason people give up on"
+echo "Resolve on Linux, and it is why this exists."
 echo ""
-echo "So AquariusOS runs it inside a small Rocky Linux — the same family of"
-echo "Linux Blackmagic themselves build against, and the one the film industry"
-echo "standardised on. In there the clash cannot happen. You will not notice"
-echo "the container: Resolve appears in your apps like any other program and"
-echo "reads and writes your ordinary folders."
+echo "You will not notice the environment. Resolve appears in your apps like"
+echo "any other program and reads and writes your ordinary folders."
 echo ""
 echo "This takes roughly fifteen minutes, nearly all of it downloading."
 echo "Stop at any time with Ctrl+C — nothing will be left broken."
@@ -645,7 +839,7 @@ esac
 # ==============================================================================
 echo ""
 echo "------------------------------------------------------------------"
-echo " Building the Rocky Linux that Resolve runs in"
+echo " Setting up the environment Resolve runs in"
 echo "------------------------------------------------------------------"
 
 # ------------------------------------------------------------------------------
@@ -701,7 +895,7 @@ pull_with_progress() {
 }
 
 if podman container exists "${CONTAINER}" 2> /dev/null; then
-    step 3 "Downloading the Rocky Linux runtime"
+    step 3 "Downloading the environment Resolve runs in"
     if [ "${MODE}" = "update" ]; then
         echo "Reusing the existing '${CONTAINER}' container."
     else
@@ -710,12 +904,12 @@ if podman container exists "${CONTAINER}" 2> /dev/null; then
     fi
     pct 100
 else
-    step 3 "Downloading the Rocky Linux runtime"
+    step 3 "Downloading the environment Resolve runs in"
     echo "Downloading ${IMAGE}"
     echo "This is about a gigabyte and happens once."
     echo ""
     if ! pull_with_progress; then
-        fail "The Rocky Linux runtime could not be downloaded. The usual cause is no internet connection — try again when you are back online."
+        fail "The environment Resolve runs in could not be downloaded. The usual cause is no internet connection — try again when you are back online."
         echo "" >&2
         echo "The download failed." >&2
         echo "" >&2
@@ -731,7 +925,7 @@ else
     fi
 
     echo ""
-    step 4 "Building the container"
+    step 4 "Setting that environment up"
     echo "Creating the container..."
     # --yes            do not ask; the questions were asked above
     # --nvidia         only when NVIDIA's own description was not available
@@ -763,7 +957,7 @@ fi
 echo ""
 # Said again here because the container may already have existed, in which case
 # the branch above was skipped entirely and this is where step 4 really begins.
-step 4 "Building the container"
+step 4 "Setting that environment up"
 echo "Starting it for the first time (this takes a moment)..."
 if ! distrobox enter --name "${CONTAINER}" -- true; then
     fail "The container was built but would not start. Clear it away with 'aq resolve remove' and try again."

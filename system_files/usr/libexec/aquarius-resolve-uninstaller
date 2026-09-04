@@ -1,0 +1,716 @@
+#!/usr/bin/python3
+# =============================================================================
+# aquarius-resolve-uninstaller — the "Remove DaVinci Resolve" window
+# =============================================================================
+# PLAIN ENGLISH
+#
+# The other half of "Install DaVinci Resolve". Same three pages, same look, the
+# opposite job. It opens from "Remove DaVinci Resolve" in the app grid, or from
+# `aq resolve remove --gui`.
+#
+# WHY IT EXISTS (Royce, after the bench test on 2026-09-04): if installing
+# something is a window, removing it has to be a window too. An operating system
+# that gives you a friendly way in and a terminal command for the way out has
+# told you, quite clearly, that it does not expect you to leave — and the person
+# most likely to want out is the one who least wants a terminal.
+#
+# ⚠️ THIS WINDOW REMOVES NOTHING ITSELF. Exactly like its sister window, every
+# actual step is done by:
+#
+#     /usr/libexec/aquarius-resolve-install --remove
+#
+# ...which is the same script `aq resolve remove` runs in a terminal, reporting
+# on the same STEP / PERCENT / DONE / FAIL channel. One remover, two faces.
+#
+# =============================================================================
+# THE ONE THING THIS WINDOW MUST GET RIGHT
+# =============================================================================
+# Somebody about to press a red button needs to know exactly what disappears.
+#
+#   GOES      DaVinci Resolve itself, and the separate environment it ran in.
+#   STAYS     every project file, every clip, every export — they are in your
+#             ordinary folders and were only ever borrowed by that environment.
+#   STAYS, unless you tick the box
+#             Resolve's own database: the project library, your preferences and
+#             keyboard customisations, in ~/.local/share/DaVinciResolve. Small,
+#             yours, and what makes a reinstall feel like the same computer.
+#
+# The tick box is OFF by default and it is the only destructive thing on the
+# page. That is deliberate: the common reason to remove Resolve is to install it
+# again cleanly, and losing your project library in the process would be a
+# disaster that looked like a tidy-up.
+#
+# =============================================================================
+# TO LOOK AT IT WITHOUT REMOVING ANYTHING
+# =============================================================================
+#     aq resolve remove --gui --dry-run
+# =============================================================================
+
+import os
+import re
+import signal
+import subprocess
+import sys
+import threading
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
+
+sys.path.insert(0, "/usr/lib/aquarius/python")
+import aquarius_ui  # noqa: E402
+from aquarius_ui import ACTIVE, DONE, FAILED, PENDING  # noqa: E402,F401
+
+APP_ID = "org.aquariusos.ResolveUninstaller"
+CLI = "/usr/libexec/aquarius-resolve-install"
+INSTALLER_GUI = "/usr/libexec/aquarius-resolve-installer"
+
+# The names drawn before anything starts. The script sends its own wording with
+# every STEP line and that wins the moment it arrives.
+DEFAULT_STEPS = [
+    "Removing DaVinci Resolve from your apps",
+    "Deleting the environment it ran in",
+    "Keeping your projects and settings",
+]
+
+RESOLVE_DB = os.path.join(
+    GLib.get_user_data_dir() or os.path.expanduser("~/.local/share"), "DaVinciResolve"
+)
+
+
+class UninstallerWindow(Adw.ApplicationWindow):
+    def __init__(self, app, dry_run=False):
+        super().__init__(application=app)
+        self.dry_run = dry_run
+        self.proc = None
+        self.cancelled = False
+        self.finished = False
+        self.step_rows = []
+        self.current_step = 0
+        self.step_total = len(DEFAULT_STEPS)
+
+        self.set_title("Remove DaVinci Resolve")
+        self.set_default_size(620, 620)
+
+        self.stack = Gtk.Stack(
+            transition_type=Gtk.StackTransitionType.CROSSFADE,
+            transition_duration=180,
+            vexpand=True,
+        )
+        self.stack.add_named(self._build_explain_page(), "explain")
+        self.stack.add_named(self._build_working_page(), "working")
+        self.stack.add_named(self._build_done_page(), "done")
+
+        header = Adw.HeaderBar()
+        self.header_title = Adw.WindowTitle(title="Remove DaVinci Resolve", subtitle="")
+        header.set_title_widget(self.header_title)
+
+        toolbar = Adw.ToolbarView()
+        toolbar.add_top_bar(header)
+        toolbar.set_content(self.stack)
+        self.set_content(toolbar)
+
+        # Escape closes the window where closing is harmless, and deliberately
+        # does not while something is being removed halfway through.
+        keys = Gtk.EventControllerKey()
+        keys.connect("key-pressed", self._on_key)
+        self.add_controller(keys)
+        self.connect("close-request", self._on_close_request)
+
+        self._refresh_state()
+
+    # -- page 1: what will happen -------------------------------------------
+
+    def _build_explain_page(self):
+        mark = aquarius_ui.mark_image()
+        title = aquarius_ui.title_label("Remove DaVinci Resolve")
+
+        blurb = aquarius_ui.body_label(
+            "This removes DaVinci Resolve and the separate environment it ran "
+            "in. It takes a minute or two."
+        )
+
+        # What goes and what stays, as rows rather than a paragraph — this is
+        # the part somebody scans rather than reads.
+        group = Adw.PreferencesGroup(title="What this does")
+
+        gone = Adw.ActionRow(title="DaVinci Resolve is removed")
+        gone.set_subtitle(
+            "The app, its menu entry, and the environment it ran in. About a "
+            "gigabyte comes back."
+        )
+        gone.set_subtitle_lines(0)
+        gone_icon = Gtk.Image.new_from_icon_name("user-trash-symbolic")
+        gone_icon.set_valign(Gtk.Align.CENTER)
+        gone.add_prefix(gone_icon)
+        group.add(gone)
+
+        kept = Adw.ActionRow(title="Your projects and media are NOT touched")
+        kept.set_subtitle(
+            "Every project file, clip and export is in your ordinary folders. "
+            "That environment only borrowed them while it was running."
+        )
+        kept.set_subtitle_lines(0)
+        kept_icon = Gtk.Image.new_from_icon_name("emblem-ok-symbolic")
+        kept_icon.set_valign(Gtk.Align.CENTER)
+        kept_icon.add_css_class("success")
+        kept.add_prefix(kept_icon)
+        group.add(kept)
+
+        self.status_row = Adw.ActionRow(title="On this computer")
+        self.status_row.set_subtitle_lines(0)
+        self.status_icon = Gtk.Image()
+        self.status_icon.set_valign(Gtk.Align.CENTER)
+        self.status_row.add_prefix(self.status_icon)
+        group.add(self.status_row)
+
+        # The one destructive choice, off by default, on its own so it cannot be
+        # ticked by accident on the way to the button.
+        choice = Adw.PreferencesGroup(title="Your Resolve settings")
+        # ⚠️ An ActionRow with a Switch, NOT Adw.SwitchRow. SwitchRow reads
+        # better and needs a newer libadwaita than the creator-apps window is
+        # written against; a window that will not open is a much worse outcome
+        # than a row built out of two widgets.
+        self.purge_row = Adw.ActionRow(
+            title="Also delete my Resolve settings and project database"
+        )
+        self.purge_row.set_title_lines(0)
+        self.purge_row.set_subtitle(
+            "Your project library, preferences and keyboard shortcuts, in "
+            "%s. Leave this off if you might install Resolve again — it is what "
+            "makes a reinstall feel like the same computer." % RESOLVE_DB
+        )
+        self.purge_row.set_subtitle_lines(0)
+        self.purge_switch = Gtk.Switch()
+        self.purge_switch.set_valign(Gtk.Align.CENTER)
+        self.purge_switch.set_active(False)
+        self.purge_row.add_suffix(self.purge_switch)
+        self.purge_row.set_activatable_widget(self.purge_switch)
+        choice.add(self.purge_row)
+
+        self.remove_button = aquarius_ui.pill_button("Remove", destructive=True)
+        self.remove_button.connect("clicked", self._on_remove_clicked)
+
+        cancel = aquarius_ui.pill_button("Keep it")
+        cancel.connect("clicked", lambda _b: self.close())
+
+        buttons = aquarius_ui.button_row([cancel, self.remove_button])
+
+        self.explain_note = aquarius_ui.body_label("")
+        self.explain_note.set_visible(False)
+
+        return aquarius_ui.page(
+            [mark, title, blurb, group, choice, buttons, self.explain_note]
+        )
+
+    def _refresh_state(self):
+        """Is Resolve actually here? Asked of the machine, never assumed."""
+
+        def work():
+            installed = _resolve_installed()
+            has_db = os.path.isdir(RESOLVE_DB)
+            GLib.idle_add(self._apply_state, installed, has_db)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _apply_state(self, installed, has_db):
+        if installed:
+            self.status_row.set_subtitle("DaVinci Resolve is installed and will be removed.")
+            self.status_icon.set_from_icon_name("emblem-ok-symbolic")
+            self.status_icon.remove_css_class("warning")
+            self.status_icon.add_css_class("success")
+            self.remove_button.set_sensitive(True)
+        elif has_db:
+            self.status_row.set_subtitle(
+                "DaVinci Resolve is not installed, but your settings folder is "
+                "still here. Tick the box below to delete that as well."
+            )
+            self.status_icon.set_from_icon_name("dialog-information-symbolic")
+            self.status_icon.remove_css_class("success")
+            self.status_icon.add_css_class("warning")
+            self.remove_button.set_sensitive(True)
+        else:
+            self.status_row.set_subtitle(
+                "DaVinci Resolve is not set up on this computer, so there is "
+                "nothing to remove."
+            )
+            self.status_icon.set_from_icon_name("dialog-information-symbolic")
+            self.status_icon.remove_css_class("success")
+            self.status_icon.add_css_class("warning")
+            self.remove_button.set_sensitive(self.dry_run)
+        return GLib.SOURCE_REMOVE
+
+    # -- page 2: removing ---------------------------------------------------
+
+    def _build_working_page(self):
+        self.working_title = aquarius_ui.title_label(
+            "Removing DaVinci Resolve", "title-2"
+        )
+        self.working_blurb = aquarius_ui.body_label(
+            "This takes a minute or two. Your projects and media are not being "
+            "touched."
+        )
+
+        self.steps_group = Adw.PreferencesGroup()
+        self._build_step_rows(DEFAULT_STEPS)
+
+        self.bar = Gtk.ProgressBar()
+        self.bar.set_show_text(False)
+        self.bar.set_margin_top(4)
+
+        self.log = aquarius_ui.LogPane()
+        self.details = self.log.widget
+
+        self.cancel_button = Gtk.Button(label="Cancel")
+        self.cancel_button.connect("clicked", self._on_cancel_clicked)
+
+        self.copy_button = aquarius_ui.copy_button("Copy details", self.log.text)
+        self.copy_button.set_visible(False)
+
+        self.retry_button = Gtk.Button(label="Try again")
+        self.retry_button.add_css_class("suggested-action")
+        self.retry_button.connect("clicked", self._on_retry_clicked)
+        self.retry_button.set_visible(False)
+
+        self.working_close = Gtk.Button(label="Close")
+        self.working_close.connect("clicked", lambda _b: self.close())
+        self.working_close.set_visible(False)
+
+        self.working_buttons = aquarius_ui.button_row(
+            [
+                self.copy_button,
+                self.working_close,
+                self.retry_button,
+                self.cancel_button,
+            ],
+            margin_top=4,
+        )
+
+        return aquarius_ui.page(
+            [
+                self.working_title,
+                self.working_blurb,
+                self.steps_group,
+                self.bar,
+                self.details,
+                self.working_buttons,
+            ],
+            spacing=14,
+        )
+
+    def _build_step_rows(self, titles):
+        for row in self.step_rows:
+            self.steps_group.remove(row)
+        self.step_rows = []
+        for title in titles:
+            row = aquarius_ui.StepRow(title)
+            self.steps_group.add(row)
+            self.step_rows.append(row)
+        self.step_total = len(titles)
+
+    # -- page 3: done -------------------------------------------------------
+
+    def _build_done_page(self):
+        self.done_page = Adw.StatusPage()
+        self.done_page.set_icon_name("emblem-ok-symbolic")
+        self.done_page.set_title("DaVinci Resolve has been removed.")
+        self.done_page.set_description("")
+
+        install_again = aquarius_ui.pill_button("Install it again", suggested=True)
+        install_again.connect("clicked", self._on_install_again)
+        self.install_again = install_again
+
+        close_button = aquarius_ui.pill_button("Close")
+        close_button.connect("clicked", lambda _b: self.close())
+
+        buttons = aquarius_ui.button_row([install_again, close_button], margin_top=0)
+
+        self.done_detail = aquarius_ui.body_label("")
+        self.done_detail.set_margin_top(6)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        box.append(buttons)
+        box.append(self.done_detail)
+        clamp = Adw.Clamp(maximum_size=520)
+        clamp.set_child(box)
+        self.done_page.set_child(clamp)
+        return self.done_page
+
+    # -- doing it -----------------------------------------------------------
+
+    def _on_remove_clicked(self, _button):
+        # One confirmation, and only for the destructive half. Removing the app
+        # is reversible — install it again — so it does not need a second
+        # question. Deleting the project database is not, so it does.
+        if not self.purge_switch.get_active():
+            self._start()
+            return
+
+        heading = "Delete your Resolve settings too?"
+        body = (
+            "Your project library, preferences and keyboard shortcuts will be "
+            "deleted along with Resolve, and cannot be recovered.\n\n"
+            "Your actual project files, clips and exports are somewhere else "
+            "entirely and are not affected."
+        )
+
+        def answered(response):
+            if response == "delete":
+                self._start()
+            else:
+                self.purge_switch.set_active(False)
+
+        # Adw.AlertDialog where the toolkit has it, Adw.MessageDialog where it
+        # does not — the same arrangement as the creator-apps window, for the
+        # same reason.
+        if hasattr(Adw, "AlertDialog"):
+            dialog = Adw.AlertDialog(heading=heading, body=body)
+            dialog.add_response("keep", "Keep my settings")
+            dialog.add_response("delete", "Delete them")
+            dialog.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)
+            dialog.set_default_response("keep")
+            dialog.set_close_response("keep")
+            dialog.connect("response", lambda _d, response: answered(response))
+            dialog.present(self)
+            return
+
+        dialog = Adw.MessageDialog(transient_for=self, heading=heading, body=body)
+        dialog.add_response("keep", "Keep my settings")
+        dialog.add_response("delete", "Delete them")
+        dialog.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.connect("response", lambda _d, response: answered(response))
+        dialog.present()
+
+    def _start(self):
+        self.explain_note.set_visible(False)
+        self.log.clear()
+        self.cancelled = False
+        self.finished = False
+        self.current_step = 0
+        self._build_step_rows(DEFAULT_STEPS)
+        self.bar.set_fraction(0.0)
+        self.details.set_expanded(False)
+        self.cancel_button.set_visible(True)
+        self.copy_button.set_visible(False)
+        self.retry_button.set_visible(False)
+        self.working_close.set_visible(False)
+        self.working_title.set_label("Removing DaVinci Resolve")
+        self.working_title.remove_css_class("error")
+        self.header_title.set_subtitle("Removing")
+        self.stack.set_visible_child_name("working")
+        self._determinate = False
+        GLib.timeout_add(120, self._pulse)
+        self._start_process()
+
+    def _start_process(self):
+        read_fd, write_fd = os.pipe()
+        argv = [CLI, "--remove", "--yes", "--progress-fd", str(write_fd)]
+        if self.purge_switch.get_active():
+            argv.append("--purge")
+        if self.dry_run:
+            argv.append("--dry-run")
+
+        self.log.append("$ %s\n" % " ".join(argv))
+        try:
+            # Its own process group, so Cancel can stop podman and distrobox
+            # underneath it rather than orphaning them.
+            self.proc = subprocess.Popen(
+                argv,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                pass_fds=(write_fd,),
+                start_new_session=True,
+                text=True,
+                errors="replace",
+                bufsize=1,
+            )
+        except OSError as exc:
+            os.close(read_fd)
+            os.close(write_fd)
+            self._show_failure("The removal could not be started: %s" % exc)
+            return
+        os.close(write_fd)
+
+        threading.Thread(target=self._read_log, daemon=True).start()
+        threading.Thread(target=self._read_progress, args=(read_fd,), daemon=True).start()
+        threading.Thread(target=self._wait_for_exit, daemon=True).start()
+
+    def _read_log(self):
+        for line in self.proc.stdout:
+            GLib.idle_add(self.log.append, line)
+        try:
+            self.proc.stdout.close()
+        except OSError:
+            pass
+
+    def _read_progress(self, read_fd):
+        with os.fdopen(read_fd, "r", errors="replace") as pipe:
+            for line in pipe:
+                GLib.idle_add(self._handle_progress, line.strip())
+
+    def _wait_for_exit(self):
+        code = self.proc.wait()
+        GLib.idle_add(self._process_exited, code)
+
+    def _handle_progress(self, line):
+        match = re.match(r"^STEP (\d+)/(\d+) (.*)$", line)
+        if match:
+            n, total, text = int(match.group(1)), int(match.group(2)), match.group(3)
+            if total != self.step_total:
+                self._build_step_rows(
+                    [DEFAULT_STEPS[i] if i < len(DEFAULT_STEPS) else "" for i in range(total)]
+                )
+            self.current_step = n
+            for i, row in enumerate(self.step_rows, start=1):
+                if i < n:
+                    row.set_state(DONE)
+                elif i == n:
+                    row.set_title(text)
+                    row.set_state(ACTIVE)
+                else:
+                    row.set_state(PENDING)
+            self.header_title.set_subtitle("Step %d of %d" % (n, total))
+            self.bar.set_fraction(max(0, n - 1) / float(max(1, total)))
+            return GLib.SOURCE_REMOVE
+
+        if line == "DONE":
+            self.finished = True
+            for row in self.step_rows:
+                row.set_state(DONE)
+            self.bar.set_fraction(1.0)
+            return GLib.SOURCE_REMOVE
+
+        if line.startswith("FAIL "):
+            self._show_failure(line[5:].strip())
+            return GLib.SOURCE_REMOVE
+
+        # PERCENT and anything unrecognised are ignored on purpose, so a line
+        # added to the script cannot break an older window.
+        return GLib.SOURCE_REMOVE
+
+    def _pulse(self):
+        if self.finished or self.cancelled or self.proc is None:
+            return GLib.SOURCE_REMOVE
+        self.bar.pulse()
+        return GLib.SOURCE_CONTINUE
+
+    def _process_exited(self, code):
+        self.proc = None
+        if self.cancelled:
+            return GLib.SOURCE_REMOVE
+        if self.finished and code == 0:
+            self._show_done()
+            return GLib.SOURCE_REMOVE
+        if not self.retry_button.get_visible():
+            self._show_failure(
+                "The removal stopped before it finished (it ended with code "
+                "%d). The details below say where." % code
+            )
+        return GLib.SOURCE_REMOVE
+
+    def _show_done(self):
+        self.header_title.set_subtitle("")
+        if self.purge_switch.get_active():
+            self.done_page.set_description(
+                "Resolve and your Resolve settings are gone. Your project "
+                "files, clips and exports were not touched."
+            )
+        else:
+            self.done_page.set_description(
+                "Your projects, media and Resolve settings were not touched. "
+                "Install it again and it picks up where you left off."
+            )
+        self.done_detail.set_label(
+            "The downloaded environment is still on this computer, so setting "
+            "Resolve up again is quick."
+        )
+        self.stack.set_visible_child_name("done")
+        self.install_again.grab_focus()
+        self.set_default_widget(self.install_again)
+
+    def _show_failure(self, message):
+        self.finished = False
+        self.stack.set_visible_child_name("working")
+        self.header_title.set_subtitle("Stopped")
+        self.working_title.set_label("The removal did not finish")
+        self.working_title.add_css_class("error")
+        self.working_blurb.set_label(
+            message
+            + "\n\nYour projects and media were not touched. It is safe to try "
+            "again."
+        )
+        for row in self.step_rows:
+            if row.state == ACTIVE:
+                row.set_state(FAILED)
+        self.bar.set_fraction(0.0)
+        self.details.set_expanded(True)
+        self.cancel_button.set_visible(False)
+        self.copy_button.set_visible(True)
+        self.retry_button.set_visible(True)
+        self.working_close.set_visible(True)
+        self.retry_button.grab_focus()
+        return GLib.SOURCE_REMOVE
+
+    # -- the buttons --------------------------------------------------------
+
+    def _on_retry_clicked(self, _button):
+        self.header_title.set_subtitle("")
+        self.explain_note.set_label(
+            "The last attempt did not finish. Nothing of yours was touched."
+        )
+        self.explain_note.set_visible(True)
+        self.stack.set_visible_child_name("explain")
+        self._refresh_state()
+
+    def _on_cancel_clicked(self, _button):
+        if self.proc is None:
+            self.close()
+            return
+        self.cancelled = True
+        self._stop_process()
+        self.header_title.set_subtitle("Stopped")
+        self.working_title.set_label("Stopped")
+        self.working_blurb.set_label(
+            "Removing was stopped partway. Nothing of yours was touched. Run it "
+            "again to finish, or leave it — a half-removed environment costs "
+            "nothing but disk space."
+        )
+        for row in self.step_rows:
+            if row.state == ACTIVE:
+                row.set_state(PENDING)
+        self.bar.set_fraction(0.0)
+        self.cancel_button.set_visible(False)
+        self.copy_button.set_visible(True)
+        self.retry_button.set_visible(True)
+        self.working_close.set_visible(True)
+        self.retry_button.grab_focus()
+
+    def _stop_process(self):
+        proc = self.proc
+        if proc is None:
+            return
+        try:
+            group = os.getpgid(proc.pid)
+        except OSError:
+            return
+        try:
+            os.killpg(group, signal.SIGTERM)
+        except OSError:
+            return
+
+        def escalate():
+            if proc.poll() is None:
+                try:
+                    os.killpg(group, signal.SIGKILL)
+                except OSError:
+                    pass
+            return GLib.SOURCE_REMOVE
+
+        GLib.timeout_add_seconds(5, escalate)
+
+    def _on_install_again(self, _button):
+        if self.dry_run:
+            self.log.append("(rehearsal: would have opened the installer)\n")
+            return
+        try:
+            subprocess.Popen([INSTALLER_GUI], start_new_session=True)
+        except OSError as exc:
+            self.done_page.set_description(
+                "Resolve was removed, but this window could not open the "
+                "installer: %s\nOpen \"Install DaVinci Resolve\" from your apps "
+                "instead." % exc
+            )
+            return
+        self.close()
+
+    def _on_key(self, _controller, keyval, _keycode, _state):
+        if keyval == Gdk.KEY_Escape:
+            if self.stack.get_visible_child_name() != "working" or self.proc is None:
+                self.close()
+                return True
+        return False
+
+    def _on_close_request(self, _window):
+        if self.proc is not None:
+            self.cancelled = True
+            self._stop_process()
+        return False
+
+
+def _resolve_installed():
+    """Is the container there? Asked of podman, which is the only real answer."""
+    container = "aquarius-resolve"
+    try:
+        with open("/usr/share/aquarius/resolve/runtime.env", "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("AQ_RESOLVE_CONTAINER="):
+                    container = line.split("=", 1)[1].strip().strip("\"'")
+    except OSError:
+        pass
+    try:
+        done = subprocess.run(
+            ["podman", "container", "exists", container],
+            capture_output=True,
+            timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return done.returncode == 0
+
+
+class UninstallerApp(Adw.Application):
+    def __init__(self, dry_run=False):
+        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.NON_UNIQUE)
+        self.dry_run = dry_run
+
+    def do_activate(self):
+        window = self.props.active_window
+        if window is None:
+            window = UninstallerWindow(self, self.dry_run)
+        window.present()
+
+
+def main(argv):
+    dry_run = os.environ.get("AQ_RESOLVE_DRY_RUN") == "1"
+    for arg in argv[1:]:
+        if arg == "--dry-run":
+            dry_run = True
+        elif arg in ("-h", "--help"):
+            print(
+                "aquarius-resolve-uninstaller — the Remove DaVinci Resolve window\n"
+                "\n"
+                "    aquarius-resolve-uninstaller [--dry-run]\n"
+                "\n"
+                "    --dry-run   walk through the window without removing anything\n"
+                "\n"
+                "It runs %s --remove, which is the same remover\n"
+                "'aq resolve remove' runs in a terminal. Nothing is removed by\n"
+                "this window itself." % CLI
+            )
+            return 0
+        else:
+            print(
+                "aquarius-resolve-uninstaller: I do not understand '%s'." % arg,
+                file=sys.stderr,
+            )
+            return 1
+
+    if not os.access(CLI, os.X_OK):
+        print(
+            "aquarius-resolve-uninstaller: %s is missing from this system.\n"
+            "That is a fault in AquariusOS, not in anything you did." % CLI,
+            file=sys.stderr,
+        )
+        return 1
+
+    GLib.set_prgname(APP_ID)
+    GLib.set_application_name("Remove DaVinci Resolve")
+    app = UninstallerApp(dry_run=dry_run)
+    return app.run([argv[0]])
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

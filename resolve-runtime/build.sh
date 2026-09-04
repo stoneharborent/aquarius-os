@@ -182,6 +182,21 @@ case "${GLIB_VERSION}" in
         ;;
 esac
 
+# ------------------------------------------------------------------------------
+# The mouse pointer
+# ------------------------------------------------------------------------------
+# The package being installed is not the question — the question is whether
+# there are actual cursor files in here for X to find, which is what the
+# launcher's XCURSOR_THEME points at. Content, never a package name alone.
+say "The mouse pointer theme"
+CURSOR_DIRS="$(find /usr/share/icons -maxdepth 2 -type d -name cursors 2> /dev/null | sort)"
+if [ -n "${CURSOR_DIRS}" ]; then
+    ok "cursor themes are installed in the runtime:"
+    printf '%s\n' "${CURSOR_DIRS}" | sed 's/^/       /'
+else
+    bad "no cursor theme is installed — Resolve would draw the tiny default X11 pointer, which is the fault this was meant to fix"
+fi
+
 say "The C library version — the VFX Reference Platform floor"
 GLIBC_VERSION="$(rpm -q --queryformat '%{VERSION}' glibc)"
 echo "  glibc is ${GLIBC_VERSION}"

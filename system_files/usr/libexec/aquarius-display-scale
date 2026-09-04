@@ -69,6 +69,12 @@
 #   aquarius-display-scale --dry-run    say what it WOULD do, change nothing
 #   aquarius-display-scale --explain    the same, with the reasoning spelled out
 #   aquarius-display-scale --status     what each screen is set to right now
+#   aquarius-display-scale --effective-scale
+#                                       print ONE number and nothing else: the
+#                                       scale this session is running at. For
+#                                       programs, not for people — it is how
+#                                       aquarius-resolve-launch knows how big to
+#                                       make DaVinci Resolve.
 #
 # The friendly front door is `aq display`. Try `aq display --help`.
 #
@@ -416,6 +422,39 @@ def decide(screens, conf, monitors_xml_text):
     return decisions
 
 
+def effective_scale(screens, conf, monitors_xml_text):
+    """One number: how much this session is scaling everything by.
+
+    WHY A SINGLE NUMBER AT ALL, when scale is a per-screen thing: because the
+    program that reads this is a launcher for an X11 application, and an X11
+    application gets one scale for the whole of itself no matter how many
+    monitors it is dragged across. That is a limit of X11 and no desktop solves
+    it. One number is the honest shape of the answer.
+
+    WITH SCREENS   the largest of the scales this session decided on. Largest,
+                   not first: a window that is slightly too big can be resized,
+                   and one that is too small on a 4K screen cannot be read.
+    WITHOUT THEM   this is being run from GNOME or over SSH, where wlr-randr
+                   answers nothing. Then: your own setting, then the scale you
+                   gave GNOME, then 1.
+    """
+    if screens:
+        chosen = [scale for _screen, scale, _reason in decide(screens, conf, monitors_xml_text)]
+        if chosen:
+            return clamp(max(chosen))
+
+    mine = scale_from_conf(conf, "")
+    if mine is not None:
+        return mine
+
+    if monitors_xml_text:
+        gnome_scales, _reason = scales_from_monitors_xml(monitors_xml_text, [])
+        if gnome_scales:
+            return clamp(max(gnome_scales.values()))
+
+    return 1.0
+
+
 def apply(decisions, dry_run, runner=None):
     """Tell the window manager. One wlr-randr call per screen that needs one."""
     runner = runner or _run
@@ -453,6 +492,17 @@ def main(argv=None):
                         help="the same as --dry-run, with the reasoning")
     parser.add_argument("--status", action="store_true",
                         help="what each screen is set to right now")
+    # ------------------------------------------------------------------------
+    # --effective-scale — one number, for a program to read
+    # ------------------------------------------------------------------------
+    # ⚠️ IT MUST ALWAYS ANSWER, AND ALWAYS WITH A NUMBER. It is read by the
+    # DaVinci Resolve launcher, which can be run from the Aquarius Desktop (where
+    # there are screens to ask about), from GNOME (where wlr-randr answers
+    # nothing at all), or over SSH. An empty answer there would mean Resolve
+    # opening at the wrong size with nothing saying why, so every path below
+    # ends in a number and 1 is the last resort.
+    parser.add_argument("--effective-scale", action="store_true",
+                        help="print the one number this session is scaled by")
     # The two below exist so that this program can be tested without a monitor,
     # in a container, in CI. They are not for people.
     parser.add_argument("--outputs-from", metavar="FILE",
@@ -476,6 +526,18 @@ def main(argv=None):
             else outputs_from_text(raw)
     else:
         screens = read_outputs()
+
+    conf_for_scale = read_conf(conf_path)
+    monitors_for_scale = ""
+    try:
+        with open(monitors_path, "r", encoding="utf-8") as handle:
+            monitors_for_scale = handle.read()
+    except OSError:
+        pass
+
+    if args.effective_scale:
+        print("%g" % effective_scale(screens, conf_for_scale, monitors_for_scale))
+        return 0
 
     if not screens:
         say("no screens were found. That normally means this was run outside the")

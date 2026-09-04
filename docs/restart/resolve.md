@@ -8,11 +8,19 @@
 
 Open your apps, click **Install DaVinci Resolve**, pick the file you downloaded
 from Blackmagic, and wait about fifteen minutes. A window shows you the six
-steps as they happen. Resolve then sits in your dock like any other program.
+steps as they happen. Resolve then sits in your dock like any other program, at
+the same size as everything else on your screen and with your own mouse pointer.
 
-You never see a terminal, and you never type anything.
+You never see a terminal, and you never type anything. The way out is a window
+too — **Remove DaVinci Resolve**, in the same place.
 
 Everything below explains what happened and what to do when it does not.
+
+> **A note on wording.** Resolve runs inside *its own protected environment* on
+> this computer. That is what the windows call it and what this guide calls it
+> in the parts written for you. Further down, in the part written for whoever
+> maintains AquariusOS, it is called what it is: a Rocky Linux container. Same
+> thing, two audiences.
 
 ---
 
@@ -233,16 +241,23 @@ for older-style programs. Resolve has no Wayland version — not on AquariusOS,
 not on any Linux, in 2026 — so this is how it runs everywhere. You will not
 notice, and there is nothing to change.
 
-**Set the interface size, inside Resolve.** On a big 4K screen Resolve's own
-interface starts small:
+**It should already be the right size.** Resolve used to open tiny on a 4K
+screen, and every guide on the internet still tells you to fix that by hand.
+AquariusOS does it for you: the launcher reads the size your desktop is set to
+and hands it to Resolve on the way in.
 
-> DaVinci Resolve menu → **Preferences** → **User** → **UI Settings** →
-> **Interface Scale**
+If you want Resolve at a different size from everything else:
 
-Set it and restart Resolve. **Do this inside Resolve, not with the system's
-display scale.** Resolve ignores the system setting and has better scaling of
-its own, because it knows which parts of its interface should grow and which
-should not. Forcing the system's scaling on top gives you blurry text.
+```
+aq resolve scale 1.5     Resolve at 150%, whatever the desktop is at
+aq resolve scale         what it is set to, and where that came from
+aq resolve scale auto    go back to following the desktop
+```
+
+It takes effect the next time Resolve starts. Resolve's own setting — **DaVinci
+Resolve menu → Preferences → User → UI Settings → Interface Scale** — still
+works too, and is the better tool for fine adjustment, because Resolve knows
+which parts of its interface should grow and which should not.
 
 **Check it found the graphics card.**
 
@@ -251,6 +266,39 @@ should not. Forcing the system's scaling on top gives you blurry text.
 *GPU processing mode* should say **CUDA**, and your card should be listed. If it
 says the mode is unsupported, go to
 *[When something is wrong](#when-something-is-wrong)*.
+
+---
+
+## The bench list for the size and the pointer, Royce
+
+Five minutes, in this order. It is worth doing them as a list, because the two
+Qt variables cannot be compared once you have started changing things by hand.
+
+1. **Open Resolve from the app grid.** Is its interface the same sort of size as
+   everything else on the 4K screen — menus, buttons, text readable from where
+   you sit? That is the whole fix working.
+2. **Look at the mouse pointer inside the Resolve window.** It should be the
+   same arrow, at the same size, as on the desktop behind it. A tiny black arrow
+   means the pointer half has not worked.
+3. **Start it from a terminal once** — `aq resolve run` — and read the line it
+   prints. It says the scale, which variable it used, and the pointer size:
+   `interface at 1.25x (scale-factor), pointer Adwaita at 30px`.
+4. **If the size is wrong, try the other variable** and say which looked better:
+
+   ```
+   echo 'qt_variable=device-pixel-ratio' >> ~/.config/aquarius/resolve.conf
+   aq resolve run
+   ```
+
+   Then delete that line to go back. This is the one thing CI genuinely cannot
+   answer — there is no Resolve and no screen in a build machine — so whichever
+   of the two you say looks right becomes the default.
+5. **Try `aq resolve scale 1.5`, open Resolve, then `aq resolve scale auto`.**
+   The first should be visibly bigger than step 1; the second should put it
+   back.
+6. **Open "Remove DaVinci Resolve" and read page one without pressing
+   anything.** Does it say plainly what goes and what stays? Is the settings
+   switch off?
 
 ---
 
@@ -327,12 +375,16 @@ decision somebody makes, not something that happens to you. It is one line in
 ```
 aq resolve status     is it installed, and can it see the graphics card
 aq resolve run        start Resolve (same as clicking the icon)
-aq resolve shell      a terminal INSIDE the container
-aq resolve remove     delete the container
+aq resolve scale 1.5  how big Resolve's own interface is drawn
+aq resolve shell      a terminal INSIDE the environment Resolve runs in
+aq resolve remove     remove Resolve and that environment
 aq resolve --help     all of the above, explained
 
 aq resolve install --gui         set it up in the window, from a terminal
 aq resolve install --dry-run     a rehearsal that installs nothing at all
+aq resolve remove --gui          remove it in the window
+aq resolve remove --purge        also delete your Resolve settings and projects
+                                 database. Never the default.
 ```
 
 **`aq resolve status` is where to start when something is wrong.** It reports
@@ -340,16 +392,25 @@ more than "is it installed": it asks *inside* the container whether the graphics
 card is visible, which is the question that actually matters and the one you
 cannot answer by looking from outside.
 
-**`aq resolve shell` puts you inside the Rocky Linux.** Your home folder is the
-same folder in there. `exit` brings you back. You do not need this in normal
+**`aq resolve shell` puts you inside the environment Resolve runs in.** Your
+home folder is the same folder in there. `exit` brings you back. You do not need this in normal
 use; it is for looking at Resolve's own log files, which are at
 `~/.local/share/DaVinciResolve/logs`.
 
-**`aq resolve remove` is safe.** It deletes the container and Resolve with it.
+**`aq resolve remove` is safe, and there is a window for it.** "Remove DaVinci
+Resolve" in your apps is the same job with no terminal: it says exactly what
+goes and what stays, and does it with the same list of steps the installer uses.
+
 **Your projects and media are not in there** — they are in your ordinary
-folders, which the container only borrows while it is running. Removing and
-re-installing is the correct first move whenever a setup has gone wrong, and it
-costs you nothing but time.
+folders, which that environment only borrows while it is running. Nor are your
+Resolve *settings*: the project library, your preferences and your keyboard
+customisations live in `~/.local/share/DaVinciResolve` and are **kept** unless
+you tick "Also delete my Resolve settings and project database", which is off
+every time you open the window.
+
+Removing and re-installing is the correct first move whenever a setup has gone
+wrong, it costs you nothing but time, and with your settings kept it comes back
+looking like the same computer.
 
 ---
 
@@ -402,13 +463,59 @@ missing from the container. `aq resolve remove` and re-install; if it persists,
 the runtime image needs a package adding to
 `resolve-runtime/packages-required.txt`.
 
+### Resolve's interface is still too small (or too big)
+
+AquariusOS hands Resolve the size your desktop is set to. If that has not
+worked, there are two things to try, in this order.
+
+**One: set it yourself.**
+
+```
+aq resolve scale          what it thinks the size should be, and why
+aq resolve scale 1.5      fix it at 150%
+```
+
+Close Resolve and open it again — Qt, the toolkit Resolve is built on, reads its
+scale once at startup and nothing can change it afterwards.
+
+**Two: try Resolve's other scaling variable.** Resolve is built on Qt 5, which
+has two mechanisms for this, and different builds of Resolve have been reported
+to respect different ones. AquariusOS uses `QT_SCALE_FACTOR` by default, because
+it is the one Qt still documents and the only one that handles fractional sizes
+like 1.25 properly. The other is `QT_DEVICE_PIXEL_RATIO`, which is what most
+DaVinci Resolve advice on the internet names, and which prefers whole numbers.
+
+```
+echo 'qt_variable=device-pixel-ratio' >> ~/.config/aquarius/resolve.conf
+```
+
+Then start Resolve again. To go back, delete that line.
+
+⚠️ **Never set both at once by hand.** Qt 5 reads both, and where both are set
+they can multiply — 1.25 and 1.25 becoming 1.56 — which looks like the scaling
+being broken rather than being applied twice. The launcher deliberately sets one
+or the other, never the pair.
+
+The launcher says which it used, so if you started Resolve from a terminal the
+answer is on screen:
+
+```
+aquarius-resolve-launch: interface at 1.25x (scale-factor), pointer Adwaita at 30px
+```
+
 ### The window is bigger than the screen
 
 Resolve sizes its own window, and on a 4K display it occasionally opens one
 whose edges — including its close button — are off the display.
 
-Start it once with its own scaling switched off, get a window you can see, set
-the Interface Scale properly in Preferences, and never do this again:
+Start it once at 100%, get a window you can see, and set the size properly
+afterwards:
+
+```
+aq resolve scale 1
+```
+
+...or, for one launch only, without saving anything:
 
 ```
 AQUARIUS_RESOLVE_SCALE=1 /usr/libexec/aquarius-resolve-launch
@@ -420,9 +527,15 @@ right-drag to resize it.
 
 ### The mouse pointer inside Resolve looks wrong
 
-It should not any more — the launcher carries your desktop's cursor theme into
-the container on purpose. If it happens, it means the app-menu entry is not
-going through our launcher. Check:
+It should not any more. The launcher carries your desktop's cursor theme into
+the environment on purpose, **and its size multiplied by your screen scale** —
+a 24-pixel pointer becomes 30 at 125% and 36 at 150%, so it matches the one
+outside Resolve instead of shrinking as you scale up. The theme is also
+installed inside the environment, so the common case works even if the shared
+folder is not where the launcher expects.
+
+If it still happens, it means the app-menu entry is not going through our
+launcher. Check:
 
 ```
 grep Exec ~/.local/share/applications/*[Rr]esolve*.desktop

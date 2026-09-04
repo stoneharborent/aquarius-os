@@ -104,6 +104,19 @@ if [ -e "${HELPER}" ]; then
     esac
 fi
 
+# ⚠️ AND IT HAS TO SAY WHERE THE SHARED PIECES ARE. Since 2026-09-04 the step
+# rows and the Details log live in /usr/lib/aquarius/python/aquarius_ui.py,
+# shared with the two DaVinci Resolve windows. Without this line the window
+# fails on its first widget and the first-login window never appears.
+say "The window knows where the shared pieces are"
+aq_file_has "${CHOOSER}" 'sys\.path\.insert\(0, "/usr/lib/aquarius/python"\)' \
+    "the chooser adds the shared-window folder to its search path"
+if python3 -c 'import sys; sys.path.insert(0, "/usr/lib/aquarius/python"); import aquarius_ui; print("  aquarius_ui imported")'; then
+    ok "the shared window pieces import cleanly"
+else
+    bad "aquarius_ui cannot be imported — this window would fail to open"
+fi
+
 say "Python can build the window"
 # Two separate questions, because they fail for different reasons and a build
 # log that says which is a build log worth reading.
