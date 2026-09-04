@@ -44,6 +44,10 @@ on:
       # Phase R3b — the creator apps layer and the ingest helper. Same
       # arrangement: builds and checks, never publishes.
       - restart/r3-apps
+      # Carrying the first-login creator-apps hook back into the aquarius-shell
+      # repository's own session files, and taking the shell commit that has it.
+      # Same arrangement again: builds and checks, never publishes.
+      - restart/shell-autostart
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
