@@ -55,6 +55,7 @@ APP_ROOT="/usr/lib/aquarius"
 PREINSTALL_FILE="/usr/share/flatpak/preinstall.d/aquarius-creator-apps.preinstall"
 OVERRIDE_DIR="/usr/share/aquarius/flatpak-overrides"
 PREINSTALL_SERVICE="aquarius-flatpak-preinstall.service"
+CATALOG_FILE="/usr/share/aquarius/apps/catalog.ini"
 
 # ------------------------------------------------------------------------------
 # WHICH VERSION OF OUR OWN APPS THIS IMAGE SHIPS
@@ -828,17 +829,81 @@ fi
 # So we supply the trigger, and only the trigger. The list format, the reading
 # of it, the installing, and the rule that a removed app stays removed are all
 # Flatpak's.
+#
+# ⚠️ CHANGED 2026-09-04 — THE TRIGGER IS NO LONGER PULLED AUTOMATICALLY. This
+#    service used to be enabled here, so a new machine downloaded all sixteen
+#    apps on its first boot without being asked. It is now deliberately NOT
+#    enabled: the app chooser at first login asks the person which of them they
+#    want, and installs those. The service remains as the "install the lot"
+#    path, started by hand or by `aq apps install --all`.
+#
+#    The check below therefore asserts the OPPOSITE of what it used to. An
+#    image that ships this service enabled is a regression, and the build says
+#    so, because the symptom on a real machine — ten gigabytes of unasked-for
+#    downloading — is one nobody would thank us for.
 # ------------------------------------------------------------------------------
-say "The first-boot app installer"
+say "The app installer (present, and deliberately not switched on)"
 
 [ -x /usr/libexec/aquarius-flatpak-preinstall ] \
     || die "/usr/libexec/aquarius-flatpak-preinstall is missing or not executable."
 
-systemctl enable "${PREINSTALL_SERVICE}"
 if systemctl is-enabled "${PREINSTALL_SERVICE}" > /dev/null 2>&1; then
-    ok "${PREINSTALL_SERVICE} is switched on"
+    bad "${PREINSTALL_SERVICE} is switched on — it would download every app before anybody was asked; the chooser is supposed to ask first"
 else
-    bad "${PREINSTALL_SERVICE} is not switched on — the creator apps would never be fetched"
+    ok "${PREINSTALL_SERVICE} is not switched on (correct — the chooser asks first)"
+fi
+
+# The parser, run against the real shipped list, exactly as it will run on a
+# machine. This is the check that would have caught the 2026-09-04 fault, in
+# which an unreadable file pattern made the reading return nothing at all and
+# the service concluded there was nothing to install.
+say "Reading the shopping list with the real parser"
+AQ_PARSED="$(/usr/libexec/aquarius-flatpak-preinstall --list | wc -l)"
+AQ_BLOCKS="$(grep -c '^\[Flatpak Preinstall ' "${PREINSTALL_FILE}")"
+if [ "${AQ_PARSED}" -eq "${AQ_BLOCKS}" ] && [ "${AQ_PARSED}" -gt 0 ]; then
+    ok "the parser finds all ${AQ_PARSED} apps on the list"
+else
+    bad "the parser found ${AQ_PARSED} apps but the list has ${AQ_BLOCKS} — the reading is broken, and a machine would install nothing"
+fi
+
+# ------------------------------------------------------------------------------
+# The words the chooser puts on screen
+# ------------------------------------------------------------------------------
+# The catalog carries the name, sentence and category for each app. It has to
+# describe exactly the apps on the shopping list — no more, no fewer — or the
+# chooser either shows an app nobody can install or silently hides one that is
+# about to be.
+say "The app catalog (the names and descriptions the chooser shows)"
+[ -r "${CATALOG_FILE}" ] \
+    || die "${CATALOG_FILE} is missing — it ships in system_files/ and the chooser cannot be drawn without it."
+
+AQ_CATALOGUED="$(/usr/libexec/aquarius-flatpak-preinstall --catalog | wc -l)"
+if [ "${AQ_CATALOGUED}" -eq "${AQ_BLOCKS}" ]; then
+    ok "all ${AQ_CATALOGUED} apps have a name and a description"
+else
+    bad "only ${AQ_CATALOGUED} of ${AQ_BLOCKS} apps have a catalog entry — the missing ones are named above"
+    /usr/libexec/aquarius-flatpak-preinstall --catalog > /dev/null || true
+fi
+
+# The other direction: an entry describing an app that is not on the list.
+comm -13 \
+    <(printf '%s\n' "${AQ_IDS}") \
+    <(grep '^\[' "${CATALOG_FILE}" | tr -d '[]' | sort) > /tmp/aq-catalog-extra.txt
+if [ -s /tmp/aq-catalog-extra.txt ]; then
+    bad "the catalog describes apps that are not on the shopping list, so nobody can install them:"
+    sed 's/^/       /' /tmp/aq-catalog-extra.txt
+else
+    ok "the catalog describes nothing that is not on the list"
+fi
+
+# Every entry must sit on one of the five shelves the chooser knows how to draw.
+AQ_BAD_CATEGORY="$(/usr/libexec/aquarius-flatpak-preinstall --catalog \
+    | awk -F'\t' '$4 !~ /^(Video|Audio|Design|Streaming|Utilities)$/ {print $1 " -> " $4}')"
+if [ -z "${AQ_BAD_CATEGORY}" ]; then
+    ok "every app is on one of the five shelves the chooser draws"
+else
+    bad "these apps name a category the chooser does not know:"
+    printf '%s\n' "${AQ_BAD_CATEGORY}" | sed 's/^/       /'
 fi
 
 # The command the service depends on. Fedora 44 ships flatpak 1.18, which has

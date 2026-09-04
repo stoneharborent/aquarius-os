@@ -1686,15 +1686,110 @@ jobs:
           if [ "${runtimes}" -ge 5 ]; then ok "${runtimes} entries are marked IsRuntime=true (the OBS plug-ins and the Vulkan layer)"
           else bad "only ${runtimes} entries are marked IsRuntime=true — a plug-in without it is never found"; fi
 
-          # The trigger. Fedora ships the folder and the command and nothing
-          # that runs it, so this service is the whole reason any of it happens.
+          # The installer must be PRESENT and must NOT be switched on. Since
+          # 2026-09-04 the app chooser asks the person which apps they want;
+          # an image that enables this service downloads about ten gigabytes
+          # before anybody has been asked, which is the behaviour we removed.
           if systemctl is-enabled aquarius-flatpak-preinstall.service >/dev/null 2>&1; then
-            ok "the first-boot installer is switched on"
+            bad "aquarius-flatpak-preinstall.service is switched on — it would fetch every app before the person was asked; the chooser is supposed to ask first"
           else
-            bad "aquarius-flatpak-preinstall.service is not switched on — nothing would ever fetch the apps"
+            ok "the installer is not switched on (correct — the chooser asks first)"
           fi
           if [ -x /usr/libexec/aquarius-flatpak-preinstall ]; then ok "the installer script is there and runnable"
           else bad "/usr/libexec/aquarius-flatpak-preinstall is missing"; fi
+
+          # ------------------------------------------------------------------
+          # RUN THE REAL PARSER AGAINST THE REAL FILE
+          # ------------------------------------------------------------------
+          # This is the check that was missing on 2026-09-04, when a reading
+          # fault made the installer see zero apps on a full list and write the
+          # "never look again" marker. Every check above reads the list file;
+          # none of them ran the code that reads it on a real machine. These do.
+          PARSED="$(/usr/libexec/aquarius-flatpak-preinstall --list | wc -l)"
+          if [ "${PARSED}" -eq "${blocks}" ]; then
+            ok "the installer's own parser finds all ${PARSED} apps"
+          else
+            bad "the parser finds ${PARSED} apps but the list holds ${blocks} — a machine would install the wrong set, or nothing"
+          fi
+
+          # THE EXACT BENCH CONDITION. /etc/flatpak/preinstall.d/ is empty on
+          # every new machine — nobody has changed anything yet — and that
+          # empty folder is what broke the reading. Prove it is harmless.
+          rm -rf /etc/flatpak/preinstall.d
+          mkdir -p /etc/flatpak/preinstall.d
+          PARSED_EMPTY="$(/usr/libexec/aquarius-flatpak-preinstall --list | wc -l)"
+          if [ "${PARSED_EMPTY}" -eq "${blocks}" ]; then
+            ok "with an empty /etc/flatpak/preinstall.d (a brand-new machine) it still finds all ${PARSED_EMPTY}"
+          else
+            bad "with an empty /etc/flatpak/preinstall.d it finds ${PARSED_EMPTY} of ${blocks} — this is the 2026-09-04 fault, back again"
+          fi
+
+          # And an empty answer must be a loud failure, never a quiet success
+          # that writes the marker. Checked by hiding the list from it.
+          mv /usr/share/flatpak/preinstall.d /usr/share/flatpak/preinstall.d.hidden
+          rm -f /etc/aquarius/flatpak-preinstall-done
+          if /usr/libexec/aquarius-flatpak-preinstall >/tmp/empty.txt 2>&1; then
+            bad "with no list at all the installer reported SUCCESS — that is how a machine silently never gets its apps"
+          else
+            ok "with no list at all the installer fails loudly (exit $?) instead of pretending it is done"
+          fi
+          if grep -q 'ERROR' /tmp/empty.txt; then ok "and it says ERROR in plain words"
+          else bad "it failed without saying why:"; sed 's/^/       /' /tmp/empty.txt; fi
+          if [ -e /etc/aquarius/flatpak-preinstall-done ]; then
+            bad "it wrote the 'already done' marker on an empty list — the machine would never try again"
+          else
+            ok "it wrote no 'already done' marker (correct — it must try again)"
+          fi
+          mv /usr/share/flatpak/preinstall.d.hidden /usr/share/flatpak/preinstall.d
+
+          # ------------------------------------------------------------------
+          # THE CATALOG THE CHOOSER WINDOW IS DRAWN FROM
+          # ------------------------------------------------------------------
+          CAT=/usr/share/aquarius/apps/catalog.ini
+          if [ -s "${CAT}" ]; then ok "the app catalog is in the image"
+          else bad "${CAT} is missing — the chooser would have no names to show"; fi
+
+          /usr/libexec/aquarius-flatpak-preinstall --catalog > /tmp/catalog.txt 2>/tmp/catalog.err
+          CAT_RC=$?
+          if [ "${CAT_RC}" -eq 0 ]; then ok "--catalog describes every app on the list"
+          else bad "--catalog failed (exit ${CAT_RC}):"; sed 's/^/       /' /tmp/catalog.err; fi
+
+          CAT_LINES="$(wc -l < /tmp/catalog.txt)"
+          if [ "${CAT_LINES}" -eq "${blocks}" ]; then ok "${CAT_LINES} catalog lines for ${blocks} apps"
+          else bad "${CAT_LINES} catalog lines for ${blocks} apps — the chooser would show the wrong set"; fi
+
+          # The contract other programs read: eight tab-separated fields.
+          FIELDS="$(awk -F'\t' '{print NF}' /tmp/catalog.txt | sort -u | tr '\n' ' ')"
+          if [ "${FIELDS}" = "8 " ]; then ok "every catalog line has the promised 8 fields"
+          else bad "catalog lines have ${FIELDS}fields — the chooser is written against exactly 8"; fi
+
+          if awk -F'\t' '$4 !~ /^(Video|Audio|Design|Streaming|Utilities)$/' /tmp/catalog.txt | grep -q .; then
+            bad "an app names a category the chooser cannot draw:"
+            awk -F'\t' '$4 !~ /^(Video|Audio|Design|Streaming|Utilities)$/ {print "       " $1 " -> " $4}' /tmp/catalog.txt
+          else
+            ok "every app sits on one of the five shelves the chooser draws"
+          fi
+
+          # 11 apps a person picks from, 5 plug-ins that follow OBS Studio.
+          VISIBLE="$(awk -F'\t' '$6=="runtime:no"' /tmp/catalog.txt | wc -l)"
+          HIDDEN="$(awk -F'\t' '$6=="runtime:yes"' /tmp/catalog.txt | wc -l)"
+          if [ "${VISIBLE}" -eq 11 ] && [ "${HIDDEN}" -eq 5 ]; then
+            ok "the chooser would offer ${VISIBLE} apps and quietly bring ${HIDDEN} plug-ins with OBS"
+          else
+            bad "the chooser would offer ${VISIBLE} apps with ${HIDDEN} plug-ins — expected 11 and 5"
+          fi
+
+          # Every plug-in must say which app it belongs to, or it can never be
+          # installed: the chooser never offers one directly.
+          if awk -F'\t' '$6=="runtime:yes" && $7=="requires:-"' /tmp/catalog.txt | grep -q .; then
+            bad "a plug-in does not say which app it belongs to, so nothing would ever install it:"
+            awk -F'\t' '$6=="runtime:yes" && $7=="requires:-" {print "       " $1}' /tmp/catalog.txt
+          else
+            ok "every plug-in names the app it arrives with"
+          fi
+
+          echo "-- what the chooser will show --"
+          awk -F'\t' '$6=="runtime:no" {printf "     [%s] %-28s %s\n", ($5=="recommended:yes" ? "x" : " "), $2, $4}' /tmp/catalog.txt
 
           # ====================================================================
           # 3. THE EXTRA PERMISSIONS
@@ -1998,13 +2093,115 @@ jobs:
 
           echo "== the scripts =="
           for f in /usr/libexec/aquarius-resolve-install \
-                   /usr/libexec/aquarius-resolve-install-gui \
                    /usr/libexec/aquarius-resolve-launch; do
             if [ -x "$f" ]; then ok "$(basename "$f") is present and runnable"
             else bad "$f is missing or not runnable"; fi
             if bash -n "$f" 2>/tmp/syn.txt; then ok "$(basename "$f") is valid shell"
             else bad "$f has a syntax error"; cat /tmp/syn.txt; fi
           done
+
+          echo "== the installer window =="
+          # "Install DaVinci Resolve" in the app grid opens a real application
+          # window, not a terminal. It is Python against GTK 4 and libadwaita,
+          # so three things have to be true, and a missing one shows up as an
+          # icon that does nothing when clicked.
+          GUI=/usr/libexec/aquarius-resolve-installer
+          if [ -x "${GUI}" ]; then ok "aquarius-resolve-installer is present and runnable"
+          else bad "${GUI} is missing or not runnable — 'Install DaVinci Resolve' would do nothing"; fi
+          if python3 -c 'import py_compile, sys; py_compile.compile(sys.argv[1], cfile="/tmp/aq-gui-check.pyc", doraise=True)' "${GUI}" 2>/tmp/py.txt; then
+            ok "aquarius-resolve-installer is valid Python"
+          else
+            bad "${GUI} has a syntax error"; cat /tmp/py.txt
+          fi
+          # Importing needs no screen — it loads the typelib files and stops.
+          # This is the check that catches a missing python3-gobject, which is
+          # the one package of the three that GNOME does not already bring in.
+          if python3 -c 'import gi; gi.require_version("Gtk","4.0"); gi.require_version("Adw","1"); from gi.repository import Gtk, Adw' 2>/tmp/gi.txt; then
+            ok "Python can reach GTK 4 and libadwaita"
+          else
+            bad "Python cannot import GTK 4 and libadwaita — the installer window could not be drawn"
+            cat /tmp/gi.txt
+          fi
+          for pkg in python3-gobject gtk4 libadwaita; do
+            if rpm -q "${pkg}" > /dev/null 2>&1; then
+              ok "${pkg} $(rpm -q --queryformat '%{VERSION}' "${pkg}")"
+            else
+              bad "${pkg} is NOT installed — the installer window is built out of it"
+            fi
+          done
+
+          echo "== the progress channel the window reads =="
+          # The window and the installer script have to agree on a handful of
+          # structured lines, and the only way to know they still do is to run
+          # them. --dry-run walks all six steps and installs nothing at all, so
+          # this is safe here: no graphics card, no download, no network.
+          #
+          # It is also what Royce runs on the bench to look at the window
+          # without reinstalling Resolve:  aq resolve install --gui --dry-run
+          if /usr/libexec/aquarius-resolve-install --dry-run --progress-fd 3 \
+               3>/tmp/progress.txt >/tmp/dryrun.txt 2>&1; then
+            ok "the rehearsal ran"
+          else
+            bad "'aquarius-resolve-install --dry-run' does not run"
+            cat /tmp/dryrun.txt
+          fi
+          echo "       --- what came back on the progress channel ---"
+          sed 's/^/       /' /tmp/progress.txt
+
+          # In order, 1..6, and nothing skipped. The window draws its list of
+          # steps from these, so a gap here is a window that never ticks a box.
+          n=0
+          while IFS= read -r line; do
+            case "${line}" in
+              "STEP "*)
+                n=$((n + 1))
+                want="STEP ${n}/6 "
+                case "${line}" in
+                  "${want}"*) : ;;
+                  *) bad "expected a line starting '${want}' and got: ${line}" ;;
+                esac
+                ;;
+            esac
+          done < /tmp/progress.txt
+          if [ "${n}" = "6" ]; then
+            ok "all six steps were announced, in order"
+          else
+            bad "the rehearsal announced ${n} steps, not 6"
+          fi
+          if grep -q '^PERCENT ' /tmp/progress.txt; then
+            ok "PERCENT lines are sent — the bar can fill rather than only pulse"
+          else
+            bad "no PERCENT line was sent"
+          fi
+          if [ "$(tail -1 /tmp/progress.txt)" = "DONE" ]; then
+            ok "it ends with DONE, which is what moves the window to its last page"
+          else
+            bad "the rehearsal did not end with DONE — the window would never say it had finished"
+          fi
+          # A rehearsal that installed something would be a serious bug.
+          if [ -e /opt/resolve ] || podman container exists aquarius-resolve 2>/dev/null; then
+            bad "--dry-run changed something. It must change nothing at all."
+          else
+            ok "the rehearsal changed nothing, which is the whole point of it"
+          fi
+
+          echo "== the two questions the window asks before it starts =="
+          # Captured, not piped into grep: `grep -q` stops early and pipefail
+          # then reports the killed producer as a failed pipeline.
+          GPU_LINE="$(/usr/libexec/aquarius-resolve-install --gpu-summary || true)"
+          echo "       ${GPU_LINE}"
+          if printf '%s' "${GPU_LINE}" | grep -Eq "^(ok|warn|none)$(printf '\t')"; then
+            ok "'--gpu-summary' answers as a word, a tab and a sentence"
+          else
+            bad "'--gpu-summary' does not answer in the shape the window reads"
+          fi
+          # There is no Resolve download in a build container, so finding one
+          # would mean the search is matching something it should not.
+          if /usr/libexec/aquarius-resolve-install --find-installer >/dev/null 2>&1; then
+            bad "'--find-installer' claims to have found a Resolve download in a container that has none"
+          else
+            ok "'--find-installer' correctly finds nothing here"
+          fi
 
           echo "== which runtime container this image will pull =="
           ENVFILE=/usr/share/aquarius/resolve/runtime.env
@@ -2050,6 +2247,14 @@ jobs:
             else
               bad "it is not a valid desktop entry — the app grid would silently ignore it"
             fi
+            grep -q '^Exec=/usr/libexec/aquarius-resolve-installer$' "${DESK}" \
+              && ok "it opens the installer window" \
+              || bad "it does not point at /usr/libexec/aquarius-resolve-installer"
+            # Must match the application id the window sets, or a running
+            # installer appears in the dock as a nameless generic window.
+            grep -q '^StartupWMClass=org.aquariusos.ResolveInstaller$' "${DESK}" \
+              && ok "the desktop can tell which window belongs to it" \
+              || bad "StartupWMClass does not match the window's application id"
           fi
 
           echo "== the aq resolve command =="

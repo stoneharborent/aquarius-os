@@ -49,6 +49,7 @@
 set -uo pipefail
 
 LIST_DIRS=(/usr/share/flatpak/preinstall.d /etc/flatpak/preinstall.d)
+CATALOG_FILE="/usr/share/aquarius/apps/catalog.ini"
 OVERRIDE_SRC="/usr/share/aquarius/flatpak-overrides"
 OVERRIDE_DST="/var/lib/flatpak/overrides"
 STATE_DIR="/etc/aquarius"
@@ -108,14 +109,39 @@ notify() {          # notify <tag> <summary> <body>
 #
 # and a block carrying Install=false is one somebody switched off, so it is not
 # counted. A file in /etc wins over the same block in /usr by being read second.
-wanted_ids() {
-    local f found=0
+#
+# ⚠️ WHY THE FILE LIST IS BUILT UP BY HAND AND NOT JUST HANDED TO awk AS A
+#    PATTERN. This function used to end with:
+#
+#        awk '…' /usr/share/flatpak/preinstall.d/*.preinstall \
+#                /etc/flatpak/preinstall.d/*.preinstall
+#
+#    /etc/flatpak/preinstall.d/ is empty on a fresh machine — nobody has
+#    changed anything yet — and when a pattern like that matches nothing, the
+#    shell hands the pattern over UNCHANGED, as if it were a filename. awk is
+#    then asked to read a file called "*.preinstall", cannot, and gives up on
+#    the spot — before it has printed a single answer. The result was a list of
+#    zero apps on every new machine, and the message "the shopping list is
+#    empty" when the list was sitting right there with sixteen apps in it.
+#    (Found on the bench, 2026-09-04.)
+#
+#    So: look at each candidate first, keep only the ones that really exist and
+#    can be read, and give awk exactly those. No file, no awk run, no confusion
+#    between "there is nothing to install" and "the reading went wrong".
+# wanted_entries prints one line per app: the ID, a tab, and its branch (the
+# version line it lives on — "stable" for almost everything). Everything else
+# in this file, and the chooser window, is built on top of this one reading.
+wanted_entries() {
+    local d f
+    local -a files=()
     for d in "${LIST_DIRS[@]}"; do
         for f in "${d}"/*.preinstall; do
-            [ -r "${f}" ] && found=1
+            # -r is both tests at once: a pattern that matched nothing is not a
+            # readable file, and neither is one we are not allowed to open.
+            [ -r "${f}" ] && files+=("${f}")
         done
     done
-    [ "${found}" -eq 1 ] || return 0
+    [ "${#files[@]}" -gt 0 ] || return 0
     awk '
         /^\[Flatpak Preinstall / {
             id = $3; sub(/\]$/, "", id); cur = id; want[id] = 1; next
@@ -124,8 +150,125 @@ wanted_ids() {
             v = tolower($0); sub(/.*=[[:space:]]*/, "", v); gsub(/[[:space:]]/, "", v)
             if (cur != "" && (v == "false" || v == "0" || v == "no")) delete want[cur]
         }
-        END { for (id in want) print id }
-    ' "${LIST_DIRS[0]}"/*.preinstall "${LIST_DIRS[1]}"/*.preinstall 2> /dev/null | sort -u
+        /^[[:space:]]*Branch[[:space:]]*=/ {
+            v = $0; sub(/.*=[[:space:]]*/, "", v); gsub(/[[:space:]]/, "", v)
+            if (cur != "") branch[cur] = v
+        }
+        /^[[:space:]]*IsRuntime[[:space:]]*=/ {
+            v = tolower($0); sub(/.*=[[:space:]]*/, "", v); gsub(/[[:space:]]/, "", v)
+            if (cur != "" && (v == "true" || v == "1" || v == "yes")) runtime[cur] = 1
+        }
+        END {
+            for (id in want)
+                printf "%s\t%s\t%s\n", id,
+                    (branch[id] == "" ? "stable" : branch[id]),
+                    (runtime[id] ? "yes" : "no")
+        }
+    ' "${files[@]}" | sort -u
+}
+
+wanted_ids() { wanted_entries | cut -f 1; }
+
+# ------------------------------------------------------------------------------
+# catalog — the shopping list, with the human words added
+# ------------------------------------------------------------------------------
+# WHY THE HUMAN WORDS LIVE IN A SEPARATE FILE. A window that offers somebody a
+# choice of apps needs a name, a sentence, and a category for each one. None of
+# those are things a .preinstall file has a place for: that format is Flatpak's,
+# and it has exactly three keys (Install, Branch, IsRuntime).
+#
+# We could have written extra keys into it anyway and relied on Flatpak's
+# parser ignoring what it does not recognise — which it very probably would,
+# today. We did not, for one reason: THAT FILE IS THE WHOLE FEATURE. If a
+# future Flatpak ever gets stricter, the cost of being wrong is not a missing
+# label in a window, it is a machine that installs no creator apps at all. So
+# Flatpak's file stays exactly Flatpak's, and our words go beside it, in
+# /usr/share/aquarius/apps/catalog.ini.
+#
+# The two files must agree, and the build enforces it: every app on the
+# shopping list has to have an entry here, and every entry here has to be on
+# the shopping list. Neither can drift without the build failing.
+#
+# ------------------------------------------------------------------------------
+# THE OUTPUT OF `--catalog` IS A CONTRACT. Other programs read it — the app
+# chooser window is written against it. One line per app, fields separated by a
+# single TAB, always eight of them, always in this order:
+#
+#   1  id            com.obsproject.Studio
+#   2  name          OBS Studio
+#   3  description   one sentence, no tabs
+#   4  category      Video | Audio | Design | Streaming | Utilities
+#   5  recommended:  recommended:yes or recommended:no
+#   6  runtime:      runtime:yes or runtime:no
+#   7  requires:     requires:<app id>, or requires:- when nothing
+#   8  branch:       branch:stable (or whatever the list says)
+#
+# Fields 5-8 carry their own name as a prefix so that a reader can check it is
+# reading what it thinks it is reading, and so an extra field added later
+# cannot be mistaken for one of these.
+#
+# "runtime:yes" means IT IS NOT AN APPLICATION — it is a plug-in or a system
+# piece. A chooser must NOT show those as things to tick: they arrive with the
+# app named in "requires:". Of the sixteen entries, eleven are apps a person
+# picks and five are plug-ins that follow OBS Studio.
+# ------------------------------------------------------------------------------
+catalog() {
+    local entries
+    entries="$(wanted_entries)"
+    [ -n "${entries}" ] || return 1
+    if [ ! -r "${CATALOG_FILE}" ]; then
+        say "ERROR — ${CATALOG_FILE} is missing from this copy of AquariusOS; this is a bug in AquariusOS, not something you did" >&2
+        return 1
+    fi
+    printf '%s\n' "${entries}" | awk -v cat="${CATALOG_FILE}" '
+        BEGIN {
+            FS = "\t"
+            while ((getline line < cat) > 0) {
+                if (line ~ /^[[:space:]]*[#;]/) continue
+                if (line ~ /^[[:space:]]*\[/) {
+                    cur = line
+                    sub(/^[[:space:]]*\[/, "", cur); sub(/\][[:space:]]*$/, "", cur)
+                    continue
+                }
+                if (cur == "" || index(line, "=") == 0) continue
+                k = substr(line, 1, index(line, "=") - 1)
+                v = substr(line, index(line, "=") + 1)
+                gsub(/^[[:space:]]+/, "", k); gsub(/[[:space:]]+$/, "", k)
+                gsub(/^[[:space:]]+/, "", v); gsub(/[[:space:]]+$/, "", v)
+                gsub(/\t/, " ", v)
+                val[cur, k] = v
+            }
+            close(cat)
+        }
+        {
+            id = $1; br = $2; rt = $3
+            name = val[id, "Name"]
+            if (name == "") {
+                printf "no catalog entry for %s\n", id > "/dev/stderr"
+                bad = 1
+                next
+            }
+            desc = val[id, "Description"]
+            category = val[id, "Category"]
+            rec = (tolower(val[id, "Recommended"]) == "true") ? "yes" : "no"
+            req = val[id, "Requires"]
+            if (req == "") req = "-"
+            printf "%s\t%s\t%s\t%s\trecommended:%s\truntime:%s\trequires:%s\tbranch:%s\n",
+                id, name, desc, category, rec, rt, req, br
+        }
+        END { if (bad) exit 3 }
+    '
+}
+
+# Is there a shopping list in the image at all? Used to tell "this image ships
+# no list" apart from "this image ships a list we failed to read", which are
+# very different faults.
+shipped_list_exists() {
+    local f
+    for f in /usr/share/flatpak/preinstall.d/*.preinstall; do
+        [ -r "${f}" ] && return 0
+    done
+    return 1
 }
 
 # How many of those are installed right now, system-wide. Asked of the system,
@@ -140,6 +283,34 @@ count_installed() {         # count_installed <id> <id> ...
 }
 
 # ==============================================================================
+# 0. Asking it a question instead of setting it to work
+# ==============================================================================
+# `--list` prints the app IDs it would install, one per line, and stops. It
+# changes nothing and needs no special powers, so anybody can run it and the
+# build can run it too — which is the point: the fault this guards against was
+# a reading fault, and the only honest way to catch a reading fault is to make
+# the build read the real file with the real code and count the answers.
+#
+# `--dry-run` is the same thing under the name people reach for first.
+case "${1:-}" in
+    --list | --dry-run)
+        wanted_ids
+        exit 0
+        ;;
+    --catalog)
+        catalog
+        exit $?
+        ;;
+    -h | --help)
+        say "usage: $0 [--list | --catalog]"
+        say "  no arguments   install every app on the list (needs root)"
+        say "  --list         print the app IDs on the list, one per line, and stop"
+        say "  --catalog      print the list with names and descriptions, and stop"
+        exit 0
+        ;;
+esac
+
+# ==============================================================================
 # 1. Have we already finished, with this exact version of this script?
 # ==============================================================================
 if [ -r "${STAMP_FILE}" ] && [ "$(cat "${STAMP_FILE}")" = "${VER}" ]; then
@@ -150,7 +321,38 @@ fi
 say "checking the list..."
 
 # ==============================================================================
-# 2. Make sure the app store is switched on
+# 2. Read the list — and treat an empty answer as a fault, never as an answer
+# ==============================================================================
+# AquariusOS always ships a shopping list. So "there is nothing to install" is
+# not a thing that can honestly happen here: it means the reading went wrong.
+#
+# THE OLD BEHAVIOUR, AND WHY IT WAS THE WORST POSSIBLE ONE. This used to shrug,
+# say "nothing to install", and write the done-stamp — which is a promise never
+# to look again. One bad reading on first boot therefore meant a machine that
+# silently never got its creator apps, for good, with a cheerful message in the
+# log saying everything was fine. (Bench, 2026-09-04.)
+#
+# Now it says so loudly, tells the person it is our bug and not theirs, leaves
+# NO stamp, and exits non-zero so that systemd tries again and the machine
+# shows up in `systemctl --failed` instead of looking healthy.
+mapfile -t WANTED < <(wanted_ids)
+TOTAL="${#WANTED[@]}"
+
+if [ "${TOTAL}" -eq 0 ]; then
+    if shipped_list_exists; then
+        say "ERROR — the shipped list at /usr/share/flatpak/preinstall.d/ could not be read; this is a bug in AquariusOS, not something you did"
+    else
+        say "ERROR — this copy of AquariusOS ships no app list at /usr/share/flatpak/preinstall.d/ at all; this is a bug in AquariusOS, not something you did"
+    fi
+    say "no stamp is being written, so it will try again — and you can install"
+    say "them yourself at any time with:  sudo flatpak preinstall -y --system"
+    notify aq-apps "AquariusOS could not read its own app list" \
+        "This is a fault in AquariusOS, not something you did. Your creator apps have not been installed. You can install them yourself in a terminal with: sudo flatpak preinstall -y --system"
+    exit 1
+fi
+
+# ==============================================================================
+# 3. Make sure the app store is switched on
 # ==============================================================================
 # The image ships Flathub's description at /usr/share/flatpak/remotes.d/ and
 # Flatpak reads that folder by itself. Doing it again here is harmless
@@ -167,17 +369,8 @@ fi
 flatpak remote-modify --system --enable flathub || :
 
 # ==============================================================================
-# 3. Install, and count out loud while it happens
+# 4. Install, and count out loud while it happens
 # ==============================================================================
-mapfile -t WANTED < <(wanted_ids)
-TOTAL="${#WANTED[@]}"
-
-if [ "${TOTAL}" -eq 0 ]; then
-    say "the shopping list is empty. Nothing to install."
-    mkdir -p "${STATE_DIR}" && printf '%s\n' "${VER}" > "${STAMP_FILE}"
-    exit 0
-fi
-
 BEFORE="$(count_installed "${WANTED[@]}")"
 say "${TOTAL} apps on the list, ${BEFORE} already here."
 
@@ -236,7 +429,7 @@ else
 fi
 
 # ==============================================================================
-# 4. The extra permissions creator apps need
+# 5. The extra permissions creator apps need
 # ==============================================================================
 # Flatpak reads system-wide permission overrides from ONE place and it is not
 # in the image: /var/lib/flatpak/overrides/. On AquariusOS /var belongs to the
@@ -272,7 +465,7 @@ if [ -d "${OVERRIDE_SRC}" ]; then
 fi
 
 # ==============================================================================
-# 5. What happened, in one sentence
+# 6. What happened, in one sentence
 # ==============================================================================
 # Three outcomes, and the exit code is how we ask systemd for the retry we want:
 #
