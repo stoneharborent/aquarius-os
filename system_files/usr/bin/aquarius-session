@@ -309,6 +309,125 @@ export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland}"
 # portal, and there is no upside.
 
 # -----------------------------------------------------------------------------
+# WHAT LANGUAGE THIS SESSION SPEAKS
+#
+# ⚠️ THIS EXISTS BECAUSE OF THE BENCH, 2026-09-03. Running `qs` by hand printed:
+#
+#     Detected locale "C" with character encoding "ANSI_X3.4-1968",
+#     which is not UTF-8. Qt depends on UTF-8 locales ...
+#     switched to "C.UTF-8"
+#
+# WHAT THAT ACTUALLY MEANT
+#   Nothing was exporting LANG. The login screen hands a session an environment,
+#   and on a bare Fedora bootc image that environment can arrive with no LANG in
+#   it at all — at which point every program falls back to the "C" locale, whose
+#   character set is 1968-era 7-bit ASCII. Qt noticed and repaired itself, which
+#   is why the desktop still worked. GTK does not always say anything at all.
+#
+#   The symptoms if it is left alone are the quiet kind, and they are the worst
+#   kind to debug six months from now: an accented character in a filename drawn
+#   as a box in the dock, a notification from an app with an em dash in its name
+#   truncated at the dash, a sort order that puts "Ångström" after "Zoe".
+#
+# WHERE WE LOOK, AND WHY IN THIS ORDER
+#   1. ~/.config/locale.conf — your own explicit choice, so it wins. This is the
+#      same file systemd's user manager reads, not an invention of ours.
+#   2. A UTF-8 LANG we were already given. If the login screen or PAM already
+#      set a sensible language, that is the language you picked, and overriding
+#      it would be rude. Note the test is "is it UTF-8" — an inherited LANG of
+#      "C" or "POSIX" is exactly the bug, so it does NOT count as an answer.
+#   3. /etc/locale.conf — the system default. AquariusOS ships one
+#      (LANG=en_US.UTF-8, written by build_files/30-session.sh), so on our own
+#      image this is where the answer normally comes from.
+#   4. C.UTF-8 — the floor. It is not a language, it is "ASCII rules, UTF-8
+#      characters", and glibc always has it. Better than "C" in every case.
+#
+#   Whatever comes out is then CHECKED against `locale -a`. Naming a locale the
+#   machine has never generated is as broken as naming none, and it fails the
+#   same silent way — so if it is not there we fall back to C.UTF-8 and say so
+#   in the log rather than exporting a value that does nothing.
+#
+# We set LANG and nothing else. LC_ALL would override every LC_* the user has
+# deliberately set (a British person who wants US dates, say), and that is not
+# ours to do.
+# -----------------------------------------------------------------------------
+# Read LANG out of a systemd-style NAME=value file. Written as plain bash
+# rather than sed, because the value can be quoted and the quoting of a sed
+# expression that strips quotes is its own small nightmare. Last LANG= line
+# wins, which is how systemd reads these files too.
+aq_lang_from_file() {
+    local aq_file="$1" aq_line="" aq_value=""
+
+    [ -r "${aq_file}" ] || return 1
+
+    while IFS= read -r aq_line || [ -n "${aq_line}" ]; do
+        case "${aq_line}" in
+            LANG=*) aq_value="${aq_line#LANG=}" ;;
+        esac
+    done < "${aq_file}"
+
+    # Drop a trailing comment or anything after a space, then the quotes.
+    aq_value="${aq_value%%[[:space:]]*}"
+    aq_value="${aq_value%\"}"; aq_value="${aq_value#\"}"
+    aq_value="${aq_value%\'}"; aq_value="${aq_value#\'}"
+
+    [ -n "${aq_value}" ] || return 1
+    printf '%s\n' "${aq_value}"
+}
+
+# Is this a UTF-8 locale? The whole point of the exercise.
+aq_is_utf8() {
+    case "$1" in
+        *.[Uu][Tt][Ff]8 | *.[Uu][Tt][Ff]-8 | *.[Uu][Tt][Ff]_8) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Has this machine actually generated it? `locale -a` is the list. glibc spells
+# the same locale two ways — "en_US.utf8" in that list, "en_US.UTF-8" in a
+# config file — so both spellings are tried.
+aq_locale_exists() {
+    local aq_want="$1" aq_alt="${1%.*}.utf8"
+    command -v locale > /dev/null 2>&1 || return 0
+    locale -a 2> /dev/null | grep -qix -e "${aq_want}" -e "${aq_alt}"
+}
+
+aq_lang=""
+aq_lang_why=""
+
+if aq_lang="$(aq_lang_from_file "${XDG_CONFIG_HOME:-${HOME}/.config}/locale.conf")"; then
+    aq_lang_why="your own ~/.config/locale.conf"
+elif [ -n "${LANG:-}" ] && aq_is_utf8 "${LANG}"; then
+    aq_lang="${LANG}"
+    aq_lang_why="the login screen"
+elif aq_lang="$(aq_lang_from_file /etc/locale.conf)"; then
+    aq_lang_why="the system default in /etc/locale.conf"
+else
+    aq_lang="C.UTF-8"
+    aq_lang_why="nothing set one, so this is the safe floor"
+fi
+
+# C.UTF-8 is glibc's own built-in and is never absent, so it is not worth
+# asking about — and asking would produce a puzzling "the fallback does not
+# exist, falling back to it" line in the log the one time it mattered.
+if [ "${aq_lang}" != "C.UTF-8" ] && ! aq_locale_exists "${aq_lang}"; then
+    echo "  note     the locale ${aq_lang} (${aq_lang_why}) has not been generated here"
+    aq_lang="C.UTF-8"
+    aq_lang_why="falling back — the one above does not exist on this machine"
+fi
+
+# The last line of defence: whatever was decided, it has to be UTF-8. Getting
+# here with anything else would reproduce the exact bug this block is for.
+if ! aq_is_utf8 "${aq_lang}"; then
+    echo "  note     ${aq_lang} (${aq_lang_why}) is not a UTF-8 locale"
+    aq_lang="C.UTF-8"
+    aq_lang_why="forced — Qt and GTK both need UTF-8"
+fi
+
+export LANG="${aq_lang}"
+echo "  language ${LANG} (${aq_lang_why})"
+
+# -----------------------------------------------------------------------------
 # HOW BIG THE AQUARIUS SHELL DRAWS ITSELF
 #
 # ⚠️ THIS IS NOT THE SAME THING AS THE SCREEN SCALE, AND THE DIFFERENCE MATTERS.
@@ -323,9 +442,14 @@ export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland}"
 #   small" are two different complaints with two different fixes, and on the
 #   bench on 2026-09-03 they arrived together and were easy to confuse.
 #
-#   It is a design knob. It lets Royce try the bar at 1.15 or 1.25 on the real
-#   machine, in seconds, and decide whether our base sizes are right — without
-#   an edit, a rebuild, or somebody on a Mac guessing for him.
+#   It is a design knob. It let Royce try the bar at 1.15, 1.25 and 1.5 on the
+#   real machine, in seconds, without an edit, a rebuild, or somebody on a Mac
+#   guessing for him.
+#
+#   ⚠️ HE ANSWERED IT ON 2026-09-03: 1.25 for the shell, 1.5 for the dock. Those
+#   numbers are now the shell's OWN token values, so **1 is the approved size**
+#   and nobody needs to set this to get it. The knob stays because the question
+#   comes back with the next monitor.
 #
 # Set with `aq display ui 1.25`, which writes ui=1.25 into the file below.
 # Absent, unreadable or nonsense means 1, which is the design exactly as drawn.
@@ -361,8 +485,12 @@ aq_push_env() {
         systemctl --user import-environment "$@" 2> /dev/null || true
     fi
 }
+#
+# LANG is in this list for the same reason as the rest: a portal or a tray icon
+# started on demand, half an hour into the session, must speak the same language
+# and the same character set as the shell that asked for it.
 aq_push_env XDG_SESSION_TYPE XDG_SESSION_DESKTOP XDG_CURRENT_DESKTOP \
-    QS_CONFIG_PATH QT_QPA_PLATFORM AQ_LOG
+    QS_CONFIG_PATH QT_QPA_PLATFORM AQ_LOG LANG
 
 echo ""
 echo "=== Starting ==="
@@ -370,6 +498,7 @@ echo "  window manager: labwc  ($(labwc --version 2>&1 | head -1))"
 echo "  shell:          ${AQ_SHELL_DIR}"
 echo "  labwc config:   ${AQ_LABWC_CONFIG_DIR}"
 echo "  desktop name:   ${XDG_CURRENT_DESKTOP}"
+echo "  language:       ${LANG}"
 echo ""
 
 # -----------------------------------------------------------------------------

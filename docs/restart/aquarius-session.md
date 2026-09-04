@@ -104,6 +104,44 @@ Clicking the status glyphs at the top-right opens **Quick Settings**: Wi-Fi,
 Bluetooth, volume, brightness, a Focus toggle. Clicking the clock opens the
 **notification panel**.
 
+### How big it all is
+
+The bar and the dock ship at the size Royce approved on the bench on 3 September
+2026, looking at a 55-inch 4K monitor: everything 1.25 times the original design,
+and the dock 1.5 times. The dock is deliberately the odd one out — you *read* a
+bar and you *aim at* a dock, and a click target across a big desk wants to be
+bigger than the text beside it.
+
+If you want it a different size anyway, that is one command and a log out:
+
+```
+aq display ui 1.15     # smaller
+aq display ui 1.4      # bigger
+aq display ui 1        # back to the design as shipped
+```
+
+That knob moves **only the Aquarius bar and dock**. Making *everything* on the
+screen bigger — your browser, Resolve, all of it — is the screen scale, which is
+`aq display scale` and a different thing entirely. `aq display status` shows
+both; on a machine nobody has changed it says `ui=1.0`.
+
+### What language it speaks
+
+The session sets `LANG` before anything starts, because a bare Fedora image can
+hand a login session no language at all — and a program with no language falls
+back to a character set from 1968 that cannot draw an accented letter.
+
+It looks in this order: your own `~/.config/locale.conf`, then a UTF-8 language
+the login screen already gave it, then the system's `/etc/locale.conf` (which
+AquariusOS ships as `LANG=en_US.UTF-8`), and if none of those answer, `C.UTF-8`
+— which is not a language, but is at least a modern character set. Whatever it
+picks is checked against the languages actually installed, and the session log
+says which one it used and why.
+
+To change the machine's language: `localectl set-locale LANG=de_DE.UTF-8`, plus
+`rpm-ostree install glibc-langpack-de` for the language's data. For yourself
+only, put `LANG=` in `~/.config/locale.conf`.
+
 ---
 
 ## If it does not work
@@ -332,7 +370,7 @@ first.
 One line, in `aquarius-os.env`:
 
 ```
-AQUARIUS_SHELL_REF="6eea5cde57d0cc91f83c1c3f7dfca13a9e4169dd"
+AQUARIUS_SHELL_REF="df62a3126c9109b18d52b272e75c68ef3c7046db"
 ```
 
 Change the commit, push, and the next build bakes in the new one. The build
@@ -417,6 +455,16 @@ In order. Stop at the first failure and read the log.
    should turn Midnight while you watch. Set it back to `default` for Ice.
 10. **The version.** In a terminal: `qs --version` should say 0.3.1, and
     `labwc --version` should say 0.20.2.
+10b. **No locale warning.** In a terminal, run `qs` by hand. It must NOT print
+    *Detected locale "C" with character encoding "ANSI_X3.4-1968", which is not
+    UTF-8*. `echo $LANG` should say `en_US.UTF-8`, and the top of
+    `~/.local/state/aquarius-session/session.log` should have a line beginning
+    `language en_US.UTF-8`. (Press Ctrl+C to stop the second shell — you will
+    have two bars until you do.)
+10c. **The size.** The bar and dock should look the way they did on the bench at
+    `AQ_UI_SCALE=1.25` with the dock at 1.5 — because that is now the design.
+    `aq display status` should say `ui=1.0`: the knob is back at neutral, and
+    nothing is being multiplied to get this size.
 11. **Leave.** Press **Super + Shift + E**. You should be back at the login
     screen within a second or two.
 12. **Go back to GNOME.** Pick GNOME at the login screen and confirm it is

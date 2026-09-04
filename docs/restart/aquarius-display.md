@@ -145,7 +145,7 @@ belt — it is a second opinion, and the two opinions end up disagreeing.
 | Qt6 (the Aquarius Shell, Qt apps) | Asks the compositor, the same way | **Nothing.** Qt6 enables high-DPI scaling on Wayland by itself; `QT_ENABLE_HIGHDPI_SCALING` exists for Qt5-era software and would be a second opinion here. |
 | GTK3 | Asks the compositor, but only understands whole numbers | **Nothing.** At 125% it is drawn at 200% and shrunk, which is the standard behaviour everywhere. |
 | X11 / XWayland (DaVinci Resolve, some plugins) | It cannot be told | **Nothing, and nothing would help.** See the box above — use Resolve's own UI Display Scale. |
-| The Aquarius Shell's own design | `AQ_UI_SCALE`, on top of everything above | Only if you set `aq display ui`. |
+| The Aquarius Shell's own design | `AQ_UI_SCALE`, on top of everything above | Only if you set `aq display ui`. Normally unset — the shell's own sizes were moved on 2026-09-03 to the size Royce approved on the bench, so 1 already *is* that size. |
 
 So the honest summary: **the compositor does the work, we set no toolkit
 variables at all, and X11 applications are on their own.** Anything else would

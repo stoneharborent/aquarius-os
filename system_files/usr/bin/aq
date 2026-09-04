@@ -285,6 +285,12 @@ status() {
 #           "is our own design drawn too small?" without changing anything
 #           else on the screen.
 #
+#           It is normally unset, and unset is right. That question was asked
+#           and answered on the bench on 2026-09-03 — Royce judged the design
+#           on a 55" 4K and the shell's own sizes were moved to match what he
+#           approved. So 1 is the size he chose, not a size waiting to be
+#           corrected. Set this only if YOU want it different from that.
+#
 # A person who says "everything is too small" wants `scale`. A person who says
 # "the bar is too small but everything else is fine" wants `ui`.
 # =============================================================================

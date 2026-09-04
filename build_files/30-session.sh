@@ -164,6 +164,54 @@ aq_dnf install \
     distrobox
 
 # ------------------------------------------------------------------------------
+# The language the machine speaks
+# ------------------------------------------------------------------------------
+# ⚠️ THIS EXISTS BECAUSE OF THE BENCH, 2026-09-03. Running the shell by hand
+# printed:
+#
+#     Detected locale "C" with character encoding "ANSI_X3.4-1968",
+#     which is not UTF-8 ... switched to "C.UTF-8"
+#
+# A bare Fedora bootc image has NO locale set up. Two things are missing and
+# they are different things:
+#
+#   glibc-langpack-en   the en_US.UTF-8 locale data itself. Without it, that
+#                       locale does not exist on the machine and asking for it
+#                       does nothing at all. The bare base image ships no
+#                       langpack — a downstream flavour like Bazzite would have
+#                       brought one in, and this is one of the small floors we
+#                       inherited for free before and now lay ourselves.
+#   /etc/locale.conf    the file that says which one to USE. systemd reads it,
+#                       PAM hands it to every login, and without it every
+#                       program falls back to the "C" locale, whose character
+#                       set is 1968-era 7-bit ASCII.
+#
+# The symptoms of leaving it are quiet and slow to diagnose: an accented
+# character in a filename drawn as a box, a name truncated at an em dash, a sort
+# order that puts "Ångström" after "Zoe". Qt says something; GTK often does not.
+#
+# en_US.UTF-8 is the default, not a decision about what language anyone must
+# use. Changing it is `localectl set-locale LANG=...`, or a personal
+# ~/.config/locale.conf, and /usr/bin/aquarius-session honours both.
+say "The language the machine speaks (en_US.UTF-8)"
+aq_dnf install glibc-langpack-en
+
+# Written here rather than left to first boot, because "first boot sets it up"
+# is how a machine ends up with a login session that started before the setup
+# ran. In a bootc image /etc is part of the image and merged on update, which is
+# exactly what this file wants.
+cat > /etc/locale.conf <<'LOCALECONF'
+# AquariusOS default. Set by build_files/30-session.sh.
+#
+# Change it with:  localectl set-locale LANG=de_DE.UTF-8
+# (and install that language's data first: rpm-ostree install glibc-langpack-de)
+#
+# For one user only, put LANG= in ~/.config/locale.conf instead — the Aquarius
+# session reads that first, and so does systemd's user manager.
+LANG=en_US.UTF-8
+LOCALECONF
+
+# ------------------------------------------------------------------------------
 # The odds and ends every system needs
 # ------------------------------------------------------------------------------
 say "Permissions, remote access, and basic tools"
@@ -193,6 +241,7 @@ say "Checking the session floor"
 
 aq_installed \
     gdm \
+    glibc-langpack-en \
     xdg-desktop-portal \
     xdg-desktop-portal-gnome \
     xdg-desktop-portal-gtk \
@@ -208,6 +257,19 @@ aq_installed \
     polkit \
     sudo \
     openssh-server
+
+# The locale, read back rather than assumed. Two questions, because they fail
+# separately: does the file say what we wrote, and does the locale it names
+# actually exist on this machine?
+aq_file_has /etc/locale.conf '^LANG=en_US\.UTF-8$' "/etc/locale.conf sets LANG=en_US.UTF-8"
+
+# glibc lists it as "en_US.utf8" in `locale -a` and spells it "en_US.UTF-8" in a
+# config file. Same locale, two spellings; this asks about the list's spelling.
+if locale -a 2> /dev/null | grep -qix 'en_US.utf8'; then
+    ok "the en_US.UTF-8 locale is generated (no more 'not UTF-8' warnings)"
+else
+    bad "en_US.UTF-8 is named in /etc/locale.conf but is not generated — every program would silently fall back to the 7-bit C locale"
+fi
 
 # The Flathub file: does it exist, and does it actually contain a repository
 # address and a signing key? A truncated download would leave a file that is

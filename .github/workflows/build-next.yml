@@ -865,6 +865,45 @@ jobs:
             else bad "${s} has a syntax error: $(cat /tmp/synerr)"; fi
           done
 
+          # ⚠️ THE 2026-09-03 LOCALE FIX. Running the shell by hand on the bench
+          # printed 'Detected locale "C" ... which is not UTF-8'. Three things
+          # have to be true for that to stay fixed, and each fails separately:
+          # the locale data is installed, the system says which locale to use,
+          # and the session launcher actually exports it.
+          echo "== the language the machine speaks =="
+          if rpm -q glibc-langpack-en > /dev/null 2>&1; then
+            ok "glibc-langpack-en $(rpm -q --queryformat '%{VERSION}-%{RELEASE}' glibc-langpack-en)"
+          else
+            bad "glibc-langpack-en is NOT installed — en_US.UTF-8 would not exist on this machine"
+          fi
+
+          if [ -r /etc/locale.conf ]; then
+            ok "/etc/locale.conf exists"
+            echo "       $(tr '\n' ' ' < /etc/locale.conf)"
+            grep -q '^LANG=en_US\.UTF-8$' /etc/locale.conf \
+              && ok "it sets LANG=en_US.UTF-8" \
+              || bad "it does not set LANG=en_US.UTF-8 — every program falls back to the 7-bit C locale"
+          else
+            bad "/etc/locale.conf is missing — nothing tells a login which language to use"
+          fi
+
+          # glibc spells it "en_US.utf8" in this list and "en_US.UTF-8" in a
+          # config file. Same locale, two spellings.
+          if locale -a 2>/dev/null | grep -qix 'en_US.utf8'; then
+            ok "the en_US.UTF-8 locale is really generated"
+          else
+            bad "en_US.UTF-8 is named in /etc/locale.conf but was never generated"
+          fi
+
+          # And the launcher has to hand it on. A locale the session does not
+          # export is a locale the shell never sees.
+          grep -q 'export LANG=' /usr/bin/aquarius-session \
+            && ok "aquarius-session exports LANG" \
+            || bad "aquarius-session does not export LANG — the shell would start in the C locale"
+          grep -q 'aq_push_env .*LANG' /usr/bin/aquarius-session \
+            && ok "it also hands LANG to systemd and D-Bus (for portals started later)" \
+            || bad "LANG is not pushed to systemd/D-Bus — a portal started later would use the C locale"
+
           echo "== the window manager's configuration =="
           for f in rc.xml autostart shutdown environment; do
             if [ -s "/usr/share/aquarius/labwc/${f}" ]; then ok "labwc/${f}"; else bad "labwc/${f} is missing"; fi
