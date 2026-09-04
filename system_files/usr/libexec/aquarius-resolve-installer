@@ -1,0 +1,949 @@
+#!/usr/bin/python3
+# =============================================================================
+# aquarius-resolve-installer — the "Install DaVinci Resolve" window
+# =============================================================================
+# PLAIN ENGLISH
+#
+# This is what opens when somebody clicks "Install DaVinci Resolve" in their
+# apps. It is an ordinary application window — three pages, a list of steps, a
+# bar that moves — and it replaces the terminal window that used to appear.
+#
+# WHY IT REPLACED THE TERMINAL
+# Royce installed Resolve through the old flow on 2026-09-03 and it worked. What
+# he saw while it worked was a black terminal full of scrolling text. That is
+# the correct amount of INFORMATION and the wrong FEELING: on the operating
+# system whose whole reason for existing is that creative work should not feel
+# like system administration, the flagship feature looked like system
+# administration. The information is all still here — it is behind "Details",
+# one click away, and it opens itself if anything goes wrong.
+#
+# ⚠️ THIS WINDOW DOES NOT INSTALL ANYTHING. Read that again, because it is the
+# rule that keeps this file honest. Every last thing — finding the download,
+# looking at the graphics card, pulling the container, running Blackmagic's
+# installer, writing the menu entry — is done by:
+#
+#     /usr/libexec/aquarius-resolve-install
+#
+# ...which is the same script `aq resolve install` runs in a terminal. This
+# window starts it, reads what it says, and draws it. There is exactly one
+# installer on this operating system and two ways to watch it. If you are ever
+# tempted to "just do this bit here in Python", don't: put it in the script, and
+# both faces get it.
+#
+# =============================================================================
+# THE PROGRESS CHANNEL — the contract with that script
+# =============================================================================
+# The script's human output (everything you would see in a terminal) comes back
+# on stdout and goes straight into the Details log, unchanged. Separately, we
+# hand it a spare pipe and it writes short structured lines to it:
+#
+#   STEP <n>/<total> <text>   step n has begun; <text> is its name, and we show
+#                             exactly that text — the wording lives in the
+#                             script, not here. Beginning step n means steps
+#                             1..n-1 finished.
+#   PERCENT <0-100>           how far through the CURRENT step. Sent only where
+#                             there is a real number, which today means the
+#                             container download. No PERCENT is not a stall: we
+#                             show a moving bar with no end, which is honest.
+#   DONE                      everything finished. Sent once, last.
+#   FAIL <text>               stopped, and <text> says why, in words a person
+#                             can act on.
+#
+# Anything else on that pipe is ignored on purpose, so that a future line added
+# to the script cannot break an older window.
+#
+# The same list is written at the top of aquarius-resolve-install. CHANGE ONE,
+# CHANGE BOTH — and the CI job "the installer window and the progress channel"
+# runs the script's own --dry-run and checks the lines still arrive in order.
+#
+# =============================================================================
+# THE THREE PAGES
+# =============================================================================
+#   1  Choose      what will happen, which file, which graphics card, Install.
+#   2  Installing  the six steps, a bar, Details, Cancel. Becomes the failure
+#                  page in place if anything goes wrong — same log, still there.
+#   3  Done        "DaVinci Resolve is installed", Open it, Close, and the two
+#                  things worth knowing the first time it opens.
+#
+# =============================================================================
+# NOTES FOR WHOEVER MAINTAINS THIS
+# =============================================================================
+# * NO PASSWORD IS EVER ASKED FOR, and none should be. distrobox and podman here
+#   are rootless — the container is built and run as the person using it. The
+#   one part of the feature that needs root (the USB rules for a Resolve Studio
+#   licence dongle) is shipped inside the image and is already in place before
+#   anybody clicks anything. If you ever find yourself adding pkexec to this
+#   file, something else has gone wrong; fix that instead.
+#
+# * Colours are NOT set here. libadwaita follows the system light/dark setting
+#   on its own and AquariusOS's accent is set at the desktop level, so a window
+#   that paints nothing itself is automatically an AquariusOS-coloured window,
+#   in both themes, for free. The Aquarius mark at the top is the icon the image
+#   already installs (branding/tokens.md is the law for anything that ever does
+#   need a literal colour).
+#
+# * Cancel really cancels. The script is started in its own process group and
+#   Cancel signals the whole group, so podman and distrobox underneath it stop
+#   too. Nothing on the actual system has been changed at any point — the worst
+#   case is a half-built container, and `aq resolve remove` clears that, which
+#   is what the cancelled page tells you.
+#
+# * To look at this window without installing anything:
+#       aq resolve install --gui --dry-run
+# =============================================================================
+
+import os
+import re
+import signal
+import subprocess
+import sys
+import threading
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+
+from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk  # noqa: E402
+
+APP_ID = "org.aquariusos.ResolveInstaller"
+CLI = "/usr/libexec/aquarius-resolve-install"
+LAUNCHER = "/usr/libexec/aquarius-resolve-launch"
+MARK = "/usr/share/icons/hicolor/scalable/apps/aquarius-logo.svg"
+BLACKMAGIC = "https://www.blackmagicdesign.com/products/davinciresolve"
+
+# The step names drawn before anything starts. The script sends its own wording
+# with every STEP line and that wins the moment it arrives; this list is only so
+# that the page is not empty for the first second.
+DEFAULT_STEPS = [
+    "Checking your graphics card",
+    "Finding your download",
+    "Downloading the Rocky Linux runtime",
+    "Building the container",
+    "Installing DaVinci Resolve",
+    "Adding it to your apps",
+]
+
+PENDING, ACTIVE, DONE, FAILED = range(4)
+
+
+def cli_query(*args):
+    """Ask the installer script a question. Returns its answer, or ''.
+
+    Every question this window asks about the machine goes through the script,
+    so that the window and the terminal can never give different answers.
+    """
+    try:
+        out = subprocess.run(
+            [CLI, *args],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            errors="replace",
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if out.returncode != 0:
+        return ""
+    return out.stdout.strip()
+
+
+class StepRow(Adw.ActionRow):
+    """One line in the list of steps, with a spinner or a tick in front of it."""
+
+    def __init__(self, title):
+        super().__init__(title=title)
+        self.set_title_lines(0)
+        self._spinner = Gtk.Spinner()
+        # "emblem-ok-symbolic" and "dialog-error-symbolic" are in the Adwaita
+        # icon theme, which the image installs. Pending steps show nothing at
+        # all rather than a third icon: an empty box beside a grey label reads
+        # as "not yet" without needing to be learnt.
+        self._icon = Gtk.Image()
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        box.set_size_request(20, -1)
+        box.set_valign(Gtk.Align.CENTER)
+        box.append(self._spinner)
+        box.append(self._icon)
+        self.add_prefix(box)
+        self.set_state(PENDING)
+
+    def set_state(self, state):
+        self._state = state
+        self._spinner.set_visible(state == ACTIVE)
+        if state == ACTIVE:
+            self._spinner.start()
+        else:
+            self._spinner.stop()
+        self._icon.set_visible(state in (DONE, FAILED))
+        if state == DONE:
+            self._icon.set_from_icon_name("emblem-ok-symbolic")
+            self._icon.remove_css_class("error")
+            self._icon.add_css_class("success")
+        elif state == FAILED:
+            self._icon.set_from_icon_name("dialog-error-symbolic")
+            self._icon.remove_css_class("success")
+            self._icon.add_css_class("error")
+        # Steps not reached yet are dimmed, so the eye lands on the live one.
+        if state == PENDING:
+            self.add_css_class("dim-label")
+        else:
+            self.remove_css_class("dim-label")
+
+
+class InstallerWindow(Adw.ApplicationWindow):
+    def __init__(self, app, dry_run=False, preset_file=None):
+        super().__init__(application=app)
+        self.dry_run = dry_run
+        self.chosen = preset_file
+        self.proc = None
+        self.cancelled = False
+        self.finished = False
+        self.log_lines = []
+        self.step_rows = []
+        self._determinate = False
+        self._pulse_source = None
+        self.current_step = 0
+        self.step_total = len(DEFAULT_STEPS)
+
+        self.set_title("Install DaVinci Resolve")
+        self.set_default_size(620, 640)
+
+        self.stack = Gtk.Stack(
+            transition_type=Gtk.StackTransitionType.CROSSFADE,
+            transition_duration=180,
+            vexpand=True,
+        )
+        self.stack.add_named(self._build_choose_page(), "choose")
+        self.stack.add_named(self._build_working_page(), "working")
+        self.stack.add_named(self._build_done_page(), "done")
+
+        header = Adw.HeaderBar()
+        self.header_title = Adw.WindowTitle(title="Install DaVinci Resolve", subtitle="")
+        header.set_title_widget(self.header_title)
+
+        toolbar = Adw.ToolbarView()
+        toolbar.add_top_bar(header)
+        toolbar.set_content(self.stack)
+        self.set_content(toolbar)
+
+        # Escape closes the window on the pages where closing is harmless. It
+        # deliberately does NOT close mid-install: a stray key press must not be
+        # able to abandon a fifteen-minute job halfway through. Cancel is a
+        # button you have to mean.
+        keys = Gtk.EventControllerKey()
+        keys.connect("key-pressed", self._on_key)
+        self.add_controller(keys)
+        self.connect("close-request", self._on_close_request)
+
+        self._refresh_choose_page()
+
+    # -- page 1: choose -----------------------------------------------------
+
+    def _build_choose_page(self):
+        mark = Gtk.Image()
+        if os.path.exists(MARK):
+            mark.set_from_file(MARK)
+        else:
+            mark.set_from_icon_name("applications-multimedia")
+        mark.set_pixel_size(64)
+        mark.set_margin_top(8)
+
+        title = Gtk.Label(label="Install DaVinci Resolve")
+        title.add_css_class("title-1")
+        title.set_wrap(True)
+        title.set_justify(Gtk.Justification.CENTER)
+
+        # Two sentences. What will happen, and where the file comes from.
+        blurb = Gtk.Label(
+            label=(
+                "AquariusOS will set up DaVinci Resolve for you, in a small "
+                "Rocky Linux of its own so that it cannot clash with anything "
+                "else on this computer — it takes about fifteen minutes, nearly "
+                "all of it downloading.\n\n"
+                "Blackmagic do not allow anyone else to hand out their "
+                "installer, so download DaVinci Resolve for Linux from them "
+                "first, then choose the file below."
+            )
+        )
+        blurb.set_wrap(True)
+        blurb.set_justify(Gtk.Justification.CENTER)
+        blurb.add_css_class("dim-label")
+
+        group = Adw.PreferencesGroup()
+
+        self.file_row = Adw.ActionRow(title="Your download")
+        self.file_row.set_subtitle_lines(0)
+        choose = Gtk.Button(label="Choose…")
+        choose.set_valign(Gtk.Align.CENTER)
+        choose.set_tooltip_text("Pick the file you downloaded from Blackmagic")
+        choose.connect("clicked", self._on_choose_clicked)
+        self.file_row.add_suffix(choose)
+        self.file_row.set_activatable_widget(choose)
+        group.add(self.file_row)
+
+        self.gpu_row = Adw.ActionRow(title="Graphics card")
+        self.gpu_row.set_subtitle_lines(0)
+        self.gpu_icon = Gtk.Image()
+        self.gpu_icon.set_valign(Gtk.Align.CENTER)
+        self.gpu_row.add_prefix(self.gpu_icon)
+        group.add(self.gpu_row)
+
+        get_it = Gtk.LinkButton(uri=BLACKMAGIC, label="Get it from Blackmagic")
+        get_it.set_tooltip_text("Opens Blackmagic's download page in your browser")
+
+        self.install_button = Gtk.Button(label="Install")
+        self.install_button.add_css_class("suggested-action")
+        self.install_button.add_css_class("pill")
+        self.install_button.connect("clicked", self._on_install_clicked)
+
+        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        buttons.set_halign(Gtk.Align.CENTER)
+        buttons.set_margin_top(8)
+        buttons.append(get_it)
+        buttons.append(self.install_button)
+
+        # Shown only when a run was stopped or a person came back from a
+        # failure, so that the page can say what state the machine is in.
+        self.choose_note = Gtk.Label()
+        self.choose_note.set_wrap(True)
+        self.choose_note.set_justify(Gtk.Justification.CENTER)
+        self.choose_note.set_visible(False)
+        self.choose_note.add_css_class("dim-label")
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+        box.set_margin_top(24)
+        box.set_margin_bottom(24)
+        box.set_margin_start(18)
+        box.set_margin_end(18)
+        for w in (mark, title, blurb, group, buttons, self.choose_note):
+            box.append(w)
+
+        clamp = Adw.Clamp(maximum_size=560)
+        clamp.set_child(box)
+        scroller = Gtk.ScrolledWindow(vexpand=True)
+        scroller.set_child(clamp)
+        return scroller
+
+    def _refresh_choose_page(self):
+        """Fill in what we know about this machine, without blocking the window."""
+
+        def work():
+            found = self.chosen or cli_query("--find-installer")
+            gpu = cli_query("--gpu-summary")
+            GLib.idle_add(self._apply_machine_facts, found, gpu)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _apply_machine_facts(self, found, gpu):
+        if found and os.path.exists(found):
+            self.chosen = found
+            self.file_row.set_subtitle(
+                "Found %s in %s"
+                % (os.path.basename(found), os.path.dirname(found) or "your files")
+            )
+            self.install_button.set_label("Install")
+        else:
+            self.chosen = None
+            self.file_row.set_subtitle(
+                "Nothing chosen yet. If you start anyway, Blackmagic's page "
+                "opens and the setup waits — for as long as you like — until "
+                "your download appears."
+            )
+            self.install_button.set_label("Install")
+
+        # "ok\tsentence" — the word chooses the icon, the sentence is printed.
+        kind, _, text = gpu.partition("\t")
+        if not text:
+            kind, text = "none", "AquariusOS could not tell what graphics card is in this computer."
+        self.gpu_row.set_subtitle(text)
+        if kind == "ok":
+            self.gpu_icon.set_from_icon_name("emblem-ok-symbolic")
+            self.gpu_icon.remove_css_class("warning")
+            self.gpu_icon.add_css_class("success")
+        else:
+            self.gpu_icon.set_from_icon_name("dialog-warning-symbolic")
+            self.gpu_icon.remove_css_class("success")
+            self.gpu_icon.add_css_class("warning")
+
+        self.install_button.grab_focus()
+        self.set_default_widget(self.install_button)
+        return GLib.SOURCE_REMOVE
+
+    def _on_choose_clicked(self, _button):
+        start = os.path.join(GLib.get_home_dir(), "Downloads")
+
+        filt = Gtk.FileFilter()
+        filt.set_name("Blackmagic's Linux download")
+        for pattern in ("*.zip", "*.ZIP", "*.run", "*.RUN"):
+            filt.add_pattern(pattern)
+        every = Gtk.FileFilter()
+        every.set_name("Every file")
+        every.add_pattern("*")
+        filters = Gio.ListStore.new(Gtk.FileFilter)
+        filters.append(filt)
+        filters.append(every)
+
+        # Gtk.FileDialog is the current way; Gtk.FileChooserNative is kept as a
+        # fallback so that a GTK older than 4.10 still gets a file picker rather
+        # than a dead button.
+        if hasattr(Gtk, "FileDialog"):
+            dialog = Gtk.FileDialog()
+            dialog.set_title("Which DaVinci Resolve download?")
+            dialog.set_filters(filters)
+            dialog.set_default_filter(filt)
+            if os.path.isdir(start):
+                dialog.set_initial_folder(Gio.File.new_for_path(start))
+            dialog.open(self, None, self._on_file_picked)
+            return
+
+        chooser = Gtk.FileChooserNative.new(
+            "Which DaVinci Resolve download?", self, Gtk.FileChooserAction.OPEN, None, None
+        )
+        chooser.add_filter(filt)
+        chooser.add_filter(every)
+        if os.path.isdir(start):
+            chooser.set_current_folder(Gio.File.new_for_path(start))
+
+        def responded(native, response):
+            if response == Gtk.ResponseType.ACCEPT:
+                gfile = native.get_file()
+                if gfile is not None:
+                    self._set_chosen(gfile.get_path())
+            native.destroy()
+
+        chooser.connect("response", responded)
+        chooser.show()
+
+    def _on_file_picked(self, dialog, result):
+        try:
+            gfile = dialog.open_finish(result)
+        except GLib.Error:
+            return  # Cancelled. That is not an error and needs no message.
+        if gfile is not None:
+            self._set_chosen(gfile.get_path())
+
+    def _set_chosen(self, path):
+        if not path:
+            return
+        self.chosen = path
+        self.file_row.set_subtitle(path)
+
+    # -- page 2: installing -------------------------------------------------
+
+    def _build_working_page(self):
+        self.working_title = Gtk.Label(label="Installing DaVinci Resolve")
+        self.working_title.add_css_class("title-2")
+        self.working_title.set_wrap(True)
+        self.working_title.set_justify(Gtk.Justification.CENTER)
+
+        self.working_blurb = Gtk.Label(
+            label=(
+                "This takes about fifteen minutes and most of it is quiet. "
+                "You can leave it and come back."
+            )
+        )
+        self.working_blurb.set_wrap(True)
+        self.working_blurb.set_justify(Gtk.Justification.CENTER)
+        self.working_blurb.add_css_class("dim-label")
+
+        self.steps_group = Adw.PreferencesGroup()
+        self._build_step_rows(DEFAULT_STEPS)
+
+        self.bar = Gtk.ProgressBar()
+        self.bar.set_show_text(False)
+        self.bar.set_margin_top(4)
+
+        self.log_view = Gtk.TextView()
+        self.log_view.set_editable(False)
+        self.log_view.set_cursor_visible(False)
+        self.log_view.set_monospace(True)
+        self.log_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        self.log_view.set_left_margin(8)
+        self.log_view.set_right_margin(8)
+        self.log_view.set_top_margin(6)
+        self.log_view.set_bottom_margin(6)
+        self.log_scroll = Gtk.ScrolledWindow()
+        self.log_scroll.set_child(self.log_view)
+        self.log_scroll.set_min_content_height(220)
+        self.log_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        self.log_scroll.add_css_class("card")
+
+        self.details = Gtk.Expander(label="Details")
+        self.details.set_child(self.log_scroll)
+        self.details.set_margin_top(4)
+
+        self.cancel_button = Gtk.Button(label="Cancel")
+        self.cancel_button.connect("clicked", self._on_cancel_clicked)
+
+        self.copy_button = Gtk.Button(label="Copy details")
+        self.copy_button.set_tooltip_text("Copy the whole log to the clipboard")
+        self.copy_button.connect("clicked", self._on_copy_clicked)
+        self.copy_button.set_visible(False)
+
+        self.retry_button = Gtk.Button(label="Try again")
+        self.retry_button.add_css_class("suggested-action")
+        self.retry_button.connect("clicked", self._on_retry_clicked)
+        self.retry_button.set_visible(False)
+
+        self.working_close = Gtk.Button(label="Close")
+        self.working_close.connect("clicked", lambda _b: self.close())
+        self.working_close.set_visible(False)
+
+        self.working_buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        self.working_buttons.set_halign(Gtk.Align.CENTER)
+        self.working_buttons.set_margin_top(4)
+        for w in (
+            self.copy_button,
+            self.working_close,
+            self.retry_button,
+            self.cancel_button,
+        ):
+            self.working_buttons.append(w)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        box.set_margin_top(24)
+        box.set_margin_bottom(24)
+        box.set_margin_start(18)
+        box.set_margin_end(18)
+        for w in (
+            self.working_title,
+            self.working_blurb,
+            self.steps_group,
+            self.bar,
+            self.details,
+            self.working_buttons,
+        ):
+            box.append(w)
+
+        clamp = Adw.Clamp(maximum_size=560)
+        clamp.set_child(box)
+        scroller = Gtk.ScrolledWindow(vexpand=True)
+        scroller.set_child(clamp)
+        return scroller
+
+    def _build_step_rows(self, titles):
+        for row in self.step_rows:
+            self.steps_group.remove(row)
+        self.step_rows = []
+        for title in titles:
+            row = StepRow(title)
+            self.steps_group.add(row)
+            self.step_rows.append(row)
+        self.step_total = len(titles)
+
+    # -- page 3: done -------------------------------------------------------
+
+    def _build_done_page(self):
+        self.done_page = Adw.StatusPage()
+        self.done_page.set_icon_name("emblem-ok-symbolic")
+        self.done_page.set_title("DaVinci Resolve is installed.")
+        self.done_page.set_description(
+            "It is in your apps now, and you can drag it to the dock. "
+            "The file you downloaded can be deleted."
+        )
+
+        tips = Gtk.Label(
+            label=(
+                "Two things worth doing the first time you open it. On a 4K "
+                "screen the interface starts small — set it inside Resolve, at "
+                "Preferences → User → UI Settings → Interface Scale, and "
+                "restart Resolve; the system display scale is ignored. And "
+                "check it found your card at Preferences → System → Memory and "
+                "GPU, where the GPU processing mode should say CUDA."
+            )
+        )
+        tips.set_wrap(True)
+        tips.set_justify(Gtk.Justification.CENTER)
+        tips.add_css_class("dim-label")
+        tips.set_margin_top(6)
+
+        open_button = Gtk.Button(label="Open DaVinci Resolve")
+        open_button.add_css_class("suggested-action")
+        open_button.add_css_class("pill")
+        open_button.connect("clicked", self._on_open_clicked)
+        self.open_button = open_button
+
+        close_button = Gtk.Button(label="Close")
+        close_button.add_css_class("pill")
+        close_button.connect("clicked", lambda _b: self.close())
+
+        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        buttons.set_halign(Gtk.Align.CENTER)
+        buttons.append(open_button)
+        buttons.append(close_button)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        box.append(buttons)
+        box.append(tips)
+        clamp = Adw.Clamp(maximum_size=520)
+        clamp.set_child(box)
+        self.done_page.set_child(clamp)
+        return self.done_page
+
+    # -- running the installer ----------------------------------------------
+
+    def _on_install_clicked(self, _button):
+        self.choose_note.set_visible(False)
+        self.log_lines = []
+        self._set_log("")
+        self.cancelled = False
+        self.finished = False
+        self.current_step = 0
+        self._build_step_rows(DEFAULT_STEPS)
+        self.bar.set_fraction(0.0)
+        self.details.set_expanded(False)
+        self.cancel_button.set_visible(True)
+        self.copy_button.set_visible(False)
+        self.retry_button.set_visible(False)
+        self.working_close.set_visible(False)
+        self.working_title.set_label("Installing DaVinci Resolve")
+        self.working_title.remove_css_class("error")
+        self.working_blurb.set_label(
+            "This takes about fifteen minutes and most of it is quiet. "
+            "You can leave it and come back."
+        )
+        self.header_title.set_subtitle("Installing")
+        self.stack.set_visible_child_name("working")
+        self._determinate = False
+        self._pulse_source = GLib.timeout_add(120, self._pulse)
+        self._start_process()
+
+    def _start_process(self):
+        argv = [CLI]
+        if self.dry_run:
+            argv.append("--dry-run")
+        read_fd, write_fd = os.pipe()
+        argv += ["--progress-fd", str(write_fd)]
+        if self.chosen:
+            argv.append(self.chosen)
+
+        self._append_log("$ %s\n" % " ".join(argv))
+        try:
+            # start_new_session puts the script in a process group of its own,
+            # which is what makes Cancel able to stop podman and distrobox
+            # underneath it rather than orphaning them.
+            self.proc = subprocess.Popen(
+                argv,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                pass_fds=(write_fd,),
+                start_new_session=True,
+                text=True,
+                errors="replace",
+                bufsize=1,
+            )
+        except OSError as exc:
+            os.close(read_fd)
+            os.close(write_fd)
+            self._show_failure(
+                "The setup could not be started: %s" % exc,
+            )
+            return
+        # Ours must be closed or the reader below never sees end-of-file.
+        os.close(write_fd)
+
+        threading.Thread(target=self._read_log, daemon=True).start()
+        threading.Thread(target=self._read_progress, args=(read_fd,), daemon=True).start()
+        threading.Thread(target=self._wait_for_exit, daemon=True).start()
+
+    def _read_log(self):
+        for line in self.proc.stdout:
+            GLib.idle_add(self._append_log, line)
+        try:
+            self.proc.stdout.close()
+        except OSError:
+            pass
+
+    def _read_progress(self, read_fd):
+        with os.fdopen(read_fd, "r", errors="replace") as pipe:
+            for line in pipe:
+                GLib.idle_add(self._handle_progress, line.strip())
+
+    def _wait_for_exit(self):
+        code = self.proc.wait()
+        GLib.idle_add(self._process_exited, code)
+
+    # -- reacting to the installer ------------------------------------------
+
+    def _handle_progress(self, line):
+        # Anything unrecognised is dropped on purpose, so a line added to the
+        # script in future cannot break this window.
+        match = re.match(r"^STEP (\d+)/(\d+) (.*)$", line)
+        if match:
+            n, total, text = int(match.group(1)), int(match.group(2)), match.group(3)
+            if total != self.step_total:
+                self._build_step_rows(
+                    [DEFAULT_STEPS[i] if i < len(DEFAULT_STEPS) else "" for i in range(total)]
+                )
+            self.current_step = n
+            for i, row in enumerate(self.step_rows, start=1):
+                if i < n:
+                    row.set_state(DONE)
+                elif i == n:
+                    row.set_title(text)
+                    row.set_state(ACTIVE)
+                else:
+                    row.set_state(PENDING)
+            self.header_title.set_subtitle("Step %d of %d" % (n, total))
+            self._determinate = False
+            self.bar.set_fraction(self._overall(0.0))
+            return GLib.SOURCE_REMOVE
+
+        match = re.match(r"^PERCENT (\d+)$", line)
+        if match:
+            self._determinate = True
+            self.bar.set_fraction(self._overall(min(100, int(match.group(1))) / 100.0))
+            return GLib.SOURCE_REMOVE
+
+        if line == "DONE":
+            self.finished = True
+            for row in self.step_rows:
+                row.set_state(DONE)
+            self.bar.set_fraction(1.0)
+            return GLib.SOURCE_REMOVE
+
+        if line.startswith("FAIL "):
+            self._show_failure(line[5:].strip())
+        return GLib.SOURCE_REMOVE
+
+    def _overall(self, within):
+        """Where the bar sits: whole steps done, plus progress inside this one."""
+        if self.step_total <= 0:
+            return 0.0
+        base = max(0, self.current_step - 1)
+        return min(1.0, (base + within) / float(self.step_total))
+
+    def _pulse(self):
+        if self.finished or self.cancelled:
+            return GLib.SOURCE_REMOVE
+        if not self._determinate:
+            self.bar.pulse()
+        return GLib.SOURCE_CONTINUE
+
+    def _append_log(self, text):
+        self.log_lines.append(text)
+        buf = self.log_view.get_buffer()
+        buf.insert(buf.get_end_iter(), text if text.endswith("\n") else text + "\n")
+        # Follow the tail, the way a terminal does.
+        mark = buf.create_mark(None, buf.get_end_iter(), False)
+        self.log_view.scroll_to_mark(mark, 0.0, True, 0.0, 1.0)
+        buf.delete_mark(mark)
+        return GLib.SOURCE_REMOVE
+
+    def _set_log(self, text):
+        self.log_view.get_buffer().set_text(text)
+
+    def _process_exited(self, code):
+        self.proc = None
+        if self.cancelled:
+            return GLib.SOURCE_REMOVE
+        if self.finished and code == 0:
+            self.header_title.set_subtitle("")
+            self.stack.set_visible_child_name("done")
+            self.open_button.grab_focus()
+            self.set_default_widget(self.open_button)
+            return GLib.SOURCE_REMOVE
+        # Exited without ever saying DONE. If it already said FAIL we are on the
+        # failure page and there is nothing to add; if it did not, say so here
+        # rather than leaving a spinner turning forever.
+        if not self._on_failure_page():
+            self._show_failure(
+                "The setup stopped before it finished (it ended with code %d). "
+                "The details below say where." % code
+            )
+        return GLib.SOURCE_REMOVE
+
+    def _on_failure_page(self):
+        return self.retry_button.get_visible()
+
+    def _show_failure(self, message):
+        self.finished = False
+        self.stack.set_visible_child_name("working")
+        self.header_title.set_subtitle("Stopped")
+        self.working_title.set_label("The setup did not finish")
+        self.working_title.add_css_class("error")
+        self.working_blurb.set_label(
+            message
+            + "\n\nNothing on this computer was changed — it all happens inside "
+            "a container. It is safe to try again. To start from a completely "
+            "clean container first, open a terminal and run: aq resolve remove"
+        )
+        for row in self.step_rows:
+            if row._state == ACTIVE:
+                row.set_state(FAILED)
+        self.bar.set_fraction(0.0)
+        self._determinate = True
+        self.details.set_expanded(True)
+        self.cancel_button.set_visible(False)
+        self.copy_button.set_visible(True)
+        self.retry_button.set_visible(True)
+        self.working_close.set_visible(True)
+        self.retry_button.grab_focus()
+        self.set_default_widget(self.retry_button)
+        return GLib.SOURCE_REMOVE
+
+    # -- the buttons --------------------------------------------------------
+
+    def _on_copy_clicked(self, _button):
+        text = "".join(
+            line if line.endswith("\n") else line + "\n" for line in self.log_lines
+        )
+        display = Gdk.Display.get_default()
+        if display is not None:
+            # NOT clipboard.set(text): that is a C macro with no introspection,
+            # so it is not there to call from Python. This is the real one.
+            value = GObject.Value(str, text)
+            display.get_clipboard().set_content(Gdk.ContentProvider.new_for_value(value))
+        _button.set_label("Copied")
+        GLib.timeout_add_seconds(2, lambda: (_button.set_label("Copy details"), False)[1])
+
+    def _on_retry_clicked(self, _button):
+        # Back to page 1 rather than straight into another attempt: the reason
+        # it failed is very often the file, and page 1 is where the file is.
+        self.header_title.set_subtitle("")
+        self.choose_note.set_label(
+            "The last attempt did not finish. Nothing was changed — check the "
+            "file below and start again."
+        )
+        self.choose_note.set_visible(True)
+        self.stack.set_visible_child_name("choose")
+        self._refresh_choose_page()
+
+    def _on_cancel_clicked(self, _button):
+        if self.proc is None:
+            self.close()
+            return
+        self.cancelled = True
+        self._stop_process()
+        self.header_title.set_subtitle("Stopped")
+        self.working_title.set_label("Setup stopped")
+        self.working_blurb.set_label(
+            "Nothing on this computer was changed. If a half-built container "
+            "was left behind, clear it away by opening a terminal and running: "
+            "aq resolve remove"
+        )
+        for row in self.step_rows:
+            if row._state == ACTIVE:
+                row.set_state(PENDING)
+        self.bar.set_fraction(0.0)
+        self._determinate = True
+        self.cancel_button.set_visible(False)
+        self.copy_button.set_visible(True)
+        self.retry_button.set_visible(True)
+        self.working_close.set_visible(True)
+        self.retry_button.grab_focus()
+
+    def _stop_process(self):
+        """Signal the whole process group, so podman and distrobox stop too."""
+        proc = self.proc
+        if proc is None:
+            return
+        try:
+            group = os.getpgid(proc.pid)
+        except OSError:
+            return
+        try:
+            os.killpg(group, signal.SIGTERM)
+        except OSError:
+            return
+
+        def escalate():
+            if proc.poll() is None:
+                try:
+                    os.killpg(group, signal.SIGKILL)
+                except OSError:
+                    pass
+            return GLib.SOURCE_REMOVE
+
+        GLib.timeout_add_seconds(5, escalate)
+
+    def _on_open_clicked(self, _button):
+        # The same front door the app-menu entry uses, so Resolve gets the
+        # cursor theme and everything else aquarius-resolve-launch carries in.
+        target = LAUNCHER if os.access(LAUNCHER, os.X_OK) else None
+        argv = [target] if target else ["aq", "resolve", "run"]
+        if self.dry_run:
+            self._append_log("(rehearsal: would have started %s)\n" % " ".join(argv))
+            return
+        try:
+            subprocess.Popen(argv, start_new_session=True)
+        except OSError as exc:
+            self.done_page.set_description(
+                "Resolve is installed, but this window could not start it: %s\n"
+                "Open it from your apps instead." % exc
+            )
+            return
+        self.close()
+
+    def _on_key(self, _controller, keyval, _keycode, _state):
+        if keyval == Gdk.KEY_Escape:
+            if self.stack.get_visible_child_name() != "working" or self.proc is None:
+                self.close()
+                return True
+        return False
+
+    def _on_close_request(self, _window):
+        # Closing the window while it is working stops the work. Leaving an
+        # invisible install running would be worse than either finishing it or
+        # stopping it, because nothing would ever tell the person how it went.
+        if self.proc is not None:
+            self.cancelled = True
+            self._stop_process()
+        return False
+
+
+class InstallerApp(Adw.Application):
+    def __init__(self, dry_run=False, preset_file=None):
+        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.NON_UNIQUE)
+        self.dry_run = dry_run
+        self.preset_file = preset_file
+
+    def do_activate(self):
+        window = self.props.active_window
+        if window is None:
+            window = InstallerWindow(self, self.dry_run, self.preset_file)
+        window.present()
+
+
+def main(argv):
+    dry_run = os.environ.get("AQ_RESOLVE_DRY_RUN") == "1"
+    preset = None
+    for arg in argv[1:]:
+        if arg == "--dry-run":
+            dry_run = True
+        elif arg in ("-h", "--help"):
+            print(
+                "aquarius-resolve-installer — the Install DaVinci Resolve window\n"
+                "\n"
+                "    aquarius-resolve-installer [--dry-run] [file]\n"
+                "\n"
+                "    --dry-run   walk through the window without installing anything\n"
+                "    file        the download from Blackmagic, if you already have it\n"
+                "\n"
+                "It runs %s, which is the same installer 'aq resolve install'\n"
+                "runs in a terminal. Nothing is installed by this window itself." % CLI
+            )
+            return 0
+        elif arg.startswith("-"):
+            print("aquarius-resolve-installer: I do not understand '%s'." % arg, file=sys.stderr)
+            return 1
+        else:
+            preset = arg
+
+    if not os.access(CLI, os.X_OK):
+        print(
+            "aquarius-resolve-installer: %s is missing from this system.\n"
+            "That is a fault in AquariusOS, not in anything you did." % CLI,
+            file=sys.stderr,
+        )
+        return 1
+
+    GLib.set_prgname(APP_ID)
+    GLib.set_application_name("Install DaVinci Resolve")
+    app = InstallerApp(dry_run=dry_run, preset_file=preset)
+    return app.run([argv[0]])
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

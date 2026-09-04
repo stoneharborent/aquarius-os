@@ -28,13 +28,151 @@
 #   2. Never end on an error without saying what to do next.
 #
 # The beginner-facing guide is docs/restart/resolve.md.
+#
+# ==============================================================================
+# THE PROGRESS CHANNEL — how the installer window follows along
+# ==============================================================================
+# THIS SCRIPT IS THE ONLY THING THAT INSTALLS RESOLVE. The window a person
+# clicks in their apps (/usr/libexec/aquarius-resolve-installer) does not
+# reimplement any of it — it RUNS this script and reads what it says. That is
+# deliberate and it is the rule: one installer, two faces.
+#
+# Everything you can read below still goes to stdout and stderr, exactly as it
+# always did, so `aq resolve install` in a terminal looks the same as it ever
+# looked. The window needs something a machine can read as well, so it opens a
+# spare pipe, tells us its number, and we write short structured lines to it and
+# to nothing else.
+#
+#     aquarius-resolve-install --progress-fd 5      (or AQ_PROGRESS_FD=5)
+#
+# THE LINES. This list is the contract. The same list is repeated at the top of
+# aquarius-resolve-installer, and if you change one you change both.
+#
+#   STEP <n>/<total> <text>
+#       Step <n> of <total> has just begun. <text> is a plain-English name for
+#       it and the window shows exactly that text, so the wording lives HERE and
+#       nowhere else. Beginning a step means the ones before it finished.
+#
+#   PERCENT <0-100>
+#       How far through the CURRENT step we are. Only sent where there is a real
+#       number to send — at the moment that means the container download, whose
+#       size podman tells us. A step with no PERCENT is not a stalled step; the
+#       window shows a moving bar with no end for it, which is the honest
+#       picture.
+#
+#   DONE
+#       Every step finished. Sent once, last.
+#
+#   FAIL <text>
+#       Stopped, and <text> says why in words a person can act on.
+#
+# Nothing else is ever written to that pipe. Anything unrecognised is ignored by
+# the window rather than shown, so adding a line here cannot break an older one.
+#
+# THE STEPS, IN ORDER (the window draws this list before anything starts, so
+# keep it and the STEP lines below in step with each other):
+#
+#     1  Checking your graphics card
+#     2  Finding your download
+#     3  Downloading the Rocky Linux runtime
+#     4  Building the container
+#     5  Installing DaVinci Resolve
+#     6  Adding it to your apps
+#
+# TWO QUESTIONS THE WINDOW ASKS BEFORE IT STARTS ANYTHING, so that it is never
+# guessing where this script would look or what this script would find:
+#
+#     aquarius-resolve-install --find-installer
+#         Prints the download it would use, or prints nothing and exits 1.
+#
+#     aquarius-resolve-install --gpu-summary
+#         Prints one line: a word (ok / warn / none), a tab, then a sentence.
+#
+# AND A REHEARSAL:
+#
+#     aquarius-resolve-install --dry-run
+#         Walks all six steps, changing nothing at all. It is how the window
+#         gets looked at without reinstalling Resolve, and it is what CI runs to
+#         prove the lines above still arrive in the right order.
 # ==============================================================================
 
 set -uo pipefail
 
+# Every person who runs this has a HOME. A build container checking the script
+# with --dry-run may not, and `set -u` would stop it dead on the next line with
+# an unbound-variable message that says nothing about what is wrong.
+: "${HOME:=/tmp}"
+
 RUNTIME_ENV=/usr/share/aquarius/resolve/runtime.env
 RECORD_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/aquarius/resolve"
 RECORD="${RECORD_DIR}/installed.env"
+DOWNLOADS="${HOME}/Downloads"
+
+# ==============================================================================
+# What was asked for
+# ==============================================================================
+MODE="install"
+INPUT=""
+QUERY=""
+DRY_RUN="${AQ_RESOLVE_DRY_RUN:-0}"
+PROGRESS_FD="${AQ_PROGRESS_FD:-}"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --update) MODE="update" ;;
+        --dry-run) DRY_RUN=1 ;;
+        --gpu-summary) QUERY="gpu" ;;
+        --find-installer) QUERY="find" ;;
+        --progress-fd)
+            shift
+            PROGRESS_FD="${1:-}"
+            ;;
+        --progress-fd=*) PROGRESS_FD="${1#*=}" ;;
+        -*)
+            echo "aquarius-resolve: I do not understand '${1}'." >&2
+            exit 1
+            ;;
+        *) INPUT="$1" ;;
+    esac
+    shift
+done
+
+# ------------------------------------------------------------------------------
+# The progress channel
+# ------------------------------------------------------------------------------
+# A file-descriptor number and nothing else. Anything that is not a plain number
+# is treated as "no channel", because the alternative is every later write
+# printing a shell error into the middle of the person's log.
+case "${PROGRESS_FD}" in
+    '' | *[!0-9]*) PROGRESS_FD="" ;;
+esac
+
+# Copy it to a fixed number — 9 — and use only that from here on.
+#
+# WHY BOTHER: writing to a descriptor whose number is in a variable is legal but
+# it reads as a mistake to both people and checking tools, and it has to be
+# re-checked at every single write. Copying once means every write below is the
+# plain, obvious `>&9`. If the copy fails — a number naming a pipe that was
+# closed behind us is a real possibility — we fall silent, which is much better
+# than spraying "Bad file descriptor" through somebody's log.
+PROGRESS_OPEN=0
+if [ -n "${PROGRESS_FD}" ]; then
+    if eval "exec 9>&${PROGRESS_FD}" 2> /dev/null; then
+        PROGRESS_OPEN=1
+    fi
+fi
+
+STEP_TOTAL=6
+
+progress() {
+    [ "${PROGRESS_OPEN}" = "1" ] || return 0
+    printf '%s\n' "$*" >&9 || true
+}
+step() { progress "STEP ${1}/${STEP_TOTAL} ${2}"; }
+pct() { progress "PERCENT ${1}"; }
+# Used on every path that leaves this script unhappily. The window shows this
+# sentence in large type, so it has to be a sentence, not a code.
+fail() { progress "FAIL ${*}"; }
 
 # ------------------------------------------------------------------------------
 # Which runtime container, and what it is called on this machine
@@ -52,37 +190,192 @@ RECORD="${RECORD_DIR}/installed.env"
 OVERRIDE_IMAGE="${AQ_RESOLVE_RUNTIME_IMAGE:-}"
 OVERRIDE_TAG="${AQ_RESOLVE_RUNTIME_TAG:-}"
 
-if [ ! -r "${RUNTIME_ENV}" ]; then
-    echo "aquarius-resolve: ${RUNTIME_ENV} is missing from this system." >&2
-    echo "  That is a fault in AquariusOS, not in anything you typed." >&2
-    exit 1
+IMAGE=""
+CONTAINER="aquarius-resolve"
+
+# The two question flags and the rehearsal answer without touching anything, so
+# none of them needs this file to be readable. Everything else does.
+if [ -z "${QUERY}" ] && [ "${DRY_RUN}" != "1" ]; then
+    if [ ! -r "${RUNTIME_ENV}" ]; then
+        fail "This copy of AquariusOS is missing its Resolve support files. That is a fault in the operating system, not in anything you did."
+        echo "aquarius-resolve: ${RUNTIME_ENV} is missing from this system." >&2
+        echo "  That is a fault in AquariusOS, not in anything you typed." >&2
+        exit 1
+    fi
+    # shellcheck source=/dev/null
+    . "${RUNTIME_ENV}"
+
+    [ -n "${OVERRIDE_IMAGE}" ] && AQ_RESOLVE_RUNTIME_IMAGE="${OVERRIDE_IMAGE}"
+    [ -n "${OVERRIDE_TAG}" ] && AQ_RESOLVE_RUNTIME_TAG="${OVERRIDE_TAG}"
+
+    IMAGE="${AQ_RESOLVE_RUNTIME_IMAGE}:${AQ_RESOLVE_RUNTIME_TAG}"
+    CONTAINER="${AQ_RESOLVE_CONTAINER}"
+
+    if [ -n "${OVERRIDE_IMAGE}${OVERRIDE_TAG}" ]; then
+        echo "NOTE: using a runtime named in the environment, not the one this"
+        echo "      version of AquariusOS ships with:  ${IMAGE}"
+    fi
 fi
-# shellcheck source=/dev/null
-. "${RUNTIME_ENV}"
 
-[ -n "${OVERRIDE_IMAGE}" ] && AQ_RESOLVE_RUNTIME_IMAGE="${OVERRIDE_IMAGE}"
-[ -n "${OVERRIDE_TAG}" ] && AQ_RESOLVE_RUNTIME_TAG="${OVERRIDE_TAG}"
+# ==============================================================================
+# How this computer is looked at
+# ==============================================================================
+# These four functions are the ONLY place AquariusOS decides what graphics card
+# is in a machine and which file is the Blackmagic download. The install below
+# uses them, and so do `--gpu-summary` and `--find-installer`, which is how the
+# window gets the same answer as the terminal instead of a second opinion.
+# ==============================================================================
 
-IMAGE="${AQ_RESOLVE_RUNTIME_IMAGE}:${AQ_RESOLVE_RUNTIME_TAG}"
-CONTAINER="${AQ_RESOLVE_CONTAINER}"
+have_nvidia() {
+    [ -e /proc/driver/nvidia/version ] && return 0
+    [ -c /dev/nvidiactl ] && return 0
+    return 1
+}
 
-if [ -n "${OVERRIDE_IMAGE}${OVERRIDE_TAG}" ]; then
-    echo "NOTE: using a runtime named in the environment, not the one this"
-    echo "      version of AquariusOS ships with:  ${IMAGE}"
+nvidia_driver_version() {
+    sed -n 's/^NVRM version: NVIDIA UNIX.* Kernel Module *\([0-9.]*\).*/\1/p' \
+        /proc/driver/nvidia/version 2> /dev/null | head -1
+}
+
+# The card's own name, for the one line a person reads before they commit to
+# fifteen minutes. nvidia-smi is the reliable answer and is part of the driver;
+# the /proc file is there for the moments it is not on the path.
+nvidia_model() {
+    local m
+    m="$(nvidia-smi --query-gpu=name --format=csv,noheader 2> /dev/null | head -1)"
+    if [ -z "${m}" ]; then
+        m="$(sed -n 's/^Model: *//p' /proc/driver/nvidia/gpus/*/information 2> /dev/null | head -1)"
+    fi
+    printf '%s' "${m}"
+}
+
+find_cdi_spec() {
+    local f
+    # /run/cdi and /var/run/cdi are the same folder on any modern Linux;
+    # both names are checked because both appear in NVIDIA's own documentation.
+    for f in /var/run/cdi/nvidia.yaml /run/cdi/nvidia.yaml \
+        /etc/cdi/nvidia.yaml /etc/cdi/nvidia.json; do
+        if [ -r "${f}" ]; then
+            printf '%s' "${f}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# One line: a word, a tab, a sentence. The word is how the window chooses
+# between a tick and a warning triangle; the sentence is what it prints.
+gpu_summary() {
+    local model version major
+    if have_nvidia; then
+        model="$(nvidia_model)"
+        [ -n "${model}" ] || model="An NVIDIA graphics card"
+        version="$(nvidia_driver_version)"
+        major="${version%%.*}"
+        if [ -n "${version}" ] && [ "${major:-0}" -lt 580 ] 2> /dev/null; then
+            printf 'warn\t%s, driver %s — DaVinci Resolve 21 expects driver 580 or newer. Update with: sudo bootc upgrade\n' \
+                "${model}" "${version}"
+        else
+            printf 'ok\t%s — CUDA ready\n' "${model}"
+        fi
+        return 0
+    fi
+    if [ -e /dev/dri ]; then
+        printf 'warn\t%s\n' "AMD or Intel graphics. Blackmagic's only supported Linux graphics is NVIDIA, so Resolve will most likely say its GPU processing mode is unsupported."
+        return 0
+    fi
+    printf 'none\t%s\n' "No graphics card could be found. Resolve will install, but it will not be able to do much."
+}
+
+# Newest match wins — that is what "I just downloaded it" means. A .run is
+# preferred over a .zip because it is already unpacked.
+find_one() { # find_one <pattern>
+    {
+        find "${DOWNLOADS}" -maxdepth 2 -type f -iname "$1" 2> /dev/null
+        find "${HOME}" -maxdepth 1 -type f -iname "$1" 2> /dev/null
+    } | sort -u | while IFS= read -r f; do
+        printf '%s\t%s\n' "$(stat -c '%Y' "${f}" 2> /dev/null || echo 0)" "${f}"
+    done | sort -rn | head -1 | cut -f2-
+}
+
+find_installer() {
+    local found
+    found="$(find_one 'DaVinci_Resolve*_Linux.run')"
+    [ -n "${found}" ] && {
+        printf '%s' "${found}"
+        return 0
+    }
+    found="$(find_one 'DaVinci_Resolve*Linux*.zip')"
+    [ -n "${found}" ] && {
+        printf '%s' "${found}"
+        return 0
+    }
+    return 1
+}
+
+# ==============================================================================
+# The two questions, answered and gone
+# ==============================================================================
+case "${QUERY}" in
+    gpu)
+        gpu_summary
+        exit 0
+        ;;
+    find)
+        if found="$(find_installer)"; then
+            printf '%s\n' "${found}"
+            exit 0
+        fi
+        exit 1
+        ;;
+esac
+
+# ==============================================================================
+# The rehearsal
+# ==============================================================================
+# --dry-run walks the same six steps and changes nothing whatsoever. It exists
+# for two reasons: so the installer window can be looked at and adjusted without
+# reinstalling Resolve, and so CI can prove the structured lines above still
+# come out in the right order on every build. It touches no container, no
+# download, and no file.
+if [ "${DRY_RUN}" = "1" ]; then
+    echo ""
+    echo "=================================================================="
+    echo " A REHEARSAL — nothing is being installed"
+    echo "=================================================================="
+    echo ""
+    echo "This walks through the same six steps a real setup goes through, so"
+    echo "that the window can be looked at, without touching DaVinci Resolve,"
+    echo "your container, or anything you have downloaded."
+    echo ""
+    step 1 "Checking your graphics card"
+    gpu_summary | sed 's/^[a-z]*\t/  /'
+    sleep 0.3
+    step 2 "Finding your download"
+    echo "  Pretending a download was found in ${DOWNLOADS}."
+    sleep 0.3
+    step 3 "Downloading the Rocky Linux runtime"
+    for p in 0 25 50 75 100; do
+        pct "${p}"
+        echo "  ...pretending to download: ${p}%"
+        sleep 0.2
+    done
+    step 4 "Building the container"
+    echo "  Pretending to create the container."
+    sleep 0.3
+    step 5 "Installing DaVinci Resolve"
+    echo "  Pretending to run Blackmagic's installer."
+    sleep 0.3
+    step 6 "Adding it to your apps"
+    echo "  Pretending to write the app-menu entry."
+    sleep 0.2
+    progress "DONE"
+    echo ""
+    echo "Rehearsal finished. Nothing was installed and nothing was changed."
+    echo "The real thing is:   aq resolve install"
+    echo ""
+    exit 0
 fi
-
-MODE="install"
-INPUT=""
-for arg in "$@"; do
-    case "${arg}" in
-        --update) MODE="update" ;;
-        -*)
-            echo "aquarius-resolve: I do not understand '${arg}'." >&2
-            exit 1
-            ;;
-        *) INPUT="${arg}" ;;
-    esac
-done
 
 # ==============================================================================
 # 0. What is about to happen
@@ -121,6 +414,7 @@ echo ""
 # ==============================================================================
 for tool in podman distrobox; do
     if ! command -v "${tool}" > /dev/null 2>&1; then
+        fail "This computer is missing '${tool}', which the setup needs. That should not be possible on AquariusOS — please report it."
         echo "This needs '${tool}', which is missing from this system." >&2
         echo "That should not be possible on AquariusOS — please report it." >&2
         exit 1
@@ -158,6 +452,7 @@ done
 # devices. What (a) and (b) are for is the driver LIBRARIES, which are not
 # devices and do not come across on their own.
 # ==============================================================================
+step 1 "Checking your graphics card"
 echo "------------------------------------------------------------------"
 echo " Looking at your graphics card"
 echo "------------------------------------------------------------------"
@@ -166,28 +461,11 @@ GPU_FLAGS=""       # goes into --additional-flags
 DISTROBOX_NVIDIA="" # the --nvidia switch, or empty
 GPU_METHOD="none"
 
-have_nvidia() {
-    [ -e /proc/driver/nvidia/version ] && return 0
-    [ -c /dev/nvidiactl ] && return 0
-    return 1
-}
-
-find_cdi_spec() {
-    local f
-    # /run/cdi and /var/run/cdi are the same folder on any modern Linux;
-    # both names are checked because both appear in NVIDIA's own documentation.
-    for f in /var/run/cdi/nvidia.yaml /run/cdi/nvidia.yaml \
-        /etc/cdi/nvidia.yaml /etc/cdi/nvidia.json; do
-        if [ -r "${f}" ]; then
-            printf '%s' "${f}"
-            return 0
-        fi
-    done
-    return 1
-}
-
+# have_nvidia, find_cdi_spec and nvidia_driver_version are defined once, near
+# the top, so that this and `--gpu-summary` cannot ever disagree about what is
+# in the machine.
 if have_nvidia; then
-    NV_VERSION="$(sed -n 's/^NVRM version: NVIDIA UNIX.* Kernel Module *\([0-9.]*\).*/\1/p' /proc/driver/nvidia/version 2> /dev/null | head -1)"
+    NV_VERSION="$(nvidia_driver_version)"
     echo "NVIDIA graphics card found${NV_VERSION:+, driver ${NV_VERSION}}."
 
     if CDI_SPEC="$(find_cdi_spec)"; then
@@ -276,37 +554,15 @@ echo ""
 #     download starts, and again while waiting.
 # ==============================================================================
 
-DOWNLOADS="${HOME}/Downloads"
+step 2 "Finding your download"
 mkdir -p "${DOWNLOADS}" 2> /dev/null || true
 
-# Newest match wins — that is what "I just downloaded it" means. A .run is
-# preferred over a .zip because it is already unpacked.
-find_one() { # find_one <pattern>
-    {
-        find "${DOWNLOADS}" -maxdepth 2 -type f -iname "$1" 2> /dev/null
-        find "${HOME}" -maxdepth 1 -type f -iname "$1" 2> /dev/null
-    } | sort -u | while IFS= read -r f; do
-        printf '%s\t%s\n' "$(stat -c '%Y' "${f}" 2> /dev/null || echo 0)" "${f}"
-    done | sort -rn | head -1 | cut -f2-
-}
-
-find_installer() {
-    local found
-    found="$(find_one 'DaVinci_Resolve*_Linux.run')"
-    [ -n "${found}" ] && {
-        printf '%s' "${found}"
-        return 0
-    }
-    found="$(find_one 'DaVinci_Resolve*Linux*.zip')"
-    [ -n "${found}" ] && {
-        printf '%s' "${found}"
-        return 0
-    }
-    return 1
-}
+# find_one and find_installer are defined once, near the top, so that this and
+# `--find-installer` cannot ever pick different files.
 
 if [ -n "${INPUT}" ]; then
     if [ ! -e "${INPUT}" ]; then
+        fail "There is no file at ${INPUT}. Choose the file you downloaded from Blackmagic and try again."
         echo "There is no file at ${INPUT}." >&2
         echo "Check the path, or run 'aq resolve install' with no file name and" >&2
         echo "let it find the download for you." >&2
@@ -338,6 +594,11 @@ if [ -z "${INSTALLER}" ]; then
     echo ""
     xdg-open "https://www.blackmagicdesign.com/products/davinciresolve" > /dev/null 2>&1 &
 
+    # Re-name step 2 while we sit here. The window shows whatever this says, so
+    # somebody who clicked Install with nothing downloaded reads "Waiting for
+    # your download" rather than watching "Finding your download" spin for an
+    # hour and assuming it has hung.
+    step 2 "Waiting for your download from Blackmagic"
     echo "Waiting for the download to appear in ${DOWNLOADS}..."
     echo "(Ctrl+C to stop. Nothing will be left broken.)"
     echo ""
@@ -370,6 +631,7 @@ case "${INSTALLER}" in
             INSTALLER="${DOWNLOADS}/$(basename "${INSTALLER}")"
             echo "Copied to ${INSTALLER}"
         else
+            fail "That download is outside your home folder and could not be copied into ${DOWNLOADS}. Move it there yourself and start again."
             echo "" >&2
             echo "The copy failed. Move the download into your Downloads folder" >&2
             echo "by hand and run this again." >&2
@@ -386,18 +648,74 @@ echo "------------------------------------------------------------------"
 echo " Building the Rocky Linux that Resolve runs in"
 echo "------------------------------------------------------------------"
 
+# ------------------------------------------------------------------------------
+# The one place there is a real number to report
+# ------------------------------------------------------------------------------
+# podman says how many megabytes of the gigabyte have arrived. This runs its
+# output through awk, which passes every line straight through to the person's
+# log untouched, and separately turns any "123.4MiB / 1.1GiB" it recognises into
+# a PERCENT line on the progress channel.
+#
+# ⚠️ IT IS ALLOWED TO RECOGNISE NOTHING. podman words its progress differently
+# depending on whether it thinks it is talking to a terminal, and that wording
+# is not a promise anybody made to us. If no line matches, no PERCENT is sent,
+# the window shows a bar with no end, and the download works exactly as well.
+# Nothing here may ever be load-bearing.
+pull_with_progress() {
+    local rc
+    if [ "${PROGRESS_OPEN}" != "1" ]; then
+        podman pull "${IMAGE}"
+        return $?
+    fi
+    # awk inherits descriptor 9 and writes the PERCENT lines there directly.
+    podman pull "${IMAGE}" 2>&1 | awk -v out="/dev/fd/9" '
+        function tosize(x,   v) {
+            gsub(/^[ \t]+|[ \t]+$/, "", x)
+            v = x + 0
+            if (x ~ /[kK]i?B/) return v * 1024
+            if (x ~ /Mi?B/)    return v * 1024 * 1024
+            if (x ~ /Gi?B/)    return v * 1024 * 1024 * 1024
+            return v
+        }
+        {
+            print
+            fflush()
+            if (match($0, /[0-9.]+ *[kKMG]?i?B *\/ *[0-9.]+ *[kKMG]?i?B/)) {
+                s = substr($0, RSTART, RLENGTH)
+                split(s, a, "/")
+                cur = tosize(a[1])
+                tot = tosize(a[2])
+                if (tot > 0) {
+                    p = int(cur * 100 / tot)
+                    if (p >= 0 && p <= 100 && p != last) {
+                        print "PERCENT " p > out
+                        fflush(out)
+                        last = p
+                    }
+                }
+            }
+        }
+    '
+    rc="${PIPESTATUS[0]}"
+    return "${rc}"
+}
+
 if podman container exists "${CONTAINER}" 2> /dev/null; then
+    step 3 "Downloading the Rocky Linux runtime"
     if [ "${MODE}" = "update" ]; then
         echo "Reusing the existing '${CONTAINER}' container."
     else
         echo "A container called '${CONTAINER}' already exists — reusing it."
         echo "(To start completely fresh:  aq resolve remove  then run this again.)"
     fi
+    pct 100
 else
+    step 3 "Downloading the Rocky Linux runtime"
     echo "Downloading ${IMAGE}"
     echo "This is about a gigabyte and happens once."
     echo ""
-    if ! podman pull "${IMAGE}"; then
+    if ! pull_with_progress; then
+        fail "The Rocky Linux runtime could not be downloaded. The usual cause is no internet connection — try again when you are back online."
         echo "" >&2
         echo "The download failed." >&2
         echo "" >&2
@@ -413,6 +731,7 @@ else
     fi
 
     echo ""
+    step 4 "Building the container"
     echo "Creating the container..."
     # --yes            do not ask; the questions were asked above
     # --nvidia         only when NVIDIA's own description was not available
@@ -433,6 +752,7 @@ else
         --image "${IMAGE}" \
         ${DISTROBOX_NVIDIA} \
         ${GPU_FLAGS:+--additional-flags "${GPU_FLAGS}"}; then
+        fail "The container could not be created. Nothing on your computer was changed. Try again, or start from a clean slate with: aq resolve remove"
         echo "" >&2
         echo "The container could not be created." >&2
         echo "Nothing on your actual system was changed." >&2
@@ -441,8 +761,12 @@ else
 fi
 
 echo ""
+# Said again here because the container may already have existed, in which case
+# the branch above was skipped entirely and this is where step 4 really begins.
+step 4 "Building the container"
 echo "Starting it for the first time (this takes a moment)..."
 if ! distrobox enter --name "${CONTAINER}" -- true; then
+    fail "The container was built but would not start. Clear it away with 'aq resolve remove' and try again."
     echo "" >&2
     echo "The container was created but would not start." >&2
     echo "Try:  aq resolve remove   and then run this again." >&2
@@ -453,6 +777,7 @@ fi
 # 5. Install Resolve inside it
 # ==============================================================================
 echo ""
+step 5 "Installing DaVinci Resolve"
 echo "------------------------------------------------------------------"
 echo " Installing DaVinci Resolve"
 echo "------------------------------------------------------------------"
@@ -462,6 +787,7 @@ echo ""
 
 if ! distrobox enter --name "${CONTAINER}" -- \
     aquarius-resolve-setup "${INSTALLER}"; then
+    fail "Blackmagic's installer did not finish. Nothing on your computer was changed — it all happened inside the container, so it is safe to try again."
     echo "" >&2
     echo "The install did not finish." >&2
     echo "Nothing on your actual system was changed — it all happened inside" >&2
@@ -485,6 +811,7 @@ fi
 # expect, the file is left exactly as it was and we say so. A slightly wrong
 # cursor is a far better outcome than a launcher that does not launch.
 echo ""
+step 6 "Adding it to your apps"
 echo "Tidying up the app-menu entries..."
 
 # distrobox-export's own Exec line looks like:
@@ -547,6 +874,7 @@ DIGEST="$(podman image inspect --format '{{index .RepoDigests 0}}' "${IMAGE}" 2>
 # ==============================================================================
 # 8. Done
 # ==============================================================================
+progress "DONE"
 echo ""
 echo "=================================================================="
 echo " Done. 'DaVinci Resolve' is now in your apps."

@@ -16,7 +16,7 @@ is a real decision.
 | | Which apps | Why |
 | --- | --- | --- |
 | **Baked in** | Aquarius Editor, Aquarius Writer | They are ours. They are on no app store. They are part of the operating system the way the file manager is, and they work on a computer that has never been online. |
-| **Offered** | OBS Studio, Kdenlive, Krita, GIMP, Inkscape, Blender, Ardour, Audacity, Obsidian, LocalSend, Google Chrome, and five OBS plug-ins | They come from Flathub, the Linux app store. AquariusOS suggests them; **you choose which ones you actually want**, in a window at your first login. |
+| **Preinstalled** | OBS Studio, Kdenlive, Krita, GIMP, Inkscape, Blender, Ardour, Audacity, Obsidian, LocalSend, Google Chrome, and four OBS plug-ins | They come from Flathub, the Linux app store, and are downloaded the first time the machine is online. |
 
 Firefox is neither: it is an ordinary system package, so it is *inside* the
 image and works from the very first second, with nothing to download.
@@ -25,94 +25,28 @@ Nobody has to open a terminal for any of it.
 
 ---
 
-## The contract the chooser window is written against
+## What "preinstalled" means in practice, honestly
 
-*This section is for whoever builds or changes the app chooser. Skip it if you
-just want to use the computer.*
+**The apps are not in the installer.** On a brand-new machine, once you are
+connected to the internet, AquariusOS spends roughly **ten to twenty minutes**
+downloading them in the background.
 
-The chooser must never contain its own copy of the app list. There is one
-source of truth, and one command that reads it:
+You can use the computer the whole time. You will see:
 
-```
-/usr/libexec/aquarius-flatpak-preinstall --catalog
-```
+> **Setting up your creator apps**
+> AquariusOS is downloading 17 apps in the background. You can carry on using
+> the computer — this takes about ten to twenty minutes on a normal connection.
 
-It needs no special powers, changes nothing, and prints **one line per app**,
-fields separated by a **single tab character**, always **eight fields**, always
-in this order:
+then a count that updates in place — *"6 of 17 installed. Still working."* —
+and finally:
 
-| # | Field | Example |
-| --- | --- | --- |
-| 1 | id | `com.obsproject.Studio` |
-| 2 | name | `OBS Studio` |
-| 3 | description | one sentence, never contains a tab |
-| 4 | category | one of `Video` `Audio` `Design` `Streaming` `Utilities` |
-| 5 | recommended | `recommended:yes` or `recommended:no` |
-| 6 | runtime | `runtime:yes` or `runtime:no` |
-| 7 | requires | `requires:com.obsproject.Studio`, or `requires:-` |
-| 8 | branch | `branch:stable` |
+> **Your creator apps are ready**
+> All 17 apps are installed. You will find them in the app grid.
 
-Fields 5–8 carry their own name as a prefix, so a reader can assert it is
-reading the field it thinks it is, and so that a ninth field added one day
-cannot be mistaken for one of these.
-
-**Four rules for whoever draws the window:**
-
-1. **Never show a line whose field 6 is `runtime:yes`.** Those five entries are
-   plug-ins, not applications. They belong to the app named in field 7 and must
-   be installed silently alongside it — never offered as a separate tick box,
-   and never installed when the app they belong to was not chosen. Today that
-   means **11 apps to choose from and 5 plug-ins that follow OBS Studio**.
-2. **Tick `recommended:yes` by default; leave the rest unticked.** The
-   recommended set is deliberately the everyday one, not everything.
-3. **Install what is ticked with `aq apps install <id> <id> …`**, which is a
-   thin front door to `flatpak install --system` and takes care of pulling in
-   the plug-ins from field 7. It installs **system-wide**, on purpose — see
-   *One thing worth knowing about how this works* below — so the person is
-   asked for their password once by the desktop's own permission prompt. The
-   chooser must **not** run as root itself and must **not** call `sudo`.
-4. **Anything the person did not tick is simply not installed.** Nothing is
-   written down, nothing is remembered as refused, and they can install it
-   later from the app store or with `aq apps install`. Ticking nothing at all
-   is a valid answer and must leave a working computer.
-
-If `--catalog` exits non-zero, **do not fall back to a built-in list** — show
-that something is wrong with the operating system. An empty answer from it is
-always a fault, never "there are no apps".
-
----
-
-## What happens on a new machine, honestly
-
-**The apps are not in the installer**, and **nothing downloads until you say
-so.**
-
-At your first login a window appears listing the eleven apps AquariusOS
-suggests, with a sentence about each one and the everyday ones already ticked.
-You untick what you do not want, press the button, and those are installed.
-The five OBS plug-ins are not in the list — they come along with OBS Studio
-if you keep it, because on their own they do nothing.
-
-Depending on how many you keep, that download is roughly **ten to twenty
-minutes** on a normal home connection, and you can use the computer throughout.
-Keeping everything is about ten gigabytes; keeping the ticked default is
-rather less.
-
-**Ticking nothing is a perfectly good answer.** You get a working computer with
-Aquarius Editor, Aquarius Writer and Firefox already on it, and you can add any
-of the rest later from the app store or with `aq apps install`.
-
-> **Why it asks instead of just doing it.** Until 2026-09-04 it did not ask: a
-> new machine fetched all sixteen entries on its first boot, about ten
-> gigabytes of other people's software, whether or not the person wanted a
-> single one of them. That is not a decision an operating system should make
-> for somebody. The apps have not changed and neither has the list — what
-> changed is who presses go.
-
-If the machine is not online when you answer, nothing breaks and nothing is
-lost — run `aq apps install --all`, or open the chooser again, once you are
-connected. If one app fails and the rest succeed — Google Chrome does this
-occasionally, for a reason explained below — it says which one by name.
+If the machine is not online yet, **nothing breaks and nothing is lost.** It
+tries again at every start-up, forever, until the list is satisfied. If one app
+fails and the rest succeed — Google Chrome does this occasionally, for a reason
+explained below — it says which one, and retries only that one.
 
 ### Why not just put them in the image?
 
@@ -327,21 +261,6 @@ into place on the machine, once, by the same service that installs the apps —
 and **it never overwrites a file that is already there**, so anything you set
 yourself survives every update.
 
-### And this is why the apps are installed for the whole computer
-
-Flatpak can install an app either **for the whole computer** or **for one
-person only**. AquariusOS installs for the whole computer, and the paragraph
-above is the reason: the permissions that let OBS see your camera and your
-capture card live in `/var/lib/flatpak/overrides/`, which applies to
-computer-wide installs and to nothing else. Install OBS for yourself alone and
-it is sandboxed away from your camera, with no message saying why.
-
-The cost is that installing asks for a password once — the ordinary desktop
-prompt, the same one the app store uses. Nothing runs as root beyond that, and
-neither the chooser nor `aq apps` ever calls `sudo`: they ask Flatpak, and
-Flatpak asks you. The benefit is that the apps work for everybody who uses the
-machine, and are downloaded once rather than once per person.
-
 ---
 
 ## The virtual camera
@@ -367,62 +286,6 @@ cat /usr/share/aquarius/virtual-camera.txt
 `status=installed` means the button works. `status=unavailable` means it does
 not, and says why. Everything else about OBS — screen recording, cameras,
 capture cards, the plug-ins — is unaffected either way.
-
----
-
-## When something goes wrong
-
-### "The apps never arrived"
-
-**What you see.** The app grid has Aquarius Editor, Aquarius Writer and Firefox
-and none of the apps you chose. `flatpak list --app` shows only what was
-already there. Asking the computer what happened:
-
-```
-journalctl -u aquarius-flatpak-preinstall
-```
-
-shows a run that ended almost immediately, saying:
-
-> AquariusOS creator apps: the shopping list is empty. Nothing to install.
-
-**The rescue, which works today, on the machine in front of you:**
-
-```
-sudo flatpak preinstall -y --system
-```
-
-That is Flatpak's own command reading the same list, and it installs
-everything on it. `aq apps status` will then show them as present.
-
-**What caused it.** A bug in AquariusOS, fixed on **2026-09-04**, and worth
-writing down because of the shape of it rather than the size.
-
-The script read the list with a pattern covering two folders — the one the
-operating system ships and the one you can put your own changes in. On a new
-machine the second folder is *empty*, and when a pattern like that matches
-nothing, the shell hands over the pattern itself as though it were a filename.
-The reader was asked for a file that does not exist, gave up before printing a
-single answer, and the script saw zero apps.
-
-It then did the genuinely damaging thing: it treated "zero apps" as *"there is
-nothing to install"*, said so cheerfully, and **wrote the marker that means
-never look again** — so the machine was permanently finished with a job it had
-never started. Nothing appeared to be wrong anywhere.
-
-Three things changed, and only the first is the bug:
-
-1. The list of files is built up by looking at each one, so a folder with
-   nothing in it is simply a folder with nothing in it.
-2. **An empty answer is now treated as a fault, never as an answer.**
-   AquariusOS always ships a list, so "no apps" cannot honestly happen. It now
-   says so in plain words, says it is our bug and not yours, tells you the
-   rescue command above, writes **no** marker, and stops with an error — so the
-   machine shows up in `systemctl --failed` instead of looking healthy.
-3. The build now runs the real reader against the real list and refuses to
-   publish an image unless it finds every app. The old checks looked at the
-   list file and never once ran the code that reads it, which is exactly how a
-   reading fault reached a real machine.
 
 ---
 

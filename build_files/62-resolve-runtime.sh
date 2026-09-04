@@ -164,12 +164,50 @@ else
 fi
 
 # ------------------------------------------------------------------------------
+# 2b. What the installer WINDOW is built out of
+# ------------------------------------------------------------------------------
+# "Install DaVinci Resolve" in the app grid opens a real application window
+# (/usr/libexec/aquarius-resolve-installer), not a terminal. It is written in
+# Python against GTK 4 and libadwaita, which means three things have to be in
+# the image, and a missing one shows up as an icon that does nothing when
+# clicked — the worst possible failure for the feature this OS is built around.
+#
+#   gtk4         the toolkit, and the Gtk-4.0 typelib that lets Python call it
+#   libadwaita   GNOME's own widgets, and the Adw-1 typelib. Also where the
+#                automatic light/dark behaviour comes from, which is why the
+#                window needs no colours of its own.
+#   python3-gobject
+#                the bridge between Python and the two above. THIS IS THE ONE
+#                THAT IS NOT ALREADY HERE. gtk4 and libadwaita arrive with
+#                GNOME at step 40; python3-gobject does not, because the only
+#                thing that pulled anything like it in was nautilus-python,
+#                which needs the smaller python3-gobject-base and stops there.
+#                It is a small package — a megabyte or two with python3-cairo —
+#                and it is the price of the feature not looking like a terminal.
+#
+# Naming all three rather than only the missing one is deliberate: if a future
+# change ever drops GNOME from an image variant, this fails HERE, in the step
+# whose name says why they matter, instead of on somebody's desk.
+say "DaVinci Resolve — what the installer window is built out of"
+aq_dnf install python3-gobject gtk4 libadwaita
+aq_installed python3-gobject gtk4 libadwaita
+
+# The import is the real test. A package can install perfectly and still leave
+# Python unable to reach it, because what Python actually loads is the typelib
+# file, which lives in a different package to the library on some systems. No
+# screen is needed to find out — importing does not open a window.
+if python3 -c 'import gi; gi.require_version("Gtk", "4.0"); gi.require_version("Adw", "1"); from gi.repository import Gtk, Adw'; then
+    ok "Python can reach GTK 4 and libadwaita — the installer window can be drawn"
+else
+    bad "Python cannot import GTK 4 and libadwaita — 'Install DaVinci Resolve' would open nothing at all"
+fi
+
+# ------------------------------------------------------------------------------
 # 3. Every file the feature is made of
 # ------------------------------------------------------------------------------
 say "DaVinci Resolve — the files"
 
 for f in /usr/libexec/aquarius-resolve-install \
-    /usr/libexec/aquarius-resolve-install-gui \
     /usr/libexec/aquarius-resolve-launch; do
     if [ ! -f "${f}" ]; then
         bad "${f} is missing"
@@ -192,6 +230,80 @@ for f in /usr/libexec/aquarius-resolve-install \
         bad "${f} has a syntax error"
     fi
 done
+
+# The window itself. Same idea, different language: py_compile parses it and
+# writes out the byte-code without running a line of it.
+AQ_GUI=/usr/libexec/aquarius-resolve-installer
+if [ ! -f "${AQ_GUI}" ]; then
+    bad "${AQ_GUI} is missing — 'Install DaVinci Resolve' would do nothing"
+else
+    chmod 0755 "${AQ_GUI}"
+    if [ -x "${AQ_GUI}" ]; then
+        ok "aquarius-resolve-installer is present and runnable"
+    else
+        bad "${AQ_GUI} is not runnable"
+    fi
+    # Compiled to a throwaway path on purpose: `python3 -m py_compile` would
+    # leave a __pycache__ folder beside the script, and that folder would then
+    # be baked into /usr/libexec in the finished operating system.
+    if python3 -c 'import py_compile, sys; py_compile.compile(sys.argv[1], cfile="/tmp/aq-gui-check.pyc", doraise=True)' "${AQ_GUI}"; then
+        ok "aquarius-resolve-installer is valid Python"
+    else
+        bad "${AQ_GUI} has a syntax error"
+    fi
+fi
+
+# The window and the script have to agree on the progress lines, and the only
+# way to know they still do is to run them. --dry-run walks all six steps and
+# installs nothing, so this is safe in a build container with no graphics card,
+# no download and no network.
+say "DaVinci Resolve — the progress channel between the two"
+if /usr/libexec/aquarius-resolve-install --dry-run --progress-fd 3 \
+    3> /tmp/aq-progress.txt > /tmp/aq-dryrun.txt 2>&1; then
+    ok "the rehearsal ran"
+else
+    bad "'aquarius-resolve-install --dry-run' does not run"
+    cat /tmp/aq-dryrun.txt
+fi
+echo "  What it said on the progress channel:"
+sed 's/^/       /' /tmp/aq-progress.txt
+EXPECTED_STEPS="$(grep -c '^STEP ' /tmp/aq-progress.txt || true)"
+if [ "${EXPECTED_STEPS}" = "6" ]; then
+    ok "all six steps were announced"
+else
+    bad "the rehearsal announced ${EXPECTED_STEPS} steps, not 6 — the window's list would not match"
+fi
+if [ "$(tail -1 /tmp/aq-progress.txt)" = "DONE" ]; then
+    ok "it finished with DONE, which is what moves the window to its last page"
+else
+    bad "the rehearsal did not end with DONE — the window would never say it had finished"
+fi
+if grep -q '^PERCENT ' /tmp/aq-progress.txt; then
+    ok "PERCENT lines are being sent"
+else
+    bad "no PERCENT line was sent — the progress bar would never fill"
+fi
+# The two questions the window asks before it starts anything.
+#
+# Captured into a variable rather than piped into grep. `grep -q` stops at the
+# first match, and with `set -o pipefail` a producer killed writing into a pipe
+# nobody is reading any more reports the whole pipeline as failed — the trap
+# written up at the top of aq-lib.sh.
+AQ_GPU_LINE="$(/usr/libexec/aquarius-resolve-install --gpu-summary || true)"
+echo "  What it says about this machine's graphics: ${AQ_GPU_LINE}"
+if printf '%s' "${AQ_GPU_LINE}" | grep -Eq "^(ok|warn|none)$(printf '\t')"; then
+    ok "'--gpu-summary' answers in the shape the window reads (a word, a tab, a sentence)"
+else
+    bad "'--gpu-summary' does not answer in the shape the window reads"
+fi
+# --find-installer exits 1 when there is no download, which is the state of
+# every build container, so a zero exit here would mean it had found something
+# that cannot possibly exist.
+if /usr/libexec/aquarius-resolve-install --find-installer > /dev/null 2>&1; then
+    bad "'--find-installer' claims to have found a Resolve download in the build container"
+else
+    ok "'--find-installer' correctly finds nothing in a machine with no download"
+fi
 
 # The one place the runtime container image is named.
 AQ_RUNTIME_ENV=/usr/share/aquarius/resolve/runtime.env
@@ -216,10 +328,17 @@ AQ_DESKTOP=/usr/share/applications/aquarius-install-resolve.desktop
 if [ ! -r "${AQ_DESKTOP}" ]; then
     bad "${AQ_DESKTOP} is missing — there would be no way to start this without a terminal"
 else
-    aq_file_has "${AQ_DESKTOP}" '^Exec=/usr/libexec/aquarius-resolve-install-gui$' \
-        "the app-grid entry points at the graphical setup"
+    aq_file_has "${AQ_DESKTOP}" '^Exec=/usr/libexec/aquarius-resolve-installer$' \
+        "the app-grid entry points at the installer window"
     aq_file_has "${AQ_DESKTOP}" '^Terminal=false$' \
         "it opens its own window rather than expecting a terminal"
+    # The window sets this same name as its application id. Without the match,
+    # a running installer shows up in the dock as a nameless generic window
+    # instead of as "Install DaVinci Resolve" with the Aquarius mark on it.
+    aq_file_has "${AQ_DESKTOP}" '^StartupWMClass=org\.aquariusos\.ResolveInstaller$' \
+        "the desktop knows which window belongs to this entry"
+    aq_file_has "${AQ_DESKTOP}" '^Icon=aquarius-logo$' \
+        "it wears the Aquarius mark"
     # desktop-file-validate is the freedesktop project's own checker. A .desktop
     # file with a bad line is silently ignored by the app grid — the entry
     # simply never appears — so this is worth a package.
@@ -258,6 +377,8 @@ if [ ! -x /usr/bin/aq ]; then
     bad "/usr/bin/aq is missing"
 else
     aq_file_has /usr/bin/aq '^    resolve\)' "aq knows the 'resolve' subcommand"
+    aq_file_has /usr/bin/aq 'AQ_RESOLVE_INSTALLER_GUI=/usr/libexec/aquarius-resolve-installer' \
+        "'aq resolve install --gui' knows where the window is"
     # Run it for real. A help screen that crashes is a help screen nobody can
     # read at the moment they most need it.
     if /usr/bin/aq resolve --help > /tmp/aq-resolve-help.txt 2>&1; then

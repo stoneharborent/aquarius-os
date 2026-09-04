@@ -519,6 +519,7 @@ display() {
 
 AQ_RESOLVE_ENV=/usr/share/aquarius/resolve/runtime.env
 AQ_RESOLVE_INSTALLER=/usr/libexec/aquarius-resolve-install
+AQ_RESOLVE_INSTALLER_GUI=/usr/libexec/aquarius-resolve-installer
 AQ_RESOLVE_LAUNCHER=/usr/libexec/aquarius-resolve-launch
 
 resolve_usage() {
@@ -529,6 +530,15 @@ aq resolve — DaVinci Resolve on AquariusOS
                     Set Resolve up. Give it Blackmagic's download if you have
                     it; leave the file off and it will look in Downloads, and
                     open Blackmagic's page and wait if there is nothing there.
+
+    aq resolve install --gui [file]
+                    The same thing in a window instead of this terminal —
+                    which is what clicking "Install DaVinci Resolve" in your
+                    apps does.
+
+    aq resolve install --dry-run
+                    A rehearsal. Walks through all six steps and installs
+                    nothing at all. Add --gui to look at the window.
 
     aq resolve run  Start Resolve. (You can also just click it in your apps.)
 
@@ -761,11 +771,32 @@ resolve() {
     case "${1:-}" in
         install)
             shift
+            # --gui is the only argument `aq` itself acts on. Everything else is
+            # handed straight to whichever installer runs, so there is one place
+            # arguments are understood and it is not this file.
+            local want_gui=0 arg
+            local -a passthrough=()
+            for arg in "$@"; do
+                if [ "${arg}" = "--gui" ]; then
+                    want_gui=1
+                else
+                    passthrough+=("${arg}")
+                fi
+            done
+
+            if [ "${want_gui}" = "1" ]; then
+                [ -x "${AQ_RESOLVE_INSTALLER_GUI}" ] || {
+                    echo "aq: ${AQ_RESOLVE_INSTALLER_GUI} is missing from this system." >&2
+                    return 1
+                }
+                exec "${AQ_RESOLVE_INSTALLER_GUI}" ${passthrough[@]+"${passthrough[@]}"}
+            fi
+
             [ -x "${AQ_RESOLVE_INSTALLER}" ] || {
                 echo "aq: ${AQ_RESOLVE_INSTALLER} is missing from this system." >&2
                 return 1
             }
-            "${AQ_RESOLVE_INSTALLER}" "$@"
+            "${AQ_RESOLVE_INSTALLER}" ${passthrough[@]+"${passthrough[@]}"}
             ;;
         update)
             shift
