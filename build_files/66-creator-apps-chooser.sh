@@ -169,10 +169,16 @@ fi
 # it". It is worth asking. The fault it guards against is somebody reaching for
 # Adw.StatusPage again because it is the obvious widget for a page like this.
 say "The last page carries the Aquarius mark"
-aq_file_has "${CHOOSER}" 'def hero\(' \
-    "there is one hero helper (the mark, the heading and the line under it)"
-aq_file_has "${CHOOSER}" 'aquarius_ui\.mark_image' \
-    "the hero helper gets the mark from the shared window pieces"
+# The hero helper moved into the shared window pieces on 2026-09-04, when the
+# two DaVinci Resolve windows turned out to have the identical blank last page
+# for the identical reason. So there is now ONE of it, in one file, and this
+# window takes a name for it rather than carrying a copy.
+aq_file_has /usr/lib/aquarius/python/aquarius_ui.py 'def hero\(' \
+    "the shared window pieces own the hero helper (the mark, the heading, the line under it)"
+aq_file_has /usr/lib/aquarius/python/aquarius_ui.py 'mark_image\(pixel_size\)' \
+    "the hero helper gets the mark from the same place every window does"
+aq_file_has "${CHOOSER}" 'hero = aquarius_ui\.hero' \
+    "the chooser uses that shared helper rather than a copy of its own"
 aq_file_has "${CHOOSER}" 'mark, self\.done_title, self\.done_blurb = hero\(' \
     "the done page is built from that same helper, so the mark is on it"
 aq_file_has "${CHOOSER}" 'mark, title, blurb = hero\(' \

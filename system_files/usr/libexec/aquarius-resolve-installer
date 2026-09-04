@@ -217,20 +217,18 @@ class InstallerWindow(Adw.ApplicationWindow):
     # -- page 1: choose -----------------------------------------------------
 
     def _build_choose_page(self):
-        mark = aquarius_ui.mark_image()
-        title = aquarius_ui.title_label("Install DaVinci Resolve")
-
         # ⚠️ THIS PARAGRAPH IS SHORTER THAN IT WAS, ON PURPOSE (Royce,
         # 2026-09-04). It used to explain the container, name the Linux inside
         # it, and say why the clash could not happen — three facts that are
         # true, interesting to whoever maintains this, and of no use whatever to
         # somebody who wants to edit a video. What survives is the two things
         # they can act on: it is safe, and it takes a while.
-        blurb = aquarius_ui.body_label(
+        mark, title, blurb = aquarius_ui.hero(
+            "Install DaVinci Resolve",
             "Resolve runs inside its own protected environment on this "
             "computer, so it stays stable across updates and cannot clash with "
             "anything else you have installed. Setting that up takes %s, "
-            "nearly all of it downloading." % MINUTES
+            "nearly all of it downloading." % MINUTES,
         )
 
         # What will happen, before it happens. Four rows, so that the fifteen
@@ -450,14 +448,27 @@ class InstallerWindow(Adw.ApplicationWindow):
     # -- page 2: installing -------------------------------------------------
 
     def _build_working_page(self):
-        self.working_title = aquarius_ui.title_label(
-            "Installing DaVinci Resolve", "title-2"
+        # ⚠️ THIS PAGE IS ALSO THE END OF THE STORY WHEN THINGS GO WRONG. A run
+        # that fails, or that somebody cancels, stays right here — the Details
+        # log is here and taking it away at the exact moment it matters would be
+        # the wrong thing to do. So this is a page a person can be left looking
+        # at, which means it is built out of the same `hero` as every other
+        # page: the Aquarius mark, a heading, one line under it. The heading is
+        # a size smaller than page 1's because there is a list of steps, a bar
+        # and a log below it.
+        mark, self.working_title, self.working_blurb = aquarius_ui.hero(
+            "Installing DaVinci Resolve",
+            "This takes %s and most of it is quiet. You can leave it and come "
+            "back." % MINUTES,
+            style="title-2",
         )
 
-        self.working_blurb = aquarius_ui.body_label(
-            "This takes %s and most of it is quiet. You can leave it and come "
-            "back." % MINUTES
-        )
+        # Nothing while it is running — a glyph beside "Installing DaVinci
+        # Resolve" would be claiming an outcome that has not happened yet. It
+        # appears, as a warning, only when the run has stopped.
+        self.working_status = aquarius_ui.status_glyph()
+        self.working_status.set_visible(False)
+        heading = aquarius_ui.heading_row(self.working_status, self.working_title)
 
         self.steps_group = Adw.PreferencesGroup()
         self._build_step_rows(DEFAULT_STEPS)
@@ -499,7 +510,8 @@ class InstallerWindow(Adw.ApplicationWindow):
 
         return aquarius_ui.page(
             [
-                self.working_title,
+                mark,
+                heading,
                 self.working_blurb,
                 self.steps_group,
                 self.bar,
@@ -522,13 +534,29 @@ class InstallerWindow(Adw.ApplicationWindow):
     # -- page 3: done -------------------------------------------------------
 
     def _build_done_page(self):
-        self.done_page = Adw.StatusPage()
-        self.done_page.set_icon_name("emblem-ok-symbolic")
-        self.done_page.set_title("DaVinci Resolve is installed.")
-        self.done_page.set_description(
-            "It is in your apps now, and you can drag it to the dock. "
-            "The file you downloaded can be deleted."
+        """The last page: it worked, and the two things to do next.
+
+        ⚠️ THIS WAS AN Adw.StatusPage UNTIL 2026-09-04 AND MUST NOT GO BACK TO
+        BEING ONE. A StatusPage draws a small system symbol, its own heading and
+        its own description, and there is no way to give it the Aquarius mark —
+        so the page you landed on after a fifteen-minute install was blank at
+        the top while both pages before it carry the logo. It is now an ordinary
+        column built from the shared `hero`, exactly like the creator-apps
+        window's "All set." page, which had the identical fault on the identical
+        day.
+
+        The tick still has a job — it says at a glance that everything arrived —
+        so it sits on the same line as the heading rather than being a second
+        big picture underneath the mark.
+        """
+        mark, self.done_title, self.done_blurb = aquarius_ui.hero(
+            "DaVinci Resolve is installed.",
+            "It is in your apps now, and the file you downloaded can be deleted.",
         )
+
+        self.done_status = aquarius_ui.status_glyph()
+        aquarius_ui.set_status_glyph(self.done_status, ok=True)
+        heading = aquarius_ui.heading_row(self.done_status, self.done_title)
 
         # One thing to check, not two. Resolve used to open tiny on a 4K screen
         # and the tip here was how to fix it by hand; AquariusOS now hands
@@ -554,13 +582,11 @@ class InstallerWindow(Adw.ApplicationWindow):
 
         buttons = aquarius_ui.button_row([open_button, close_button], margin_top=0)
 
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        box.append(buttons)
-        box.append(tips)
-        clamp = Adw.Clamp(maximum_size=520)
-        clamp.set_child(box)
-        self.done_page.set_child(clamp)
-        return self.done_page
+        return aquarius_ui.page(
+            [mark, heading, self.done_blurb, buttons, tips],
+            maximum_size=560,
+            spacing=12,
+        )
 
     # -- running the installer ----------------------------------------------
 
@@ -579,6 +605,7 @@ class InstallerWindow(Adw.ApplicationWindow):
         self.working_close.set_visible(False)
         self.working_title.set_label("Installing DaVinci Resolve")
         self.working_title.remove_css_class("error")
+        self.working_status.set_visible(False)
         self.working_blurb.set_label(
             "This takes about fifteen minutes and most of it is quiet. "
             "You can leave it and come back."
@@ -735,6 +762,8 @@ class InstallerWindow(Adw.ApplicationWindow):
         self.header_title.set_subtitle("Stopped")
         self.working_title.set_label("The setup did not finish")
         self.working_title.add_css_class("error")
+        self.working_status.set_visible(True)
+        aquarius_ui.set_status_glyph(self.working_status, ok=False)
         self.working_blurb.set_label(
             message
             + "\n\nNothing on this computer was changed — it all happens "
@@ -778,6 +807,8 @@ class InstallerWindow(Adw.ApplicationWindow):
         self._stop_process()
         self.header_title.set_subtitle("Stopped")
         self.working_title.set_label("Setup stopped")
+        self.working_status.set_visible(True)
+        aquarius_ui.set_status_glyph(self.working_status, ok=False)
         self.working_blurb.set_label(
             "Nothing on this computer was changed. If a half-built "
             "environment was left behind, clear it away with \"Remove DaVinci "
@@ -829,7 +860,8 @@ class InstallerWindow(Adw.ApplicationWindow):
         try:
             subprocess.Popen(argv, start_new_session=True)
         except OSError as exc:
-            self.done_page.set_description(
+            aquarius_ui.set_status_glyph(self.done_status, ok=False)
+            self.done_blurb.set_label(
                 "Resolve is installed, but this window could not start it: %s\n"
                 "Open it from your apps instead." % exc
             )

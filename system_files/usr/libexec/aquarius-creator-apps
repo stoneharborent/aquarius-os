@@ -521,24 +521,19 @@ def run_window(first_run):
             found.append((name, title, comment, icon))
         return found
 
-    def hero(title_text, blurb_text=""):
-        """The top of a page: the Aquarius mark, a heading, and a line under it.
-
-        ⚠️ EVERY PAGE IN THIS WINDOW USES THIS, AND THAT IS THE 2026-09-04 BENCH
-        FAULT. The first page drew the mark by hand and the last page was an
-        Adw.StatusPage, which draws a small system symbol and no logo at all —
-        so finishing an install landed you on a page that was empty where every
-        other page has the Aquarius mark. It read as a page that had failed to
-        load. One helper, three pages, and that cannot drift again.
-
-        It returns the three widgets rather than a box, because each page puts
-        different things between them.
-        """
-        return (
-            aquarius_ui.mark_image(56),
-            aquarius_ui.title_label(title_text),
-            aquarius_ui.body_label(blurb_text),
-        )
+    # The top of a page: the Aquarius mark, a heading, and a line under it.
+    #
+    # ⚠️ EVERY PAGE IN THIS WINDOW USES THIS, AND THAT IS THE 2026-09-04 BENCH
+    # FAULT. The first page drew the mark by hand and the last page was an
+    # Adw.StatusPage, which draws a small system symbol and no logo at all — so
+    # finishing an install landed you on a page that was empty where every other
+    # page has the Aquarius mark. It read as a page that had failed to load.
+    #
+    # It lived here until the two DaVinci Resolve windows turned out to have the
+    # same blank last page for the same reason. It is now in the shared window
+    # pieces, so all three windows draw the top of a page the same way and there
+    # is one place for it to be fixed. This is a name for it, nothing more.
+    hero = aquarius_ui.hero
 
     def load_icon_into(image, entry):
         """Put the best icon we can find on this card, without ever waiting.
@@ -1195,15 +1190,10 @@ def run_window(first_run):
             """
             mark, self.done_title, self.done_blurb = hero("All set.")
 
-            self.done_status = Gtk.Image()
-            self.done_status.set_pixel_size(26)
-            self.done_status.set_valign(Gtk.Align.CENTER)
+            self.done_status = aquarius_ui.status_glyph()
             self._set_done_status(ok=True)
 
-            heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-            heading.set_halign(Gtk.Align.CENTER)
-            heading.append(self.done_status)
-            heading.append(self.done_title)
+            heading = aquarius_ui.heading_row(self.done_status, self.done_title)
 
             # "Open apps" is the suggested action rather than "Open <the first
             # app we happened to install>", which is what this button used to
@@ -1239,14 +1229,7 @@ def run_window(first_run):
 
         def _set_done_status(self, ok):
             """The small glyph beside the heading: a tick, or a warning."""
-            if ok:
-                self.done_status.set_from_icon_name("emblem-ok-symbolic")
-                self.done_status.remove_css_class("warning")
-                self.done_status.add_css_class("success")
-            else:
-                self.done_status.set_from_icon_name("dialog-warning-symbolic")
-                self.done_status.remove_css_class("success")
-                self.done_status.add_css_class("warning")
+            aquarius_ui.set_status_glyph(self.done_status, ok)
 
         # -- running the installer -----------------------------------------
         def _on_install_clicked(self, _button):

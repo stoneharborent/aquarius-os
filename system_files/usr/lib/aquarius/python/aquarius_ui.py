@@ -18,6 +18,13 @@
 # to drift, and a window that looks slightly different from its neighbour looks
 # like a different operating system.
 #
+# ⚠️ THE TOP OF A PAGE IS `hero()` AND NOTHING ELSE (2026-09-04). All three
+# windows used to finish on an Adw.StatusPage, which cannot be given the
+# Aquarius mark, so all three had a last page that was blank where every page
+# before it had the logo. `hero()` — the mark, a heading, a line under it — is
+# now the only way any of them draws the top of a page, and CI greps all three
+# for it and for the absence of `Adw.StatusPage(`.
+#
 # So the shared pieces live here, once. NOTHING IN THIS FILE DECIDES ANYTHING.
 # It has no idea what Resolve is or what a Flatpak is; it draws rows, logs and
 # labels. Every decision stays in the window that owns it.
@@ -232,6 +239,65 @@ def body_label(text, dim=True, centre=True):
     if dim:
         label.add_css_class("dim-label")
     return label
+
+
+def hero(title_text, blurb_text="", pixel_size=56, style="title-1"):
+    """The top of a page: the Aquarius mark, a heading, and a line under it.
+
+    ⚠️ EVERY PAGE OF EVERY AQUARIUSOS WINDOW IS BUILT ON THIS, AND THAT IS THE
+    2026-09-04 BENCH FAULT. Three windows each had a last page made out of an
+    Adw.StatusPage — a widget that draws a small system symbol, its own heading
+    and its own description, and that CANNOT be given the Aquarius mark. So
+    finishing an install landed you on a page that was empty at the top while
+    every page before it carried the logo. It read as a page that had failed to
+    load. It happened three times because each window had its own idea of what
+    the top of a page was; now there is one, here, and it cannot drift.
+
+    It returns the three widgets rather than a box, because each page puts
+    different things between them — a heading with a glyph beside it, a warning
+    line, a list of steps.
+    """
+    return (
+        mark_image(pixel_size),
+        title_label(title_text, style),
+        body_label(blurb_text),
+    )
+
+
+def status_glyph(pixel_size=26):
+    """The small tick or warning triangle that sits beside a heading.
+
+    Deliberately small and beside the words rather than big and above them: the
+    Aquarius mark is what goes at the top of a page, and two large pictures
+    stacked up is what a StatusPage did. This one says at a glance how it went,
+    and then gets out of the way.
+    """
+    image = Gtk.Image()
+    image.set_pixel_size(pixel_size)
+    image.set_valign(Gtk.Align.CENTER)
+    return image
+
+
+def set_status_glyph(image, ok):
+    """A tick, or a warning triangle. Two states, because a page that has
+    finished has to answer the question rather than ask a new one."""
+    if ok:
+        image.set_from_icon_name("emblem-ok-symbolic")
+        image.remove_css_class("warning")
+        image.add_css_class("success")
+    else:
+        image.set_from_icon_name("dialog-warning-symbolic")
+        image.remove_css_class("success")
+        image.add_css_class("warning")
+
+
+def heading_row(glyph, title, spacing=10):
+    """A heading and its glyph on one line, centred together as a pair."""
+    box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=spacing)
+    box.set_halign(Gtk.Align.CENTER)
+    box.append(glyph)
+    box.append(title)
+    return box
 
 
 def page(widgets, maximum_size=560, spacing=16):

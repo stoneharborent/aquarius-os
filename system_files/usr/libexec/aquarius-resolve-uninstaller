@@ -125,12 +125,10 @@ class UninstallerWindow(Adw.ApplicationWindow):
     # -- page 1: what will happen -------------------------------------------
 
     def _build_explain_page(self):
-        mark = aquarius_ui.mark_image()
-        title = aquarius_ui.title_label("Remove DaVinci Resolve")
-
-        blurb = aquarius_ui.body_label(
+        mark, title, blurb = aquarius_ui.hero(
+            "Remove DaVinci Resolve",
             "This removes DaVinci Resolve and the separate environment it ran "
-            "in. It takes a minute or two."
+            "in. It takes a minute or two.",
         )
 
         # What goes and what stays, as rows rather than a paragraph — this is
@@ -246,13 +244,25 @@ class UninstallerWindow(Adw.ApplicationWindow):
     # -- page 2: removing ---------------------------------------------------
 
     def _build_working_page(self):
-        self.working_title = aquarius_ui.title_label(
-            "Removing DaVinci Resolve", "title-2"
-        )
-        self.working_blurb = aquarius_ui.body_label(
+        # ⚠️ THIS PAGE IS ALSO THE END OF THE STORY WHEN THINGS GO WRONG — a run
+        # that fails, or that somebody stops, stays here, because the Details
+        # log is here. So it is a page a person can be left looking at, and it
+        # gets the same top as every other page: the Aquarius mark, a heading,
+        # one line. The heading is a size smaller than page 1's because a list
+        # of steps, a bar and a log sit under it.
+        mark, self.working_title, self.working_blurb = aquarius_ui.hero(
+            "Removing DaVinci Resolve",
             "This takes a minute or two. Your projects and media are not being "
-            "touched."
+            "touched.",
+            style="title-2",
         )
+
+        # Nothing while it is running: a glyph beside "Removing DaVinci Resolve"
+        # would be announcing an outcome that has not happened. It appears, as a
+        # warning, only once the run has stopped.
+        self.working_status = aquarius_ui.status_glyph()
+        self.working_status.set_visible(False)
+        heading = aquarius_ui.heading_row(self.working_status, self.working_title)
 
         self.steps_group = Adw.PreferencesGroup()
         self._build_step_rows(DEFAULT_STEPS)
@@ -291,7 +301,8 @@ class UninstallerWindow(Adw.ApplicationWindow):
 
         return aquarius_ui.page(
             [
-                self.working_title,
+                mark,
+                heading,
                 self.working_blurb,
                 self.steps_group,
                 self.bar,
@@ -314,10 +325,24 @@ class UninstallerWindow(Adw.ApplicationWindow):
     # -- page 3: done -------------------------------------------------------
 
     def _build_done_page(self):
-        self.done_page = Adw.StatusPage()
-        self.done_page.set_icon_name("emblem-ok-symbolic")
-        self.done_page.set_title("DaVinci Resolve has been removed.")
-        self.done_page.set_description("")
+        """The last page: it is gone, and what to do next.
+
+        ⚠️ THIS WAS AN Adw.StatusPage UNTIL 2026-09-04 AND MUST NOT GO BACK TO
+        BEING ONE. A StatusPage draws a small system symbol, its own heading and
+        its own description, and cannot be given the Aquarius mark — so the page
+        you finished on was blank at the top while the two pages before it carry
+        the logo. All three AquariusOS windows had that fault, for the same
+        reason, on the same day. It is now the shared `hero`, like every other
+        page, and the line under the heading is filled in by _show_done because
+        what it says depends on whether the settings were kept.
+        """
+        mark, self.done_title, self.done_blurb = aquarius_ui.hero(
+            "DaVinci Resolve has been removed."
+        )
+
+        self.done_status = aquarius_ui.status_glyph()
+        aquarius_ui.set_status_glyph(self.done_status, ok=True)
+        heading = aquarius_ui.heading_row(self.done_status, self.done_title)
 
         install_again = aquarius_ui.pill_button("Install it again", suggested=True)
         install_again.connect("clicked", self._on_install_again)
@@ -331,13 +356,11 @@ class UninstallerWindow(Adw.ApplicationWindow):
         self.done_detail = aquarius_ui.body_label("")
         self.done_detail.set_margin_top(6)
 
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        box.append(buttons)
-        box.append(self.done_detail)
-        clamp = Adw.Clamp(maximum_size=520)
-        clamp.set_child(box)
-        self.done_page.set_child(clamp)
-        return self.done_page
+        return aquarius_ui.page(
+            [mark, heading, self.done_blurb, buttons, self.done_detail],
+            maximum_size=560,
+            spacing=12,
+        )
 
     # -- doing it -----------------------------------------------------------
 
@@ -399,6 +422,7 @@ class UninstallerWindow(Adw.ApplicationWindow):
         self.working_close.set_visible(False)
         self.working_title.set_label("Removing DaVinci Resolve")
         self.working_title.remove_css_class("error")
+        self.working_status.set_visible(False)
         self.header_title.set_subtitle("Removing")
         self.stack.set_visible_child_name("working")
         self._determinate = False
@@ -520,13 +544,14 @@ class UninstallerWindow(Adw.ApplicationWindow):
 
     def _show_done(self):
         self.header_title.set_subtitle("")
+        aquarius_ui.set_status_glyph(self.done_status, ok=True)
         if self.purge_switch.get_active():
-            self.done_page.set_description(
+            self.done_blurb.set_label(
                 "Resolve and your Resolve settings are gone. Your project "
                 "files, clips and exports were not touched."
             )
         else:
-            self.done_page.set_description(
+            self.done_blurb.set_label(
                 "Your projects, media and Resolve settings were not touched. "
                 "Install it again and it picks up where you left off."
             )
@@ -544,6 +569,8 @@ class UninstallerWindow(Adw.ApplicationWindow):
         self.header_title.set_subtitle("Stopped")
         self.working_title.set_label("The removal did not finish")
         self.working_title.add_css_class("error")
+        self.working_status.set_visible(True)
+        aquarius_ui.set_status_glyph(self.working_status, ok=False)
         self.working_blurb.set_label(
             message
             + "\n\nYour projects and media were not touched. It is safe to try "
@@ -580,6 +607,8 @@ class UninstallerWindow(Adw.ApplicationWindow):
         self._stop_process()
         self.header_title.set_subtitle("Stopped")
         self.working_title.set_label("Stopped")
+        self.working_status.set_visible(True)
+        aquarius_ui.set_status_glyph(self.working_status, ok=False)
         self.working_blurb.set_label(
             "Removing was stopped partway. Nothing of yours was touched. Run it "
             "again to finish, or leave it — a half-removed environment costs "
@@ -625,7 +654,8 @@ class UninstallerWindow(Adw.ApplicationWindow):
         try:
             subprocess.Popen([INSTALLER_GUI], start_new_session=True)
         except OSError as exc:
-            self.done_page.set_description(
+            aquarius_ui.set_status_glyph(self.done_status, ok=False)
+            self.done_blurb.set_label(
                 "Resolve was removed, but this window could not open the "
                 "installer: %s\nOpen \"Install DaVinci Resolve\" from your apps "
                 "instead." % exc
