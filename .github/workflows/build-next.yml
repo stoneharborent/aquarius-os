@@ -900,9 +900,19 @@ jobs:
           grep -q 'export LANG=' /usr/bin/aquarius-session \
             && ok "aquarius-session exports LANG" \
             || bad "aquarius-session does not export LANG — the shell would start in the C locale"
-          grep -q 'aq_push_env .*LANG' /usr/bin/aquarius-session \
-            && ok "it also hands LANG to systemd and D-Bus (for portals started later)" \
-            || bad "LANG is not pushed to systemd/D-Bus — a portal started later would use the C locale"
+          # aq_push_env's argument list is split over a backslash continuation,
+          # so a line-at-a-time grep cannot see the last few names. Join the
+          # continued lines first, then look for LANG as a whole word among the
+          # arguments. (Getting this wrong is what failed the build on
+          # 2026-09-04 — the launcher was right and the check was not.)
+          AQ_PUSHED="$(sed -e ':a' -e '/\\$/N; s/\\\n/ /; ta' /usr/bin/aquarius-session \
+                       | grep '^aq_push_env ' || true)"
+          case " ${AQ_PUSHED} " in
+            *" LANG "*)
+              ok "it also hands LANG to systemd and D-Bus (for portals started later)" ;;
+            *)
+              bad "LANG is not pushed to systemd/D-Bus — a portal started later would use the C locale" ;;
+          esac
 
           echo "== the window manager's configuration =="
           for f in rc.xml autostart shutdown environment; do
