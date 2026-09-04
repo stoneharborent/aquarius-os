@@ -1665,7 +1665,8 @@ jobs:
             org.localsend.localsend_app md.obsidian.Obsidian com.google.Chrome \
             com.obsproject.Studio.Plugin.OBSVkCapture \
             com.obsproject.Studio.Plugin.PipeWireAudioCapture \
-            org.freedesktop.Platform.VulkanLayer.OBSVkCapture
+            org.freedesktop.Platform.VulkanLayer.OBSVkCapture \
+            com.heroicgameslauncher.hgl net.lutris.Lutris net.davidotek.pupgui2
           do
             if grep -qx "${want}" /tmp/ids.txt; then ok "on the list: ${want}"
             else bad "MISSING from the list: ${want}"; fi
@@ -1818,20 +1819,28 @@ jobs:
           if [ "${FIELDS}" = "8 " ]; then ok "every catalog line has the promised 8 fields"
           else bad "catalog lines have ${FIELDS}fields — the chooser is written against exactly 8"; fi
 
-          if awk -F'\t' '$4 !~ /^(Video|Audio|Design|Streaming|Utilities)$/' /tmp/catalog.txt | grep -q .; then
+          # Six shelves since R4, when Gaming was added (build_files/68-gaming.sh).
+          SHELVES='^(Video|Audio|Design|Streaming|Utilities|Gaming)$'
+          if awk -F'\t' -v s="${SHELVES}" '$4 !~ s' /tmp/catalog.txt | grep -q .; then
             bad "an app names a category the chooser cannot draw:"
-            awk -F'\t' '$4 !~ /^(Video|Audio|Design|Streaming|Utilities)$/ {print "       " $1 " -> " $4}' /tmp/catalog.txt
+            awk -F'\t' -v s="${SHELVES}" '$4 !~ s {print "       " $1 " -> " $4}' /tmp/catalog.txt
           else
-            ok "every app sits on one of the five shelves the chooser draws"
+            ok "every app sits on one of the six shelves the chooser draws"
           fi
 
-          # 11 apps a person picks from, 5 plug-ins that follow OBS Studio.
+          # The apps a person picks from, and the plug-ins that follow OBS
+          # Studio. Derived from the shipped list rather than written down as a
+          # number, so that adding an app to AquariusOS does not mean editing
+          # this file — the invariant is that the two agree, not that either is
+          # any particular size. The floor is there so an empty catalog, which
+          # would satisfy "they agree" perfectly, still fails.
           VISIBLE="$(awk -F'\t' '$6=="runtime:no"' /tmp/catalog.txt | wc -l)"
           HIDDEN="$(awk -F'\t' '$6=="runtime:yes"' /tmp/catalog.txt | wc -l)"
-          if [ "${VISIBLE}" -eq 11 ] && [ "${HIDDEN}" -eq 5 ]; then
+          EXPECT_VISIBLE=$(( blocks - runtimes ))
+          if [ "${VISIBLE}" -eq "${EXPECT_VISIBLE}" ] && [ "${HIDDEN}" -eq "${runtimes}" ] && [ "${VISIBLE}" -ge 10 ]; then
             ok "the chooser would offer ${VISIBLE} apps and quietly bring ${HIDDEN} plug-ins with OBS"
           else
-            bad "the chooser would offer ${VISIBLE} apps with ${HIDDEN} plug-ins — expected 11 and 5"
+            bad "the chooser would offer ${VISIBLE} apps with ${HIDDEN} plug-ins — the shipped list says ${EXPECT_VISIBLE} and ${runtimes}"
           fi
 
           # Every plug-in must say which app it belongs to, or it can never be
