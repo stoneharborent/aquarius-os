@@ -293,6 +293,59 @@ done
 rm -f /tmp/aq-gui-check.pyc
 
 # ------------------------------------------------------------------------------
+# Every page of both windows carries the Aquarius mark
+# ------------------------------------------------------------------------------
+# ⚠️ THE 2026-09-04 BENCH FAULT, AND IT HAPPENED THREE TIMES. All three
+# AquariusOS windows finished on an Adw.StatusPage — a widget that draws a small
+# system symbol, its own heading and its own description, and that CANNOT be
+# given the Aquarius mark. So the page a person landed on after a fifteen-minute
+# install was blank at the top while every page before it carried the logo. It
+# read as a page that had failed to load. The creator-apps window was fixed
+# first; these two had the identical page for the identical reason.
+#
+# The fix is one helper — aquarius_ui.hero() — used by every page of all three
+# windows. These are text checks, and that is a deliberate limit: drawing a GTK
+# window needs a screen and a build container has none, so the only question a
+# build can ask is "is it still written the way we fixed it". It is worth
+# asking, because Adw.StatusPage is the obvious widget to reach for here and
+# somebody will reach for it again.
+say "DaVinci Resolve — every page of both windows carries the Aquarius mark"
+aq_file_has "${AQ_UI}" 'def hero\(' \
+    "the shared window pieces own the hero helper (the mark, the heading, the line under it)"
+aq_file_has "${AQ_UI}" 'def status_glyph\(' \
+    "and the small tick/warning glyph that goes beside a heading"
+for AQ_GUI in /usr/libexec/aquarius-resolve-installer \
+    /usr/libexec/aquarius-resolve-uninstaller; do
+    [ -r "${AQ_GUI}" ] || continue
+    AQ_NAME="$(basename "${AQ_GUI}")"
+    # Looking for the CALL — "Adw.StatusPage(" with its bracket — and not for
+    # the bare name, because the comments in these files explain at length why
+    # the page is not one any more.
+    if grep -q 'Adw\.StatusPage(' "${AQ_GUI}"; then
+        bad "${AQ_NAME} builds an Adw.StatusPage again — that page cannot show the Aquarius mark"
+    else
+        ok "${AQ_NAME} builds no Adw.StatusPage anywhere"
+    fi
+    aq_file_has "${AQ_GUI}" 'mark, self\.done_title, self\.done_blurb = aquarius_ui\.hero\(' \
+        "${AQ_NAME}'s last page is built from the shared hero, so the mark is on it"
+    aq_file_has "${AQ_GUI}" 'mark, title, blurb = aquarius_ui\.hero\(' \
+        "so is its first page, which is what makes them match"
+    # The page a failed or cancelled run is left on is the working page — the
+    # Details log is there and taking it away at that moment would be wrong. So
+    # it is a page a person can be left looking at, and it gets the mark too.
+    aq_file_has "${AQ_GUI}" 'mark, self\.working_title, self\.working_blurb = aquarius_ui\.hero\(' \
+        "and so does the page a failed or cancelled run is left on"
+    # The glyph says how it went. On the last page it starts as a tick; on the
+    # working page it is hidden until there is an outcome to report.
+    aq_file_has "${AQ_GUI}" 'aquarius_ui\.set_status_glyph\(self\.done_status, ok=True\)' \
+        "${AQ_NAME} puts a tick beside the heading when it worked"
+    aq_file_has "${AQ_GUI}" 'aquarius_ui\.set_status_glyph\(self\.working_status, ok=False\)' \
+        "and a warning beside it when it did not"
+    aq_file_has "${AQ_GUI}" 'aquarius_ui\.heading_row\(' \
+        "the glyph sits on the heading line, not as a second picture under the mark"
+done
+
+# ------------------------------------------------------------------------------
 # Nothing a person reads may name another Linux
 # ------------------------------------------------------------------------------
 # ⚠️ ROYCE'S RULE, 2026-09-04. A person installing a video editor is not helped

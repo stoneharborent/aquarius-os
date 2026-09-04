@@ -78,6 +78,12 @@ on:
       # main button offered to open one app instead of showing them all. Same
       # arrangement: builds and checks, never publishes.
       - restart/chooser-done
+      # The two DaVinci Resolve windows' last pages — the same 2026-09-04 fault
+      # as the chooser's "All set." page, in the two windows nobody looked at
+      # yet: both finished on a widget that cannot show the Aquarius mark, so
+      # both were blank at the top. Same arrangement: builds and checks, never
+      # publishes.
+      - restart/resolve-done
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -2881,6 +2887,36 @@ jobs:
               ok "$(basename "${GUI}") is valid Python"
             else
               bad "${GUI} has a syntax error"; cat /tmp/py.txt
+            fi
+            # ⚠️ THE 2026-09-04 BENCH FAULT, WHICH HAPPENED THREE TIMES. All
+            # three AquariusOS windows finished on an Adw.StatusPage — a widget
+            # that draws a small system symbol and CANNOT be given the Aquarius
+            # mark — so the page you landed on after installing was blank at the
+            # top while every page before it carried the logo. One shared
+            # helper, aquarius_ui.hero(), draws the top of every page now. Read
+            # back out of the finished image, which is the copy that ships.
+            if grep -q 'Adw\.StatusPage(' "${GUI}"; then
+              bad "$(basename "${GUI}") builds an Adw.StatusPage again — that page cannot show the Aquarius mark"
+            else
+              ok "$(basename "${GUI}") builds no Adw.StatusPage anywhere"
+            fi
+            for want in 'mark, title, blurb = aquarius_ui.hero(' \
+                        'mark, self.working_title, self.working_blurb = aquarius_ui.hero(' \
+                        'mark, self.done_title, self.done_blurb = aquarius_ui.hero(' \
+                        'aquarius_ui.heading_row('; do
+              if grep -qF "$want" "${GUI}"; then
+                ok "$(basename "${GUI}"): $want"
+              else
+                bad "$(basename "${GUI}") no longer has '$want' — one of its pages would have no Aquarius mark"
+              fi
+            done
+          done
+          # The helper itself, in the image, where all three windows read it.
+          for want in 'def hero(' 'def status_glyph(' 'def set_status_glyph(' 'def heading_row('; do
+            if grep -qF "$want" /usr/lib/aquarius/python/aquarius_ui.py; then
+              ok "the shared window pieces still have $want"
+            else
+              bad "aquarius_ui.py has lost '$want' — every AquariusOS window is built on it"
             fi
           done
           # ⚠️ ROYCE'S RULE, 2026-09-04: nothing a person READS may name another
