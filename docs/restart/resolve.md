@@ -77,6 +77,27 @@ Blackmagic themselves test against, which is the part everyone else skips.
 
 ## Doing it — the exact steps on the bench
 
+> ### ⚠️ Read this first if you are testing before R3a is merged
+>
+> Until this branch merges into `restart/fedora-bootc`, the Rocky Linux runtime
+> is published **only** under a development tag, so that a half-finished one can
+> never overwrite what finished machines pull. The normal command will fail at
+> "Downloading…" with a *manifest unknown* error, which is correct and not a
+> fault.
+>
+> On the bench, run it like this instead:
+>
+> ```
+> AQ_RESOLVE_RUNTIME_TAG=dev-restart-r3-resolve aq resolve install
+> ```
+>
+> It prints a line saying it is using a runtime that is not the one this
+> AquariusOS shipped with. Everything else is identical. After the merge, the
+> plain command works and this note stops applying.
+>
+> The graphical **Install DaVinci Resolve** button cannot pass that setting, so
+> use the terminal for this one test.
+
 ### 1. Get the download
 
 Go to <https://www.blackmagicdesign.com/products/davinciresolve>, choose **the

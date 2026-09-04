@@ -399,9 +399,16 @@ else
     echo ""
     if ! podman pull "${IMAGE}"; then
         echo "" >&2
-        echo "The download failed. The usual cause is no internet connection." >&2
-        echo "Nothing was changed. Try again when you are back online:" >&2
-        echo "    aq resolve install" >&2
+        echo "The download failed." >&2
+        echo "" >&2
+        echo "The usual cause is no internet connection. Try again when you are" >&2
+        echo "back online:   aq resolve install" >&2
+        echo "" >&2
+        echo "If the message above says 'manifest unknown', it means this exact" >&2
+        echo "runtime has not been published yet. That happens when a machine is" >&2
+        echo "running a test build of AquariusOS from a branch. The fix is to name" >&2
+        echo "the branch's own runtime — see the note at the top of" >&2
+        echo "docs/restart/resolve.md — and it does not affect released versions." >&2
         exit 1
     fi
 
