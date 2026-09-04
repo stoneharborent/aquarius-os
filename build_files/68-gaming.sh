@@ -36,9 +36,11 @@
 #                 winetricks, steam-devices, and the 32-bit graphics libraries.
 #                 Everything that can come from Fedora does.
 #
-#   Terra         Steam and umu-launcher, which Fedora does not package.
-#                 Terra (repos.fyralabs.com) is Fyra Labs' Fedora add-on
-#                 repository and it is where Bazzite gets its Steam too.
+#   Terra         umu-launcher, and Steam. Terra (repos.fyralabs.com) is Fyra
+#                 Labs' Fedora add-on repository and it is where Bazzite gets
+#                 its Steam. (RPM Fusion, already enabled here for the codecs,
+#                 turns out to carry the very same Steam release — see the note
+#                 further down. umu is Terra's alone, so Terra is not optional.)
 #
 #   Universal     The Xbox controller kernel modules (xone and xpadneo),
 #   Blue          already compiled and already signed — exactly the same
@@ -246,21 +248,27 @@ aq_dnf install \
 # game through Proton from OUTSIDE Steam — it is what Lutris and Heroic use
 # under the hood, so having it here means those two work properly the moment
 # somebody installs them.
-say "Steam and umu-launcher, from Terra"
+say "Steam and umu-launcher, with Terra switched on for this one command"
 aq_dnf install "${AQ_TERRA_FLAG}" steam umu-launcher
 
-# Where did they actually come from? An install can succeed having taken a
-# package of the same name from somewhere else entirely — RPM Fusion also
-# packages Steam — and the honest answer is in the package's own vendor field.
-say "Checking Steam really came from Terra"
-AQ_STEAM_VENDOR="$(rpm -q --queryformat '%{VENDOR}' steam 2> /dev/null || echo '(not installed)')"
-echo "  steam vendor: ${AQ_STEAM_VENDOR}"
-if [ "${AQ_STEAM_VENDOR}" = "Terra" ]; then
-    ok "Steam came from Terra, as intended"
-else
-    echo "  NOTE this is not a failure — it means dnf preferred another"
-    echo "       repository's Steam. Worth knowing, not worth stopping for."
-fi
+# ⚠️ WHICH REPOSITORY STEAM ACTUALLY CAME FROM, and why we stopped caring.
+#
+# RPM Fusion — which this image has had enabled since step 1, for the codecs —
+# packages Steam as well, and on 2026-09-04 the first build of this step showed
+# both repositories offering THE SAME RELEASE, steam-1.0.0.87-1.fc44, with dnf
+# taking RPM Fusion's copy on the tie.
+#
+# That is a fine outcome and not worth engineering around. Both are the same
+# upstream Steam, both are already trusted sources in this image, and pinning
+# one would mean fighting dnf every time the other happened to be a day ahead.
+# Terra is still switched on for this command because umu-launcher is only
+# there, and umu is what Lutris and Heroic run Windows games through.
+#
+# So the source is printed rather than judged: worth being able to read in a
+# build log, not worth failing a build over.
+say "Where Steam and umu came from"
+rpm -q --queryformat '       %{NAME}-%{VERSION}-%{RELEASE}  (packaged by: %{VENDOR})\n' \
+    steam umu-launcher 2>&1 || true
 
 aq_installed steam umu-launcher gamescope gamemode mangohud vkBasalt protontricks winetricks steam-devices
 
@@ -599,38 +607,56 @@ else
 fi
 
 # ------------------------------------------------------------------------------
-# gamescope and CAP_SYS_NICE — a decision, written down
+# gamescope and CAP_SYS_NICE — Fedora's decision, not ours, and we leave it
 # ------------------------------------------------------------------------------
-# gamescope prints a warning at startup asking for a permission called
-# CAP_SYS_NICE, which would let it give itself scheduling priority. Bazzite
-# grants it. WE DELIBERATELY DO NOT, and here is why:
+# gamescope asks for a permission called CAP_SYS_NICE, which lets it raise its
+# own scheduling priority. It is worth knowing that this permission has a
+# history: on NVIDIA cards specifically it has been reported to make gamescope
+# pick the wrong graphics card and refuse to start
+# (ValveSoftware/gamescope #521, and #1370 for the general case), because a
+# program holding an extra capability has part of its environment stripped by
+# the loader for security — including some of the variables that tell a Vulkan
+# program which card to use.
 #
-#   * On NVIDIA cards specifically — which is this project's primary target —
-#     granting it has a long history of making gamescope pick the wrong
-#     graphics card and fail to start at all (ValveSoftware/gamescope issue
-#     #521, and #1370 for the general case).
-#   * A program with an extra capability has environment variables stripped by
-#     the loader for security, and several of the variables that tell a Vulkan
-#     program which card to use are among them. That is the same fault seen
-#     from the other side.
-#   * What it buys is a small scheduling advantage that gamemode already
-#     provides by a route that has none of these problems.
+# ⚠️ AND FEDORA GRANTS IT ANYWAY, IN THE PACKAGE ITSELF. We found this out by
+# checking, on 2026-09-04: `getcap /usr/bin/gamescope` reports
+# `cap_sys_nice=ep` on a freshly built image, and it is there because the RPM
+# declares it, not because anything in this build asked for it.
 #
-# Turning it on is one command on a machine that wants it, and that command is
-# in docs/restart/gaming.md. This check exists so that if somebody adds it
-# later, it is a decision and not an accident.
-say "gamescope has no special permissions (on purpose)"
+# So there is no decision for us to take here, only one not to fight. Stripping
+# a capability that Fedora's own package ships would be us overriding the
+# distribution on every build, for a fault we have not actually seen on our
+# hardware. If gamescope ever does misbehave on the bench's 4090, this is the
+# first thing to suspect and `sudo setcap -r /usr/bin/gamescope` is the
+# one-line test — that is written up in docs/restart/gaming.md.
+#
+# What this check is for, then, is narrower and more useful: to notice if
+# anything in OUR build ever starts granting capabilities of its own. So the
+# question asked is not "does gamescope have capabilities" but "did they come
+# from the package". Content, not assumption.
+say "gamescope's permissions come from Fedora's package, not from us"
+# `rpm -q --filecaps` is rpm's own listing of which files in a package carry
+# POSIX capabilities. Asking rpm rather than assembling the answer out of two
+# separate tags avoids the case where the two lists are different lengths and
+# the query fails outright — which would look exactly like "the package
+# declares nothing".
+AQ_DECLARED_CAPS="$(rpm -q --filecaps gamescope 2> /dev/null \
+    | awk '$1 == "/usr/bin/gamescope" { $1 = ""; sub(/^[[:space:]]+/, ""); print }' || true)"
+echo "  the package declares: ${AQ_DECLARED_CAPS:-(none)}"
 if aq_have getcap; then
     getcap /usr/bin/gamescope > /tmp/aq-caps.txt 2>&1 || true
-    if [ -s /tmp/aq-caps.txt ]; then
-        sed 's/^/       /' /tmp/aq-caps.txt
-        bad "gamescope has been given extra capabilities — on NVIDIA that is a known way to make it refuse to start"
-    else
-        ok "gamescope carries no extra capabilities"
-    fi
+    AQ_ACTUAL_CAPS="$(awk '{ $1 = ""; sub(/^ /, ""); print }' /tmp/aq-caps.txt)"
+    echo "  the file actually has: ${AQ_ACTUAL_CAPS:-(none)}"
     rm -f /tmp/aq-caps.txt
+    if [ -z "${AQ_ACTUAL_CAPS}" ]; then
+        ok "gamescope carries no capabilities at all"
+    elif [ -n "${AQ_DECLARED_CAPS}" ]; then
+        ok "the capabilities on gamescope are the ones Fedora's package ships"
+    else
+        bad "gamescope has capabilities its package does not declare — something in THIS build granted them"
+    fi
 else
-    echo "  note   getcap is not in this image; skipping (nothing in the build grants capabilities)"
+    echo "  note   getcap is not in this image; the package's own declaration above is the answer"
 fi
 
 # ==============================================================================

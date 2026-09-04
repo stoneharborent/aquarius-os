@@ -38,8 +38,8 @@ downloaded on first boot.
 
 | Program | What it is for | Where it comes from |
 | --- | --- | --- |
-| **Steam** | The shop and the launcher. | Terra |
-| **umu-launcher** | Runs a Windows game through Proton from *outside* Steam. Heroic and Lutris use it. | Terra |
+| **Steam** | The shop and the launcher. | RPM Fusion or Terra — both carry the same release |
+| **umu-launcher** | Runs a Windows game through Proton from *outside* Steam. Heroic and Lutris use it. | Terra (only there) |
 | **gamescope** | Gives a game its own private screen — lock a resolution, cap a frame rate, upscale cleanly. | Fedora |
 | **gamemode** | A temporary performance boost while a game runs. Starts when asked, stops after. | Fedora |
 | **MangoHud** | The frame-rate/temperature overlay. Off unless you ask for it. | Fedora |
@@ -172,8 +172,12 @@ for games.
 
 ### 1. Terra's graphics driver
 
-Steam and umu come from **Terra**, Fyra Labs' Fedora add-on repository — the
-same place Bazzite gets its Steam. Terra also publishes a **Valve-patched Mesa**
+umu-launcher comes from **Terra**, Fyra Labs' Fedora add-on repository — the
+same place Bazzite gets its Steam. (Steam itself turned out to be a tie: RPM
+Fusion, which this image has enabled anyway for the codecs, carries the exact
+same release, and dnf takes whichever is newer on the day. Either is the same
+upstream Steam, so we do not fight it. Terra is still required, because umu is
+only there.) Terra also publishes a **Valve-patched Mesa**
 graphics driver, which lands Valve's game fixes months before Fedora does.
 Bazzite uses it. **We do not.**
 
@@ -191,30 +195,42 @@ So AquariusOS keeps Fedora's Mesa, and to make sure that stays true:
 - Every build checks that `mesa-dri-drivers` and `mesa-vulkan-drivers` still say
   their maker is Fedora, and fails if they do not.
 
-### 2. gamescope's extra permission
+### 2. We did not override Fedora on gamescope's extra permission
 
-gamescope prints a warning at startup asking for a permission called
-`CAP_SYS_NICE`, which would let it raise its own scheduling priority. Bazzite
-grants it. We do not, because on NVIDIA cards — our primary target — granting it
-has a long, documented history of making gamescope pick the wrong graphics card
-and fail to start entirely
+gamescope uses a permission called `CAP_SYS_NICE` to raise its own scheduling
+priority. That permission has a history: on NVIDIA cards specifically it has
+been reported to make gamescope pick the wrong graphics card and refuse to start
 ([gamescope #521](https://github.com/ValveSoftware/gamescope/issues/521),
-[#1370](https://github.com/ValveSoftware/gamescope/issues/1370)). The underlying
-cause is that a program holding an extra capability has some of its environment
-stripped by the system for security reasons, and several of the variables that
-tell a Vulkan program which card to use are among them.
+[#1370](https://github.com/ValveSoftware/gamescope/issues/1370)), because a
+program holding an extra capability has part of its environment stripped by the
+system for security — including some of the variables that tell a Vulkan
+program which card to use. Since NVIDIA is this project's primary target, the
+plan was to leave the permission off.
 
-What it buys is a small scheduling advantage that **gamemode already provides**
-by a route with none of these problems.
+**Then the build told us Fedora already grants it.** Checked on 2026-09-04:
+`getcap /usr/bin/gamescope` reports `cap_sys_nice=ep` on a freshly built image,
+and it is there because Fedora's own RPM declares it — nothing in our build
+asked for it.
 
-If you want it anyway, on your own machine:
+So we left it alone. Stripping a capability that the distribution's own package
+ships would mean overriding Fedora on every single build, for a fault we have
+not actually seen on our hardware.
+
+**If gamescope misbehaves on the 4090, this is the first thing to suspect.** The
+one-line test:
 
 ```
-sudo setcap 'cap_sys_nice=eip' /usr/bin/gamescope
+sudo setcap -r /usr/bin/gamescope     # remove it, then try gamescope again
 ```
 
-and to undo it: `sudo setcap -r /usr/bin/gamescope`. Note that an AquariusOS
-update replaces the system files, so this does not survive one.
+and to put it back: `sudo setcap 'cap_sys_nice=ep' /usr/bin/gamescope`. Neither
+survives an AquariusOS update, which is exactly what you want from a test. If
+removing it turns out to fix something real on the bench, that is the evidence
+that would make us override Fedora here after all — please report it.
+
+Every build checks that the capabilities on gamescope are the ones its *package*
+declares, so if anything in AquariusOS ever starts granting permissions of its
+own, CI says so.
 
 ---
 
@@ -294,11 +310,12 @@ machine already after a `bootc upgrade`; nothing needs installing first.*
 ### E. gamescope
 
 - [ ] `gamescope -W 1920 -H 1080 -f -- glxgears` (or any game, via launch
-      options) opens and runs. It is expected to print a warning about
-      `CAP_SYS_NICE` — that is the permission we deliberately do not grant, and
-      it is a warning, not a failure.
-- [ ] Note whether it feels worse than running the game directly. If it does,
-      say so; that is the evidence that would reopen the CAP_SYS_NICE decision.
+      options) opens and runs.
+- [ ] **If it refuses to start, or picks the wrong card**, run
+      `sudo setcap -r /usr/bin/gamescope` and try again. Fedora's package grants
+      `CAP_SYS_NICE`, and on NVIDIA that is a documented way to get exactly this
+      failure. Whether removing it helps is the one piece of evidence CI cannot
+      produce — please report either answer.
 
 ### F. The display, since the Samsung ultrawide earns its keep
 

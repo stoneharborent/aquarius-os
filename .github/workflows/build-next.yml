@@ -2559,19 +2559,31 @@ jobs:
             ok "nothing turns MangoHud on by itself"
           fi
 
-          echo "== gamescope carries no extra capabilities (on purpose) =="
-          # Granting CAP_SYS_NICE is a documented way to make gamescope pick
-          # the wrong card and refuse to start on NVIDIA, which is this
-          # project's primary target. See docs/restart/gaming.md.
+          echo "== gamescope's permissions came from Fedora, not from us =="
+          # Fedora's own gamescope package grants CAP_SYS_NICE in the RPM. That
+          # permission has a history of confusing gamescope on NVIDIA
+          # (gamescope #521 / #1370), but overriding a distribution's packaging
+          # on every build, for a fault we have not seen on our own hardware,
+          # is the wrong trade — docs/restart/gaming.md carries the one-line
+          # test to run if the bench ever does see it.
+          #
+          # What must never happen is OUR build quietly granting a capability.
+          # So the question is not "are there capabilities" but "did the
+          # package declare them".
+          declared="$(rpm -q --filecaps gamescope 2>/dev/null | awk '$1 == "/usr/bin/gamescope" { $1 = ""; sub(/^[[:space:]]+/, ""); print }')"
+          echo "     the package declares: ${declared:-(none)}"
           if command -v getcap > /dev/null 2>&1; then
-            caps="$(getcap /usr/bin/gamescope 2>/dev/null || true)"
-            if [ -n "${caps}" ]; then
-              bad "gamescope has capabilities set: ${caps}"
+            actual="$(getcap /usr/bin/gamescope 2>/dev/null | awk '{ $1 = ""; sub(/^[[:space:]]+/, ""); print }')"
+            echo "     the file actually has: ${actual:-(none)}"
+            if [ -z "${actual}" ]; then
+              ok "gamescope carries no capabilities at all"
+            elif [ -n "${declared}" ]; then
+              ok "the capabilities on gamescope are the ones Fedora's package ships"
             else
-              ok "gamescope has no capabilities set"
+              bad "gamescope has capabilities its package does not declare — something in the build granted them"
             fi
           else
-            echo "     (getcap is not in the image; nothing in the build grants capabilities)"
+            echo "     (getcap is not in the image; the package's declaration above is the answer)"
           fi
 
           echo "== the menu entries =="
