@@ -1016,7 +1016,13 @@ jobs:
           # that no longer exists, the other tells the portal system to load the
           # Aquarius configuration in the middle of a GNOME session.
           UNSETS="$(grep '^AQ_SESSION_ENV_COMPOSITOR=' "${LIB}" | cut -d'"' -f2) $(grep '^AQ_SESSION_ENV_PUSH=' "${LIB}" | cut -d'"' -f2)"
-          echo "       removed at logout: ${UNSETS}"
+          # ⚠️ This is everything the session SETS, which is not quite the same
+          # as everything it removes: LANG is deliberately kept (it is the
+          # person's language, not this desktop's — checked two blocks down).
+          # Labelling this "removed at logout" would be a lie in a checks list,
+          # which is the worst place to keep one.
+          echo "       set by the session: ${UNSETS}"
+          echo "       (all of those are removed again at logout except LANG)"
           for v in WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE XDG_SESSION_DESKTOP QS_CONFIG_PATH QT_QPA_PLATFORM; do
             case " ${UNSETS} " in
               *" ${v} "*) ok "${v} is on the list to be forgotten at logout" ;;
