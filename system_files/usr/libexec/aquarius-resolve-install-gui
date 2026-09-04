@@ -1,0 +1,120 @@
+#!/usr/bin/bash
+# ==============================================================================
+# aquarius-resolve-install-gui — "Install DaVinci Resolve", with no terminal
+# ==============================================================================
+# PLAIN ENGLISH
+#
+# This is what happens when somebody clicks "Install DaVinci Resolve" in their
+# apps. It is a thin wrapper: it asks which file they downloaded, using an
+# ordinary file-picker window, and then hands that file to the real installer.
+#
+# WHY THE REAL INSTALLER STILL RUNS IN A TERMINAL WINDOW
+#
+# Because it takes fifteen minutes and it has things to say. A progress bar that
+# says "Installing…" for fifteen minutes is indistinguishable from a program
+# that has crashed, and the messages this one prints — what it found, what your
+# graphics card is, what to do if something is wrong — are the whole value.
+#
+# So: a friendly window to choose the file, then a terminal window with plain
+# English scrolling past. Nobody has to type a command, and nobody is left
+# staring at a frozen bar wondering.
+#
+# WHAT IT DOES IF THERE IS NO DOWNLOAD YET
+# Nothing clever. It hands over anyway, and the real installer opens
+# Blackmagic's page and waits — which is exactly what it does when run from a
+# terminal. One behaviour, not two.
+# ==============================================================================
+
+set -uo pipefail
+
+INSTALLER=/usr/libexec/aquarius-resolve-install
+
+if [ ! -x "${INSTALLER}" ]; then
+    echo "aquarius-resolve: ${INSTALLER} is missing from this system." >&2
+    exit 1
+fi
+
+# ------------------------------------------------------------------------------
+# Which terminal window?
+# ------------------------------------------------------------------------------
+# Ptyxis is Fedora's terminal and what AquariusOS ships. The others are here so
+# this file keeps working if the terminal ever changes, rather than failing in a
+# way nobody would think to look for.
+#
+# ⚠️ THE ARGUMENT THAT INTRODUCES THE COMMAND IS DIFFERENT FOR EACH ONE, and
+# getting it wrong opens an empty terminal rather than running anything. Ptyxis
+# and GNOME Console take `--`, xterm-style terminals take `-e`.
+pick_terminal() {
+    if command -v ptyxis > /dev/null 2>&1; then
+        printf '%s' "ptyxis --new-window --title=DaVinci-Resolve-setup --"
+        return 0
+    fi
+    if command -v kgx > /dev/null 2>&1; then
+        printf '%s' "kgx --"
+        return 0
+    fi
+    if command -v gnome-terminal > /dev/null 2>&1; then
+        printf '%s' "gnome-terminal --"
+        return 0
+    fi
+    if command -v xterm > /dev/null 2>&1; then
+        printf '%s' "xterm -e"
+        return 0
+    fi
+    return 1
+}
+
+# ------------------------------------------------------------------------------
+# Ask which file
+# ------------------------------------------------------------------------------
+# zenity is GNOME's little-windows program and it ships with AquariusOS.
+#
+# If it is not here, or if the person cancels the picker, we do NOT stop: we
+# hand over with no file, and the installer opens Blackmagic's page and waits
+# for the download. Cancelling a file picker means "I have not got one yet",
+# which is a thing the installer already knows how to handle, and it is a much
+# better answer than a dead end.
+CHOSEN=""
+if command -v zenity > /dev/null 2>&1; then
+    CHOSEN="$(
+        zenity --file-selection \
+            --title="Which DaVinci Resolve download?" \
+            --filename="${HOME}/Downloads/" \
+            --file-filter="Blackmagic's Linux download | *.zip *.ZIP *.run *.RUN" \
+            --file-filter="Every file | *" \
+            2> /dev/null
+    )" || CHOSEN=""
+fi
+
+if [ -n "${CHOSEN}" ]; then
+    echo "Chosen: ${CHOSEN}"
+fi
+
+# ------------------------------------------------------------------------------
+# Hand over
+# ------------------------------------------------------------------------------
+if TERMINAL="$(pick_terminal)"; then
+    # An extra shell wrapping the installer, so the window STAYS OPEN at the
+    # end with the result still on screen. Without it the terminal closes the
+    # instant the installer finishes and everything it said — including a
+    # failure and what to do about it — vanishes.
+    #
+    # printf %q quotes the file name properly, so a download saved as
+    # "DaVinci Resolve (1).zip" works like any other.
+    INNER="$(printf '%q %q; echo; echo "Press Enter to close this window."; read -r _' \
+        "${INSTALLER}" "${CHOSEN}")"
+    # shellcheck disable=SC2086  # TERMINAL is a command plus its flags
+    exec ${TERMINAL} bash -lc "${INNER}"
+fi
+
+# No terminal at all. Very unlikely on AquariusOS, but say something rather
+# than nothing.
+if command -v zenity > /dev/null 2>&1; then
+    zenity --error --width=520 --title="Install DaVinci Resolve" \
+        --text="No terminal program could be found on this computer, and the setup needs one to show you what it is doing.
+
+Open a terminal yourself and run:
+    aq resolve install" > /dev/null 2>&1
+fi
+echo "No terminal program found. Run 'aq resolve install' yourself." >&2
+exit 1

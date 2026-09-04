@@ -1,0 +1,185 @@
+#!/usr/bin/bash
+# ==============================================================================
+# aquarius-resolve-setup — installs DaVinci Resolve INSIDE the runtime container
+# ==============================================================================
+# ⚠️ THIS SCRIPT LIVES INSIDE THE CONTAINER, NOT ON AQUARIUSOS.
+#
+# It is run by /usr/libexec/aquarius-resolve-install on the host, like this:
+#
+#     distrobox enter aquarius-resolve -- aquarius-resolve-setup /path/to/file
+#
+# where the path is either Blackmagic's .zip or the .run inside it, sitting in
+# the user's home folder — which distrobox shares between the host and here, so
+# it is the same file at the same path in both places.
+#
+# WHAT IT DOES
+#   1. Unpacks the download, whatever shape it arrived in.
+#   2. Runs Blackmagic's installer with its package check switched off.
+#   3. Hands Resolve's menu entries back to the desktop outside.
+#
+# WHY THE PACKAGE CHECK IS SWITCHED OFF
+# Blackmagic's installer looks for packages by their Ubuntu/CentOS names and
+# stops if it does not recognise them. Everything it wants is already installed
+# in this image — under Rocky's names — so the check would fail on a container
+# that is, in fact, complete. `SKIP_PACKAGE_CHECK=1` is the installer's own
+# documented switch for exactly this, and it is what every containerised Resolve
+# setup on Linux uses.
+# ==============================================================================
+
+set -uo pipefail
+
+INPUT="${1:-}"
+
+if [ -z "${INPUT}" ] || [ ! -e "${INPUT}" ]; then
+    echo "aquarius-resolve-setup: no installer was handed to me." >&2
+    echo "  Usage: aquarius-resolve-setup /path/to/DaVinci_Resolve_..._Linux.zip" >&2
+    exit 1
+fi
+
+echo ""
+echo "Working inside the Rocky Linux runtime container."
+echo "  Rocky      : $(sed -n 's/^PRETTY_NAME="\(.*\)"$/\1/p' /etc/os-release)"
+echo "  GLib       : $(rpm -q --queryformat '%{VERSION}' glib2)  (Resolve bundles 2.68 — these match, which is the point)"
+echo "  C library  : $(rpm -q --queryformat '%{VERSION}' glibc)"
+echo ""
+
+# ------------------------------------------------------------------------------
+# Somewhere to work
+# ------------------------------------------------------------------------------
+# Under the user's home, because that folder is shared with the host and
+# therefore survives if this container is thrown away and rebuilt. It is emptied
+# first so a half-finished earlier attempt cannot be mistaken for this one.
+WORK="${HOME}/.cache/aquarius/resolve-install"
+rm -rf "${WORK}"
+mkdir -p "${WORK}" || {
+    echo "Could not create ${WORK}." >&2
+    exit 1
+}
+
+# ------------------------------------------------------------------------------
+# 1. Unpack, whatever shape it arrived in
+# ------------------------------------------------------------------------------
+# Three shapes all happen in real life:
+#   a .zip nobody has opened          we unzip it
+#   a .run somebody unzipped already  use it as is
+#   a .zip with the .run in a folder  the unzip below finds it either way
+case "${INPUT}" in
+    *.zip | *.ZIP)
+        echo "Unzipping Blackmagic's download..."
+        unzip -q -o "${INPUT}" -d "${WORK}/zip" || {
+            echo "" >&2
+            echo "That .zip would not open. It usually means the download did not" >&2
+            echo "finish. Delete it and download it again." >&2
+            exit 1
+        }
+        RUNFILE="$(find "${WORK}/zip" -maxdepth 3 -type f -iname '*_Linux.run' | head -1)"
+        ;;
+    *)
+        RUNFILE="${INPUT}"
+        ;;
+esac
+
+if [ -z "${RUNFILE:-}" ] || [ ! -f "${RUNFILE}" ]; then
+    echo "" >&2
+    echo "There is no Linux installer inside ${INPUT}." >&2
+    echo "The Linux download is named something like" >&2
+    echo "    DaVinci_Resolve_Studio_21.0_Linux.zip" >&2
+    echo "It is easy to download the Mac or Windows one by mistake." >&2
+    exit 1
+fi
+
+echo "Found Blackmagic's installer: $(basename "${RUNFILE}")"
+
+# The .run is copied out before it is made executable. Changing the permissions
+# of a file sitting in somebody's Downloads folder is not ours to do, and a copy
+# costs a few seconds.
+cp -f "${RUNFILE}" "${WORK}/resolve-installer.run"
+chmod +x "${WORK}/resolve-installer.run"
+
+echo "Unpacking the installer (about a minute)..."
+cd "${WORK}" || exit 1
+if ! ./resolve-installer.run --appimage-extract > /dev/null 2>&1; then
+    echo "" >&2
+    echo "The installer would not unpack. That normally means the download is" >&2
+    echo "incomplete. Delete it and download it again." >&2
+    exit 1
+fi
+
+APPRUN="${WORK}/squashfs-root/AppRun"
+if [ ! -x "${APPRUN}" ]; then
+    echo "The installer unpacked into an unexpected shape — no AppRun in ${WORK}/squashfs-root." >&2
+    exit 1
+fi
+
+# ------------------------------------------------------------------------------
+# 2. Run Blackmagic's installer
+# ------------------------------------------------------------------------------
+# QT_QPA_PLATFORM=minimal   the installer is a graphical program; this tells it
+#                           to run without drawing a window, because the answers
+#                           are being supplied on the command line
+# SKIP_PACKAGE_CHECK=1      see the header
+# -i -a -y                  install, accept the licence, do not ask questions
+#
+# `sudo` because it writes into /opt inside this container. It is the
+# container's root, not the computer's — nothing outside is touched.
+echo ""
+echo "Installing DaVinci Resolve. This is the long part — several minutes."
+echo ""
+if ! sudo QT_QPA_PLATFORM=minimal SKIP_PACKAGE_CHECK=1 "${APPRUN}" -i -a -y; then
+    echo "" >&2
+    echo "Blackmagic's installer did not finish." >&2
+    echo "Nothing on your actual computer was changed — everything above" >&2
+    echo "happened inside the container." >&2
+    echo "" >&2
+    echo "You can safely try the whole thing again:  aq resolve install <file>" >&2
+    exit 1
+fi
+
+if [ ! -x /opt/resolve/bin/resolve ]; then
+    echo "" >&2
+    echo "The installer said it finished, but /opt/resolve/bin/resolve is not there." >&2
+    echo "Please report this — it should not be possible." >&2
+    exit 1
+fi
+
+echo ""
+echo "Installed: $(cat /opt/resolve/docs/Release_Notes.txt 2> /dev/null | head -1 || echo 'DaVinci Resolve')"
+
+# ------------------------------------------------------------------------------
+# 3. Hand the menu entries back to the desktop outside
+# ------------------------------------------------------------------------------
+# `distrobox-export --app` writes a copy of a program's menu entry into the
+# HOST's ~/.local/share/applications, with an Exec line that steps back into
+# this container. That is what makes "DaVinci Resolve" appear in the app grid
+# and the dock on AquariusOS, next to everything else.
+#
+# The host installer rewrites those Exec lines afterwards to go through
+# /usr/libexec/aquarius-resolve-launch, which adds the few things a container
+# cannot know about the desktop around it (chiefly what the mouse pointer looks
+# like). See that file's header.
+echo ""
+echo "Adding DaVinci Resolve to your apps..."
+
+exported=0
+for entry in /usr/share/applications/com.blackmagicdesign.resolve.desktop \
+    /usr/share/applications/DaVinciResolve*.desktop \
+    /usr/share/applications/blackmagicraw*.desktop \
+    /usr/share/applications/DaVinciControlPanels*.desktop; do
+    [ -f "${entry}" ] || continue
+    name="$(basename "${entry}" .desktop)"
+    if distrobox-export --app "${name}" > /dev/null 2>&1; then
+        echo "  added ${name}"
+        exported=$((exported + 1))
+    else
+        echo "  NOTE could not add ${name} to the app menu"
+    fi
+done
+
+if [ "${exported}" -eq 0 ]; then
+    echo ""
+    echo "  NOTE Resolve installed, but no menu entry could be created."
+    echo "       You can still start it with:   aq resolve run"
+fi
+
+echo ""
+echo "Done inside the container."

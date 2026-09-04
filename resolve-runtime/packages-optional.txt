@@ -1,0 +1,61 @@
+# ==============================================================================
+# Nice to have inside the Resolve runtime — but not worth failing a build over
+# ==============================================================================
+# Everything here improves something. Nothing here stops Resolve from starting.
+#
+# They are in a separate file because Rocky splits its software across four
+# repositories (BaseOS, AppStream, CRB and EPEL) and moves packages between them
+# between point releases. A name that exists in Rocky 9.5 and is gone in 9.6
+# should make the build print a NOTE, not stop the whole flagship feature of the
+# operating system.
+#
+# The build log lists exactly which of these landed and which did not, so this
+# is a report rather than a guess. If something in here turns out to matter, it
+# moves to packages-required.txt and stays there.
+# ==============================================================================
+
+# --- X11 odds and ends -------------------------------------------------------
+# libxkbfile and xcb-util-cursor live in CRB on some point releases and
+# AppStream on others.
+libxkbfile
+xcb-util-cursor
+
+# --- Compute -----------------------------------------------------------------
+# The filesystem layout package that OpenCL vendors drop their .icd files into.
+opencl-filesystem
+# Mesa's software OpenCL. Present on a machine with no GPU passthrough at all,
+# which is how the CI smoke test runs.
+mesa-libOpenCL
+
+# --- Old-name compatibility --------------------------------------------------
+# Some Resolve builds link against libnsl.so.1, which Enterprise Linux 9 renamed
+# to libnsl2. Where a compat package exists, take it.
+libnsl
+libnsl2
+
+# --- Unreal Engine 5 -----------------------------------------------------------
+# UE5's Linux editor and its runtime need the Vulkan loader and a driver; the
+# NVIDIA half arrives from the host at run time the same way Resolve's CUDA
+# does. This is why the same container serves both — Epic's floor is Rocky 8's
+# glibc, and this image is a release newer than that.
+vulkan-loader
+mesa-vulkan-drivers
+libatomic
+SDL2
+libcurl
+openssl-libs
+
+# --- Diagnostics -------------------------------------------------------------
+# glxinfo, for answering "does this container see the graphics card at all?" —
+# the single most useful question when Resolve will not start.
+glx-utils
+# vulkaninfo, the same question for Unreal.
+vulkan-tools
+# patchelf is davincibox's tool for adjusting Resolve's own libraries after
+# install. We do not need it on Rocky 9 (see the README), but having it present
+# means a fix can be tried on the bench without rebuilding this image.
+patchelf
+# Reads the hardware, so the installer can say what graphics card it found.
+pciutils
+# Lets Resolve's own audio reach the host's PipeWire.
+pipewire-alsa

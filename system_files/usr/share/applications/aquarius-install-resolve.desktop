@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Install DaVinci Resolve
+GenericName=Video Editor Setup
+Comment=Set up Blackmagic's DaVinci Resolve on this computer, step by step
+Exec=/usr/libexec/aquarius-resolve-install-gui
+TryExec=/usr/libexec/aquarius-resolve-install-gui
+Icon=applications-multimedia
+Terminal=false
+StartupNotify=true
+Categories=AudioVideo;Video;AudioVideoEditing;
+Keywords=davinci;resolve;blackmagic;colour;color;grade;grading;video;editor;edit;install;setup;

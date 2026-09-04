@@ -1,0 +1,105 @@
+# ==============================================================================
+# The AquariusOS DaVinci Resolve runtime — a recipe for a Rocky Linux userland
+# ==============================================================================
+# PLAIN ENGLISH
+#
+# This is a SECOND, SEPARATE recipe. It does not build AquariusOS. It builds a
+# small Rocky Linux that lives INSIDE AquariusOS, and whose only job is to be
+# the kind of Linux DaVinci Resolve expects.
+#
+# It is downloaded onto a machine the first time somebody installs Resolve, and
+# never before — which is why it is a separate image rather than a layer of the
+# operating system. Baking a gigabyte of Rocky Linux into an OS that most people
+# would never use it from would be rude.
+#
+# WHY ROCKY AND NOT FEDORA
+#
+# Resolve carries its own copy of GLib 2.68. On a modern Linux the system's
+# text-drawing library is built against GLib 2.80+, asks Resolve's old copy for
+# something that did not exist in 2021, and Resolve dies before its window
+# opens. Enterprise Linux 9 is still on GLib 2.68 — so the crash is not worked
+# around here, it is impossible here.
+#
+# Blackmagic's only listed Linux for Resolve is Rocky 8.6. This is Rocky 9: one
+# release newer, so a 2026 graphics driver works, and still Enterprise Linux, so
+# Resolve is at home. It is also the VFX Reference Platform's CY2027 floor.
+#
+# The whole argument, and what is given up: docs/restart/resolve.md and
+# ../docs/base-distro-reassessment-2026-09.md §3.2.
+#
+# THERE IS NO DAVINCI RESOLVE IN THIS IMAGE, AND THERE NEVER WILL BE.
+# Blackmagic's licence does not allow anyone else to distribute their installer.
+# The user downloads it; AquariusOS installs it into a copy of this image on the
+# user's own machine. Nothing licensed is ever published by us.
+# ==============================================================================
+
+# Which Enterprise Linux. 9 is the default and the tested one; 10 builds and
+# will warn you that the GLib version no longer matches, which is the entire
+# reason this image exists. See the README inside the image.
+ARG ROCKY=9
+
+# ------------------------------------------------------------------------------
+# Our own files, gathered up so the build can reach them
+# ------------------------------------------------------------------------------
+# Same pattern as the main Containerfile: a scratch pile that is read from and
+# thrown away, so the build script never ends up inside the finished image.
+FROM scratch AS ctx
+COPY build.sh /build.sh
+COPY packages-required.txt /packages-required.txt
+COPY packages-optional.txt /packages-optional.txt
+
+# ==============================================================================
+# The runtime itself
+# ==============================================================================
+FROM quay.io/rockylinux/rockylinux:${ROCKY}
+
+ARG ROCKY
+
+# ------------------------------------------------------------------------------
+# Labels
+# ------------------------------------------------------------------------------
+# These are what `podman inspect` shows and what appears on the package page.
+# The licence line matters: this image is our package list, published under the
+# same licence as the rest of AquariusOS. It is not, and must never become, a
+# redistribution of anything of Blackmagic's.
+LABEL org.opencontainers.image.title="AquariusOS DaVinci Resolve runtime"
+LABEL org.opencontainers.image.description="A Rocky Linux ${ROCKY} userland carrying everything DaVinci Resolve and Unreal Engine 5 need — and no Blackmagic or Epic software. AquariusOS installs Resolve into a copy of this on the user's own machine, from the user's own download."
+LABEL org.opencontainers.image.source="https://github.com/stoneharborent/aquarius-os"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+LABEL org.opencontainers.image.vendor="stoneharborent"
+
+# distrobox reads this label when it starts the container. It is not decoration:
+# without it distrobox has to guess which distribution it is dealing with in
+# order to set the container up.
+LABEL com.github.containers.toolbox="true"
+
+# ------------------------------------------------------------------------------
+# Our two scripts, and the README a human can read from inside
+# ------------------------------------------------------------------------------
+COPY system_files /
+COPY README /usr/share/aquarius-resolve/README
+
+# ------------------------------------------------------------------------------
+# The one build step
+# ------------------------------------------------------------------------------
+# One RUN rather than several: this image is downloaded whole, in one go, on
+# first use, so splitting it into layers buys nothing and costs image size.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    ROCKY="${ROCKY}" /ctx/build.sh
+
+# ------------------------------------------------------------------------------
+# The last check
+# ------------------------------------------------------------------------------
+# Reading the result back, the same house rule as the operating system's own
+# build: ask the finished image whether the two scripts are really there and
+# really runnable, rather than trusting that a COPY did what it said.
+RUN set -eu; \
+    for f in /usr/bin/aquarius-resolve-setup /usr/bin/aquarius-resolve-run /usr/share/aquarius-resolve/README; do \
+    [ -s "$f" ] || { echo "MISSING: $f"; exit 1; }; \
+    done; \
+    bash -n /usr/bin/aquarius-resolve-setup; \
+    bash -n /usr/bin/aquarius-resolve-run; \
+    chmod 0755 /usr/bin/aquarius-resolve-setup /usr/bin/aquarius-resolve-run; \
+    echo "The Resolve runtime is complete."
+
+CMD ["/bin/bash"]

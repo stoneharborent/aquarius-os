@@ -1,0 +1,70 @@
+#!/usr/bin/bash
+# ==============================================================================
+# aquarius-resolve-run — starts DaVinci Resolve INSIDE the runtime container
+# ==============================================================================
+# ⚠️ THIS SCRIPT LIVES INSIDE THE CONTAINER, NOT ON AQUARIUSOS.
+#
+# The host-side launcher (/usr/libexec/aquarius-resolve-launch) steps into the
+# container and runs this. Everything here is a setting that only makes sense
+# from in here.
+#
+# With no arguments it starts Resolve. With arguments it runs whatever you name
+# instead, which is how the Blackmagic RAW Player and the control-panel setup
+# tool get launched from the same menu machinery.
+# ==============================================================================
+
+set -uo pipefail
+
+# ------------------------------------------------------------------------------
+# Resolve is an X11 application. All of it, in 2026, on every Linux.
+# ------------------------------------------------------------------------------
+# It has no Wayland backend at all. On AquariusOS — which is Wayland — it runs
+# through XWayland, the compatibility layer that lets X11 programs draw on a
+# Wayland desktop.
+#
+# Qt tries to pick a backend by itself and, on a Wayland session, picks Wayland
+# and then fails, because Resolve's Qt was not built with Wayland support. So we
+# tell it, rather than leaving it to guess. This one line is the difference
+# between a window and an error message.
+export QT_QPA_PLATFORM=xcb
+
+# Qt also tries to load a "platform theme" plugin to match the desktop it thinks
+# it is on. The desktop outside is GNOME or the Aquarius Desktop; the plugin for
+# either of those is not installed in here, and Qt's complaint about it looks
+# alarming and means nothing. Emptying these two stops it looking.
+export QT_QPA_PLATFORMTHEME=
+export QT_STYLE_OVERRIDE=
+
+# ------------------------------------------------------------------------------
+# Where Resolve's own libraries are
+# ------------------------------------------------------------------------------
+# Resolve carries a large private library folder. It goes AFTER the system path
+# rather than before it, so that anything the system has a good copy of wins —
+# which is the whole reason this container is built on Enterprise Linux.
+export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+${LD_LIBRARY_PATH}:}/opt/resolve/libs"
+
+# ------------------------------------------------------------------------------
+# Is there actually a graphics card in here?
+# ------------------------------------------------------------------------------
+# Not a hard stop — Resolve gives its own, clearer message — but a line in the
+# terminal that names the real problem saves a lot of guessing. The most common
+# cause of "GPU processing mode is unsupported" is that the container was
+# created without the graphics-card passthrough, which is a one-command fix
+# (`aq resolve remove` then `aq resolve install` again).
+if [ ! -e /dev/dri ] && [ ! -e /dev/nvidiactl ]; then
+    echo "aquarius-resolve: WARNING — this container cannot see a graphics card." >&2
+    echo "  Resolve will start and then say its GPU processing mode is unsupported." >&2
+    echo "  Rebuild the container:   aq resolve remove   then   aq resolve install <file>" >&2
+fi
+
+TARGET="${1:-/opt/resolve/bin/resolve}"
+[ "$#" -gt 0 ] && shift
+
+if [ ! -x "${TARGET}" ]; then
+    echo "aquarius-resolve: ${TARGET} is not here." >&2
+    echo "  DaVinci Resolve may not be installed in this container yet." >&2
+    echo "  Run:  aq resolve install /path/to/the/download" >&2
+    exit 1
+fi
+
+exec "${TARGET}" "$@"
