@@ -94,7 +94,10 @@ jobs:
           echo "BUILD_TAG=build-${{ github.run_id }}" >> "${GITHUB_ENV}"
           echo "DATE_TAG=$(date -u +%Y%m%d)" >> "${GITHUB_ENV}"
           # A branch name can contain slashes, which a container tag cannot.
-          slug="$(echo "${{ github.ref_name }}" | tr '/' '-' | tr -c 'a-zA-Z0-9._-' '-')"
+          # `printf`, not `echo`: echo adds a newline, and the character
+          # translation below turns that newline into a dash, so the tag came
+          # out as `dev-restart-r3-resolve-` on 2026-09-04.
+          slug="$(printf '%s' "${{ github.ref_name }}" | tr '/' '-' | tr -c 'a-zA-Z0-9._-' '-')"
           echo "BRANCH_SLUG=${slug}" >> "${GITHUB_ENV}"
 
       # ------------------------------------------------------------------------

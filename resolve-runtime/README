@@ -78,6 +78,7 @@ WHAT IS NOT IN HERE
 THE COMMANDS, ON THE HOST
 
   aq resolve install <file>   set this up from Blackmagic's download
+  aq resolve run              start Resolve
   aq resolve status           what is installed, and can it see the GPU
   aq resolve update <file>    install a newer Resolve over the top
   aq resolve shell            a terminal inside this container

@@ -714,11 +714,16 @@ resolve_remove() {
     local apps
     apps="${XDG_DATA_HOME:-${HOME}/.local/share}/applications"
     local removed=0
-    for entry in "${apps}"/*[Rr]esolve*.desktop "${apps}"/*blackmagic*.desktop; do
-        [ -f "${entry}" ] || continue
+    while IFS= read -r entry; do
+        [ -n "${entry}" ] || continue
+        # Only entries that point INTO our container. Somebody who also has
+        # Resolve installed some other way keeps their own launcher.
         grep -q 'aquarius-resolve-launch\|aquarius-resolve-run' "${entry}" || continue
         rm -f "${entry}" && removed=$((removed + 1))
-    done
+    done < <(find "${apps}" -maxdepth 1 -type f \
+        \( -iname '*resolve*.desktop' \
+        -o -iname '*davinci*.desktop' \
+        -o -iname '*blackmagic*.desktop' \) 2> /dev/null)
     [ "${removed}" -gt 0 ] && echo "Removed ${removed} menu entries."
     update-desktop-database "${apps}" > /dev/null 2>&1 || true
 

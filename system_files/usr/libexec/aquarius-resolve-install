@@ -252,8 +252,17 @@ echo ""
 # 3. Find Blackmagic's download
 # ==============================================================================
 # This section is longer than it looks like it should be, and every line is
-# there because of something that happened to a real person on 2026-08-28 on
-# the Bazzite line:
+# there because of something that happened to a real person on 2026-08-28, on
+# the first AquariusOS line — the one that was restarted from scratch on
+# 2026-09-02 and is now frozen.
+#
+# (That old line's name is deliberately not written here. The image build
+# refuses to publish an image with the previous base distribution's name
+# anywhere in it, which is a rule worth keeping even when the mention is only a
+# comment in a script: it is the check that catches a leftover nobody meant to
+# ship. The history is in docs/base-distro-reassessment-2026-09.md.)
+#
+# What happened:
 #
 #   * The old flow opened Blackmagic's page and then said "installer not found"
 #     a second later. Of course it was not found — the page had only just
@@ -471,24 +480,38 @@ fi
 echo ""
 echo "Tidying up the app-menu entries..."
 
+# distrobox-export's own Exec line looks like:
+#
+#     Exec=/usr/local/bin/distrobox-enter -n aquarius-resolve -e /opt/resolve/bin/resolve %u
+#
+# Everything after `-e` has to survive untouched, because it carries the file
+# arguments (`%u`) that make "open this project with Resolve" work. So the
+# replacement stops at `-e` and leaves the rest alone.
+#
+# `-e` OR `--`: distrobox's documented examples use `-e` for export and `--`
+# for `enter`, and the exported file has used both over the years. Matching
+# either costs nothing and saves a silent no-op.
 APPS_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/applications"
+mkdir -p "${APPS_DIR}" 2> /dev/null || true
 patched=0
 skipped=0
-for entry in "${APPS_DIR}"/*[Rr]esolve*.desktop "${APPS_DIR}"/*blackmagic*.desktop; do
-    [ -f "${entry}" ] || continue
+while IFS= read -r entry; do
+    [ -n "${entry}" ] || continue
+    # Already ours from an earlier run — nothing to do.
     grep -q "aquarius-resolve-launch" "${entry}" && continue
-    if grep -q '^Exec=.*aquarius-resolve-run' "${entry}"; then
-        sed -i 's|^Exec=.*aquarius-resolve-run|Exec=/usr/libexec/aquarius-resolve-launch|' "${entry}"
-        patched=$((patched + 1))
-    elif grep -q "^Exec=.*distrobox.*${CONTAINER}" "${entry}"; then
-        # distrobox-export wrote its own shape. Everything after the program
-        # name has to survive, because it carries the file arguments.
-        sed -i "s|^Exec=.*-n ${CONTAINER} -- |Exec=/usr/libexec/aquarius-resolve-launch |" "${entry}"
-        patched=$((patched + 1))
+    if grep -qE "^Exec=.*distrobox-enter .*-n +${CONTAINER}( |$)" "${entry}"; then
+        # `#` as the delimiter, because the pattern below contains a `|`.
+        sed -i -E "s#^Exec=.*-n +${CONTAINER} +(-e|--) +#Exec=/usr/libexec/aquarius-resolve-launch #" "${entry}"
+        grep -q "aquarius-resolve-launch" "${entry}" \
+            && patched=$((patched + 1)) \
+            || skipped=$((skipped + 1))
     else
         skipped=$((skipped + 1))
     fi
-done
+done < <(find "${APPS_DIR}" -maxdepth 1 -type f \
+    \( -iname '*resolve*.desktop' \
+    -o -iname '*davinci*.desktop' \
+    -o -iname '*blackmagic*.desktop' \) 2> /dev/null | sort)
 
 [ "${patched}" -gt 0 ] && echo "  ${patched} entries now go through the AquariusOS launcher."
 if [ "${skipped}" -gt 0 ]; then

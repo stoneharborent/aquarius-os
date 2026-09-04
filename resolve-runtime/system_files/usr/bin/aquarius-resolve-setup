@@ -160,20 +160,30 @@ echo "Installed: $(cat /opt/resolve/docs/Release_Notes.txt 2> /dev/null | head -
 echo ""
 echo "Adding DaVinci Resolve to your apps..."
 
+# `find`, not a shell pattern, for one reason: Resolve's menu entries are
+# named inconsistently between versions and platforms — one release ships
+# `com.blackmagicdesign.resolve.desktop`, another `DaVinciResolve.desktop`,
+# and the extras are `blackmagicraw-player`, `blackmagicraw-speedtest` and
+# `DaVinciControlPanelsSetup`. A shell pattern is case-sensitive; `-iname` is
+# not, so this keeps working when Blackmagic change the capitalisation again.
+#
+# The FULL PATH is handed to distrobox-export, not the bare name. Both are
+# documented, and a path cannot be mistaken for a different program that
+# happens to share a name.
 exported=0
-for entry in /usr/share/applications/com.blackmagicdesign.resolve.desktop \
-    /usr/share/applications/DaVinciResolve*.desktop \
-    /usr/share/applications/blackmagicraw*.desktop \
-    /usr/share/applications/DaVinciControlPanels*.desktop; do
-    [ -f "${entry}" ] || continue
+while IFS= read -r entry; do
+    [ -n "${entry}" ] || continue
     name="$(basename "${entry}" .desktop)"
-    if distrobox-export --app "${name}" > /dev/null 2>&1; then
+    if distrobox-export --app "${entry}" > /dev/null 2>&1; then
         echo "  added ${name}"
         exported=$((exported + 1))
     else
         echo "  NOTE could not add ${name} to the app menu"
     fi
-done
+done < <(find /usr/share/applications -maxdepth 1 -type f \
+    \( -iname '*resolve*.desktop' \
+    -o -iname '*davinci*.desktop' \
+    -o -iname '*blackmagic*.desktop' \) 2> /dev/null | sort)
 
 if [ "${exported}" -eq 0 ]; then
     echo ""

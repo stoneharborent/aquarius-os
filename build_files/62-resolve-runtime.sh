@@ -44,8 +44,8 @@
 # ==============================================================================
 
 set -euo pipefail
-# shellcheck source=/dev/null
-. /ctx/build_files/aq-lib.sh
+# shellcheck source=build_files/aq-lib.sh
+source "$(dirname "$0")/aq-lib.sh"
 
 NVIDIA="${NVIDIA:-0}"
 
@@ -262,7 +262,20 @@ else
     # read at the moment they most need it.
     if /usr/bin/aq resolve --help > /tmp/aq-resolve-help.txt 2>&1; then
         ok "'aq resolve --help' runs"
-        sed 's/^/       /' /tmp/aq-resolve-help.txt | head -20
+        # ⚠️ `head` FIRST, THEN `sed`. The other way round — `sed file | head` —
+        # is the broken-pipe trap written up at the top of aq-lib.sh: `head`
+        # stops after 20 lines, whatever is upstream is killed writing to a pipe
+        # nobody is reading, and `set -o pipefail` reports the whole pipeline as
+        # failed.
+        #
+        # Being precise, because a half-understood rule is worse than none: with
+        # 46 lines of help text this particular pipeline would probably NOT have
+        # failed, because all of it fits in the pipe's buffer and `sed` finishes
+        # before `head` closes anything. It is a latent bug, not a certain one —
+        # it would start failing the day somebody added enough help text to
+        # exceed 64 KB, and would then look like a change to a different file
+        # breaking this one. Writing it the safe way round costs nothing.
+        head -20 /tmp/aq-resolve-help.txt | sed 's/^/       /'
     else
         bad "'aq resolve --help' does not run"
         cat /tmp/aq-resolve-help.txt
