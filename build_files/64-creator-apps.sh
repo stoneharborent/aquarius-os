@@ -848,25 +848,41 @@ say "The app installer (present, and deliberately not switched on)"
 [ -x /usr/libexec/aquarius-flatpak-preinstall ] \
     || die "/usr/libexec/aquarius-flatpak-preinstall is missing or not executable."
 
-# ⚠️ NOT `systemctl is-enabled`, AND THIS IS WHY. For a unit with no [Install]
-#    section — which is exactly what this one is now — `is-enabled` prints
-#    "static" and EXITS ZERO. Asking it as a yes/no question therefore answers
-#    "yes, switched on" about a service that nothing can switch on, which is
-#    how this check failed the build on 2026-09-04 while being wrong.
+# ⚠️ THIS IS DELIBERATELY NOT `systemctl is-enabled`, AND THAT IS THE WHOLE
+#    POINT OF THIS BLOCK. `systemctl is-enabled` EXITS ZERO — success — for a
+#    unit whose state is "static", and "static" is exactly what this unit is now
+#    that its [Install] section has been removed. Asked the obvious way, the
+#    question "is it switched on?" is answered "yes" on every build, forever,
+#    about a service that is switched on nowhere and by nothing.
 #
-#    So read the thing that actually decides it: a unit is started at boot if
-#    it has an [Install] section saying so, or if something has linked it into
-#    a .wants folder. Step 66 checks both in full; this is the near half of it,
-#    here so that the layer that ships the unit is the layer that notices.
-AQ_UNIT="/usr/lib/systemd/system/${PREINSTALL_SERVICE}"
-if [ ! -r "${AQ_UNIT}" ]; then
-    bad "${AQ_UNIT} is missing — 'aq apps install --all' would have nothing to run"
-elif grep -q '^\[Install\]' "${AQ_UNIT}"; then
+#    That is not a hypothetical: it turned this branch red on 2026-09-04, on a
+#    check whose only job was to prove a good change had happened.
+#
+#    So we read the files, which is this repository's rule anyway. A unit runs at
+#    boot for exactly two reasons: it has an [Install] section saying so, or
+#    something has linked it into a .wants folder. Both are things you can look
+#    at, and neither can lie.
+AQ_UNIT_FILE="/usr/lib/systemd/system/${PREINSTALL_SERVICE}"
+if [ ! -r "${AQ_UNIT_FILE}" ]; then
+    bad "${AQ_UNIT_FILE} is missing — 'aq apps install --all' would have nothing to run"
+elif grep -q '^\[Install\]' "${AQ_UNIT_FILE}"; then
     bad "${PREINSTALL_SERVICE} has an [Install] section — it would download every app before anybody was asked; the chooser is supposed to ask first"
 else
-    ok "${PREINSTALL_SERVICE} has no [Install] section, so nothing switches it on (correct — the chooser asks first)"
-    echo "         systemd calls it: $(systemctl is-enabled "${PREINSTALL_SERVICE}" 2>&1 || true)"
+    ok "${PREINSTALL_SERVICE} has no [Install] section, so nothing switches it on"
 fi
+
+AQ_PREINSTALL_WANTS="$(find /etc/systemd/system /usr/lib/systemd/system \
+    -name "${PREINSTALL_SERVICE}" -path '*.wants/*' 2> /dev/null | sort || true)"
+if [ -n "${AQ_PREINSTALL_WANTS}" ]; then
+    bad "something has linked ${PREINSTALL_SERVICE} into a .wants folder, which starts it at boot:"
+    printf '%s\n' "${AQ_PREINSTALL_WANTS}" | sed 's/^/       /' >&2
+else
+    ok "nothing has linked ${PREINSTALL_SERVICE} into a .wants folder (correct — the chooser asks first)"
+fi
+
+# Printed, not judged: the word systemd uses ("static") is the useful thing in a
+# build log, and its exit code is the misleading thing.
+echo "  note   systemd calls it: $(systemctl is-enabled "${PREINSTALL_SERVICE}" 2>&1 || true)"
 
 # ------------------------------------------------------------------------------
 # The permissions, which ARE switched on
