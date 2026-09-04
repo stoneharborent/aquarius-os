@@ -58,6 +58,7 @@ set -euo pipefail
 # -----------------------------------------------------------------------------
 AQ_LABWC_CONFIG_DIR="/usr/share/aquarius/labwc"
 AQ_SHELL_DIR="/usr/share/aquarius/shell"
+AQ_SESSION_LIB="/usr/libexec/aquarius-session-lib"
 
 # -----------------------------------------------------------------------------
 # The log. Everything below this point goes to the terminal AND to the file.
@@ -123,6 +124,33 @@ die() {
     echo "------------------------------------------------------------"
     exit 1
 }
+
+# -----------------------------------------------------------------------------
+# The tidying-up half of this session, kept in its own file.
+#
+# It holds the LIST of variables this script exports, and the clean-up that puts
+# the machine back the way it found it when the session ends. One list used in
+# both directions, so the two can never disagree — which is the whole reason it
+# is a separate file rather than another page of this one.
+#
+# ⚠️ WHY IT EXISTS: the bench bug of 2026-09-04. Logging out of the Aquarius
+# Desktop to go to GNOME bounced off the login screen two or three times before
+# GNOME would start, because this session used to walk away and leave its
+# settings and its background programs behind for GNOME to trip over. The long
+# version of that story is at the top of the file being read here, and it is
+# worth reading before changing anything in it.
+# -----------------------------------------------------------------------------
+if [ -r "${AQ_SESSION_LIB}" ]; then
+    # shellcheck source=../libexec/aquarius-session-lib
+    . "${AQ_SESSION_LIB}"
+else
+    die "${AQ_SESSION_LIB} is not in this image." \
+        "It holds the list of settings this session uses and the clean-up that" \
+        "runs when you log out. Starting without it would leave the machine in" \
+        "a state where logging in to GNOME afterwards fails." \
+        "" \
+        "This is a broken image, not something you did. Log in with GNOME."
+fi
 
 # -----------------------------------------------------------------------------
 # Is everything here?
@@ -486,11 +514,31 @@ aq_push_env() {
     fi
 }
 #
-# LANG is in this list for the same reason as the rest: a portal or a tray icon
+# ⚠️ THE LIST IS NOT WRITTEN HERE. It is AQ_SESSION_ENV_PUSH, in
+# /usr/libexec/aquarius-session-lib, because the SAME list is what gets removed
+# again when you log out. Two hand-written lists would eventually disagree, and
+# the way that disagreement shows up is a login that bounces off the login
+# screen with nothing in any log to explain it. So there is one list, and
+# tests/test-session-teardown.sh fails the build if any `export` in this file is
+# missing from it.
+#
+# LANG is in that list for the same reason as the rest: a portal or a tray icon
 # started on demand, half an hour into the session, must speak the same language
-# and the same character set as the shell that asked for it.
-aq_push_env XDG_SESSION_TYPE XDG_SESSION_DESKTOP XDG_CURRENT_DESKTOP \
-    QS_CONFIG_PATH QT_QPA_PLATFORM AQ_LOG LANG
+# and the same character set as the shell that asked for it. (It is also the one
+# entry that is deliberately NOT removed at logout — see the comment beside
+# AQ_SESSION_ENV_KEEP.)
+#
+# ⚠️ FIRST, throw away the LAST desktop's screen. This is protection against
+# arriving after a session that did not clean up after itself — a GNOME session
+# (which never cleans up on the way out), or an Aquarius session that was
+# force-killed and so never got to run the clean-up at the bottom of this file.
+# A desktop that only starts properly when the previous one shut down tidily is
+# not actually fixed. GNOME does exactly this, on the same variables, for the
+# same reason; the reasoning and the citation are in the library.
+aq_session_env_reset
+
+# shellcheck disable=SC2086
+aq_push_env ${AQ_SESSION_ENV_PUSH}
 
 echo ""
 echo "=== Starting ==="
@@ -511,7 +559,37 @@ echo ""
 # desktop down the moment the command it started exits. That would turn a crash
 # of the bar into a logout, and a bar falling over should not log you out.
 #
-# `exec` replaces this script with labwc, so when labwc exits — which is what
-# Super+Shift+E does — this program ends too, and the login screen comes back.
 # -----------------------------------------------------------------------------
-exec labwc -C "${AQ_LABWC_CONFIG_DIR}"
+# ⚠️ WHY THIS IS NO LONGER `exec labwc`. THE 2026-09-04 LOGOUT FIX.
+# -----------------------------------------------------------------------------
+# It used to be. `exec` replaces this script with the window manager, which is
+# tidy — one fewer process — and it was wrong, because it meant there was
+# nothing left to run afterwards. The moment labwc ended, this program was
+# already gone, and the session's settings and background programs were left
+# behind for the next desktop to trip over. That is the whole bug Royce hit:
+# log out of Aquarius, pick GNOME, and get bounced back to the login screen two
+# or three times before it would let him in.
+#
+# So the window manager is now run as a CHILD and this script stays alive for
+# the second or two it takes to clean up after it. Nothing about the session
+# changes; there is simply somebody left to turn the lights off.
+#
+# THE `trap` IS WHAT MAKES IT RELIABLE. It is armed here, one line before the
+# window manager starts, and it fires on EVERY way out of this script — the
+# normal Super+Shift+E, a crash of the window manager, or the login screen
+# telling the session to end. Not "if we remember to call it at the end", which
+# is the version of this that quietly does not run on the path that mattered.
+#
+# `exit` inside the two signal traps is deliberate: it hands control to the EXIT
+# trap, so a session being shut down cleans up the same way as one being left.
+# -----------------------------------------------------------------------------
+trap 'aq_session_teardown' EXIT
+trap 'exit 143' TERM INT HUP
+
+aq_labwc_status=0
+labwc -C "${AQ_LABWC_CONFIG_DIR}" || aq_labwc_status=$?
+
+echo ""
+echo "=== The Aquarius Desktop has ended (window manager exit code ${aq_labwc_status}) ==="
+
+exit "${aq_labwc_status}"

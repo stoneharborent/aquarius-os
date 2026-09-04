@@ -1,0 +1,468 @@
+#!/usr/bin/bash
+# =============================================================================
+# aquarius-session-lib — the tidying-up half of the Aquarius Desktop
+# =============================================================================
+# THIS FILE IS NOT A PROGRAM. It is a list of names and a handful of functions
+# that two other files read:
+#
+#   /usr/bin/aquarius-session          starts the desktop, and calls the
+#                                      clean-up in here when it ends
+#   /usr/libexec/aquarius-session-portals
+#                                      the small helper the window manager runs
+#                                      at login to make the portals ours
+#
+# -----------------------------------------------------------------------------
+# WHY THIS FILE EXISTS AT ALL — THE BENCH BUG, 2026-09-04
+# -----------------------------------------------------------------------------
+# Royce reported it in one sentence: "when logging out of Aquarius to go to
+# GNOME, it kicks me back to the login screen a couple of times before letting
+# me log in."
+#
+# Here is what was actually happening, in plain language.
+#
+# When you log in, Linux starts a personal background manager for you — systemd
+# calls it the "user manager". It outlives any one desktop. Think of it as a
+# noticeboard plus a set of running helpers that belong to YOU rather than to
+# one login.
+#
+# The Aquarius Desktop pins things to that noticeboard on purpose. It writes
+# down "the screen is called wayland-0", "this desktop is called Aquarius",
+# "our settings live in /usr/share/aquarius/shell", and a few more. Anything
+# started later — a file dialog, a screen recorder, a password prompt — reads
+# the noticeboard so it knows where it is. That is not a hack, it is how every
+# Wayland desktop works, GNOME included.
+#
+# THE BUG WAS THAT NOBODY EVER RUBBED THE NOTICEBOARD OUT AGAIN.
+#
+# So you logged out of Aquarius, and left behind:
+#
+#   * notes saying the screen is wayland-0 — a screen that no longer exists,
+#   * a note saying this desktop is called "Aquarius", which is the note the
+#     portal system reads to decide that screen recording should go to the
+#     wlroots back end — a back end that only works with OUR window manager,
+#   * helpers still running and still believing all of the above: the bar
+#     (which owns the name every notification in the system is delivered to),
+#     the wallpaper program, the keyboard remapper, the wlroots portal.
+#
+# Then GNOME started, and tried to be the desktop. It could not take the
+# notification name, because our bar still had it. Its portals were already
+# running, pointed at a compositor that had died. Its own session pieces waited
+# for services that were never going to answer, timed out, gave up — and GDM
+# does exactly one thing when a session gives up during start-up: it puts the
+# login screen back. Try again, same leftovers, same failure. Only after the
+# stragglers had been killed off by their own timeouts — a minute or so, i.e.
+# "a couple of times" — was the machine clean enough for GNOME to start.
+#
+# -----------------------------------------------------------------------------
+# THE RULE WE WERE BREAKING — IT IS WRITTEN DOWN, AND WE WERE NOT FOLLOWING IT
+# -----------------------------------------------------------------------------
+# `man systemd.special`, under graphical-session.target, says a session manager
+# must do TWO things when the session ends:
+#
+#   1. stop graphical-session.target, so everything that said "start me with the
+#      graphical session" is stopped with it, and
+#   2. UNSET the variables it set, so the next session does not inherit them.
+#
+# We did the first (in the window manager's `shutdown` file) and never did the
+# second. That is the bug.
+#
+# ⚠️ AND HOW DOES GNOME MANAGE IT? NOT THE WAY YOU WOULD GUESS — checked in
+# gnome-session's own source (gnome-session/gsm-util.c) on 2026-09-04 rather
+# than assumed, because the assumption was wrong and it changes the design.
+#
+# gnome-session does NOT clean up when it stops. There is no unexport on
+# shutdown at all. What it does is clean up when it STARTS: at login it calls
+# systemd's UnsetAndSetEnvironment with an explicit list of variables to throw
+# away first, and that list is
+#
+#     DISPLAY, XAUTHORITY, WAYLAND_DISPLAY, WAYLAND_SOCKET,
+#     GNOME_SHELL_SESSION_MODE, GNOME_SETUP_DISPLAY, and the LC_* family
+#
+# — in other words, exactly the "this points at a screen that is gone" ones.
+# GNOME protects ITSELF on the way in, and leaves its own mess for whoever
+# comes next.
+#
+# TWO THINGS FOLLOW FROM THAT, AND BOTH ARE IN THIS FILE:
+#
+#   1. Cleaning up on the way OUT is still ours to do, and it is the polite and
+#      correct half — it is what `man systemd.special` actually asks for, and
+#      nothing of ours (QS_CONFIG_PATH, AQ_LOG, AQ_UI_SCALE, XDG_SESSION_DESKTOP)
+#      appears anywhere on GNOME's list, so GNOME would never clear it for us.
+#
+#   2. We should ALSO protect ourselves on the way IN, exactly as GNOME does —
+#      see aq_session_env_reset below. Because an Aquarius session that is
+#      force-killed rather than closed never gets to run its clean-up at all,
+#      and a desktop that only works when the last one shut down tidily is not
+#      actually fixed.
+#
+# -----------------------------------------------------------------------------
+# WHY THE LISTS LIVE HERE AND NOT IN THE LAUNCHER
+# -----------------------------------------------------------------------------
+# There is one obvious way for this fix to rot: somebody adds a new variable to
+# the launcher, forgets to add it to the clean-up list, and six months later
+# there is a mystery that looks nothing like a missing line in a list.
+#
+# So the SAME LIST is used for both jobs. The launcher does not name the
+# variables it hands to systemd — it hands over AQ_SESSION_ENV_PUSH, from this
+# file. The clean-up removes AQ_SESSION_ENV_UNSET, computed from that same
+# list. And tests/test-session-teardown.sh reads the launcher, finds every
+# `export` in it, and fails the build if any of them is missing from the list
+# here. Drift is not a matter of discipline; it is a build failure.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# THE VARIABLES THE LAUNCHER PUTS ON THE NOTICEBOARD
+#
+# This is the list /usr/bin/aquarius-session hands to systemd and D-Bus. Every
+# `export` in that file must appear here — the test enforces it.
+# -----------------------------------------------------------------------------
+AQ_SESSION_ENV_PUSH="XDG_SESSION_TYPE XDG_SESSION_DESKTOP XDG_CURRENT_DESKTOP QS_CONFIG_PATH QT_QPA_PLATFORM AQ_LOG AQ_UI_SCALE LANG"
+
+# -----------------------------------------------------------------------------
+# THE TWO THE WINDOW MANAGER ADDS LATER
+#
+# These cannot be in the list above: they do not exist when the launcher runs,
+# because the window manager has not started and there is no screen yet. The
+# labwc `autostart` file adds them a moment later. They still have to be taken
+# down at the end, and WAYLAND_DISPLAY is the single most poisonous one to
+# leave behind — it names a socket that is gone.
+# -----------------------------------------------------------------------------
+AQ_SESSION_ENV_COMPOSITOR="WAYLAND_DISPLAY DISPLAY"
+
+# -----------------------------------------------------------------------------
+# THE ONE WE DELIBERATELY LEAVE ALONE
+#
+# LANG is not a fact about this desktop. It is a fact about this PERSON: which
+# language they read, and which alphabet their filenames are written in. It is
+# the same answer in GNOME as it is here.
+#
+# Removing it would also walk straight back into the bug of 2026-09-03. When
+# nothing sets LANG, programs fall back to the "C" locale, whose alphabet is
+# 1968-era 7-bit ASCII, and accented characters start being drawn as boxes. The
+# launcher goes to real trouble to make sure LANG is right (see the long
+# comment in it). Un-setting that on the way out would be undoing our own work.
+#
+# So: pushed, never unset. The test checks both halves of that sentence.
+# -----------------------------------------------------------------------------
+AQ_SESSION_ENV_KEEP="LANG"
+
+# The list the clean-up actually removes: everything we set, minus the keeper.
+# Computed rather than typed, so the three lists above can never disagree.
+aq_session_env_unset_list() {
+    local aq_name aq_keep aq_skip aq_out=""
+    for aq_name in ${AQ_SESSION_ENV_PUSH} ${AQ_SESSION_ENV_COMPOSITOR}; do
+        aq_skip=0
+        for aq_keep in ${AQ_SESSION_ENV_KEEP}; do
+            if [ "${aq_name}" = "${aq_keep}" ]; then
+                aq_skip=1
+            fi
+        done
+        if [ "${aq_skip}" -eq 0 ]; then
+            aq_out="${aq_out}${aq_out:+ }${aq_name}"
+        fi
+    done
+    printf '%s\n' "${aq_out}"
+}
+
+# -----------------------------------------------------------------------------
+# THE PORTALS
+#
+# A "portal" is the middleman a sandboxed application talks to when it wants to
+# record the screen or open a file. Which back end answers is decided by the
+# XDG_CURRENT_DESKTOP note on the noticeboard, ONCE, when the portal starts.
+#
+# That "once" is the problem in both directions:
+#
+#   * A portal started under Aquarius has read "Aquarius" and sends screen
+#     recording to the wlroots back end. If it survives into a GNOME session it
+#     is still doing that, against a compositor that no longer exists.
+#   * A portal started under GNOME has read "GNOME" and ignores our
+#     aquarius-portals.conf entirely. If it survives into an Aquarius session,
+#     OBS shows an empty list of screens and nothing anywhere says why.
+#
+# The fix for both is the same and it is safe: STOP them. Every one of these is
+# started on demand — the moment an application asks for a portal, D-Bus starts
+# one again, and the new one reads the noticeboard as it is now. Stopping a
+# portal is never destructive; it is closing a shop that reopens when somebody
+# knocks.
+# -----------------------------------------------------------------------------
+AQ_SESSION_PORTAL_UNITS="xdg-desktop-portal.service xdg-desktop-portal-wlr.service xdg-desktop-portal-gtk.service xdg-desktop-portal-gnome.service"
+
+# -----------------------------------------------------------------------------
+# EVERYTHING TO STOP, IN THE ORDER IT IS STOPPED
+#
+# Leaves first, then the trunk. The two targets at the end are the ones
+# `man systemd.special` names: labwc-session.target is bound to
+# graphical-session.target, and anything that said "start me with the graphical
+# session" — our keyboard remapper, the keyring, the portals — is PartOf it and
+# goes down with it.
+#
+# The portals and the remapper are named individually anyway, ahead of the
+# targets, and that redundancy is on purpose. `PartOf=` only stops a unit if the
+# unit really carries that line; naming them here means the clean-up does not
+# depend on a stranger's unit file being written the way we hope.
+# -----------------------------------------------------------------------------
+AQ_SESSION_UNITS="aquarius-keys.service ${AQ_SESSION_PORTAL_UNITS} labwc-session.target graphical-session.target"
+
+# -----------------------------------------------------------------------------
+# THE PROGRAMS THAT DO NOT BELONG TO SYSTEMD, AND SO HAVE TO BE ASKED DIRECTLY
+#
+# ⚠️ Linux does NOT kill your programs when you log out. Fedora ships
+# systemd-logind with KillUserProcesses=no, which means a program the window
+# manager started keeps running after the window manager is gone. That is a
+# deliberate upstream choice (it is what lets a long build survive a logout) and
+# we are not going to change it machine-wide for one desktop.
+#
+# But it means these four are ours to clean up, because nothing else will:
+#
+#   qs / quickshell   the Aquarius bar. THE IMPORTANT ONE. It owns
+#                     org.freedesktop.Notifications — the single name every
+#                     notification on the machine is delivered to. GNOME's shell
+#                     wants that name too, and there is only one. A surviving
+#                     bar is a GNOME session with no notifications.
+#                     ("qs" and "quickshell" are the same program under two
+#                     names; which one shows up depends on how it was started,
+#                     so both are listed.)
+#   swaybg            the wallpaper. Harmless, but it is holding the old screen
+#                     open and it is confusing to find running the next day.
+#   xremap-wlroots    the keyboard remapper. It has a grab on the keyboards. A
+#   xremap-gnome      leftover copy is exactly what broke the remapper on
+#                     2026-09-03 — the new one asked for the keyboards and was
+#                     told "device or resource busy".
+#   slurp             the little "which screen?" overlay. Only running if a
+#                     recording was being set up as the session ended.
+#   xdg-desktop-portal-wlr
+#                     the screen-recording back end. Stopping its unit above is
+#                     the proper way; this is the belt to that braces, because
+#                     it is the one portal that is genuinely useless without our
+#                     compositor.
+#
+# NOT in this list, on purpose: xdg-desktop-portal and xdg-desktop-portal-gtk.
+# Those are shared with every other desktop, they are started on demand, and
+# stopping their unit is the right lever. Reaching past systemd to kill them by
+# name could reach into a second session this person has open on another screen.
+# -----------------------------------------------------------------------------
+AQ_SESSION_STRAGGLERS="qs quickshell swaybg xremap-wlroots xremap-gnome slurp xdg-desktop-portal-wlr"
+
+# How long we are willing to wait for the graphical session to actually stop,
+# in seconds. Long enough for a slow machine, short enough that a stuck service
+# cannot turn a logout into a hang. Anything still alive after this is killed by
+# name below, which is the whole point of having both.
+AQ_SESSION_STOP_TIMEOUT="${AQ_SESSION_STOP_TIMEOUT:-10}"
+
+# -----------------------------------------------------------------------------
+# Saying what we are doing.
+#
+# Straight into the same session log as everything else, in the same plain
+# language, because the person reading it is not a systems programmer — and
+# because "did the clean-up run?" is the first question anybody will ask the
+# next time a login misbehaves.
+# -----------------------------------------------------------------------------
+aq_session_say() {
+    echo "[logout] $*"
+}
+
+# Run something, but never let it hang the logout. `timeout` is part of
+# coreutils and is always there; the fallback is only so that this file can be
+# read and tested anywhere.
+aq_session_bounded() {
+    local aq_secs="$1"
+    shift
+    if command -v timeout > /dev/null 2>&1; then
+        timeout "${aq_secs}" "$@" > /dev/null 2>&1
+    else
+        "$@" > /dev/null 2>&1
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# STEP 1 — stop the services.
+# -----------------------------------------------------------------------------
+aq_session_stop_units() {
+    aq_session_say "stopping the desktop's background services"
+    # One `stop` for the whole list: systemd works out the order itself, and a
+    # unit that is not installed or was never started is not an error worth
+    # printing at somebody who is trying to log out.
+    # shellcheck disable=SC2086
+    aq_session_bounded "${AQ_SESSION_STOP_TIMEOUT}" \
+        systemctl --user stop ${AQ_SESSION_UNITS} || true
+}
+
+# -----------------------------------------------------------------------------
+# STEP 2 — wait, but not forever, for the graphical session to really be over.
+#
+# `systemctl stop` normally waits by itself. Normally. A service that ignores
+# the polite request to stop gets ninety seconds before systemd loses patience,
+# and ninety seconds of black screen is exactly the experience this whole file
+# exists to prevent. So we ask, we watch, and after AQ_SESSION_STOP_TIMEOUT we
+# stop watching and move on to the blunter tools.
+# -----------------------------------------------------------------------------
+aq_session_wait_for_stop() {
+    local aq_left="${AQ_SESSION_STOP_TIMEOUT}"
+    while [ "${aq_left}" -gt 0 ]; do
+        if ! systemctl --user is-active graphical-session.target > /dev/null 2>&1; then
+            aq_session_say "the graphical session has stopped"
+            return 0
+        fi
+        sleep 1
+        aq_left=$((aq_left - 1))
+    done
+    aq_session_say "the graphical session did not stop within ${AQ_SESSION_STOP_TIMEOUT} seconds; carrying on anyway"
+    return 1
+}
+
+# -----------------------------------------------------------------------------
+# STEP 3 — rub the noticeboard out. THIS IS THE ACTUAL FIX.
+#
+# Two noticeboards, and they take different instructions:
+#
+#   systemd's       has a real "forget this" — `unset-environment`. Used.
+#                   This is the one that matters on Fedora, because D-Bus here
+#                   asks systemd to start services, so systemd's copy of the
+#                   environment is the copy those services are handed.
+#
+#   D-Bus's own     has NO "forget this". `dbus-update-activation-environment`
+#                   can only set values. The nearest thing to erasing a note is
+#                   to write an empty one, which is what GNOME's session does
+#                   too, and it is enough: an empty XDG_CURRENT_DESKTOP makes
+#                   the portal fall back to its default configuration instead of
+#                   confidently loading OURS in the middle of a GNOME session.
+#
+# ⚠️ The D-Bus pass deliberately does NOT use --systemd. With that flag it would
+# push the empty values into systemd as well, leaving XDG_CURRENT_DESKTOP set to
+# "" there instead of genuinely gone — undoing the good half of this function.
+# -----------------------------------------------------------------------------
+aq_session_unset_env() {
+    local aq_names aq_name aq_blanks=""
+    aq_names="$(aq_session_env_unset_list)"
+
+    aq_session_say "forgetting this desktop's settings: ${aq_names}"
+
+    if command -v dbus-update-activation-environment > /dev/null 2>&1; then
+        for aq_name in ${aq_names}; do
+            aq_blanks="${aq_blanks}${aq_blanks:+ }${aq_name}="
+        done
+        # shellcheck disable=SC2086
+        dbus-update-activation-environment ${aq_blanks} > /dev/null 2>&1 || true
+    fi
+
+    # shellcheck disable=SC2086
+    systemctl --user unset-environment ${aq_names} > /dev/null 2>&1 || true
+}
+
+# -----------------------------------------------------------------------------
+# STEP 4 — the programs systemd does not know about.
+#
+# Politely first (a normal stop request), then firmly. Every name comes from the
+# fixed list at the top of this file, every kill is limited to this person's own
+# programs with --uid, and --exact means the name must match completely — so
+# "qs" cannot possibly match somebody's "qsomething".
+# -----------------------------------------------------------------------------
+aq_session_kill_stragglers() {
+    local aq_name aq_found=""
+
+    if ! command -v pkill > /dev/null 2>&1; then
+        aq_session_say "pkill is not installed, so leftover programs cannot be tidied up"
+        return 0
+    fi
+
+    for aq_name in ${AQ_SESSION_STRAGGLERS}; do
+        if pkill --uid "$(id -u)" --exact --signal TERM "${aq_name}" > /dev/null 2>&1; then
+            aq_found="${aq_found}${aq_found:+ }${aq_name}"
+        fi
+    done
+
+    if [ -z "${aq_found}" ]; then
+        aq_session_say "nothing was left running"
+        return 0
+    fi
+
+    aq_session_say "asked these to close: ${aq_found}"
+
+    # Three seconds is a long time for a program that has been asked to close
+    # and has nothing to save. Anything still there after it is not going to.
+    sleep 3
+
+    for aq_name in ${aq_found}; do
+        if pkill --uid "$(id -u)" --exact --signal KILL "${aq_name}" > /dev/null 2>&1; then
+            aq_session_say "${aq_name} would not close and was stopped"
+        fi
+    done
+}
+
+# -----------------------------------------------------------------------------
+# STEP 5 — clear the failure marks.
+#
+# A service that was stopped mid-job can be left marked "failed". systemd will
+# refuse to start a unit that has failed too many times too quickly, so the next
+# login could inherit a keyboard remapper that will not start and no explanation
+# for it. One command, and the slate is clean.
+# -----------------------------------------------------------------------------
+aq_session_reset_failed() {
+    systemctl --user reset-failed > /dev/null 2>&1 || true
+}
+
+# -----------------------------------------------------------------------------
+# The whole thing, in order. Called from /usr/bin/aquarius-session on EVERY way
+# out of the session — the normal Super+Shift+E, a crash of the window manager,
+# or the launcher failing before it ever got started.
+# -----------------------------------------------------------------------------
+aq_session_teardown() {
+    # Not a single step in here is allowed to abort the logout, so the launcher's
+    # "stop at the first error" rule is switched off for the duration. We are on
+    # the way out; there is nothing left to protect.
+    set +e
+
+    aq_session_say "cleaning up so the next login starts fresh"
+    aq_session_stop_units
+    aq_session_wait_for_stop
+    aq_session_unset_env
+    aq_session_kill_stragglers
+    aq_session_reset_failed
+    aq_session_say "done — GNOME or Aquarius will start from a clean slate"
+}
+
+# -----------------------------------------------------------------------------
+# AND THE SAME PROBLEM FROM THE OTHER SIDE: starting up.
+#
+# GNOME has exactly the same habit we just fixed in ourselves — it leaves its
+# portals running. So a person who logs out of GNOME and into Aquarius arrives
+# to find xdg-desktop-portal already awake, already told it is in GNOME, and
+# completely uninterested in aquarius-portals.conf. Symptom: OBS lists no
+# screens to record, and nothing anywhere says why.
+#
+# So we stop them at the START of our session too. They come straight back the
+# first time anything asks — and the one that comes back reads OUR settings.
+#
+# This runs from the window manager's autostart file, not from the launcher,
+# because it has to happen AFTER WAYLAND_DISPLAY exists. A portal restarted
+# before there is a screen would only have to be restarted again.
+# -----------------------------------------------------------------------------
+aq_session_env_reset() {
+    # ---------------------------------------------------------------------
+    # Throw away the LAST desktop's screen before naming ours.
+    #
+    # This is the same move GNOME makes, for the same reason, on the same two
+    # variables (its own list is DISPLAY, XAUTHORITY, WAYLAND_DISPLAY,
+    # WAYLAND_SOCKET and a few GNOME-only ones — checked in gsm-util.c,
+    # 2026-09-04). It is protection against arriving after a session that did
+    # NOT clean up after itself:
+    #
+    #   * a GNOME session, which never cleans up on the way out, or
+    #   * an Aquarius session that was force-killed and so never got to run
+    #     the clean-up at the bottom of the launcher.
+    #
+    # Only the compositor pair is thrown away here. Everything else we care
+    # about is overwritten a moment later by the launcher's own values, so
+    # unsetting it first would be a no-op with a longer login.
+    # ---------------------------------------------------------------------
+    # shellcheck disable=SC2086
+    systemctl --user unset-environment ${AQ_SESSION_ENV_COMPOSITOR} > /dev/null 2>&1 || true
+}
+
+aq_session_portals_refresh() {
+    aq_session_say "restarting the portals so they pick up the Aquarius settings"
+    # shellcheck disable=SC2086
+    aq_session_bounded "${AQ_SESSION_STOP_TIMEOUT}" \
+        systemctl --user stop ${AQ_SESSION_PORTAL_UNITS} || true
+}

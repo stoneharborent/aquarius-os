@@ -54,6 +54,10 @@ on:
       # with the right mouse pointer, and langpacks-en baked in. Same
       # arrangement: builds and checks, never publishes.
       - restart/r3-polish
+      # The logout clean-up — the 2026-09-04 bench bug where logging out of the
+      # Aquarius Desktop to go to GNOME bounced off the login screen two or
+      # three times. Same arrangement again: builds and checks, never publishes.
+      - restart/session-teardown
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -100,6 +104,22 @@ jobs:
 
       - name: Check the Justfile is valid
         run: just check
+
+      # ------------------------------------------------------------------------
+      # Logging out has to leave the machine clean. This runs BEFORE the build
+      # because it takes two seconds and the build takes twenty minutes, and
+      # there is no reason to spend the twenty minutes to find out that the
+      # logout clean-up has a list wrong.
+      #
+      # The same test runs again INSIDE the image later, against the installed
+      # copies, which is the check that actually counts. This one is the fast
+      # warning. (Why it exists at all: the bench bug of 2026-09-04 — logging
+      # out of Aquarius to go to GNOME bounced off the login screen two or three
+      # times, because the session left its settings and its background programs
+      # behind. See docs/restart/aquarius-session.md.)
+      # ------------------------------------------------------------------------
+      - name: Check logging out leaves the machine clean
+        run: ./tests/test-session-teardown.sh
 
       - name: Work out what this image is called
         run: |
@@ -917,19 +937,27 @@ jobs:
           grep -q 'export LANG=' /usr/bin/aquarius-session \
             && ok "aquarius-session exports LANG" \
             || bad "aquarius-session does not export LANG — the shell would start in the C locale"
-          # aq_push_env's argument list is split over a backslash continuation,
-          # so a line-at-a-time grep cannot see the last few names. Join the
-          # continued lines first, then look for LANG as a whole word among the
-          # arguments. (Getting this wrong is what failed the build on
-          # 2026-09-04 — the launcher was right and the check was not.)
-          AQ_PUSHED="$(sed -e ':a' -e '/\\$/N; s/\\\n/ /; ta' /usr/bin/aquarius-session \
-                       | grep '^aq_push_env ' || true)"
+          # The launcher no longer types out the list of variables it hands to
+          # systemd — since the logout fix of 2026-09-04 it hands over
+          # AQ_SESSION_ENV_PUSH from /usr/libexec/aquarius-session-lib, so that
+          # the SAME list is what gets removed again at logout. So the question
+          # "does LANG get handed on?" is now asked of the library.
+          # (An earlier version of this check read the launcher line by line and
+          # missed a backslash continuation, which failed a build on 2026-09-04
+          # with the launcher perfectly correct. Reading one plain list is the
+          # cure for that whole class of mistake.)
+          AQ_PUSHED="$(grep '^AQ_SESSION_ENV_PUSH=' /usr/libexec/aquarius-session-lib \
+                       | cut -d'"' -f2 || true)"
+          echo "       the session hands over: ${AQ_PUSHED}"
           case " ${AQ_PUSHED} " in
             *" LANG "*)
               ok "it also hands LANG to systemd and D-Bus (for portals started later)" ;;
             *)
               bad "LANG is not pushed to systemd/D-Bus — a portal started later would use the C locale" ;;
           esac
+          grep -q 'aq_push_env \${\?AQ_SESSION_ENV_PUSH' /usr/bin/aquarius-session \
+            && ok "and the launcher really uses that list rather than a copy of it" \
+            || bad "the launcher does not use AQ_SESSION_ENV_PUSH — the start-up list and the logout list can drift apart"
 
           echo "== the window manager's configuration =="
           for f in rc.xml autostart shutdown environment; do
@@ -955,6 +983,88 @@ jobs:
           grep -q '^org.freedesktop.impl.portal.Settings=gtk$'    "${PC}" && ok "light/dark follows the system setting"        || bad "Settings is not gtk"
           grep -q '^chooser_type=simple$' /etc/xdg/xdg-desktop-portal-wlr/config \
             && ok "screen recording asks which screen rather than guessing" || bad "no chooser configured for screen recording"
+
+          # ⚠️ THE 2026-09-04 LOGOUT FIX. Logging out of the Aquarius Desktop to
+          # go to GNOME bounced off the login screen two or three times, because
+          # the session left its settings on the user's systemd noticeboard and
+          # left its background programs running. Everything below reads the
+          # finished image to prove the fix is actually in it. The behaviour
+          # itself is tested by tests/test-session-teardown.sh, which runs during
+          # the build against these same installed files.
+          echo "== logging out leaves the machine clean =="
+          LIB=/usr/libexec/aquarius-session-lib
+          if [ -r "${LIB}" ]; then ok "${LIB} is installed"
+          else bad "${LIB} is missing — nobody could log in to the Aquarius Desktop at all, because the launcher refuses to start without it"; fi
+
+          if [ -x /usr/libexec/aquarius-session-portals ]; then
+            ok "/usr/libexec/aquarius-session-portals is installed and executable"
+          else
+            bad "/usr/libexec/aquarius-session-portals is missing or not executable — arriving here from GNOME would leave GNOME's portals in charge and OBS would show no screens"
+          fi
+
+          # The launcher must stay alive long enough to clean up. `exec labwc`
+          # replaced the launcher with the window manager, which is exactly why
+          # nothing was ever cleaned up.
+          grep -qE '^exec labwc' /usr/bin/aquarius-session \
+            && bad "the launcher still uses 'exec labwc' — nothing would be left alive to clean up after the session" \
+            || ok "the launcher outlives the window manager, so it can clean up after it"
+          grep -q "^trap 'aq_session_teardown' EXIT" /usr/bin/aquarius-session \
+            && ok "the clean-up is armed with a trap, so it runs even if the desktop crashes" \
+            || bad "the launcher does not trap EXIT — a crash would skip the clean-up entirely"
+          # And the other direction: a session that was force-killed never ran
+          # its clean-up, and GNOME never cleans up on the way out at all, so
+          # logging IN has to defend itself too.
+          grep -q '^aq_session_env_reset$' /usr/bin/aquarius-session \
+            && ok "logging in clears the last desktop's screen before naming ours" \
+            || bad "the launcher does not clear the previous desktop's screen — arriving after a force-killed session would inherit a dead one"
+
+          # The list of settings that get removed again. WAYLAND_DISPLAY and
+          # XDG_CURRENT_DESKTOP are the two that broke GNOME: one names a screen
+          # that no longer exists, the other tells the portal system to load the
+          # Aquarius configuration in the middle of a GNOME session.
+          UNSETS="$(grep '^AQ_SESSION_ENV_COMPOSITOR=' "${LIB}" | cut -d'"' -f2) $(grep '^AQ_SESSION_ENV_PUSH=' "${LIB}" | cut -d'"' -f2)"
+          # ⚠️ This is everything the session SETS, which is not quite the same
+          # as everything it removes: LANG is deliberately kept (it is the
+          # person's language, not this desktop's — checked two blocks down).
+          # Labelling this "removed at logout" would be a lie in a checks list,
+          # which is the worst place to keep one.
+          echo "       set by the session: ${UNSETS}"
+          echo "       (all of those are removed again at logout except LANG)"
+          for v in WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE XDG_SESSION_DESKTOP QS_CONFIG_PATH QT_QPA_PLATFORM; do
+            case " ${UNSETS} " in
+              *" ${v} "*) ok "${v} is on the list to be forgotten at logout" ;;
+              *) bad "${v} is not on the logout list — it would be inherited by the next desktop" ;;
+            esac
+          done
+          grep -q 'systemctl --user unset-environment' "${LIB}" \
+            && ok "the clean-up really tells systemd to forget them" \
+            || bad "nothing calls 'systemctl --user unset-environment' — this is the bug of 2026-09-04 exactly"
+          grep -q '^AQ_SESSION_ENV_KEEP="LANG"$' "${LIB}" \
+            && ok "LANG is deliberately kept (it is the person's language, not this desktop's)" \
+            || bad "the keep-list is not just LANG — check the reasoning in ${LIB}"
+
+          # The portals. Stopping them is what makes the NEXT desktop's portals
+          # read the next desktop's configuration, in both directions.
+          for u in xdg-desktop-portal.service xdg-desktop-portal-wlr.service xdg-desktop-portal-gtk.service; do
+            grep -q "${u}" "${LIB}" && ok "${u} is stopped when the session changes" \
+              || bad "${u} is not handled — it would answer the next desktop with this one's back end"
+          done
+          grep -q 'aquarius-session-portals' /usr/share/aquarius/labwc/autostart \
+            && ok "logging IN takes the portals back from whichever desktop had them last" \
+            || bad "the autostart file does not refresh the portals — arriving from GNOME, screen recording would silently show no screens"
+
+          # And every service of ours that starts with the desktop has to stop
+          # with it. Without PartOf= a service started at login keeps running
+          # after logout, which is the other half of the same bug.
+          for unit in /usr/lib/systemd/user/aquarius-*.service /usr/lib/systemd/user/aq-*.service; do
+            [ -r "${unit}" ] || continue
+            grep -qE '^WantedBy=.*graphical-session\.target' "${unit}" || continue
+            if grep -qE '^PartOf=.*graphical-session\.target' "${unit}"; then
+              ok "$(basename "${unit}") stops when the desktop does"
+            else
+              bad "$(basename "${unit}") starts with the graphical session but is not PartOf it — it would outlive the logout and get in the next desktop's way"
+            fi
+          done
 
           echo "== packages the session needs =="
           for pkg in greetd greetd-selinux tuigreet xdg-desktop-portal-wlr \

@@ -10,6 +10,32 @@
 #
 # Orphans matter more here than they sound. A leftover portal from a previous
 # session is one of the classic causes of "screen recording worked yesterday".
+#
+# -----------------------------------------------------------------------------
+# ⚠️ THIS FILE IS THE HEAD START, NOT THE CLEAN-UP.  (2026-09-04)
+# -----------------------------------------------------------------------------
+# It used to be the whole of the clean-up, and it was not enough. Two reasons:
+#
+#   1. It only stops services. It does not remove the settings this session
+#      wrote into your personal background manager — the note saying the screen
+#      is called wayland-0, the note saying this desktop is called "Aquarius".
+#      Those outlive the logout, and they are what made GNOME fail to start
+#      afterwards. That was Royce's "it kicks me back to the login screen a
+#      couple of times" bug.
+#
+#   2. labwc does not wait for this script. It starts it and carries on with
+#      its own shutdown, so anything slow in here is racing the compositor's
+#      exit and may simply be cut off.
+#
+# The real clean-up is therefore in /usr/bin/aquarius-session, which now stays
+# alive until the window manager has gone and then runs the whole sequence with
+# a time limit on it — stop the services, wait, remove the settings, close
+# anything left running. See /usr/libexec/aquarius-session-lib.
+#
+# This line stays because it is a genuinely useful head start: it lets systemd
+# begin stopping things a moment earlier, while the screen still exists, which
+# is the kindest moment for a program to be asked to close. Running it twice is
+# harmless — stopping something already stopped is not an error.
 # =============================================================================
 
 systemctl --user stop graphical-session.target 2>/dev/null || true
