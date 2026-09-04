@@ -65,12 +65,31 @@ cannot be mistaken for one of these.
    means **11 apps to choose from and 5 plug-ins that follow OBS Studio**.
 2. **Tick `recommended:yes` by default; leave the rest unticked.** The
    recommended set is deliberately the everyday one, not everything.
-3. **Install what is ticked with `aq apps install <id> <id> …`**, which is a
-   thin front door to `flatpak install --system` and takes care of pulling in
-   the plug-ins from field 7. It installs **system-wide**, on purpose — see
-   *One thing worth knowing about how this works* below — so the person is
-   asked for their password once by the desktop's own permission prompt. The
-   chooser must **not** run as root itself and must **not** call `sudo`.
+3. **Install what is ticked by handing the whole list to one privileged
+   helper, through `pkexec`:**
+
+   ```
+   pkexec /usr/libexec/aquarius-creator-apps-install <ref> <ref> …
+   ```
+
+   ...where each `<ref>` is field 1 and field 8 joined as `id//branch`, and the
+   plug-ins from field 7 have already been added to that list by the chooser.
+   `aq apps install` is the same job from a terminal and reaches the same
+   place; the window does not go through it, because it needs the per-app
+   progress the helper reports back (`STEP`, `PERCENT`, `OK`, `FAILED`,
+   `DONE`).
+
+   It installs **system-wide**, on purpose — see *One thing worth knowing about
+   how this works* below.
+
+   **The chooser must never run as root itself, and never call `sudo`.**
+   `pkexec` is the right tool and `sudo` is the wrong one: `sudo` is built for a
+   terminal, wants a tty to type into, and from a window either fails with
+   nothing on screen or asks again for every app. `pkexec` is the desktop's own
+   permission prompt — **one prompt, at the moment Install is pressed, for the
+   whole run** — and everything privileged happens inside that single
+   authorisation, in the helper. The window itself has no special powers at any
+   point.
 4. **Anything the person did not tick is simply not installed.** Nothing is
    written down, nothing is remembered as refused, and they can install it
    later from the app store or with `aq apps install`. Ticking nothing at all
@@ -493,8 +512,10 @@ it is sandboxed away from your camera, with no message saying why.
 
 The cost is that installing asks for a password once — the ordinary desktop
 prompt, the same one the app store uses. Nothing runs as root beyond that, and
-neither the chooser nor `aq apps` ever calls `sudo`: they ask Flatpak, and
-Flatpak asks you. The benefit is that the apps work for everybody who uses the
+neither the chooser nor `aq apps` ever calls `sudo`. The prompt comes from the
+system, not from us: the chooser asks through `pkexec`, `aq apps` lets Flatpak
+ask, and either way it is Linux's own permission prompt putting the question to
+you, once. The benefit is that the apps work for everybody who uses the
 machine, and are downloaded once rather than once per person.
 
 ---
@@ -543,7 +564,7 @@ with OBS Studio and asking for one by name is refused, with a note saying which
 app it belongs to.
 
 You will be asked for your password once, by the desktop's own prompt. That is
-Flatpak asking, not us: the apps are installed **for the whole computer** for
+the system asking, not us: the apps are installed **for the whole computer** for
 the reason given under *One thing worth knowing about how this works*, and
 nothing here ever runs `sudo` on your behalf.
 
