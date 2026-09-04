@@ -858,7 +858,10 @@ fi
 # which an unreadable file pattern made the reading return nothing at all and
 # the service concluded there was nothing to install.
 say "Reading the shopping list with the real parser"
-AQ_PARSED="$(/usr/libexec/aquarius-flatpak-preinstall --list | wc -l)"
+# `|| true` because this script runs under `set -e` with `pipefail`: if the
+# reader fails we want the plain-English FAIL below, not the build dying on an
+# assignment with no explanation of what it was trying to do.
+AQ_PARSED="$(/usr/libexec/aquarius-flatpak-preinstall --list | wc -l || true)"
 AQ_BLOCKS="$(grep -c '^\[Flatpak Preinstall ' "${PREINSTALL_FILE}")"
 if [ "${AQ_PARSED}" -eq "${AQ_BLOCKS}" ] && [ "${AQ_PARSED}" -gt 0 ]; then
     ok "the parser finds all ${AQ_PARSED} apps on the list"
@@ -877,12 +880,12 @@ say "The app catalog (the names and descriptions the chooser shows)"
 [ -r "${CATALOG_FILE}" ] \
     || die "${CATALOG_FILE} is missing — it ships in system_files/ and the chooser cannot be drawn without it."
 
-AQ_CATALOGUED="$(/usr/libexec/aquarius-flatpak-preinstall --catalog | wc -l)"
+AQ_CATALOGUED="$(/usr/libexec/aquarius-flatpak-preinstall --catalog 2>/dev/null | wc -l || true)"
 if [ "${AQ_CATALOGUED}" -eq "${AQ_BLOCKS}" ]; then
     ok "all ${AQ_CATALOGUED} apps have a name and a description"
 else
-    bad "only ${AQ_CATALOGUED} of ${AQ_BLOCKS} apps have a catalog entry — the missing ones are named above"
-    /usr/libexec/aquarius-flatpak-preinstall --catalog > /dev/null || true
+    bad "only ${AQ_CATALOGUED} of ${AQ_BLOCKS} apps have a catalog entry — these are the ones with no name or description:"
+    /usr/libexec/aquarius-flatpak-preinstall --catalog 2>&1 >/dev/null | sed 's/^/       /' || true
 fi
 
 # The other direction: an entry describing an app that is not on the list.
@@ -897,8 +900,8 @@ else
 fi
 
 # Every entry must sit on one of the five shelves the chooser knows how to draw.
-AQ_BAD_CATEGORY="$(/usr/libexec/aquarius-flatpak-preinstall --catalog \
-    | awk -F'\t' '$4 !~ /^(Video|Audio|Design|Streaming|Utilities)$/ {print $1 " -> " $4}')"
+AQ_BAD_CATEGORY="$(/usr/libexec/aquarius-flatpak-preinstall --catalog 2>/dev/null \
+    | awk -F'\t' '$4 !~ /^(Video|Audio|Design|Streaming|Utilities)$/ {print $1 " -> " $4}' || true)"
 if [ -z "${AQ_BAD_CATEGORY}" ]; then
     ok "every app is on one of the five shelves the chooser draws"
 else
