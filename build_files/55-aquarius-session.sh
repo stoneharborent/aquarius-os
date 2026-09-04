@@ -680,6 +680,41 @@ aq_scale_case "with nothing saved, a 55-inch 4K is left at 100% (81 dpi — the 
 aq_scale_case "your own 'aq display scale' beats the GNOME setting (150%)" \
     "${AQ_T}/monitors.xml" "${AQ_T}/display.conf" "150%"
 
+# ------------------------------------------------------------------------------
+# --effective-scale: one number, for the DaVinci Resolve launcher
+# ------------------------------------------------------------------------------
+# ⚠️ THE 2026-09-04 BENCH REPORT: Resolve "appearing smaller". Resolve is an X11
+# program, XWayland tells X11 programs the screen is always at 100%, so the
+# launcher has to be told separately — and this is where it asks. If this ever
+# prints something that is not a number, Resolve silently opens at the wrong
+# size and nothing says why.
+say "The one number the DaVinci Resolve launcher reads"
+aq_effective() { # aq_effective "<what>" "<monitors.xml>" "<display.conf>" "<expected>"
+    local what="$1" got
+    got="$("${AQ_DISPLAY_HELPER}" --effective-scale \
+        --outputs-from "${AQ_T}/ark.json" \
+        --monitors-xml "$2" --conf "$3" 2>&1)"
+    if [ "${got}" = "$4" ]; then
+        ok "${what} — it printed ${got}"
+    else
+        bad "${what} — expected '$4', got '${got}'"
+    fi
+}
+aq_effective "it agrees with the GNOME scale the session inherits" \
+    "${AQ_T}/monitors.xml" /nonexistent "1.25"
+aq_effective "and with your own 'aq display scale'" \
+    "${AQ_T}/monitors.xml" "${AQ_T}/display.conf" "1.5"
+
+# And with no screens at all, which is what a build machine is — and what
+# running Resolve from GNOME or over SSH looks like too. It must still answer.
+AQ_EFF_NOSCREEN="$("${AQ_DISPLAY_HELPER}" --effective-scale 2>&1 || true)"
+case "${AQ_EFF_NOSCREEN}" in
+    '' | *[!0-9.]*)
+        bad "with no screens it printed '${AQ_EFF_NOSCREEN}', not a number — the launcher would have nothing to hand Resolve"
+        ;;
+    *) ok "with no screens at all it still answers with a number (${AQ_EFF_NOSCREEN})" ;;
+esac
+
 # The other end of the ladder: a dense laptop panel must NOT be left at 100%.
 cat > "${AQ_T}/laptop.json" << 'JSON'
 [{"name":"eDP-1","description":"a 14-inch 2880x1800 laptop panel",
