@@ -7,8 +7,10 @@
 ## The short version
 
 Open your apps, click **Install DaVinci Resolve**, pick the file you downloaded
-from Blackmagic, and wait about fifteen minutes. Resolve then sits in your dock
-like any other program.
+from Blackmagic, and wait about fifteen minutes. A window shows you the six
+steps as they happen. Resolve then sits in your dock like any other program.
+
+You never see a terminal, and you never type anything.
 
 Everything below explains what happened and what to do when it does not.
 
@@ -95,8 +97,14 @@ Blackmagic themselves test against, which is the part everyone else skips.
 > AquariusOS shipped with. Everything else is identical. After the merge, the
 > plain command works and this note stops applying.
 >
-> The graphical **Install DaVinci Resolve** button cannot pass that setting, so
-> use the terminal for this one test.
+> The **Install DaVinci Resolve** button in the app grid cannot pass that
+> setting, because nothing types anything into it. If you want the window
+> *and* the development runtime, start the window from a terminal, where
+> anything you set carries into it:
+>
+> ```
+> AQ_RESOLVE_RUNTIME_TAG=dev-restart-r3-resolve aq resolve install --gui
+> ```
 
 ### 1. Get the download
 
@@ -126,9 +134,58 @@ below.
 Press the **Super** key (the one with the Windows or Command symbol), type
 **Install**, and click **Install DaVinci Resolve**.
 
-A file picker opens in your Downloads folder. Choose the file. A terminal window
-opens and tells you what it is doing, in plain English, for about fifteen
-minutes.
+A window opens. There are three pages and you will see all three.
+
+**Page one — what will happen.** Two sentences saying what the setup is about to
+do, and then two lines about your computer:
+
+- **Your download.** If Blackmagic's file is already in your Downloads folder it
+  is filled in for you and says so — *"Found DaVinci_Resolve_Studio_21.1_Linux.zip
+  in /home/royce/Downloads"*. If it is somewhere else, click **Choose…** and pick
+  it. If you have not downloaded it at all, that is fine too: **Get it from
+  Blackmagic** opens their page, and if you press Install with nothing chosen the
+  setup opens their page itself and then *waits*, for as long as you like, until
+  the file appears.
+- **Graphics card.** One honest line. On the bench it reads *"NVIDIA GeForce RTX
+  4090 — CUDA ready"* with a tick beside it. On an AMD or Intel machine it says
+  so, with a warning triangle, **before** you spend fifteen minutes finding out
+  from Resolve.
+
+Then click **Install**.
+
+**Page two — the six steps.** A list, with a spinner on the step that is
+happening and a tick on the ones that are done:
+
+1. Checking your graphics card
+2. Finding your download
+3. Downloading the Rocky Linux runtime
+4. Building the container
+5. Installing DaVinci Resolve
+6. Adding it to your apps
+
+Underneath is a progress bar. During the download it fills properly, because
+that is the one step where there is a real number to report; the rest of the
+time it sweeps back and forth, which honestly means *"this is working and nobody
+can say how long it will take"*. Step 5 is the long, quiet one.
+
+Everything the old terminal window used to show is still there, behind
+**Details**. Click it and the whole log is in front of you, scrolling as it
+goes. It is worth a look the first time, and it opens **by itself** if anything
+goes wrong.
+
+**Cancel** really stops — the setup and everything underneath it. Nothing on
+your computer is changed by stopping; the worst that can be left behind is a
+half-built container, and the window tells you the one command that clears it.
+
+**Page three — done.** *"DaVinci Resolve is installed."*, a button that opens it
+straight away, and a short paragraph with the two things worth doing the first
+time it opens (both are in *[The first time you open it](#the-first-time-you-open-it)*
+below).
+
+**If something goes wrong**, page two turns into the failure page in place: what
+happened in plain English, the log already open beneath it, **Copy details** to
+put the whole thing on the clipboard, and **Try again**, which takes you back to
+page one where the file is.
 
 If you would rather type, the same thing is:
 
@@ -136,13 +193,34 @@ If you would rather type, the same thing is:
 aq resolve install
 ```
 
+That runs the *same installer*, printing the same plain English into your
+terminal instead of into a window. There is one installer on this operating
+system and two ways to watch it — the window is not a second, simpler version
+that might behave differently.
+
 With no file name it looks in Downloads, and if there is nothing there it opens
 Blackmagic's page **and waits** — as long as you like — until the download
 appears. You cannot get the order wrong.
 
 ### 3. Open it
 
-"DaVinci Resolve" is now in your apps and can be pinned to the dock.
+"DaVinci Resolve" is now in your apps and can be pinned to the dock. The window's
+own **Open DaVinci Resolve** button does the same thing.
+
+### Looking at the window without installing anything
+
+```
+aq resolve install --gui --dry-run
+```
+
+This opens the real window and walks through all six steps, and it **installs
+nothing at all**: no container, no download, no Resolve, no change of any kind.
+It is how to look at the window after changing it, or to see what the setup is
+going to be like before committing fifteen minutes to it. It takes a few
+seconds.
+
+Without `--gui` you get the same rehearsal as text in your terminal, which is
+what CI runs on every build.
 
 ---
 
@@ -252,6 +330,9 @@ aq resolve run        start Resolve (same as clicking the icon)
 aq resolve shell      a terminal INSIDE the container
 aq resolve remove     delete the container
 aq resolve --help     all of the above, explained
+
+aq resolve install --gui         set it up in the window, from a terminal
+aq resolve install --dry-run     a rehearsal that installs nothing at all
 ```
 
 **`aq resolve status` is where to start when something is wrong.** It reports
@@ -410,13 +491,86 @@ Resolve itself is unaffected.
 | `resolve-runtime/system_files/usr/bin/aquarius-resolve-setup` | Runs Blackmagic's installer, **inside** the container. |
 | `resolve-runtime/system_files/usr/bin/aquarius-resolve-run` | Starts Resolve, inside the container. |
 | `build_files/62-resolve-runtime.sh` | The OS-image step. Checks everything below arrived. |
-| `system_files/usr/libexec/aquarius-resolve-install` | The setup, on the host. The long one. |
-| `system_files/usr/libexec/aquarius-resolve-install-gui` | The no-terminal way in: a file picker, then the above. |
+| `system_files/usr/libexec/aquarius-resolve-install` | **The setup, on the host. The long one, and the only one.** |
+| `system_files/usr/libexec/aquarius-resolve-installer` | The window. GTK 4 + libadwaita, in Python. Runs the above; installs nothing itself. |
 | `system_files/usr/libexec/aquarius-resolve-launch` | The host-side launcher. Carries the desktop's settings in. |
 | `system_files/usr/share/aquarius/resolve/runtime.env` | **The one place the runtime image is named.** |
 | `system_files/usr/lib/udev/rules.d/75-aquarius-resolve.rules` | Dongles and control panels. |
 | `system_files/usr/lib/systemd/system/aquarius-resolve-cdi.service` | Graphics-card description, safety net only. |
 | `.github/workflows/build-resolve-runtime.yml` | Builds and publishes the runtime. |
+
+### The window, and the progress channel
+
+*Added 2026-09-04. Before this, clicking "Install DaVinci Resolve" opened a file
+picker and then a Ptyxis terminal. That worked — Royce installed Resolve through
+it on 2026-09-03 — and it was replaced anyway, because the flagship feature of
+an operating system for creative people should not look like system
+administration.*
+
+**The rule.** `aquarius-resolve-install` is the only thing that installs
+Resolve. The window runs it and draws what it says. Nothing is reimplemented in
+Python — not finding the download, not looking at the graphics card, not
+patching the menu entries — so `aq resolve install` in a terminal and the window
+cannot drift apart or disagree about the machine. If you are tempted to do "just
+this one bit" in the window, put it in the script instead and both get it.
+
+**How they talk.** The script's human output goes to stdout and stderr exactly
+as it always did. Given `--progress-fd N` (or `AQ_PROGRESS_FD=N`) it *also*
+writes four kinds of structured line to that descriptor, and nothing else:
+
+| Line | Means |
+| --- | --- |
+| `STEP <n>/<total> <text>` | Step n has begun, and is called `<text>`. Beginning n means 1…n-1 finished. |
+| `PERCENT <0-100>` | How far through the **current** step. Sent only where there is a real number. |
+| `DONE` | Everything finished. Once, last. |
+| `FAIL <text>` | Stopped, and `<text>` says why in words a person can act on. |
+
+Three things about that are deliberate:
+
+- **The step wording lives in the script.** The window prints whatever text
+  arrives, so a step can be renamed — or re-named mid-flight, which is how
+  "Finding your download" becomes "Waiting for your download from Blackmagic"
+  when somebody clicks Install with nothing downloaded — without touching the
+  window.
+- **No `PERCENT` is not a stall.** Only the container download reports a real
+  number, parsed out of podman's own output. Everywhere else the window sweeps a
+  bar with no end, which is the honest picture of a step nobody can time. The
+  parser is explicitly allowed to recognise nothing: podman's wording is not a
+  promise anybody made us, and if it changes the download still works and the
+  bar simply sweeps.
+- **Unknown lines are ignored, not shown.** A line added to the script in future
+  cannot break a window built before it.
+
+**Two questions and a rehearsal**, all answered by the same script, so the window
+never has a second opinion about the machine:
+
+```
+aquarius-resolve-install --find-installer   the download it would use, or exit 1
+aquarius-resolve-install --gpu-summary      ok|warn|none, a tab, then a sentence
+aquarius-resolve-install --dry-run          walk all six steps, change nothing
+```
+
+**No password is asked for and none should be.** podman and distrobox here are
+rootless; the container is built and run as the person using it. The one part
+that needs root — the udev rules for a Studio licence dongle — ships inside the
+image and is in place before anybody clicks anything. `pkexec` appearing in this
+feature would mean something else had gone wrong.
+
+**Cancel** signals the whole process group, which is why the script is started
+with a session of its own: podman and distrobox stop with it rather than being
+orphaned to finish a download nobody is watching.
+
+**Colours are not set by the window.** libadwaita follows the system light/dark
+setting and AquariusOS's accent is set at the desktop level, so a window that
+paints nothing itself is an AquariusOS-coloured window in both themes for free.
+`branding/tokens.md` stays the law for anything that ever does need a literal
+colour.
+
+**Packages.** `python3-gobject` is added by `build_files/62-resolve-runtime.sh`
+— a megabyte or two with `python3-cairo`, and the only one of the three that
+GNOME does not already bring in. `gtk4` and `libadwaita` arrive with GNOME at
+step 40 and are named there anyway, so that dropping GNOME from an image variant
+fails in the step whose name says why they matter.
 
 ### Why Rocky 9 and not Rocky 10
 
@@ -513,6 +667,9 @@ Be clear about this, because a green tick is easy to over-read.
 | Every library Resolve is known to look for resolves by name (`ldconfig -p`) | That a 4K screen behaves |
 | Neither image contains any Blackmagic software | Playback, export, colour |
 | Every script parses, the desktop entry validates, `aq resolve --help` and `status` run | Whether it is actually pleasant to use |
+| The window compiles, and Python inside the image can really import GTK 4 and libadwaita | **What the window looks like** |
+| The rehearsal's six `STEP` lines arrive in order and end in `DONE` | That the bar moves sensibly during a real download |
+| The desktop entry's `StartupWMClass` matches the window's application id | That the dock shows the right name and mark |
 
 There is no Resolve in CI — we may not distribute it — and no graphics card in a
 GitHub runner. The library check is a **proxy**: every "Resolve will not start"
@@ -522,6 +679,9 @@ release moving a package between repositories.
 
 **The real proof is the bench.** Nothing here is finished until a person on the
 4090 machine has downloaded Resolve, clicked the icon, and looked at the window.
+CI can prove the window is importable and that the lines it reads still arrive;
+it cannot see a pixel of it. `aq resolve install --gui --dry-run` is the cheap
+way to look, and it installs nothing.
 
 ### Testing a work-in-progress runtime on the bench
 
@@ -534,6 +694,11 @@ AQ_RESOLVE_RUNTIME_TAG=dev-restart-r3-resolve aq resolve install
 
 The setup prints a line saying it is using a runtime that is not the one this
 AquariusOS shipped with.
+
+Add `--gui` to get the window instead of the terminal. Anything set in the
+terminal carries into the window, because the window passes its whole
+environment to the installer it runs — which is why this works and clicking the
+icon in the app grid does not.
 
 ---
 

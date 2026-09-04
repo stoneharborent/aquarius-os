@@ -32,23 +32,6 @@
 #
 # It is a "oneshot": it runs, it finishes, it stays finished. It is not a
 # background process eating memory forever.
-#
-# ------------------------------------------------------------------------------
-# ⚠️ THIS SERVICE IS NOT SWITCHED ON, AND THAT IS DELIBERATE (2026-09-04)
-# ------------------------------------------------------------------------------
-# It used to start by itself at the first boot and fetch all sixteen apps
-# whether or not anybody wanted them. It no longer does. There is no
-# [Install] section below, so nothing enables it and nothing starts it on its
-# own — it exists to be started BY HAND, or by `aq apps install --all`.
-#
-# WHY. Downloading roughly ten gigabytes of other people's software to a
-# machine before its owner has said yes is a decision that belongs to the
-# person, not to us. What replaces it is the app chooser: a window at the first
-# login that shows what AquariusOS suggests, with the everyday ones already
-# ticked, and installs exactly what is left ticked.
-#
-# The apps themselves have not changed and neither has the shopping list. What
-# changed is who presses go.
 # ==============================================================================
 
 [Unit]
@@ -68,19 +51,16 @@ After=flatpak-system-helper.service
 # Nothing to do on a system without Flatpak.
 ConditionPathExists=/usr/bin/flatpak
 
+# If it fails — which almost always means "no internet yet" — keep trying
+# rather than giving up after five goes, which is systemd's default and is
+# exactly wrong for "wait until this laptop meets some Wi-Fi".
 StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
 ExecStart=/usr/libexec/aquarius-flatpak-preinstall
-
-# It is only ever started by somebody asking for it, and somebody who asked is
-# somebody waiting for an answer. So a failure is reported and left alone
-# rather than retried quietly in the background: the person can read what went
-# wrong and run it again. (While this started itself at boot it retried every
-# two minutes, which was right for "this laptop has not met any Wi-Fi yet" and
-# is wrong now.)
-Restart=no
+Restart=on-failure
+RestartSec=120
 
 # Downloading several gigabytes over a slow connection must never be killed
 # half way by a stopwatch.
@@ -92,7 +72,5 @@ TimeoutStartSec=infinity
 Nice=10
 IOSchedulingClass=idle
 
-# There is deliberately NO [Install] section. See the note at the top: nothing
-# starts this on its own any more. `systemctl enable` on this unit will say
-# "the unit files have no installation config", and that is the correct answer,
-# not a fault.
+[Install]
+WantedBy=multi-user.target

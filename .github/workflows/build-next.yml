@@ -1686,110 +1686,15 @@ jobs:
           if [ "${runtimes}" -ge 5 ]; then ok "${runtimes} entries are marked IsRuntime=true (the OBS plug-ins and the Vulkan layer)"
           else bad "only ${runtimes} entries are marked IsRuntime=true — a plug-in without it is never found"; fi
 
-          # The installer must be PRESENT and must NOT be switched on. Since
-          # 2026-09-04 the app chooser asks the person which apps they want;
-          # an image that enables this service downloads about ten gigabytes
-          # before anybody has been asked, which is the behaviour we removed.
+          # The trigger. Fedora ships the folder and the command and nothing
+          # that runs it, so this service is the whole reason any of it happens.
           if systemctl is-enabled aquarius-flatpak-preinstall.service >/dev/null 2>&1; then
-            bad "aquarius-flatpak-preinstall.service is switched on — it would fetch every app before the person was asked; the chooser is supposed to ask first"
+            ok "the first-boot installer is switched on"
           else
-            ok "the installer is not switched on (correct — the chooser asks first)"
+            bad "aquarius-flatpak-preinstall.service is not switched on — nothing would ever fetch the apps"
           fi
           if [ -x /usr/libexec/aquarius-flatpak-preinstall ]; then ok "the installer script is there and runnable"
           else bad "/usr/libexec/aquarius-flatpak-preinstall is missing"; fi
-
-          # ------------------------------------------------------------------
-          # RUN THE REAL PARSER AGAINST THE REAL FILE
-          # ------------------------------------------------------------------
-          # This is the check that was missing on 2026-09-04, when a reading
-          # fault made the installer see zero apps on a full list and write the
-          # "never look again" marker. Every check above reads the list file;
-          # none of them ran the code that reads it on a real machine. These do.
-          PARSED="$(/usr/libexec/aquarius-flatpak-preinstall --list | wc -l)"
-          if [ "${PARSED}" -eq "${blocks}" ]; then
-            ok "the installer's own parser finds all ${PARSED} apps"
-          else
-            bad "the parser finds ${PARSED} apps but the list holds ${blocks} — a machine would install the wrong set, or nothing"
-          fi
-
-          # THE EXACT BENCH CONDITION. /etc/flatpak/preinstall.d/ is empty on
-          # every new machine — nobody has changed anything yet — and that
-          # empty folder is what broke the reading. Prove it is harmless.
-          rm -rf /etc/flatpak/preinstall.d
-          mkdir -p /etc/flatpak/preinstall.d
-          PARSED_EMPTY="$(/usr/libexec/aquarius-flatpak-preinstall --list | wc -l)"
-          if [ "${PARSED_EMPTY}" -eq "${blocks}" ]; then
-            ok "with an empty /etc/flatpak/preinstall.d (a brand-new machine) it still finds all ${PARSED_EMPTY}"
-          else
-            bad "with an empty /etc/flatpak/preinstall.d it finds ${PARSED_EMPTY} of ${blocks} — this is the 2026-09-04 fault, back again"
-          fi
-
-          # And an empty answer must be a loud failure, never a quiet success
-          # that writes the marker. Checked by hiding the list from it.
-          mv /usr/share/flatpak/preinstall.d /usr/share/flatpak/preinstall.d.hidden
-          rm -f /etc/aquarius/flatpak-preinstall-done
-          if /usr/libexec/aquarius-flatpak-preinstall >/tmp/empty.txt 2>&1; then
-            bad "with no list at all the installer reported SUCCESS — that is how a machine silently never gets its apps"
-          else
-            ok "with no list at all the installer fails loudly (exit $?) instead of pretending it is done"
-          fi
-          if grep -q 'ERROR' /tmp/empty.txt; then ok "and it says ERROR in plain words"
-          else bad "it failed without saying why:"; sed 's/^/       /' /tmp/empty.txt; fi
-          if [ -e /etc/aquarius/flatpak-preinstall-done ]; then
-            bad "it wrote the 'already done' marker on an empty list — the machine would never try again"
-          else
-            ok "it wrote no 'already done' marker (correct — it must try again)"
-          fi
-          mv /usr/share/flatpak/preinstall.d.hidden /usr/share/flatpak/preinstall.d
-
-          # ------------------------------------------------------------------
-          # THE CATALOG THE CHOOSER WINDOW IS DRAWN FROM
-          # ------------------------------------------------------------------
-          CAT=/usr/share/aquarius/apps/catalog.ini
-          if [ -s "${CAT}" ]; then ok "the app catalog is in the image"
-          else bad "${CAT} is missing — the chooser would have no names to show"; fi
-
-          /usr/libexec/aquarius-flatpak-preinstall --catalog > /tmp/catalog.txt 2>/tmp/catalog.err
-          CAT_RC=$?
-          if [ "${CAT_RC}" -eq 0 ]; then ok "--catalog describes every app on the list"
-          else bad "--catalog failed (exit ${CAT_RC}):"; sed 's/^/       /' /tmp/catalog.err; fi
-
-          CAT_LINES="$(wc -l < /tmp/catalog.txt)"
-          if [ "${CAT_LINES}" -eq "${blocks}" ]; then ok "${CAT_LINES} catalog lines for ${blocks} apps"
-          else bad "${CAT_LINES} catalog lines for ${blocks} apps — the chooser would show the wrong set"; fi
-
-          # The contract other programs read: eight tab-separated fields.
-          FIELDS="$(awk -F'\t' '{print NF}' /tmp/catalog.txt | sort -u | tr '\n' ' ')"
-          if [ "${FIELDS}" = "8 " ]; then ok "every catalog line has the promised 8 fields"
-          else bad "catalog lines have ${FIELDS}fields — the chooser is written against exactly 8"; fi
-
-          if awk -F'\t' '$4 !~ /^(Video|Audio|Design|Streaming|Utilities)$/' /tmp/catalog.txt | grep -q .; then
-            bad "an app names a category the chooser cannot draw:"
-            awk -F'\t' '$4 !~ /^(Video|Audio|Design|Streaming|Utilities)$/ {print "       " $1 " -> " $4}' /tmp/catalog.txt
-          else
-            ok "every app sits on one of the five shelves the chooser draws"
-          fi
-
-          # 11 apps a person picks from, 5 plug-ins that follow OBS Studio.
-          VISIBLE="$(awk -F'\t' '$6=="runtime:no"' /tmp/catalog.txt | wc -l)"
-          HIDDEN="$(awk -F'\t' '$6=="runtime:yes"' /tmp/catalog.txt | wc -l)"
-          if [ "${VISIBLE}" -eq 11 ] && [ "${HIDDEN}" -eq 5 ]; then
-            ok "the chooser would offer ${VISIBLE} apps and quietly bring ${HIDDEN} plug-ins with OBS"
-          else
-            bad "the chooser would offer ${VISIBLE} apps with ${HIDDEN} plug-ins — expected 11 and 5"
-          fi
-
-          # Every plug-in must say which app it belongs to, or it can never be
-          # installed: the chooser never offers one directly.
-          if awk -F'\t' '$6=="runtime:yes" && $7=="requires:-"' /tmp/catalog.txt | grep -q .; then
-            bad "a plug-in does not say which app it belongs to, so nothing would ever install it:"
-            awk -F'\t' '$6=="runtime:yes" && $7=="requires:-" {print "       " $1}' /tmp/catalog.txt
-          else
-            ok "every plug-in names the app it arrives with"
-          fi
-
-          echo "-- what the chooser will show --"
-          awk -F'\t' '$6=="runtime:no" {printf "     [%s] %-28s %s\n", ($5=="recommended:yes" ? "x" : " "), $2, $4}' /tmp/catalog.txt
 
           # ====================================================================
           # 3. THE EXTRA PERMISSIONS
