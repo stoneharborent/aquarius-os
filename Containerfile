@@ -384,6 +384,21 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     /ctx/build_files/64-creator-apps.sh
 
+# 7d. The window that offers those apps to a person: "Your creator apps", which
+#     opens by itself the first time somebody logs in and lives in the app grid
+#     afterwards as "Aquarius Apps".
+#
+#     ⚠️ NOTHING INSTALLS ITSELF ANY MORE (Royce's call, 2026-09-04). Step 7c
+#     ships the list; this step ships the choosing. The service that used to go
+#     and fetch every app at first boot is present but switched off, and this
+#     step fails the build if it is ever switched back on.
+#
+#     After step 7c because it reads that step's list with the real parser — the
+#     check whose absence let an image ship that could not read its own list.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache/libdnf5 \
+    /ctx/build_files/66-creator-apps-chooser.sh
+
 # 8. The boot path: the Aquarius splash screen, the name in the boot menu, the
 #    text login banners, and then a rebuild of the boot ramdisk so that all of
 #    it is really used.

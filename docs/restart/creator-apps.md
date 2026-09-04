@@ -129,6 +129,136 @@ rather than hidden.
 
 ---
 
+## The window — "Your creator apps"
+
+*This is the window itself: what is on it, and what happens when you press the
+button. The list it draws comes from the two files described in
+[the contract section](#the-contract-the-chooser-window-is-written-against);
+this section is about the window, not the list.*
+
+It is `/usr/libexec/aquarius-creator-apps` — a normal application window, built
+the same way as the DaVinci Resolve installer window next door, so the two feel
+like parts of one operating system rather than two different projects.
+
+### Three pages
+
+**1. Choosing.** The Aquarius mark, the sentence *"AquariusOS comes with a
+studio's worth of apps. Pick the ones you want — you can change this any time
+from Aquarius Apps."*, and then the apps as cards, on shelves:
+
+> **Included with AquariusOS** — Aquarius Editor and Aquarius Writer, with no
+> tick beside them and an **Open** button instead. They are already here.
+> They are listed because this window should be the one place that shows you the
+> whole studio; a window that quietly left out two of the apps would make you
+> wonder which list was lying.
+>
+> **Video · Audio · Design · Streaming · Utilities** — a card each: the app's
+> icon, its name, one sentence, a **Recommended** tag where it has one, and a
+> tick. Clicking anywhere on a card ticks it.
+
+Above the shelves: **Select recommended · Select all · Select none**. At the
+bottom: how many you have chosen and roughly how big the download is, a
+**Skip for now** link, and **Install**.
+
+**What is ticked when it opens:** the recommended ones, and only those — OBS
+Studio, Kdenlive, Audacity, GIMP, Inkscape and LocalSend. Blender, Ardour,
+Krita, Obsidian and Chrome start unticked, because they are either very large
+or for a particular job. It is a suggestion, and every part of it can be
+undone in one click.
+
+**Where the icons come from.** The real app icons are fetched from Flathub the
+first time the window opens and kept in `~/.cache/aquarius/app-icons/`. If there
+is no internet, or Flathub is slow, you get a category symbol instead and the
+window opens at exactly the same speed — **nothing about this window ever waits
+for the network.** The same is true of the download size in the footer: it is
+Flatpak's own figure, asked for in the background, and if the answer never
+arrives the footer simply says how many apps you picked and no size at all. A
+number that is missing is better than a number that is wrong.
+
+**The plug-ins are not on the page.** OBS Studio's card says *"…and its
+plug-ins"* and that is the whole of it. The five entries that make game capture
+and per-app sound work arrive with OBS because you chose OBS. Nobody who wants
+to record their screen should have to learn what a Vulkan layer is.
+
+**2. Installing.** One line per app, each with a spinner that becomes a tick or
+a cross, an overall bar, and a **Details** panel with the full log in it —
+closed by default, and it opens itself the moment anything fails. **Cancel**
+stops it, between apps: the app that is downloading right now finishes first,
+because stopping in the middle is how you get a broken one, and the window says
+so as soon as you press it.
+
+**3. Done.** *"All set."*, with **Open <the first app>** and **Close**. If
+anything failed it says which, by name, and offers to try those again. Nothing
+is ever left half-installed.
+
+### One password prompt, at the moment you press Install
+
+The window has no special powers of its own. When you press Install it runs
+`/usr/libexec/aquarius-creator-apps-install` through `pkexec`, which is the
+standard Linux "may I?", and you are asked for your password **once**, for the
+whole run. That script does the installing, one app at a time, and reports back
+on two channels: the human words go into **Details** unchanged, and short
+structured lines (`STEP`, `PERCENT`, `OK`, `FAILED`, `DONE`) move the ticks and
+the bar.
+
+The apps are installed **for the whole computer**, not just your account. That
+is why permission is needed at all, and it is the right way round: the extra
+permissions creator apps need are shipped as system-wide overrides, and
+`aq apps status` reports on the system installation. One place, one answer.
+
+> **Why one app at a time?** So that every line on the page can be true. One
+> long command has one answer at the end; eleven short ones have eleven. It
+> costs nothing — the same bytes are downloaded, and shared runtimes are still
+> fetched once — and it means Google Chrome can fail on its own without taking
+> the other ten with it. And after each one, the script does not believe the
+> exit code: it asks `flatpak info` whether the app is really there.
+
+### How it opens by itself, once
+
+Two files, because the two desktops start things differently:
+
+| Session | What starts it |
+| --- | --- |
+| GNOME (the fallback) | `/etc/xdg/autostart/aquarius-creator-apps-firstrun.desktop` |
+| The Aquarius Desktop | a block at the end of `/usr/share/aquarius/labwc/autostart` |
+
+**labwc does not read `/etc/xdg/autostart` at all.** It reads exactly one file,
+its own `autostart`, and that is deliberate — it is what keeps a dozen GNOME
+background programs out of the Aquarius session. The cost is that anything
+which must run at login in both sessions is written down twice, and the build
+checks that the two copies still say the same thing.
+
+Both wait ten seconds, so the window arrives once the desktop has settled
+rather than on top of a login screen. Both pass `--first-run`, which is what
+makes it happen once: the window looks for `~/.config/aquarius/creator-apps-seen`
+and returns silently if it is there. Delete that file to be asked again.
+
+> **A note for whoever next syncs the `aquarius-shell` repository:** that repo
+> is the home of the labwc `autostart` file and AquariusOS ships a copy. The
+> first-run block has to be carried across, or a session built from the shell
+> repo will never offer anybody their creator apps.
+
+### Opening it again — "Aquarius Apps"
+
+It is in the app grid as **Aquarius Apps**, and it is the same window. Apps you
+already have show **Installed**, with **Open** and **Remove** instead of a tick.
+Removing goes through the same single password prompt, and leaves your own files
+and the app's settings alone.
+
+### Looking at it without a screen
+
+```
+aquarius-creator-apps --dry-run
+```
+
+reads the real list, prints what it found and what it would tick, opens no
+window and installs nothing. Add `--catalog-from FILE` to read a saved catalogue
+instead of the system's, or `--select id,id` to see what choosing exactly those
+would install. This is what the build runs, and it is the honest way to check
+the reading without a desktop.
+
+---
+
 ## The full list
 
 ### Video
@@ -486,16 +616,63 @@ scripts:
   `hevc_nvenc` — the difference between a three-minute export and a
   twenty-minute one.
 
+And, for the chooser window specifically:
+
+- The window is valid Python, the installer is valid shell, and **a Python
+  program on the finished image can really load GTK 4, libadwaita and Pango** —
+  which is how this particular thing breaks: the packages are installed and the
+  import fails anyway, for want of a description file.
+- The installer is root-owned and `0755` or tighter. `pkexec` refuses to run a
+  program anybody could have edited, and if it refuses, the single password
+  prompt this whole feature depends on never appears.
+- Both menu entries pass the freedesktop validator, the app-grid one is called
+  *Aquarius Apps*, and the first-login one has **no `OnlyShowIn`** — a session
+  name there would be the only session that ever ran it.
+- The Aquarius session's `autostart` carries the same first-run line, so the
+  two copies cannot drift apart silently.
+- **Nothing installs itself.** The installer service has no `[Install]` section
+  and nothing has linked it into a `.wants` folder. *(Read from the files, not
+  from `systemctl is-enabled`, which exits **zero** — success — for a unit whose
+  state is "static", and would therefore report this as broken on every build
+  forever.)*
+- The window reads a small made-up catalogue in `tests/`: it must skip the one
+  deliberately broken line instead of guessing at it, keep the two plug-ins out
+  of the choices, and — **choosing OBS Studio on its own must produce three
+  things to install**, including the Vulkan layer at branch `25.08`, the piece
+  everyone forgets.
+- The window reads **the real list this image ships**, with the real parser.
+  More than none offered, more than none ticked, no line unread, and no plug-in
+  belonging to an app nobody can choose. *(This is the check whose absence let
+  an image ship on 2026-09-04 that could not read its own shopping list.)*
+- The installer's rehearsal emits `STEP`, `PERCENT` and `DONE` in order, and run
+  without permission it explains itself in words rather than failing obscurely.
+
 ---
 
 ## Bench test, for Royce
 
 After rebasing the 4090 to an image built from this branch:
 
-1. **Log in and wait.** Within a minute or two you should see *"Setting up your
-   creator apps"*. Leave it alone and use the machine.
-2. **Check it finished.** `flatpak list --system --columns=application` should
-   list all seventeen. Or: `journalctl -u aquarius-flatpak-preinstall -b`.
+1. **Log in and wait about ten seconds.** The **"Your creator apps"** window
+   should appear on its own, showing Aquarius Editor and Aquarius Writer as
+   *Included*, then eleven apps as cards on five shelves, with six of them
+   already ticked. Nothing has downloaded yet.
+2. **Pick and install.** Untick anything you do not want, press **Install**, and
+   enter your password when asked — **once**. Watch the lines tick over one at a
+   time and open **Details** to see the log. Then press **Open OBS Studio** on
+   the last page.
+
+   *Then check the three claims this window makes.* `aq apps status` should agree
+   with what you see on screen. Close the window, log out and back in — it must
+   **not** come back. Open **Aquarius Apps** from the app grid: the apps you
+   installed now say *Installed* with **Open** and **Remove**, and the ones you
+   skipped are still there to tick.
+
+   *And the two ways it is allowed to go wrong.* If nothing is ticked when the
+   window opens, the catalogue is not being read — say so, that is a bug of
+   ours, and `aq apps catalog` will show the same emptiness. If one app fails
+   (Chrome is the likely one) the rest must still arrive, and the failed one
+   must be named on the last page.
 3. **Open Aquarius Editor and Aquarius Writer** from the dock. Both should open
    a window. If either does nothing, the log is
    `~/.local/state/aquarius/aquarius-editor.log`.

@@ -141,3 +141,42 @@ fi
 # the shell's.
 # ---------------------------------------------------------------------------
 /usr/libexec/aquarius-shell-start &
+
+# ---------------------------------------------------------------------------
+# 5. The creator apps window, once, on the first login.
+#
+# ⚠️ THIS LINE EXISTS BECAUSE LABWC DOES NOT READ /etc/xdg/autostart.
+#
+# On GNOME, a file in /etc/xdg/autostart is all it takes: GNOME reads that
+# folder at login and starts everything in it. labwc reads exactly ONE file —
+# this one — and nothing else. That is deliberate and it is what keeps a dozen
+# GNOME background programs out of the Aquarius session (see the build check
+# "Nothing in this session may fight the shell"). It also means anything that
+# must run at login in BOTH sessions has to be written down twice: once as a
+# .desktop file for GNOME, and once here.
+#
+# So this line and /etc/xdg/autostart/aquarius-creator-apps-firstrun.desktop are
+# the same fact said in two languages. CHANGE ONE, CHANGE BOTH — the build
+# checks that both exist and that they run the same command.
+#
+# --first-run is what makes it "once": the window looks for
+# ~/.config/aquarius/creator-apps-seen and returns silently if it is there. So
+# this runs at every login and does nothing at all on all but the first.
+#
+# The ten-second wait matches the X-GNOME-Autostart-Delay in the GNOME copy. It
+# is not for us — the window opens in well under a second — it is so that the
+# desktop has settled and the person is looking at their computer rather than at
+# a login screen when it appears.
+#
+# ⚠️ THE COPY IN THE aquarius-shell REPOSITORY NEEDS THE SAME LINE. That repo is
+# the home of this file (session/labwc/autostart there, and the niri equivalent
+# in session/niri/config.kdl); AquariusOS ships its own copy. Whoever next syncs
+# them must carry this block across, or a shell-built session will silently
+# never offer anybody their creator apps.
+# ---------------------------------------------------------------------------
+if [ -x /usr/libexec/aquarius-creator-apps ]; then
+    (
+        sleep 10
+        /usr/libexec/aquarius-creator-apps --first-run
+    ) >> "${AQ_LOG:-/dev/null}" 2>&1 &
+fi

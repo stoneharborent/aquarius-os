@@ -1,0 +1,1691 @@
+#!/usr/bin/python3
+# =============================================================================
+# aquarius-creator-apps — "Your creator apps", the window that offers the studio
+# =============================================================================
+# PLAIN ENGLISH
+#
+# The first time you log in to AquariusOS, this window opens and shows you every
+# creator app the operating system can set up for you — the video editors, the
+# streaming tools, the drawing programs — with a short line saying what each one
+# is for. You tick the ones you want and press Install. Nothing is installed
+# until you do.
+#
+# It is also an ordinary app called "Aquarius Apps", so you can open it again at
+# any time, add something you skipped, or remove something you no longer use.
+#
+# ⚠️ WHY THIS WINDOW EXISTS AT ALL — the design decision, 2026-09-04.
+#
+# Until this file, AquariusOS installed every creator app by itself, quietly, in
+# the background, the first time the machine got online. That is what most Linux
+# systems for creators do and it is the wrong thing to do. It spends fifteen
+# gigabytes of somebody's internet connection on their behalf, on apps they may
+# never open, before they have been asked a single question — and it hides the
+# most interesting thing about the operating system, which is HOW MUCH IS HERE.
+#
+# So: no automatic installs. A window that showcases the studio and lets the
+# person choose. Royce's call, made on the bench the first evening a real
+# machine booted this build.
+#
+# =============================================================================
+# WHERE THE LIST COMES FROM — and why not from this file
+# =============================================================================
+# Not one app name is written down in this file. The list lives in two files
+# that ship with the operating system:
+#
+#     /usr/share/flatpak/preinstall.d/aquarius-creator-apps.preinstall
+#         Flatpak's own format. WHICH apps, which version line, and which of
+#         them are plug-ins rather than applications.
+#
+#     /usr/share/aquarius/apps/catalog.ini
+#         Our words for them. The name, the one sentence, the shelf it belongs
+#         on, and whether it is ticked by default.
+#
+# This window never reads either file directly. It asks:
+#
+#     /usr/libexec/aquarius-flatpak-preinstall --catalog
+#
+# ...which reads both, checks they agree, and prints one line per app with TAB
+# between the fields. That command is the contract, and it is written down at
+# the top of that script and in docs/restart/creator-apps.md. Eight fields, in
+# this order:
+#
+#     1 id            com.obsproject.Studio
+#     2 name          OBS Studio
+#     3 description   one sentence
+#     4 category      Video | Audio | Design | Streaming | Utilities
+#     5 recommended:yes | recommended:no
+#     6 runtime:yes | runtime:no
+#     7 requires:<app id>  or  requires:-
+#     8 branch:stable
+#
+# Fields five to eight carry their own name as a prefix, so this window can
+# check it is reading what it thinks it is reading, and an extra ninth field
+# added one day cannot be mistaken for one of these. Anything it cannot make
+# sense of is skipped and counted, never guessed at.
+#
+# THE POINT OF DOING IT THIS WAY: adding an app to AquariusOS is two blocks of
+# text in two files. Nobody edits this window, nobody writes any Python, and the
+# terminal (`aq apps`) and the window can never disagree about what exists.
+#
+# =============================================================================
+# WHAT IS TICKED WHEN IT OPENS — the default, said out loud
+# =============================================================================
+# The apps marked Recommended=true in the catalogue, and only those. That is
+# roughly a day-one creator kit — OBS, Kdenlive, Audacity, GIMP, Inkscape,
+# LocalSend — and it deliberately leaves out the very large downloads (Blender)
+# and the specialist tools (Ardour, Krita) for the person to add themselves.
+#
+# It is a suggestion and it is visibly a suggestion: every tick can be unticked,
+# "Select none" is one click away, and "Skip for now" installs nothing at all.
+#
+# =============================================================================
+# THE PLUG-INS NOBODY SHOULD HAVE TO KNOW ABOUT
+# =============================================================================
+# Five of the sixteen entries are not apps. They are OBS plug-ins and one Vulkan
+# layer, and they are marked runtime:yes with requires:com.obsproject.Studio.
+#
+# They are NOT shown as things to tick. They arrive with OBS Studio, because a
+# person choosing "record my screen" has not asked to be told that game capture
+# on Linux needs a piece installed inside the game as well as a piece inside
+# OBS. The OBS card says "…and its plug-ins" and that is the whole of it.
+#
+# =============================================================================
+# HOW THE INSTALLING ACTUALLY HAPPENS
+# =============================================================================
+# This window installs nothing itself and has no special powers. It runs:
+#
+#     pkexec /usr/libexec/aquarius-creator-apps-install <app> <app> ...
+#
+# `pkexec` is the standard Linux "may I?" — you get ONE password prompt, at the
+# moment you press Install. That script does the installing, one app at a time,
+# as an administrator, for the whole computer, and reports back.
+#
+# WHY THE WHOLE COMPUTER AND NOT JUST THIS ACCOUNT. Two reasons. The extra
+# permissions creator apps need — OBS reaching a camera, Ardour reaching a
+# sound card — are shipped as system-wide Flatpak overrides, and `aq apps
+# status` reports on the system installation. One place, one answer.
+#
+# THE REPORT COMES BACK ON TWO CHANNELS, and this is the one design detail worth
+# knowing: the human words come back on the script's normal output and go into
+# Details unchanged, while short structured lines (STEP, PERCENT, OK, FAILED,
+# DONE) come back on its ERROR output, which is the channel this window reads to
+# move the ticks and the bar.
+#
+# ⚠️ IT IS ERROR OUTPUT AND NOT A SPARE PIPE ON PURPOSE. The DaVinci Resolve
+#    installer window next door hands its script an extra file descriptor, which
+#    is tidier. It cannot be done here: `pkexec` sits between us and the script,
+#    and a program that changes who you are is entitled to close every file
+#    descriptor except the first three before it hands over. Error output is one
+#    of the three, so it always survives. The script keeps Flatpak's own noise
+#    off that channel by folding it into the normal output.
+#
+# =============================================================================
+# TO LOOK AT ANY OF THIS WITHOUT A SCREEN
+# =============================================================================
+#     aquarius-creator-apps --dry-run
+#         Reads the real catalogue, prints what it found and what it would tick,
+#         opens no window, installs nothing. This is what the build runs.
+#
+#     aquarius-creator-apps --dry-run --catalog-from FILE
+#         The same, against a file of saved --catalog output, so the parser can
+#         be tested without the rest of the operating system.
+#
+#     aquarius-creator-apps --dry-run --select com.obsproject.Studio
+#         Print what choosing exactly those apps would install — which is how
+#         the build proves that picking OBS really does pull its plug-ins in.
+# =============================================================================
+
+import json
+import os
+import subprocess
+import sys
+import threading
+import time
+
+APP_ID = "org.aquariusos.CreatorApps"
+CATALOG_CLI = "/usr/libexec/aquarius-flatpak-preinstall"
+INSTALLER = "/usr/libexec/aquarius-creator-apps-install"
+MARK = "/usr/share/icons/hicolor/scalable/apps/aquarius-logo.svg"
+APPLICATIONS = "/usr/share/applications"
+
+# The order the shelves appear in. An app whose category is not one of these
+# still appears — at the end, under its own heading — rather than vanishing,
+# because a missing app is a much worse fault than an unexpected heading.
+CATEGORY_ORDER = ["Video", "Audio", "Design", "Streaming", "Utilities"]
+
+# What to draw when we have no real icon: a symbol from the Adwaita icon theme,
+# which is always present. Never a blank square.
+CATEGORY_ICON = {
+    "Video": "video-x-generic-symbolic",
+    "Audio": "audio-x-generic-symbolic",
+    "Design": "image-x-generic-symbolic",
+    "Streaming": "camera-web-symbolic",
+    "Utilities": "applications-utilities-symbolic",
+}
+FALLBACK_ICON = "application-x-executable-symbolic"
+
+# The apps that are already inside the image and are not downloads. Listed here
+# by their menu entry, not by name: the name, the sentence and the icon are read
+# out of the entry itself, so this window cannot disagree with the app grid.
+INCLUDED_DESKTOP = ["aquarius-editor.desktop", "aquarius-writer.desktop"]
+
+
+# -----------------------------------------------------------------------------
+# The catalogue
+# -----------------------------------------------------------------------------
+class Entry:
+    """One line of `--catalog`, after checking it says what it should."""
+
+    __slots__ = (
+        "app_id",
+        "name",
+        "description",
+        "category",
+        "recommended",
+        "runtime",
+        "requires",
+        "branch",
+    )
+
+    def __init__(self, app_id, name, description, category, recommended, runtime, requires, branch):
+        self.app_id = app_id
+        self.name = name
+        self.description = description
+        self.category = category
+        self.recommended = recommended
+        self.runtime = runtime
+        self.requires = requires
+        self.branch = branch
+
+    @property
+    def ref(self):
+        """What Flatpak is asked for: the id and the version line, together."""
+        return "%s//%s" % (self.app_id, self.branch)
+
+
+def parse_catalog(text):
+    """Turn `--catalog` output into entries. Returns (entries, skipped_lines).
+
+    Anything that does not look exactly like the contract is skipped and
+    counted. Guessing at a half-understood line is how a window ends up
+    offering somebody an app that does not exist.
+    """
+    entries = []
+    skipped = []
+    for raw in text.splitlines():
+        line = raw.rstrip("\n")
+        if not line.strip():
+            continue
+        fields = line.split("\t")
+        if len(fields) < 8:
+            skipped.append(line)
+            continue
+        app_id, name, description, category = fields[0], fields[1], fields[2], fields[3]
+        tagged = {}
+        ok = True
+        for field in fields[4:8]:
+            key, sep, value = field.partition(":")
+            if not sep:
+                ok = False
+                break
+            tagged[key] = value
+        if not ok or not {"recommended", "runtime", "requires", "branch"} <= set(tagged):
+            skipped.append(line)
+            continue
+        if not app_id or not name:
+            skipped.append(line)
+            continue
+        requires = tagged["requires"]
+        entries.append(
+            Entry(
+                app_id=app_id,
+                name=name,
+                description=description,
+                category=category or "Utilities",
+                recommended=tagged["recommended"] == "yes",
+                runtime=tagged["runtime"] == "yes",
+                requires=None if requires in ("", "-") else requires,
+                branch=tagged["branch"] or "stable",
+            )
+        )
+    return entries, skipped
+
+
+def read_catalog(path=None):
+    """Get the catalogue, from a file if asked, otherwise from the system.
+
+    Returns (entries, skipped, error). `error` is a sentence for a person, or
+    None. An empty catalogue is always an error: AquariusOS always ships a list,
+    so nothing to show means the reading went wrong, never that there is nothing.
+    """
+    if path:
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as handle:
+                text = handle.read()
+        except OSError as exc:
+            return [], [], "Could not read %s: %s" % (path, exc)
+    else:
+        if not os.access(CATALOG_CLI, os.X_OK):
+            return [], [], (
+                "%s is missing from this computer. That is a fault in "
+                "AquariusOS, not something you did." % CATALOG_CLI
+            )
+        try:
+            done = subprocess.run(
+                [CATALOG_CLI, "--catalog"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                errors="replace",
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            return [], [], "Could not read the list of apps: %s" % exc
+        if done.returncode != 0:
+            detail = (done.stderr or "").strip().splitlines()
+            return [], [], (
+                "AquariusOS could not read its own list of apps. "
+                + (detail[-1] if detail else "There is no more detail than that.")
+            )
+        text = done.stdout
+
+    entries, skipped = parse_catalog(text)
+    if not entries:
+        return [], skipped, (
+            "AquariusOS could not read its own list of apps. This is a fault in "
+            "AquariusOS, not something you did — the apps are all still "
+            "installable from Software."
+        )
+    return entries, skipped, None
+
+
+def resolve_install_set(entries, chosen_ids):
+    """Given the apps a person ticked, work out everything that has to arrive.
+
+    A plug-in is never chosen directly. It comes because the app it belongs to
+    was chosen. This is the one place that rule lives.
+    """
+    chosen = set(chosen_ids)
+    wanted = [e for e in entries if not e.runtime and e.app_id in chosen]
+    for entry in entries:
+        if entry.runtime and entry.requires in chosen:
+            wanted.append(entry)
+    # Apps first, then their plug-ins, so that a plug-in can never be installed
+    # before the thing it plugs into.
+    wanted.sort(key=lambda e: (e.runtime, e.app_id))
+    return wanted
+
+
+def dependents(entries, app_id):
+    """The plug-ins that would arrive with this app."""
+    return [e for e in entries if e.runtime and e.requires == app_id]
+
+
+# -----------------------------------------------------------------------------
+# Asking the system what is already here
+# -----------------------------------------------------------------------------
+def installed_ids():
+    """Every Flatpak on this computer, apps and plug-ins, both installations.
+
+    Asked of Flatpak every time rather than remembered, because somebody may
+    have removed one in Software while this window was open.
+    """
+    try:
+        done = subprocess.run(
+            ["flatpak", "list", "--columns=application"],
+            capture_output=True,
+            text=True,
+            timeout=25,
+            errors="replace",
+        )
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    if done.returncode != 0:
+        return set()
+    return {line.strip() for line in done.stdout.splitlines() if line.strip()}
+
+
+def human_size(total):
+    """Bytes as a person would say them. Deliberately vague above a gigabyte."""
+    if total >= 1000 ** 3:
+        return "%.1f GB" % (total / 1000.0 ** 3)
+    if total >= 1000 ** 2:
+        return "%d MB" % round(total / 1000.0 ** 2)
+    return "%d kB" % round(total / 1000.0)
+
+
+def parse_size(text):
+    """Turn Flatpak's own '1.2 GB' into bytes. Returns 0 if it is not a size."""
+    units = {"bytes": 1, "kb": 1000, "mb": 1000 ** 2, "gb": 1000 ** 3, "tb": 1000 ** 4}
+    parts = text.strip().split()
+    if len(parts) < 2:
+        return 0
+    try:
+        number = float(parts[0].replace(",", ""))
+    except ValueError:
+        return 0
+    return int(number * units.get(parts[1].lower(), 0))
+
+
+def download_size(ref):
+    """How big this app's download is, according to Flathub, via Flatpak itself.
+
+    ⚠️ WHY NOT FLATHUB'S WEBSITE. Because Flatpak already knows, and its answer
+    is the one that will actually be downloaded onto this machine — the right
+    architecture, the right branch, and what is already shared with an app you
+    have. A number scraped from a web page would be a different number, and a
+    wrong number here is worse than no number.
+    """
+    try:
+        done = subprocess.run(
+            ["flatpak", "remote-info", "--system", "flathub", ref],
+            capture_output=True,
+            text=True,
+            timeout=25,
+            errors="replace",
+        )
+    except (OSError, subprocess.SubprocessError):
+        return 0
+    if done.returncode != 0:
+        return 0
+    for line in done.stdout.splitlines():
+        label, sep, value = line.partition(":")
+        if sep and label.strip().lower() == "download":
+            return parse_size(value)
+    return 0
+
+
+# -----------------------------------------------------------------------------
+# The rehearsal — everything above, with no window at all
+# -----------------------------------------------------------------------------
+def rehearse(catalog_from, selection):
+    """--dry-run. Prints what it read and what it would do. Installs nothing.
+
+    The output of this is read by the build (build_files/66-creator-apps-
+    chooser.sh), so the shape of these lines is a contract too. Add lines
+    freely; do not reword the ones that are already here.
+    """
+    entries, skipped, error = read_catalog(catalog_from)
+    if error:
+        print("ERROR — %s" % error, file=sys.stderr)
+        return 1
+
+    apps = [e for e in entries if not e.runtime]
+    plugins = [e for e in entries if e.runtime]
+
+    print("catalog entries: %d" % len(entries))
+    print("apps offered: %d" % len(apps))
+    print("plug-ins hidden: %d" % len(plugins))
+    print("unreadable lines: %d" % len(skipped))
+    for line in skipped:
+        print("  skipped: %s" % line, file=sys.stderr)
+
+    for category in CATEGORY_ORDER:
+        print("category %s: %d" % (category, len([e for e in apps if e.category == category])))
+    strays = sorted({e.category for e in apps} - set(CATEGORY_ORDER))
+    for category in strays:
+        print("category %s: %d  (not one of the five)" % (category, len([e for e in apps if e.category == category])))
+
+    if selection is None:
+        chosen = [e.app_id for e in apps if e.recommended]
+        print("preselected by default: %d" % len(chosen))
+    else:
+        chosen = [i for i in selection if i]
+        print("selection: %d" % len(chosen))
+    for app_id in chosen:
+        print("  %s" % app_id)
+
+    plan = resolve_install_set(entries, chosen)
+    print("would install: %d" % len(plan))
+    for entry in plan:
+        print("  %s" % entry.ref)
+
+    # Said plainly because it is the thing most likely to break silently one
+    # day: a plug-in whose requires= no longer names an app anybody can pick.
+    orphans = [e for e in plugins if e.requires not in {a.app_id for a in apps}]
+    print("orphaned plug-ins: %d" % len(orphans))
+    for entry in orphans:
+        print("  %s wants %s, which nobody can choose" % (entry.app_id, entry.requires))
+    return 0
+
+
+# -----------------------------------------------------------------------------
+# From here down is the window. Nothing above this line imports Gtk, which is
+# what lets --dry-run work on a machine with no screen and no desktop installed.
+# -----------------------------------------------------------------------------
+def run_window(first_run):
+    import gi
+
+    gi.require_version("Gtk", "4.0")
+    gi.require_version("Adw", "1")
+    from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango
+
+    PENDING, ACTIVE, DONE, FAILED = range(4)
+
+    stamp_path = os.path.join(GLib.get_user_config_dir(), "aquarius", "creator-apps-seen")
+    icon_cache = os.path.join(GLib.get_user_cache_dir(), "aquarius", "app-icons")
+
+    def write_stamp():
+        """Remember that this person has been shown the window.
+
+        Written when the window APPEARS, not when it is finished with, because
+        the promise is "you are asked once" and skipping is a complete answer.
+        """
+        try:
+            os.makedirs(os.path.dirname(stamp_path), exist_ok=True)
+            with open(stamp_path, "w", encoding="utf-8") as handle:
+                handle.write(time.strftime("%Y-%m-%d %H:%M:%S\n"))
+        except OSError:
+            pass  # Being asked twice is a small annoyance. Crashing is not.
+
+    def included_apps():
+        """Read the baked-in apps out of their own menu entries."""
+        found = []
+        for name in INCLUDED_DESKTOP:
+            path = os.path.join(APPLICATIONS, name)
+            keyfile = GLib.KeyFile()
+            try:
+                keyfile.load_from_file(path, GLib.KeyFileFlags.NONE)
+                title = keyfile.get_locale_string("Desktop Entry", "Name", None)
+            except GLib.Error:
+                continue
+            try:
+                comment = keyfile.get_locale_string("Desktop Entry", "Comment", None)
+            except GLib.Error:
+                comment = ""
+            try:
+                icon = keyfile.get_string("Desktop Entry", "Icon")
+            except GLib.Error:
+                icon = ""
+            found.append((name, title, comment, icon))
+        return found
+
+    def load_icon_into(image, entry):
+        """Put the best icon we can find on this card, without ever waiting.
+
+        In order: the icon theme (which has it if the app is installed), then
+        our own cache, then Flathub. Until one of those answers, the category
+        symbol is on screen — so the grid is complete from the first frame and
+        icons appear as they arrive.
+        """
+        display = Gdk.Display.get_default()
+        if display is not None:
+            theme = Gtk.IconTheme.get_for_display(display)
+            if theme.has_icon(entry.app_id):
+                image.set_from_icon_name(entry.app_id)
+                return
+
+        cached = os.path.join(icon_cache, entry.app_id + ".png")
+        if os.path.exists(cached):
+            image.set_from_file(cached)
+            return
+
+        def fetch():
+            path = fetch_icon(entry.app_id)
+            if path:
+                GLib.idle_add(image.set_from_file, path)
+
+        threading.Thread(target=fetch, daemon=True).start()
+
+    def fetch_icon(app_id):
+        """Ask Flathub for this app's icon, once, and keep it.
+
+        Everything here is best-effort and short-lived on purpose. No icon is a
+        cosmetic disappointment; a window that will not open because a web
+        server is slow is a broken operating system.
+        """
+        import urllib.request
+
+        cached = os.path.join(icon_cache, app_id + ".png")
+        try:
+            os.makedirs(icon_cache, exist_ok=True)
+        except OSError:
+            return None
+        try:
+            with urllib.request.urlopen(
+                "https://flathub.org/api/v2/appstream/%s" % app_id, timeout=6
+            ) as response:
+                data = json.loads(response.read().decode("utf-8", "replace"))
+        except Exception:
+            return None
+        url = data.get("icon") if isinstance(data, dict) else None
+        if not isinstance(url, str) or not url.startswith("https://"):
+            return None
+        try:
+            with urllib.request.urlopen(url, timeout=8) as response:
+                blob = response.read(2 * 1024 * 1024)
+        except Exception:
+            return None
+        try:
+            with open(cached + ".part", "wb") as handle:
+                handle.write(blob)
+            os.replace(cached + ".part", cached)
+        except OSError:
+            return None
+        return cached
+
+    # -- one card ----------------------------------------------------------
+    class AppCard(Gtk.Box):
+        """One app, as a card: icon, name, one line, and a tick.
+
+        `card` is libadwaita's own style class, so this looks like part of the
+        system in both the light and the dark theme without a single colour
+        being written down here. branding/tokens.md is the law for anything
+        that ever does need a literal colour; nothing here does.
+        """
+
+        def __init__(self, entry, plugins, on_toggle):
+            super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            self.entry = entry
+            self.plugins = plugins
+            self._on_toggle = on_toggle
+            self.installed = False
+
+            self.add_css_class("card")
+            self.set_margin_top(2)
+            self.set_margin_bottom(2)
+            for setter in (self.set_margin_start, self.set_margin_end):
+                setter(2)
+
+            inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            inner.set_margin_top(16)
+            inner.set_margin_bottom(14)
+            inner.set_margin_start(16)
+            inner.set_margin_end(16)
+            self.append(inner)
+
+            top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            self.icon = Gtk.Image()
+            self.icon.set_pixel_size(48)
+            self.icon.set_from_icon_name(CATEGORY_ICON.get(entry.category, FALLBACK_ICON))
+            self.icon.set_valign(Gtk.Align.START)
+            load_icon_into(self.icon, entry)
+            top.append(self.icon)
+
+            names = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True)
+            title = Gtk.Label(label=entry.name, xalign=0.0)
+            title.add_css_class("heading")
+            title.set_wrap(True)
+            names.append(title)
+
+            self.tag = Gtk.Label(label="Recommended", xalign=0.0)
+            self.tag.add_css_class("caption-heading")
+            self.tag.add_css_class("accent")
+            self.tag.set_visible(entry.recommended)
+            names.append(self.tag)
+            top.append(names)
+
+            # The tick, or — once the app is here — the word "Installed".
+            self.check = Gtk.CheckButton()
+            self.check.set_valign(Gtk.Align.START)
+            self.check.set_tooltip_text("Install %s" % entry.name)
+            self.check.connect("toggled", lambda _b: self._on_toggle())
+            self.state_label = Gtk.Label(label="Installed")
+            self.state_label.add_css_class("caption-heading")
+            self.state_label.add_css_class("success")
+            self.state_label.set_valign(Gtk.Align.START)
+            self.state_label.set_visible(False)
+            top.append(self.check)
+            top.append(self.state_label)
+            inner.append(top)
+
+            body = Gtk.Label(label=entry.description, xalign=0.0)
+            body.set_wrap(True)
+            body.set_lines(4)
+            body.set_ellipsize(Pango.EllipsizeMode.END)
+            body.add_css_class("caption")
+            body.add_css_class("dim-label")
+            body.set_vexpand(True)
+            body.set_valign(Gtk.Align.START)
+            inner.append(body)
+
+            # The plug-in sentence. One line, no cards, no explanation of what a
+            # Vulkan layer is — because nobody choosing "record my screen" asked.
+            if plugins:
+                note = Gtk.Label(label="…and its plug-ins", xalign=0.0)
+                note.add_css_class("caption")
+                note.add_css_class("dim-label")
+                note.set_tooltip_text(
+                    "Installed with it, so that game capture and per-app sound "
+                    "work: " + ", ".join(p.name for p in plugins)
+                )
+                inner.append(note)
+
+            self.actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            self.actions.set_halign(Gtk.Align.END)
+            self.actions.set_visible(False)
+            self.open_button = Gtk.Button(label="Open")
+            self.open_button.add_css_class("flat")
+            self.open_button.connect("clicked", self._on_open)
+            self.remove_button = Gtk.Button(label="Remove")
+            self.remove_button.add_css_class("flat")
+            self.remove_button.connect("clicked", self._on_remove)
+            self.actions.append(self.open_button)
+            self.actions.append(self.remove_button)
+            inner.append(self.actions)
+
+            # The whole card is a click target for the tick. A person aiming at
+            # a small square is a person who has been made to work.
+            click = Gtk.GestureClick()
+            click.connect("released", self._on_card_clicked)
+            self.add_controller(click)
+
+        def _on_card_clicked(self, _gesture, _n, x, y):
+            """Clicking anywhere on the card ticks it — except on a control.
+
+            Without this test the tick would be toggled twice when somebody
+            clicks the tick itself: once by the tick, once by the card. The
+            visible result would be nothing happening, which is the most
+            confusing failure a checkbox can have.
+            """
+            if self.installed:
+                return
+            picked = self.pick(x, y, Gtk.PickFlags.DEFAULT)
+            while picked is not None:
+                if picked in (self.check, self.open_button, self.remove_button):
+                    return
+                picked = picked.get_parent()
+            self.check.set_active(not self.check.get_active())
+
+        def _on_open(self, _button):
+            try:
+                subprocess.Popen(
+                    ["flatpak", "run", self.entry.app_id], start_new_session=True
+                )
+            except OSError:
+                pass
+
+        def _on_remove(self, _button):
+            """Uninstall, after asking, and after saying what will be kept.
+
+            Removing needs administrator permission for the same reason
+            installing does, so it goes through pkexec and produces exactly one
+            password prompt. Nothing personal is touched: Flatpak leaves an
+            app's own files and settings alone unless it is told otherwise, and
+            we do not tell it otherwise.
+            """
+            window = self.get_root()
+            body = (
+                "It will be removed from this computer. Your own files and its "
+                "settings are left alone, and you can install it again from "
+                "this window at any time."
+            )
+
+            def do_remove():
+                def work():
+                    subprocess.run(
+                        [
+                            "pkexec",
+                            "flatpak",
+                            "uninstall",
+                            "--system",
+                            "-y",
+                            "--noninteractive",
+                            self.entry.app_id,
+                        ],
+                        capture_output=True,
+                    )
+                    GLib.idle_add(window.refresh_installed)
+
+                threading.Thread(target=work, daemon=True).start()
+
+            if hasattr(Adw, "AlertDialog"):
+                dialog = Adw.AlertDialog(heading="Remove %s?" % self.entry.name, body=body)
+                dialog.add_response("cancel", "Keep it")
+                dialog.add_response("remove", "Remove")
+                dialog.set_response_appearance("remove", Adw.ResponseAppearance.DESTRUCTIVE)
+                dialog.connect(
+                    "response",
+                    lambda _d, response: do_remove() if response == "remove" else None,
+                )
+                dialog.present(window)
+                return
+
+            dialog = Adw.MessageDialog(
+                transient_for=window, heading="Remove %s?" % self.entry.name, body=body
+            )
+            dialog.add_response("cancel", "Keep it")
+            dialog.add_response("remove", "Remove")
+            dialog.set_response_appearance("remove", Adw.ResponseAppearance.DESTRUCTIVE)
+            dialog.connect(
+                "response", lambda _d, response: do_remove() if response == "remove" else None
+            )
+            dialog.present()
+
+        def set_installed(self, installed):
+            self.installed = installed
+            self.check.set_visible(not installed)
+            self.state_label.set_visible(installed)
+            self.actions.set_visible(installed)
+            self.tag.set_visible(self.entry.recommended and not installed)
+            if installed:
+                self.check.set_active(False)
+
+        @property
+        def chosen(self):
+            return (not self.installed) and self.check.get_active()
+
+    class StepRow(Adw.ActionRow):
+        """One app on the installing page, with a spinner or a tick in front."""
+
+        def __init__(self, title):
+            super().__init__(title=title)
+            self.set_title_lines(0)
+            self._spinner = Gtk.Spinner()
+            self._icon = Gtk.Image()
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+            box.set_size_request(20, -1)
+            box.set_valign(Gtk.Align.CENTER)
+            box.append(self._spinner)
+            box.append(self._icon)
+            self.add_prefix(box)
+            self.set_state(PENDING)
+
+        def set_state(self, state):
+            self._spinner.set_visible(state == ACTIVE)
+            if state == ACTIVE:
+                self._spinner.start()
+            else:
+                self._spinner.stop()
+            self._icon.set_visible(state in (DONE, FAILED))
+            if state == DONE:
+                self._icon.set_from_icon_name("emblem-ok-symbolic")
+                self._icon.remove_css_class("error")
+                self._icon.add_css_class("success")
+            elif state == FAILED:
+                self._icon.set_from_icon_name("dialog-error-symbolic")
+                self._icon.remove_css_class("success")
+                self._icon.add_css_class("error")
+            if state == PENDING:
+                self.add_css_class("dim-label")
+            else:
+                self.remove_css_class("dim-label")
+
+    # -- the window --------------------------------------------------------
+    class ChooserWindow(Adw.ApplicationWindow):
+        def __init__(self, app, entries, warning):
+            super().__init__(application=app)
+            self.entries = entries
+            self.apps = [e for e in entries if not e.runtime]
+            self.cards = {}
+            self.step_rows = {}
+            self.log_lines = []
+            self.proc = None
+            self.plan = []
+            self.failures = {}
+            self.sizes = {}
+            self.cancel_file = None
+            self.cancelled = False
+            self.first_app = None
+
+            self.set_title("Your creator apps")
+            self.set_default_size(940, 780)
+
+            self.stack = Gtk.Stack(
+                transition_type=Gtk.StackTransitionType.CROSSFADE,
+                transition_duration=180,
+                vexpand=True,
+            )
+            self.stack.add_named(self._build_choose_page(warning), "choose")
+            self.stack.add_named(self._build_working_page(), "working")
+            self.stack.add_named(self._build_done_page(), "done")
+
+            header = Adw.HeaderBar()
+            self.header_title = Adw.WindowTitle(title="Your creator apps", subtitle="")
+            header.set_title_widget(self.header_title)
+
+            self.toolbar = Adw.ToolbarView()
+            self.toolbar.add_top_bar(header)
+            self.toolbar.set_content(self.stack)
+            self.toolbar.add_bottom_bar(self._build_footer())
+            self.set_content(self.toolbar)
+
+            keys = Gtk.EventControllerKey()
+            keys.connect("key-pressed", self._on_key)
+            self.add_controller(keys)
+            self.connect("close-request", self._on_close_request)
+
+            self.select_recommended()
+            self.refresh_installed()
+            self.measure_downloads()
+
+        # -- page 1: choose ------------------------------------------------
+        def _build_choose_page(self, warning):
+            mark = Gtk.Image()
+            if os.path.exists(MARK):
+                mark.set_from_file(MARK)
+            else:
+                mark.set_from_icon_name("applications-multimedia")
+            mark.set_pixel_size(56)
+
+            title = Gtk.Label(label="Your creator apps")
+            title.add_css_class("title-1")
+            title.set_wrap(True)
+            title.set_justify(Gtk.Justification.CENTER)
+
+            blurb = Gtk.Label(
+                label=(
+                    "AquariusOS comes with a studio's worth of apps. Pick the "
+                    "ones you want — you can change this any time from Aquarius "
+                    "Apps."
+                )
+            )
+            blurb.set_wrap(True)
+            blurb.set_justify(Gtk.Justification.CENTER)
+            blurb.add_css_class("dim-label")
+
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+            box.set_margin_top(28)
+            box.set_margin_bottom(28)
+            box.set_margin_start(18)
+            box.set_margin_end(18)
+            box.append(mark)
+            box.append(title)
+            box.append(blurb)
+
+            if warning:
+                label = Gtk.Label(label=warning)
+                label.set_wrap(True)
+                label.set_justify(Gtk.Justification.CENTER)
+                label.add_css_class("warning")
+                box.append(label)
+
+            # The three bulk buttons. Right-aligned above the first shelf, where
+            # they are findable but are not the first thing the eye lands on —
+            # the apps are.
+            picker = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            picker.set_halign(Gtk.Align.END)
+            picker.set_margin_top(6)
+            for label_text, handler in (
+                ("Select recommended", lambda _b: self.select_recommended()),
+                ("Select all", lambda _b: self.select_all()),
+                ("Select none", lambda _b: self.select_none()),
+            ):
+                button = Gtk.Button(label=label_text)
+                button.add_css_class("flat")
+                button.connect("clicked", handler)
+                picker.append(button)
+            box.append(picker)
+
+            included = included_apps()
+            if included:
+                box.append(self._build_included_group(included))
+
+            for category in CATEGORY_ORDER + sorted(
+                {e.category for e in self.apps} - set(CATEGORY_ORDER)
+            ):
+                section = self._build_category(category)
+                if section is not None:
+                    box.append(section)
+
+            clamp = Adw.Clamp(maximum_size=900)
+            clamp.set_child(box)
+            scroller = Gtk.ScrolledWindow(vexpand=True)
+            scroller.set_child(clamp)
+            return scroller
+
+        def _build_included_group(self, included):
+            """The apps that are already here. Shown first, with no tick.
+
+            THE REASON THIS SECTION EXISTS: so that this window is the one place
+            that lists the whole studio. An app grid with Aquarius Editor in it
+            and a chooser without it would make somebody wonder which one is
+            lying.
+            """
+            heading = Gtk.Label(label="Included with AquariusOS", xalign=0.0)
+            heading.add_css_class("heading")
+            heading.set_margin_top(10)
+
+            note = Gtk.Label(
+                label="Already installed. Nothing to choose — they are part of the system.",
+                xalign=0.0,
+            )
+            note.add_css_class("caption")
+            note.add_css_class("dim-label")
+
+            group = Adw.PreferencesGroup()
+            for desktop_id, name, comment, icon_name in included:
+                row = Adw.ActionRow(title=name, subtitle=comment or "")
+                row.set_subtitle_lines(0)
+                image = Gtk.Image()
+                image.set_pixel_size(32)
+                image.set_from_icon_name(icon_name or FALLBACK_ICON)
+                row.add_prefix(image)
+                tag = Gtk.Label(label="Included")
+                tag.add_css_class("caption-heading")
+                tag.add_css_class("success")
+                tag.set_valign(Gtk.Align.CENTER)
+                row.add_suffix(tag)
+                button = Gtk.Button(label="Open")
+                button.add_css_class("flat")
+                button.set_valign(Gtk.Align.CENTER)
+                button.connect("clicked", self._open_desktop, desktop_id)
+                row.add_suffix(button)
+                group.add(row)
+
+            section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            section.append(heading)
+            section.append(note)
+            section.append(group)
+            return section
+
+        def _open_desktop(self, _button, desktop_id):
+            info = Gio.DesktopAppInfo.new(desktop_id)
+            if info is None:
+                return
+            try:
+                info.launch([], None)
+            except GLib.Error:
+                pass
+
+        def _build_category(self, category):
+            members = [e for e in self.apps if e.category == category]
+            if not members:
+                return None
+
+            heading = Gtk.Label(label=category, xalign=0.0)
+            heading.add_css_class("heading")
+            heading.set_margin_top(12)
+
+            flow = Gtk.FlowBox()
+            flow.set_selection_mode(Gtk.SelectionMode.NONE)
+            flow.set_max_children_per_line(3)
+            flow.set_min_children_per_line(1)
+            flow.set_homogeneous(True)
+            flow.set_row_spacing(10)
+            flow.set_column_spacing(10)
+            for entry in sorted(members, key=lambda e: (not e.recommended, e.name.lower())):
+                card = AppCard(entry, dependents(self.entries, entry.app_id), self.update_footer)
+                self.cards[entry.app_id] = card
+                child = Gtk.FlowBoxChild()
+                child.set_child(card)
+                child.set_focusable(False)
+                flow.append(child)
+
+            section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            section.append(heading)
+            section.append(flow)
+            return section
+
+        # -- the footer ----------------------------------------------------
+        def _build_footer(self):
+            self.footer_label = Gtk.Label(label="", xalign=0.0)
+            self.footer_label.set_hexpand(True)
+            self.footer_label.add_css_class("dim-label")
+
+            self.skip_button = Gtk.Button(label="Skip for now")
+            self.skip_button.add_css_class("flat")
+            self.skip_button.set_tooltip_text(
+                "Close without installing anything. Everything here stays "
+                "available in Aquarius Apps."
+            )
+            self.skip_button.connect("clicked", lambda _b: self.close())
+
+            self.install_button = Gtk.Button(label="Install")
+            self.install_button.add_css_class("suggested-action")
+            self.install_button.add_css_class("pill")
+            self.install_button.connect("clicked", self._on_install_clicked)
+
+            self.footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            self.footer.set_margin_top(10)
+            self.footer.set_margin_bottom(10)
+            self.footer.set_margin_start(18)
+            self.footer.set_margin_end(18)
+            self.footer.append(self.footer_label)
+            self.footer.append(self.skip_button)
+            self.footer.append(self.install_button)
+            return self.footer
+
+        def update_footer(self):
+            chosen = [card.entry.app_id for card in self.cards.values() if card.chosen]
+            plan = resolve_install_set(self.entries, chosen)
+            count = len(chosen)
+            if count == 0:
+                self.footer_label.set_label("Nothing chosen.")
+                self.install_button.set_sensitive(False)
+                self.install_button.set_label("Install")
+                return
+            self.install_button.set_sensitive(True)
+            text = "%d app%s" % (count, "" if count == 1 else "s")
+
+            # The size is shown ONLY when we know all of it. A total that is
+            # missing three of the eleven apps is a lie told in a helpful tone.
+            known = [self.sizes.get(e.ref, 0) for e in plan]
+            if all(known) and known:
+                text += " · about %s" % human_size(sum(known))
+            self.footer_label.set_label(text)
+            self.install_button.set_label("Install")
+
+        def measure_downloads(self):
+            """Ask Flatpak how big everything is, in the background, once.
+
+            If there is no network this simply never answers and the footer
+            never mentions a size. It cannot delay anything: the window is
+            already on screen before this starts.
+            """
+
+            def work():
+                for entry in self.entries:
+                    size = download_size(entry.ref)
+                    if size:
+                        GLib.idle_add(self._record_size, entry.ref, size)
+
+            threading.Thread(target=work, daemon=True).start()
+
+        def _record_size(self, ref, size):
+            self.sizes[ref] = size
+            self.update_footer()
+            return GLib.SOURCE_REMOVE
+
+        # -- selection -----------------------------------------------------
+        def select_recommended(self):
+            for card in self.cards.values():
+                card.check.set_active(card.entry.recommended and not card.installed)
+            self.update_footer()
+
+        def select_all(self):
+            for card in self.cards.values():
+                card.check.set_active(not card.installed)
+            self.update_footer()
+
+        def select_none(self):
+            for card in self.cards.values():
+                card.check.set_active(False)
+            self.update_footer()
+
+        def refresh_installed(self):
+            def work():
+                here = installed_ids()
+                GLib.idle_add(self._apply_installed, here)
+
+            threading.Thread(target=work, daemon=True).start()
+
+        def _apply_installed(self, here):
+            for app_id, card in self.cards.items():
+                card.set_installed(app_id in here)
+            self.update_footer()
+            return GLib.SOURCE_REMOVE
+
+        # -- page 2: installing --------------------------------------------
+        def _build_working_page(self):
+            self.working_title = Gtk.Label(label="Installing your apps")
+            self.working_title.add_css_class("title-2")
+            self.working_title.set_wrap(True)
+            self.working_title.set_justify(Gtk.Justification.CENTER)
+
+            self.working_blurb = Gtk.Label(
+                label=(
+                    "They arrive one at a time. You can leave this and come "
+                    "back — nothing is lost if you do."
+                )
+            )
+            self.working_blurb.set_wrap(True)
+            self.working_blurb.set_justify(Gtk.Justification.CENTER)
+            self.working_blurb.add_css_class("dim-label")
+
+            self.steps_group = Adw.PreferencesGroup()
+
+            self.bar = Gtk.ProgressBar()
+            self.bar.set_show_text(False)
+            self.bar.set_margin_top(4)
+
+            self.log_view = Gtk.TextView()
+            self.log_view.set_editable(False)
+            self.log_view.set_cursor_visible(False)
+            self.log_view.set_monospace(True)
+            self.log_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+            self.log_view.set_left_margin(8)
+            self.log_view.set_right_margin(8)
+            self.log_view.set_top_margin(6)
+            self.log_view.set_bottom_margin(6)
+            self.log_scroll = Gtk.ScrolledWindow()
+            self.log_scroll.set_child(self.log_view)
+            self.log_scroll.set_min_content_height(200)
+            self.log_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+            self.log_scroll.add_css_class("card")
+
+            self.details = Gtk.Expander(label="Details")
+            self.details.set_child(self.log_scroll)
+            self.details.set_margin_top(4)
+
+            self.cancel_button = Gtk.Button(label="Cancel")
+            self.cancel_button.set_tooltip_text(
+                "Stops after the app that is downloading right now has finished"
+            )
+            self.cancel_button.connect("clicked", self._on_cancel_clicked)
+
+            self.copy_button = Gtk.Button(label="Copy details")
+            self.copy_button.connect("clicked", self._on_copy_clicked)
+            self.copy_button.set_visible(False)
+
+            self.working_close = Gtk.Button(label="Close")
+            self.working_close.connect("clicked", lambda _b: self.close())
+            self.working_close.set_visible(False)
+
+            self.retry_button = Gtk.Button(label="Try again")
+            self.retry_button.add_css_class("suggested-action")
+            self.retry_button.connect("clicked", self._on_retry_clicked)
+            self.retry_button.set_visible(False)
+
+            buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            buttons.set_halign(Gtk.Align.CENTER)
+            buttons.set_margin_top(4)
+            self.working_buttons = buttons
+            for widget in (
+                self.copy_button,
+                self.working_close,
+                self.retry_button,
+                self.cancel_button,
+            ):
+                buttons.append(widget)
+
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+            box.set_margin_top(24)
+            box.set_margin_bottom(24)
+            box.set_margin_start(18)
+            box.set_margin_end(18)
+            for widget in (
+                self.working_title,
+                self.working_blurb,
+                self.steps_group,
+                self.bar,
+                self.details,
+                buttons,
+            ):
+                box.append(widget)
+
+            clamp = Adw.Clamp(maximum_size=620)
+            clamp.set_child(box)
+            scroller = Gtk.ScrolledWindow(vexpand=True)
+            scroller.set_child(clamp)
+            return scroller
+
+        # -- page 3: done --------------------------------------------------
+        def _build_done_page(self):
+            self.done_page = Adw.StatusPage()
+            self.done_page.set_icon_name("emblem-ok-symbolic")
+            self.done_page.set_title("All set.")
+            self.done_page.set_description("")
+
+            self.done_open = Gtk.Button(label="Open")
+            self.done_open.add_css_class("suggested-action")
+            self.done_open.add_css_class("pill")
+            self.done_open.connect("clicked", self._on_open_first)
+
+            close_button = Gtk.Button(label="Close")
+            close_button.add_css_class("pill")
+            close_button.connect("clicked", lambda _b: self.close())
+
+            self.done_retry = Gtk.Button(label="Try the ones that failed again")
+            self.done_retry.add_css_class("pill")
+            self.done_retry.connect("clicked", self._on_retry_failed)
+            self.done_retry.set_visible(False)
+
+            buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            buttons.set_halign(Gtk.Align.CENTER)
+            buttons.append(self.done_open)
+            buttons.append(self.done_retry)
+            buttons.append(close_button)
+
+            self.done_detail = Gtk.Label(label="")
+            self.done_detail.set_wrap(True)
+            self.done_detail.set_justify(Gtk.Justification.CENTER)
+            self.done_detail.add_css_class("dim-label")
+            self.done_detail.set_margin_top(8)
+            self.done_detail.set_visible(False)
+
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+            box.append(buttons)
+            box.append(self.done_detail)
+            clamp = Adw.Clamp(maximum_size=560)
+            clamp.set_child(box)
+            self.done_page.set_child(clamp)
+            return self.done_page
+
+        # -- running the installer -----------------------------------------
+        def _on_install_clicked(self, _button):
+            chosen = [card.entry.app_id for card in self.cards.values() if card.chosen]
+            self.start_install(resolve_install_set(self.entries, chosen))
+
+        def _on_retry_clicked(self, _button):
+            self.start_install(self.plan)
+
+        def _on_retry_failed(self, _button):
+            still = [e for e in self.plan if e.app_id in self.failures]
+            if still:
+                self.start_install(still)
+
+        def start_install(self, plan):
+            if not plan:
+                return
+            self.plan = plan
+            self.failures = {}
+            self.cancelled = False
+            self.log_lines = []
+            self._set_log("")
+            self.bar.set_fraction(0.0)
+            self.details.set_expanded(False)
+            self.cancel_button.set_visible(True)
+            self.cancel_button.set_sensitive(True)
+            self.cancel_button.set_label("Cancel")
+            self.copy_button.set_visible(False)
+            self.retry_button.set_visible(False)
+            self.working_close.set_visible(False)
+            self.working_title.set_label("Installing your apps")
+            self.working_blurb.set_label(
+                "They arrive one at a time. You can leave this and come back — "
+                "nothing is lost if you do."
+            )
+            self.footer.set_visible(False)
+
+            for row in list(self.step_rows.values()):
+                self.steps_group.remove(row)
+            self.step_rows = {}
+            for entry in plan:
+                # Plug-ins are shown, but as what they are: a line under the app
+                # rather than a thing somebody chose. Hiding them here would
+                # make the progress bar move for reasons nobody could see.
+                title = entry.name if not entry.runtime else "  " + entry.name
+                row = StepRow(title)
+                self.steps_group.add(row)
+                self.step_rows[entry.app_id] = row
+
+            self.header_title.set_subtitle("Installing")
+            self.stack.set_visible_child_name("working")
+            self._start_process(plan)
+
+        def _start_process(self, plan):
+            runtime_dir = GLib.get_user_runtime_dir() or GLib.get_tmp_dir()
+            self.cancel_file = os.path.join(runtime_dir, "aquarius-creator-apps.cancel")
+            try:
+                if os.path.exists(self.cancel_file):
+                    os.unlink(self.cancel_file)
+            except OSError:
+                pass
+
+            argv = []
+            if not DRY_RUN:
+                # pkexec is the one and only place this feature asks for a
+                # password, and it asks once for the whole run.
+                argv.append("pkexec")
+            argv += [INSTALLER, "--progress-fd", "2", "--cancel-file", self.cancel_file]
+            if DRY_RUN:
+                argv.append("--dry-run")
+            argv += [entry.ref for entry in plan]
+
+            self._append_log("$ %s\n" % " ".join(argv))
+            try:
+                self.proc = subprocess.Popen(
+                    argv,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    start_new_session=True,
+                    text=True,
+                    errors="replace",
+                    bufsize=1,
+                )
+            except OSError as exc:
+                self._show_failure("The installer could not be started: %s" % exc)
+                return
+
+            threading.Thread(target=self._read_log, daemon=True).start()
+            threading.Thread(target=self._read_progress, daemon=True).start()
+            threading.Thread(target=self._wait_for_exit, daemon=True).start()
+
+        def _read_log(self):
+            for line in self.proc.stdout:
+                GLib.idle_add(self._append_log, line)
+            try:
+                self.proc.stdout.close()
+            except OSError:
+                pass
+
+        def _read_progress(self):
+            for line in self.proc.stderr:
+                GLib.idle_add(self._handle_progress, line.rstrip("\n"))
+            try:
+                self.proc.stderr.close()
+            except OSError:
+                pass
+
+        def _wait_for_exit(self):
+            code = self.proc.wait()
+            GLib.idle_add(self._process_exited, code)
+
+        # -- reacting ------------------------------------------------------
+        def _handle_progress(self, line):
+            # Anything unrecognised is dropped on purpose, so that a line added
+            # to the script one day cannot break an older window. Unrecognised
+            # lines still reach Details, because they came in on the same
+            # channel and a person debugging deserves all of it.
+            head, _, rest = line.partition(" ")
+            if head == "STEP":
+                index, _, _name = rest.partition(" ")
+                position, _, total = index.partition("/")
+                try:
+                    n, total_n = int(position), int(total)
+                except ValueError:
+                    return GLib.SOURCE_REMOVE
+                self.header_title.set_subtitle("App %d of %d" % (n, total_n))
+                for i, entry in enumerate(self.plan, start=1):
+                    row = self.step_rows.get(entry.app_id)
+                    if row is None:
+                        continue
+                    if i == n:
+                        row.set_state(ACTIVE)
+                    elif i > n:
+                        row.set_state(PENDING)
+                return GLib.SOURCE_REMOVE
+
+            if head == "PERCENT":
+                try:
+                    self.bar.set_fraction(min(100, max(0, int(rest))) / 100.0)
+                except ValueError:
+                    pass
+                return GLib.SOURCE_REMOVE
+
+            if head == "OK":
+                row = self.step_rows.get(rest.strip())
+                if row is not None:
+                    row.set_state(DONE)
+                return GLib.SOURCE_REMOVE
+
+            if head == "FAILED":
+                app_id, _, why = rest.partition(" ")
+                row = self.step_rows.get(app_id)
+                if row is not None:
+                    row.set_state(FAILED)
+                    row.set_subtitle(why)
+                    row.set_subtitle_lines(0)
+                self.failures[app_id] = why
+                # A failure is the one thing worth showing without being asked.
+                self.details.set_expanded(True)
+                return GLib.SOURCE_REMOVE
+
+            if head == "CANCELLED":
+                self.cancelled = True
+                return GLib.SOURCE_REMOVE
+
+            if head == "FAIL":
+                self._show_failure(rest.strip())
+                return GLib.SOURCE_REMOVE
+
+            if head == "DONE":
+                return GLib.SOURCE_REMOVE
+
+            self._append_log(line + "\n")
+            return GLib.SOURCE_REMOVE
+
+        def _process_exited(self, code):
+            self.proc = None
+            self.cancel_button.set_visible(False)
+            self.refresh_installed()
+
+            # pkexec's own codes, which are not the installer's. 126 is "you
+            # said no, or nothing asked you"; 127 is "the asking itself failed".
+            # Both need a different sentence from "an app would not install".
+            if code in (126, 127) and not self.failures:
+                self._show_failure(
+                    "AquariusOS was not given permission to install apps for "
+                    "this computer, so nothing was installed. Press Try again "
+                    "and enter your password when asked."
+                )
+                return GLib.SOURCE_REMOVE
+
+            if self.cancelled:
+                self._show_done(cancelled=True)
+                return GLib.SOURCE_REMOVE
+
+            self._show_done(cancelled=False)
+            return GLib.SOURCE_REMOVE
+
+        def _show_done(self, cancelled):
+            arrived = [e for e in self.plan if e.app_id not in self.failures]
+            apps_arrived = [e for e in arrived if not e.runtime]
+
+            if self.failures:
+                names = [
+                    e.name for e in self.plan if e.app_id in self.failures
+                ]
+                self.done_page.set_icon_name("dialog-warning-symbolic")
+                self.done_page.set_title(
+                    "%d of %d installed." % (len(arrived), len(self.plan))
+                )
+                self.done_page.set_description(
+                    "These did not: " + ", ".join(names) + "."
+                )
+                self.done_detail.set_label(
+                    "Nothing is broken and nothing is half-installed. Try them "
+                    "again now, or later from Aquarius Apps."
+                )
+                self.done_detail.set_visible(True)
+                self.done_retry.set_visible(True)
+            elif cancelled:
+                self.done_page.set_icon_name("emblem-ok-symbolic")
+                self.done_page.set_title("Stopped, as you asked.")
+                self.done_page.set_description(
+                    "%d of %d were installed before it stopped. The rest are "
+                    "waiting for you in Aquarius Apps."
+                    % (len(arrived), len(self.plan))
+                )
+                self.done_detail.set_visible(False)
+                self.done_retry.set_visible(False)
+            else:
+                self.done_page.set_icon_name("emblem-ok-symbolic")
+                self.done_page.set_title("All set.")
+                self.done_page.set_description(
+                    "%d app%s installed and waiting in your apps."
+                    % (len(apps_arrived), "" if len(apps_arrived) == 1 else "s")
+                )
+                self.done_detail.set_visible(False)
+                self.done_retry.set_visible(False)
+
+            if apps_arrived:
+                self.first_app = apps_arrived[0]
+                self.done_open.set_label("Open %s" % self.first_app.name)
+                self.done_open.set_visible(True)
+            else:
+                self.first_app = None
+                self.done_open.set_visible(False)
+
+            self.header_title.set_subtitle("")
+            self.stack.set_visible_child_name("done")
+
+        def _show_failure(self, message):
+            self.working_title.set_label("That did not work")
+            self.working_blurb.set_label(message)
+            self.bar.set_fraction(0.0)
+            self.cancel_button.set_visible(False)
+            self.copy_button.set_visible(True)
+            self.retry_button.set_visible(True)
+            self.working_close.set_visible(True)
+            self.details.set_expanded(True)
+            self.stack.set_visible_child_name("working")
+            self.header_title.set_subtitle("")
+
+        def _on_open_first(self, _button):
+            if self.first_app is None:
+                return
+            try:
+                subprocess.Popen(
+                    ["flatpak", "run", self.first_app.app_id], start_new_session=True
+                )
+            except OSError:
+                return
+            self.close()
+
+        def _on_cancel_clicked(self, _button):
+            # Cancel is a note, not a knife — see the long comment in
+            # aquarius-creator-apps-install. The button says so as soon as it is
+            # pressed, so that "why is it still going?" never has to be asked.
+            self.cancelled = True
+            try:
+                if self.cancel_file:
+                    with open(self.cancel_file, "w", encoding="utf-8") as handle:
+                        handle.write("stop\n")
+            except OSError:
+                pass
+            self.cancel_button.set_sensitive(False)
+            self.cancel_button.set_label("Stopping…")
+            self.working_blurb.set_label(
+                "Stopping. The app downloading right now will finish first — "
+                "stopping in the middle is how you get a broken one."
+            )
+
+        def _on_copy_clicked(self, _button):
+            text = "".join(
+                line if line.endswith("\n") else line + "\n" for line in self.log_lines
+            )
+            display = Gdk.Display.get_default()
+            if display is not None:
+                # NOT clipboard.set(text): that is a C macro with no
+                # introspection, so it is not there to call from Python. This is
+                # the real one. (The same note is in aquarius-resolve-installer,
+                # where it was found first.)
+                value = GObject.Value(str, text)
+                display.get_clipboard().set_content(
+                    Gdk.ContentProvider.new_for_value(value)
+                )
+            _button.set_label("Copied")
+            GLib.timeout_add_seconds(
+                2, lambda: (_button.set_label("Copy details"), False)[1]
+            )
+
+        # -- the log -------------------------------------------------------
+        def _append_log(self, text):
+            self.log_lines.append(text)
+            buffer = self.log_view.get_buffer()
+            buffer.insert(buffer.get_end_iter(), text)
+            mark = buffer.create_mark(None, buffer.get_end_iter(), False)
+            self.log_view.scroll_mark_onscreen(mark)
+            buffer.delete_mark(mark)
+            return GLib.SOURCE_REMOVE
+
+        def _set_log(self, text):
+            self.log_view.get_buffer().set_text(text)
+
+        # -- window plumbing -----------------------------------------------
+        def _on_key(self, _controller, keyval, _keycode, _state):
+            if keyval == Gdk.KEY_Escape and self.proc is None:
+                self.close()
+                return True
+            return False
+
+        def _on_close_request(self, _window):
+            # Closing mid-install does NOT stop the install. It cannot: the
+            # installing is being done by a program running as an administrator,
+            # which this window is not allowed to kill — and abandoning a
+            # half-written app would be worse than letting it finish. It carries
+            # on and finishes; the apps simply appear.
+            return False
+
+    class ChooserApp(Adw.Application):
+        def __init__(self, entries, warning):
+            super().__init__(
+                application_id=APP_ID, flags=Gio.ApplicationFlags.NON_UNIQUE
+            )
+            self.entries = entries
+            self.warning = warning
+
+        def do_activate(self):
+            window = self.props.active_window
+            if window is None:
+                window = ChooserWindow(self, self.entries, self.warning)
+            window.present()
+            if first_run:
+                write_stamp()
+
+    # ----------------------------------------------------------------------
+    if first_run and os.path.exists(stamp_path):
+        # Already offered to this person once. Silence is the correct behaviour:
+        # this is the login autostart, and a window that reappears every morning
+        # is a window people learn to close without reading.
+        return 0
+
+    entries, _skipped, error = read_catalog(None)
+    if error:
+        # There is no honest window to draw without a list. Say so where a
+        # person will see it — a desktop notification — and leave.
+        print("aquarius-creator-apps: %s" % error, file=sys.stderr)
+        try:
+            subprocess.Popen(
+                [
+                    "notify-send",
+                    "--app-name=Aquarius Apps",
+                    "AquariusOS could not read its own list of apps",
+                    error,
+                ]
+            )
+        except OSError:
+            pass
+        return 1
+
+    GLib.set_prgname(APP_ID)
+    GLib.set_application_name("Aquarius Apps")
+    app = ChooserApp(entries, None)
+    return app.run([sys.argv[0]])
+
+
+DRY_RUN = False
+
+
+def main(argv):
+    global DRY_RUN
+    dry_run = False
+    first_run = False
+    catalog_from = None
+    selection = None
+
+    args = list(argv[1:])
+    while args:
+        arg = args.pop(0)
+        if arg == "--dry-run":
+            dry_run = True
+        elif arg == "--first-run":
+            first_run = True
+        elif arg == "--catalog-from":
+            catalog_from = args.pop(0) if args else None
+        elif arg.startswith("--catalog-from="):
+            catalog_from = arg.split("=", 1)[1]
+        elif arg == "--select":
+            selection = (args.pop(0) if args else "").split(",")
+        elif arg.startswith("--select="):
+            selection = arg.split("=", 1)[1].split(",")
+        elif arg in ("-h", "--help"):
+            print(
+                "aquarius-creator-apps — the Aquarius Apps window\n"
+                "\n"
+                "    aquarius-creator-apps [--first-run]\n"
+                "    aquarius-creator-apps --dry-run [--catalog-from FILE] [--select id,id]\n"
+                "\n"
+                "    --first-run        open only if this account has not been\n"
+                "                       offered the apps before (used at login)\n"
+                "    --dry-run          print what it read and what it would do,\n"
+                "                       open no window, install nothing\n"
+                "    --catalog-from F   read the app list from F instead of from\n"
+                "                       the system, for testing the reading\n"
+                "    --select a,b       pretend those apps were ticked\n"
+                "\n"
+                "The list of apps comes from %s --catalog." % CATALOG_CLI
+            )
+            return 0
+        else:
+            print(
+                "aquarius-creator-apps: I do not understand '%s'." % arg,
+                file=sys.stderr,
+            )
+            return 2
+
+    if catalog_from or selection is not None:
+        # These only make sense as a rehearsal, and quietly opening a real
+        # window with a test file behind it would be a trap.
+        dry_run = True
+
+    if dry_run and not first_run:
+        return rehearse(catalog_from, selection)
+
+    DRY_RUN = dry_run
+    return run_window(first_run)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

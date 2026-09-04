@@ -1,0 +1,310 @@
+#!/usr/bin/bash
+# ==============================================================================
+# aquarius-creator-apps-install — install the chosen creator apps, one at a time
+# ==============================================================================
+# PLAIN ENGLISH
+#
+# The app chooser window (/usr/libexec/aquarius-creator-apps) hands this script
+# the list of apps somebody ticked. This script installs them, one after
+# another, and says what it is doing as it goes.
+#
+# It is a separate script and not part of the window for two reasons:
+#
+#   1. IT NEEDS ROOT AND THE WINDOW MUST NOT HAVE IT. Installing an app for the
+#      whole computer needs administrator permission. The window runs as you.
+#      It starts this script with `pkexec`, which is the standard Linux way of
+#      asking "may I?" — you get ONE password prompt, at the moment you press
+#      Install, and the window itself never has any special power at all.
+#
+#   2. ONE PROMPT, NOT SEVEN. If the window ran `flatpak install` seven times
+#      itself, each one would be a separate request for permission, and Linux
+#      may well ask you seven times. Everything privileged happens inside this
+#      one script, inside one authorisation.
+#
+# It can also be run in a terminal, by hand:
+#
+#     sudo /usr/libexec/aquarius-creator-apps-install org.kde.kdenlive//stable
+#
+# ------------------------------------------------------------------------------
+# WHY ONE APP AT A TIME AND NOT ALL OF THEM IN ONE COMMAND
+# ------------------------------------------------------------------------------
+# `flatpak install a b c` is one command with one answer at the end: it worked,
+# or it did not. That is no use to a window that has to show you a line per app
+# with a tick beside it. Installing them one at a time costs nothing — the same
+# bytes are downloaded either way, and shared runtimes are still only fetched
+# once — and it buys an honest answer for every single app.
+#
+# It also means one failure is one failure. Google Chrome, which is the one on
+# this list that regularly breaks through no fault of ours (see the notes in
+# the shopping list), can fail on its own without taking the other ten with it.
+#
+# ------------------------------------------------------------------------------
+# HOW IT SAYS WHAT IS HAPPENING — the progress channel
+# ------------------------------------------------------------------------------
+# Everything a person would read in a terminal goes to stdout, unchanged, and
+# the window puts it behind "Details".
+#
+# Separately, if it is given --progress-fd <n>, it writes short structured lines
+# to that file descriptor. THIS IS A CONTRACT with the window:
+#
+#   STEP <n>/<total> <text>   app n of total has begun; <text> is its name.
+#   PERCENT <0-100>           how far through the whole run we are, counted in
+#                             apps finished. Sent after every app.
+#   OK <id>                   that app is installed, and we checked.
+#   FAILED <id> <text>        that app is not installed, and <text> says why.
+#   DONE                      the run finished. Sent once, last, even when some
+#                             apps failed — "finished" is not "all succeeded".
+#   FAIL <text>               the run could not happen at all.
+#   CANCELLED                 you pressed Cancel and it stopped between apps.
+#
+# This is deliberately the same vocabulary as
+# /usr/libexec/aquarius-resolve-install uses for the DaVinci Resolve installer
+# window, with OK/FAILED added because this job has many small parts rather than
+# six big ones. A window that does not understand a line ignores it.
+#
+# ------------------------------------------------------------------------------
+# THE RULE THIS SCRIPT FOLLOWS ABOVE ALL OTHERS
+# ------------------------------------------------------------------------------
+# NEVER SAY AN APP IS INSTALLED BECAUSE A COMMAND EXITED ZERO. After every
+# install we ASK THE SYSTEM whether the app is really there (`flatpak info`).
+# That is the same rule the rest of AquariusOS follows: trust content, never
+# appearances.
+# ==============================================================================
+
+set -uo pipefail
+
+PROGRESS_FD=""
+CANCEL_FILE=""
+DRY_RUN=0
+REFS=()
+
+say() { printf '%s\n' "$*"; }
+
+# Write one line to the progress channel, if we were given one. Never fails, and
+# never blocks: a window that has gone away must not be able to wedge an install
+# that is still running.
+progress() {
+    [ -n "${PROGRESS_FD}" ] || return 0
+    printf '%s\n' "$*" >&"${PROGRESS_FD}" 2> /dev/null || true
+}
+
+usage() {
+    cat <<'USAGE'
+aquarius-creator-apps-install — install creator apps, one at a time
+
+    aquarius-creator-apps-install [--progress-fd N] [--dry-run] <ref> [<ref>...]
+
+    <ref>            a Flatpak reference: an app id, optionally with a branch,
+                     as in  org.kde.kdenlive//stable
+    --progress-fd N  also write short progress lines to file descriptor N
+    --cancel-file F  stop cleanly, between apps, as soon as file F appears
+    --dry-run        say what would happen and install nothing
+
+Needs root, because it installs for the whole computer. The app chooser window
+starts it through pkexec, which is where the one password prompt comes from.
+USAGE
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --progress-fd)
+            PROGRESS_FD="${2:-}"
+            shift 2 || true
+            ;;
+        --progress-fd=*)
+            PROGRESS_FD="${1#*=}"
+            shift
+            ;;
+        --cancel-file)
+            CANCEL_FILE="${2:-}"
+            shift 2 || true
+            ;;
+        --cancel-file=*)
+            CANCEL_FILE="${1#*=}"
+            shift
+            ;;
+        --dry-run)
+            DRY_RUN=1
+            shift
+            ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        -*)
+            say "aquarius-creator-apps-install: I do not understand '$1'."
+            usage
+            exit 2
+            ;;
+        *)
+            REFS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+if [ "${#REFS[@]}" -eq 0 ]; then
+    say "Nothing to install — no apps were named."
+    progress "FAIL Nothing was chosen, so there is nothing to install."
+    exit 2
+fi
+
+# ==============================================================================
+# Are we allowed to do this?
+# ==============================================================================
+# Checked here rather than left to fail deep inside Flatpak, because "you are
+# not an administrator" is a sentence a person can act on and Flatpak's own
+# wording for it is not.
+if [ "${DRY_RUN}" -eq 0 ] && [ "$(id -u)" -ne 0 ]; then
+    say "This has to run as an administrator, because it installs apps for the"
+    say "whole computer. Start it with sudo, or use the Aquarius Apps window,"
+    say "which asks for permission properly."
+    progress "FAIL AquariusOS was not given permission to install apps for this computer."
+    exit 1
+fi
+
+# In a rehearsal nothing is installed, so Flatpak is not needed and not looked
+# for — which is what lets --dry-run be run anywhere, including on a machine
+# that is only checking that this script still parses.
+if [ "${DRY_RUN}" -eq 0 ] && ! command -v flatpak > /dev/null 2>&1; then
+    say "ERROR — flatpak is missing from this computer. That is a fault in"
+    say "AquariusOS, not something you did."
+    progress "FAIL Flatpak is missing from this copy of AquariusOS."
+    exit 1
+fi
+
+# ==============================================================================
+# Make sure the app store is switched on
+# ==============================================================================
+# The image ships Flathub's description at /usr/share/flatpak/remotes.d/ and
+# Flatpak reads that folder itself. This is belt and braces: if somebody
+# disabled the remote by hand, every install below would fail with a message
+# about a missing remote rather than about the app.
+if [ "${DRY_RUN}" -eq 0 ]; then
+    flatpak remote-modify --system --enable flathub > /dev/null 2>&1 || true
+fi
+
+TOTAL="${#REFS[@]}"
+say "Installing ${TOTAL} $([ "${TOTAL}" -eq 1 ] && echo app || echo apps) for this computer."
+say ""
+
+FAILED_IDS=()
+DONE_COUNT=0
+
+# ==============================================================================
+# How Cancel works, and why it is not instant
+# ==============================================================================
+# The window runs as you; this script runs as root. A program running as you
+# cannot stop a program running as root, and it should not be able to — that is
+# the whole point of asking for permission in the first place.
+#
+# So Cancel is a note, not a knife. The window creates a file that it owns, this
+# script looks for that file BETWEEN apps, and stops as soon as it sees it. The
+# app that is downloading at that moment finishes first, because killing a
+# half-written Flatpak install is how you get a broken one.
+#
+# The window says exactly this on screen when you press Cancel, so nobody is
+# left wondering why it did not stop dead.
+cancelled() {
+    [ -n "${CANCEL_FILE}" ] && [ -e "${CANCEL_FILE}" ]
+}
+
+CANCELLED=0
+
+for i in "${!REFS[@]}"; do
+    ref="${REFS[$i]}"
+    n=$((i + 1))
+
+    if cancelled; then
+        say ""
+        say "Stopped, because you asked it to. Nothing that was already"
+        say "installed has been removed, and nothing is half-installed."
+        CANCELLED=1
+        progress "CANCELLED"
+        break
+    fi
+    # The id is the ref without its architecture and branch. Everything we
+    # report and everything we verify uses the id, because that is what a person
+    # sees and what `flatpak info` answers to.
+    id="${ref%%/*}"
+
+    progress "STEP ${n}/${TOTAL} ${id}"
+    say "──────────────────────────────────────────────────────────────────────"
+    say "[${n}/${TOTAL}] ${id}"
+    say "──────────────────────────────────────────────────────────────────────"
+
+    if [ "${DRY_RUN}" -eq 1 ]; then
+        say "(rehearsal: would run  flatpak install --system -y --noninteractive flathub ${ref})"
+        DONE_COUNT=$((DONE_COUNT + 1))
+        progress "OK ${id}"
+        progress "PERCENT $((DONE_COUNT * 100 / TOTAL))"
+        continue
+    fi
+
+    # Already here? Then say so and move on. This is what makes the window safe
+    # to run again after a partial failure: the apps that arrived last time are
+    # not downloaded twice.
+    if flatpak info --system "${id}" > /dev/null 2>&1; then
+        say "Already installed. Nothing to do."
+        DONE_COUNT=$((DONE_COUNT + 1))
+        progress "OK ${id}"
+        progress "PERCENT $((DONE_COUNT * 100 / TOTAL))"
+        continue
+    fi
+
+    # --noninteractive is what stops it asking questions at a terminal nobody is
+    # watching. We are already root, so no permission question can arise here —
+    # that was answered once, by pkexec, before this script started.
+    flatpak install --system -y --noninteractive flathub "${ref}" 2>&1
+    rc=$?
+
+    # ⚠️ THE EXIT CODE IS NOT THE ANSWER. Ask the system.
+    if flatpak info --system "${id}" > /dev/null 2>&1; then
+        say ""
+        say "${id} is installed."
+        DONE_COUNT=$((DONE_COUNT + 1))
+        progress "OK ${id}"
+    else
+        say ""
+        say "${id} did NOT install. The lines above say why."
+        FAILED_IDS+=("${id}")
+        if [ "${rc}" -eq 0 ]; then
+            # Exited happily and is not there. Rare, and worth saying plainly
+            # rather than pretending we know more than we do.
+            progress "FAILED ${id} Flatpak reported success but the app is not here."
+        else
+            progress "FAILED ${id} Flatpak could not install it. Open Details to see why."
+        fi
+    fi
+    progress "PERCENT $((DONE_COUNT * 100 / TOTAL))"
+done
+
+# ==============================================================================
+# What happened, in one sentence
+# ==============================================================================
+say ""
+say "══════════════════════════════════════════════════════════════════════"
+if [ "${CANCELLED}" -eq 1 ]; then
+    say "Stopped at your request. ${DONE_COUNT} of ${TOTAL} were installed."
+    say "The rest are still waiting for you in Aquarius Apps."
+elif [ "${#FAILED_IDS[@]}" -eq 0 ]; then
+    say "All ${TOTAL} installed."
+else
+    say "${DONE_COUNT} of ${TOTAL} installed. These did not:"
+    for id in "${FAILED_IDS[@]}"; do
+        say "    ${id}"
+    done
+    say ""
+    say "Nothing is broken — you can try them again at any time from Aquarius"
+    say "Apps, or in a terminal with:"
+    say "    sudo flatpak install --system flathub <the id>"
+fi
+say "══════════════════════════════════════════════════════════════════════"
+
+# DONE means "the run finished", not "everything worked". The window has been
+# told app by app which was which, so it can show the truth either way.
+progress "DONE"
+
+# The exit code is for scripts and for systemd: zero only when every app that was
+# actually attempted is really here.
+[ "${#FAILED_IDS[@]}" -eq 0 ]
