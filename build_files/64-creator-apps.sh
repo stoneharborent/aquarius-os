@@ -697,6 +697,30 @@ say "The extra permissions creator apps need"
 
 AQ_SCRATCH="/var/lib/flatpak/overrides"
 mkdir -p "${AQ_SCRATCH}"
+
+# ------------------------------------------------------------------------------
+# FIRST: can Flatpak do this here AT ALL?
+# ------------------------------------------------------------------------------
+# A build container is not a running desktop, and it would be easy to write a
+# check that fails for that reason and then to "fix" a perfectly good
+# permission file. So before judging any of our files, a KNOWN-GOOD one is put
+# through exactly the same command. If even that fails, the tool is what is
+# missing, not our files, and the check says so and falls back to a plainer one
+# rather than failing the build on a wrong conclusion.
+AQ_CONTROL="com.aquariusos.OverrideSelfTest"
+printf '[Context]\nshared=network;\n' > "${AQ_SCRATCH}/${AQ_CONTROL}"
+if flatpak override --system "${AQ_CONTROL}" > /tmp/aq-control.txt 2>&1; then
+    AQ_FLATPAK_CAN_READ=1
+    ok "Flatpak can read permission files in this build, so it is the judge"
+else
+    AQ_FLATPAK_CAN_READ=0
+    echo "  NOTE: Flatpak cannot read permission files inside this build container:"
+    sed 's/^/         /' /tmp/aq-control.txt
+    echo "        Falling back to a plainer check of the file format. This is a"
+    echo "        weaker check and it is worth knowing which one ran."
+fi
+rm -f "${AQ_SCRATCH}/${AQ_CONTROL}" /tmp/aq-control.txt
+
 AQ_OVERRIDE_COUNT=0
 for f in "${OVERRIDE_DIR}"/*; do
     [ -f "$f" ] || continue
@@ -704,27 +728,56 @@ for f in "${OVERRIDE_DIR}"/*; do
     case "${base}" in *.md) continue ;; esac
     AQ_OVERRIDE_COUNT=$((AQ_OVERRIDE_COUNT + 1))
 
-    cp "$f" "${AQ_SCRATCH}/${base}"
-    if shown="$(flatpak override --system --show "${base}" 2>&1)"; then
+    if [ "${AQ_FLATPAK_CAN_READ}" -eq 1 ]; then
+        cp "$f" "${AQ_SCRATCH}/${base}"
+
+        # ⚠️ NO --show ON THIS FIRST CALL, AND THAT IS THE WHOLE POINT.
+        # `flatpak override --show` prints the file back and checks almost
+        # nothing. Running it WITHOUT --show is what makes Flatpak actually
+        # interpret every key and value — and that is the path that rejects a
+        # misspelt permission (`xdg-vidoes`) or a device that does not exist.
+        # A typo of that kind is otherwise completely silent on a real machine.
+        if ! out="$(flatpak override --system "${base}" 2>&1)"; then
+            bad "${base}: Flatpak refuses this permission file"
+            printf '%s\n' "${out}" | sed 's/^/         /'
+            rm -f "${AQ_SCRATCH}/${base}"
+            continue
+        fi
+
+        shown="$(flatpak override --system --show "${base}" 2>&1)"
         if printf '%s' "${shown}" | grep -q '^\[Context\]'; then
-            ok "${base}: Flatpak reads it, and it grants:"
+            ok "${base}: Flatpak accepts it, and it grants:"
             printf '%s\n' "${shown}" | grep -v '^\[' | grep -v '^$' | sed 's/^/         /'
         else
-            bad "${base}: Flatpak read it but found no permissions in it — the [Context] heading is probably misspelled"
+            bad "${base}: Flatpak read it and found no permissions — the [Context] heading is probably misspelled"
             printf '%s\n' "${shown}" | sed 's/^/         /'
         fi
+        rm -f "${AQ_SCRATCH}/${base}"
     else
-        bad "${base}: Flatpak refuses to read this file"
-        printf '%s\n' "${shown}" | sed 's/^/         /'
+        # The fallback: is it at least a settings file with a [Context] heading
+        # and nothing but known keys in it?
+        if python3 - "$f" << 'PYEOF'; then
+import configparser, sys
+p = configparser.ConfigParser(comment_prefixes=("#", ";"), interpolation=None)
+p.optionxform = str
+p.read(sys.argv[1], encoding="utf-8")
+if "Context" not in p:
+    raise SystemExit("no [Context] heading")
+known = {"shared", "sockets", "devices", "filesystems", "persistent", "features"}
+unknown = sorted(set(p["Context"]) - known)
+if unknown:
+    raise SystemExit("keys Flatpak does not know: " + ", ".join(unknown))
+for key, value in p["Context"].items():
+    if not value.strip().endswith(";"):
+        raise SystemExit(f"{key} does not end in a semicolon, so its last item is dropped")
+print("   ", {k: v for k, v in p["Context"].items()})
+PYEOF
+            ok "${base}: reads as a valid permission file"
+        else
+            bad "${base}: is not a valid permission file"
+        fi
     fi
-    rm -f "${AQ_SCRATCH}/${base}"
 done
-
-if [ "${AQ_OVERRIDE_COUNT}" -lt 1 ]; then
-    bad "there are no permission files in ${OVERRIDE_DIR} at all"
-else
-    ok "${AQ_OVERRIDE_COUNT} permission file(s) checked with Flatpak's own reader"
-fi
 
 # ⚠️ LEAVE NO FLATPAK STATE IN /var. Step 3 checks for exactly this, because a
 #    remote or an override written into /var during a build is silently

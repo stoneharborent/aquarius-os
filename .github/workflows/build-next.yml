@@ -1704,15 +1704,34 @@ jobs:
           # would guess are not read at all — and /var is scratch space in a
           # container, so this leaves nothing behind.
           mkdir -p /var/lib/flatpak/overrides
+
+          # A known-good file first, so that "Flatpak cannot do this in a
+          # container" is never mistaken for "our permission file is wrong".
+          printf '[Context]\nshared=network;\n' > /var/lib/flatpak/overrides/com.aquariusos.OverrideSelfTest
+          if flatpak override --system com.aquariusos.OverrideSelfTest >/tmp/ctl.txt 2>&1; then
+            ok "Flatpak can read permission files here, so it is the judge"
+          else
+            bad "Flatpak cannot read even a known-good permission file — this check cannot say anything about ours"
+            sed 's/^/       /' /tmp/ctl.txt
+          fi
+          rm -f /var/lib/flatpak/overrides/com.aquariusos.OverrideSelfTest
+
           for f in /usr/share/aquarius/flatpak-overrides/*; do
             base="$(basename "${f}")"
             case "${base}" in *.md) continue ;; esac
             cp "${f}" "/var/lib/flatpak/overrides/${base}"
-            if shown="$(flatpak override --system --show "${base}" 2>&1)" && printf '%s' "${shown}" | grep -q '^\[Context\]'; then
-              ok "${base} — Flatpak reads it: $(printf '%s' "${shown}" | grep -v '^\[' | grep -v '^$' | tr '\n' ' ')"
+
+            # ⚠️ NO --show ON THIS FIRST CALL, AND THAT IS THE WHOLE POINT.
+            # `--show` prints the file back and checks almost nothing. Without
+            # it, Flatpak actually interprets every key and value, which is the
+            # path that rejects a misspelt permission like `xdg-vidoes` — a
+            # mistake that is otherwise completely silent on a real machine.
+            if out="$(flatpak override --system "${base}" 2>&1)"; then
+              shown="$(flatpak override --system --show "${base}" 2>&1)"
+              ok "${base} — Flatpak accepts it: $(printf '%s' "${shown}" | grep -v '^\[' | grep -v '^$' | tr '\n' ' ')"
             else
-              bad "${base} — Flatpak cannot read this permission file"
-              printf '%s\n' "${shown}" | sed 's/^/       /'
+              bad "${base} — Flatpak refuses this permission file"
+              printf '%s\n' "${out}" | sed 's/^/       /'
             fi
             rm -f "/var/lib/flatpak/overrides/${base}"
           done
