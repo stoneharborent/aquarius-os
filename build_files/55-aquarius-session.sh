@@ -545,6 +545,8 @@ fi
 
 aq_file_has "${AQ_LAUNCHER}" "^trap 'aq_session_teardown' EXIT" \
     "the launcher runs the clean-up on EVERY way out of the session, including a crash"
+aq_file_has "${AQ_LAUNCHER}" '^aq_session_env_reset$' \
+    "and it clears the LAST desktop's screen on the way IN, so a force-killed session cannot poison the next one"
 aq_file_has "${AQ_LABWC_DIR}/autostart" 'aquarius-session-portals' \
     "logging in takes the portals back from whichever desktop had them last"
 

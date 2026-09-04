@@ -234,8 +234,27 @@ later, was the machine clean enough for GNOME to start.
 
 `man systemd.special` says a desktop must do two things when its session ends:
 stop `graphical-session.target`, and **unset the variables it set**. We were
-doing the first and had never done the second. GNOME does both, which is exactly
-why GNOME never had this problem and we did.
+doing the first and had never done the second.
+
+**And GNOME? Not what you would guess.** This was checked in gnome-session's own
+source on 2026-09-04 rather than assumed, because the assumption was wrong.
+GNOME does not clean up when it stops either — there is no clean-up on shutdown
+in it at all. What it does is clean up when it **starts**: at login it tells
+systemd to throw away `DISPLAY`, `XAUTHORITY`, `WAYLAND_DISPLAY`,
+`WAYLAND_SOCKET` and a few GNOME-only variables before setting its own. In other
+words GNOME protects *itself* on the way in and leaves its own mess for whoever
+comes next.
+
+Two things follow, and AquariusOS now does both:
+
+- **We clean up on the way out.** It is what the rule actually asks for, and
+  nothing of ours — `QS_CONFIG_PATH`, `AQ_LOG`, `AQ_UI_SCALE`,
+  `XDG_SESSION_DESKTOP` — is anywhere on GNOME's list, so GNOME would never
+  clear it for us however long we waited.
+- **We also protect ourselves on the way in**, the same way GNOME does and on
+  the same variables. A session that is force-killed never gets to run its
+  clean-up, and a desktop that only starts properly when the last one shut down
+  tidily is not actually fixed.
 
 So `/usr/bin/aquarius-session` now stays alive for the few seconds after the
 window manager exits and runs a clean-up, in this order:
@@ -287,8 +306,7 @@ better trade than a login that fails twice.
 
 ### The same problem in the other direction
 
-GNOME has the same habit we just fixed in ourselves: it leaves its portals
-running. Somebody coming here straight from GNOME would find a portal already
+GNOME leaves its portals running when you log out of it, just as we used to. Somebody coming here straight from GNOME would find a portal already
 awake and still convinced it is in GNOME — so it ignores
 `aquarius-portals.conf` entirely, and OBS shows an empty list of screens with no
 error anywhere.

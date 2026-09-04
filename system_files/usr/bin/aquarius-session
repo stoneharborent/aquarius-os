@@ -528,6 +528,15 @@ aq_push_env() {
 # entry that is deliberately NOT removed at logout — see the comment beside
 # AQ_SESSION_ENV_KEEP.)
 #
+# ⚠️ FIRST, throw away the LAST desktop's screen. This is protection against
+# arriving after a session that did not clean up after itself — a GNOME session
+# (which never cleans up on the way out), or an Aquarius session that was
+# force-killed and so never got to run the clean-up at the bottom of this file.
+# A desktop that only starts properly when the previous one shut down tidily is
+# not actually fixed. GNOME does exactly this, on the same variables, for the
+# same reason; the reasoning and the citation are in the library.
+aq_session_env_reset
+
 # shellcheck disable=SC2086
 aq_push_env ${AQ_SESSION_ENV_PUSH}
 

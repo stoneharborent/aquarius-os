@@ -1004,6 +1004,12 @@ jobs:
           grep -q "^trap 'aq_session_teardown' EXIT" /usr/bin/aquarius-session \
             && ok "the clean-up is armed with a trap, so it runs even if the desktop crashes" \
             || bad "the launcher does not trap EXIT — a crash would skip the clean-up entirely"
+          # And the other direction: a session that was force-killed never ran
+          # its clean-up, and GNOME never cleans up on the way out at all, so
+          # logging IN has to defend itself too.
+          grep -q '^aq_session_env_reset$' /usr/bin/aquarius-session \
+            && ok "logging in clears the last desktop's screen before naming ours" \
+            || bad "the launcher does not clear the previous desktop's screen — arriving after a force-killed session would inherit a dead one"
 
           # The list of settings that get removed again. WAYLAND_DISPLAY and
           # XDG_CURRENT_DESKTOP are the two that broke GNOME: one names a screen

@@ -400,6 +400,26 @@ export AQ_SESSION_STOP_TIMEOUT=10
 rm -f "${STUBS_STILL_ACTIVE}"
 
 # ==============================================================================
+echo "== starting up: we protect ourselves from the LAST desktop too =="
+# ==============================================================================
+# An Aquarius session that is force-killed never runs its clean-up, and a GNOME
+# session never cleans up on the way out at all. So arriving is defended as well
+# as leaving — exactly the way GNOME defends itself (gsm-util.c unsets DISPLAY,
+# WAYLAND_DISPLAY, XAUTHORITY and WAYLAND_SOCKET at login).
+: > "${TRANSCRIPT}"
+aq_session_env_reset > /dev/null 2>&1
+RESET_LINE="$(grep 'unset-environment' "${TRANSCRIPT}" | head -1)"
+echo "  ${RESET_LINE:-(nothing)}"
+for v in ${AQ_SESSION_ENV_COMPOSITOR}; do
+    case " ${RESET_LINE} " in
+        *" ${v} "*) pass "logging in throws away the last desktop's ${v}" ;;
+        *) fail "${v} is not cleared at login — a force-killed previous session would poison this one" ;;
+    esac
+done
+check "the launcher really does that before naming its own screen" \
+    "$(grep -q '^aq_session_env_reset$' "${LAUNCHER}" && echo 0 || echo 1)"
+
+# ==============================================================================
 echo "== starting up: the portals are made ours =="
 # ==============================================================================
 : > "${TRANSCRIPT}"

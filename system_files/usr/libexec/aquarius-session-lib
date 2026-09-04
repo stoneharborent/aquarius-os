@@ -64,9 +64,36 @@
 #   2. UNSET the variables it set, so the next session does not inherit them.
 #
 # We did the first (in the window manager's `shutdown` file) and never did the
-# second. GNOME does both: gnome-session imports its environment into the user
-# manager when it starts and removes it again when it stops. That difference is
-# the whole bug.
+# second. That is the bug.
+#
+# ⚠️ AND HOW DOES GNOME MANAGE IT? NOT THE WAY YOU WOULD GUESS — checked in
+# gnome-session's own source (gnome-session/gsm-util.c) on 2026-09-04 rather
+# than assumed, because the assumption was wrong and it changes the design.
+#
+# gnome-session does NOT clean up when it stops. There is no unexport on
+# shutdown at all. What it does is clean up when it STARTS: at login it calls
+# systemd's UnsetAndSetEnvironment with an explicit list of variables to throw
+# away first, and that list is
+#
+#     DISPLAY, XAUTHORITY, WAYLAND_DISPLAY, WAYLAND_SOCKET,
+#     GNOME_SHELL_SESSION_MODE, GNOME_SETUP_DISPLAY, and the LC_* family
+#
+# — in other words, exactly the "this points at a screen that is gone" ones.
+# GNOME protects ITSELF on the way in, and leaves its own mess for whoever
+# comes next.
+#
+# TWO THINGS FOLLOW FROM THAT, AND BOTH ARE IN THIS FILE:
+#
+#   1. Cleaning up on the way OUT is still ours to do, and it is the polite and
+#      correct half — it is what `man systemd.special` actually asks for, and
+#      nothing of ours (QS_CONFIG_PATH, AQ_LOG, AQ_UI_SCALE, XDG_SESSION_DESKTOP)
+#      appears anywhere on GNOME's list, so GNOME would never clear it for us.
+#
+#   2. We should ALSO protect ourselves on the way IN, exactly as GNOME does —
+#      see aq_session_env_reset below. Because an Aquarius session that is
+#      force-killed rather than closed never gets to run its clean-up at all,
+#      and a desktop that only works when the last one shut down tidily is not
+#      actually fixed.
 #
 # -----------------------------------------------------------------------------
 # WHY THE LISTS LIVE HERE AND NOT IN THE LAUNCHER
@@ -411,6 +438,28 @@ aq_session_teardown() {
 # because it has to happen AFTER WAYLAND_DISPLAY exists. A portal restarted
 # before there is a screen would only have to be restarted again.
 # -----------------------------------------------------------------------------
+aq_session_env_reset() {
+    # ---------------------------------------------------------------------
+    # Throw away the LAST desktop's screen before naming ours.
+    #
+    # This is the same move GNOME makes, for the same reason, on the same two
+    # variables (its own list is DISPLAY, XAUTHORITY, WAYLAND_DISPLAY,
+    # WAYLAND_SOCKET and a few GNOME-only ones — checked in gsm-util.c,
+    # 2026-09-04). It is protection against arriving after a session that did
+    # NOT clean up after itself:
+    #
+    #   * a GNOME session, which never cleans up on the way out, or
+    #   * an Aquarius session that was force-killed and so never got to run
+    #     the clean-up at the bottom of the launcher.
+    #
+    # Only the compositor pair is thrown away here. Everything else we care
+    # about is overwritten a moment later by the launcher's own values, so
+    # unsetting it first would be a no-op with a longer login.
+    # ---------------------------------------------------------------------
+    # shellcheck disable=SC2086
+    systemctl --user unset-environment ${AQ_SESSION_ENV_COMPOSITOR} > /dev/null 2>&1 || true
+}
+
 aq_session_portals_refresh() {
     aq_session_say "restarting the portals so they pick up the Aquarius settings"
     # shellcheck disable=SC2086
