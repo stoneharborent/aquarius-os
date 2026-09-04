@@ -399,6 +399,29 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     /ctx/build_files/66-creator-apps-chooser.sh
 
+# 7e. The gaming layer: Steam, Proton's supporting cast, gamescope, gamemode,
+#     MangoHud, the 32-bit graphics libraries a Windows game needs, and the
+#     Xbox controller drivers. In BOTH images — this machine is meant to be a
+#     good gaming PC out of the box, not after a setup guide.
+#
+#     It borrows both boxes of ready-made kernel modules: the NVIDIA one for
+#     its 32-bit driver libraries (already downloaded by step 6, so this costs
+#     nothing extra), and Universal Blue's common one for xone and xpadneo.
+#
+#     ⚠️ AFTER STEP 6, ALWAYS. Step 6 sometimes replaces this image's kernel,
+#     and a kernel module belongs to one exact kernel — ask before the swap and
+#     the answer is about a kernel that is no longer here. On a mismatch this
+#     step leaves the controller drivers out and writes down why, exactly like
+#     the virtual camera in step 6c. It never changes which kernel we ship.
+#
+#     There is no Game Mode session and no handheld support in here, on
+#     purpose: standing decision 6, and docs/restart/gaming.md says why.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=bind,from=nvidia-src,source=/,target=/ctx-nvidia \
+    --mount=type=bind,from=akmods-src,source=/,target=/ctx-akmods \
+    --mount=type=cache,dst=/var/cache/libdnf5 \
+    NVIDIA="${NVIDIA}" /ctx/build_files/68-gaming.sh
+
 # 8. The boot path: the Aquarius splash screen, the name in the boot menu, the
 #    text login banners, and then a rebuild of the boot ramdisk so that all of
 #    it is really used.
