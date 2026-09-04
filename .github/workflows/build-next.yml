@@ -753,11 +753,25 @@ jobs:
           fi
           # No default key bindings on a login screen: there is one window and
           # it must not be closable by Alt+F4.
-          if grep -q '<default */>' /usr/share/aquarius/greeter-labwc/rc.xml; then
-            bad "the login screen's window manager loads labwc's default key bindings — Alt+F4 would close the login screen"
-          else
-            ok "it loads no default key bindings"
-          fi
+          #
+          # ⚠️ ASKED BY PARSING THE XML, NOT BY grep. The first version of this
+          # check grepped for "<default />" and failed on 2026-09-04 against the
+          # COMMENT in that file explaining why there is no <default /> in it.
+          # A check that fails on its own explanation teaches people to delete
+          # the explanation, so this one asks the document instead of the text.
+          if python3 - <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          tree = ET.parse('/usr/share/aquarius/greeter-labwc/rc.xml')
+          found = [e.tag for e in tree.iter() if e.tag == 'default']
+          if found:
+              print("  FAIL rc.xml has a <default /> element — labwc's own key")
+              print("       bindings would be loaded, and Alt+F4 would close the")
+              print("       login screen.")
+              sys.exit(1)
+          print("  OK   it loads no default key bindings")
+          sys.exit(0)
+          PY
+          then :; else bad "the login screen's window manager loads labwc's default key bindings"; fi
 
           echo "== the login screen itself =="
           GREETER_DIR=/usr/share/aquarius/shell/greeter
