@@ -32,9 +32,9 @@
 # ------------------------------------------------------------------------------
 # Three sources, in order of preference:
 #
-#   Fedora        gamescope, gamemode, MangoHud, vkBasalt, protontricks,
-#                 winetricks, steam-devices, and the 32-bit graphics libraries.
-#                 Everything that can come from Fedora does.
+#   Fedora        gamescope, gamemode, MangoHud, vkBasalt, steam-devices, and
+#                 the 32-bit graphics libraries. Everything that can come from
+#                 Fedora does.
 #
 #   Terra         umu-launcher, and Steam. Terra (repos.fyralabs.com) is Fyra
 #                 Labs' Fedora add-on repository and it is where Bazzite gets
@@ -199,11 +199,22 @@ rm -f /tmp/aq-terra-probe.txt
 #   mangohud      The overlay that shows frame rate, temperatures and load in
 #                 the corner of a game. Off unless asked for; see below.
 #   vkBasalt      Optional picture sharpening and colour effects for games.
-#   protontricks  Fixes for individual Windows games running under Proton.
-#   winetricks    The same idea, one layer down. protontricks needs it.
 #   steam-devices The USB rules that let a controller, a Steam Controller or a
 #                 VR headset be used without administrator rights. Steam pulls
 #                 this in anyway; it is named here so it is ours on purpose.
+#
+# ⚠️ protontricks AND winetricks ARE DELIBERATELY NOT HERE, and it took a build
+# to find out why. They are the per-game fix-it tools for awkward Windows
+# titles, they were in the first version of this step, and between them they
+# dragged in the WHOLE OF WINE: `wine-core` alone is 1.3 GiB, plus about
+# 180 MiB of mingw64 pieces. That is roughly 1.5 GiB of an operating system
+# spent on a tool most people will never open — and spent for nothing, because
+# Steam brings its own Proton and umu-launcher fetches its own runtime, so
+# nothing else in this image touches the system Wine at all.
+#
+# Protontricks is offered as a Flatpak on the Gaming shelf instead, where it
+# costs nothing until somebody actually wants it. Same tool, same job, and the
+# image is a gigabyte and a half smaller.
 #
 # The 32-bit ones are not a mistake. A great many Windows games — and Steam's
 # own runtime — are still 32-bit programs, and a 64-bit Linux cannot run them
@@ -218,8 +229,6 @@ aq_dnf install \
     mangohud.i686 \
     vkBasalt \
     vkBasalt.i686 \
-    protontricks \
-    winetricks \
     steam-devices
 
 say "The 32-bit graphics libraries old and Windows games need"
@@ -270,7 +279,7 @@ say "Where Steam and umu came from"
 rpm -q --queryformat '       %{NAME}-%{VERSION}-%{RELEASE}  (packaged by: %{VENDOR})\n' \
     steam umu-launcher 2>&1 || true
 
-aq_installed steam umu-launcher gamescope gamemode mangohud vkBasalt protontricks winetricks steam-devices
+aq_installed steam umu-launcher gamescope gamemode mangohud vkBasalt steam-devices
 
 # ==============================================================================
 # 4. THE MESA CHECK — the one that proves the Terra rule held
@@ -727,6 +736,16 @@ if [ "${AQ_GAMING_TICKED}" -eq 0 ] 2> /dev/null; then
     ok "none of them are ticked when the window opens"
 else
     bad "${AQ_GAMING_TICKED} gaming app(s) are ticked by default — they should all be a choice"
+fi
+
+# The size decision above, made permanent. If Wine ever comes back into this
+# image it will be as a dependency of something, silently, and the only sign
+# will be an installer that is a gigabyte and a half bigger than it was.
+say "The whole of Wine did not come along for the ride"
+if rpm -q wine-core > /dev/null 2>&1; then
+    bad "wine-core is installed — that is 1.3 GiB nothing in this image needs; find what pulled it in (protontricks and winetricks are the usual answer) and offer that as a Flatpak instead"
+else
+    ok "wine-core is not in this image"
 fi
 
 # ==============================================================================

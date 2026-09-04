@@ -295,3 +295,15 @@ Branch=stable
 # saves a person from following a forum post full of terminal commands.
 [Flatpak Preinstall net.davidotek.pupgui2]
 Branch=stable
+
+# Protontricks — the per-game fix-it tool for awkward Windows titles.
+#
+# ⚠️ IT IS HERE, AND NOT IN THE OPERATING SYSTEM, FOR A MEASURED REASON. The
+# system package of the same name pulls in the whole of Wine: 1.3 GB of
+# wine-core plus about 180 MB of mingw64 pieces, in an image where nothing else
+# touches the system Wine at all — Steam brings its own Proton and umu fetches
+# its own runtime. That is a gigabyte and a half of installer spent on a tool
+# most people never open. As a Flatpak it costs nothing until somebody asks
+# for it, and it is the same tool.
+[Flatpak Preinstall com.github.Matoking.protontricks]
+Branch=stable

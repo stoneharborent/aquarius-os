@@ -19,8 +19,12 @@ Nothing to install, nothing to set up:
 | **MangoHud** | The frame-rate and temperature overlay. **Off** until you ask for it. |
 | **vkBasalt** | Optional sharpening and colour effects for games. Off until asked for. |
 | **umu-launcher** | Runs a Windows game through Proton from outside Steam. Heroic and Lutris use it. |
-| **protontricks / winetricks** | Per-game fixes for Windows titles. |
 | **Xbox controller drivers** | `xone` for the Xbox wireless dongle, `xpadneo` for Xbox Bluetooth. See below. |
+
+Four more gaming apps — **Heroic**, **Lutris**, **ProtonUp-Qt** and
+**Protontricks** — are offered unticked in the app chooser at your first login.
+Protontricks is a Flatpak rather than part of the OS because the system package
+drags in 1.5 GB of Wine that nothing else here uses.
 
 PlayStation controllers (DualShock 4, DualSense) need none of this — Linux
 supports them over USB and Bluetooth by itself.

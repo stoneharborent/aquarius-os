@@ -1666,7 +1666,8 @@ jobs:
             com.obsproject.Studio.Plugin.OBSVkCapture \
             com.obsproject.Studio.Plugin.PipeWireAudioCapture \
             org.freedesktop.Platform.VulkanLayer.OBSVkCapture \
-            com.heroicgameslauncher.hgl net.lutris.Lutris net.davidotek.pupgui2
+            com.heroicgameslauncher.hgl net.lutris.Lutris net.davidotek.pupgui2 \
+            com.github.Matoking.protontricks
           do
             if grep -qx "${want}" /tmp/ids.txt; then ok "on the list: ${want}"
             else bad "MISSING from the list: ${want}"; fi
@@ -2415,7 +2416,7 @@ jobs:
 
           echo "== the programs =="
           for pkg in steam gamescope gamemode mangohud vkBasalt umu-launcher \
-                     protontricks winetricks steam-devices terra-release; do
+                     steam-devices terra-release; do
             if rpm -q "${pkg}" > /dev/null 2>&1; then
               ok "${pkg} $(rpm -q --queryformat '%{VERSION}-%{RELEASE}' "${pkg}")"
             else
@@ -2610,7 +2611,7 @@ jobs:
           /usr/libexec/aquarius-flatpak-preinstall --catalog > /tmp/cat.txt 2>/dev/null || true
           awk -F'\t' '$4 == "Gaming" { print "     " $1 "  " $2 "  [" $5 "]" }' /tmp/cat.txt
           gaming="$(awk -F'\t' '$4 == "Gaming"' /tmp/cat.txt | wc -l)"
-          if [ "${gaming}" -ge 3 ]; then
+          if [ "${gaming}" -ge 4 ]; then
             ok "${gaming} apps on the Gaming shelf"
           else
             bad "only ${gaming} apps on the Gaming shelf"
@@ -2621,7 +2622,7 @@ jobs:
           else
             bad "${ticked} gaming app(s) are ticked by default"
           fi
-          for id in com.heroicgameslauncher.hgl net.lutris.Lutris net.davidotek.pupgui2; do
+          for id in com.heroicgameslauncher.hgl net.lutris.Lutris net.davidotek.pupgui2 com.github.Matoking.protontricks; do
             if awk -F'\t' -v want="${id}" '$1 == want { found = 1 } END { exit !found }' /tmp/cat.txt; then
               ok "${id} is offered"
             else
@@ -2638,6 +2639,19 @@ jobs:
           grep -q '"steam.desktop"' /usr/libexec/aquarius-creator-apps \
             && ok "the chooser lists Steam under Included with AquariusOS" \
             || bad "the chooser does not know Steam is included"
+
+          echo "== and the whole of Wine did not come along for the ride =="
+          # protontricks and winetricks were in the first version of this layer
+          # and between them pulled in 1.5 GB of Wine that nothing in this image
+          # uses - Steam brings its own Proton, umu fetches its own runtime.
+          # Protontricks is offered as a Flatpak instead. If Wine ever returns
+          # it will be as somebody's silent dependency, and this is the only
+          # thing that would notice.
+          if rpm -q wine-core > /dev/null 2>&1; then
+            bad "wine-core is installed — 1.3 GiB nothing in this image needs; find what pulled it in"
+          else
+            ok "wine-core is not in this image"
+          fi
 
           echo "== the note that ships in the image =="
           if [ -r /usr/share/aquarius/gaming/README.md ]; then

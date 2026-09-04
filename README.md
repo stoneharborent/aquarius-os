@@ -114,8 +114,8 @@ Resolve actually wants.
 Desktop gaming, properly, and it is **in the image now** (Phase R4): Steam,
 Proton, gamescope, gamemode, MangoHud, vkBasalt, umu, the 32-bit libraries a
 Windows game needs, and Xbox controller drivers — on both images, with nothing
-to set up. Three more launchers (Heroic, Lutris, ProtonUp-Qt) are offered,
-unticked, in the app chooser at first login.
+to set up. Four more gaming apps (Heroic, Lutris, ProtonUp-Qt, Protontricks)
+are offered, unticked, in the app chooser at first login.
 
 There is no Game Mode session — Steam's own Big Picture does that job on a
 desktop — and handheld consoles are explicitly **out of scope**: that is

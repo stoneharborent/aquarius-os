@@ -44,18 +44,18 @@ downloaded on first boot.
 | **gamemode** | A temporary performance boost while a game runs. Starts when asked, stops after. | Fedora |
 | **MangoHud** | The frame-rate/temperature overlay. Off unless you ask for it. | Fedora |
 | **vkBasalt** | Optional sharpening and colour effects in games. Off unless asked for. | Fedora |
-| **protontricks**, **winetricks** | Per-game fixes for awkward Windows titles. | Fedora |
 | **steam-devices** | The USB rules that let a controller work without administrator rights. | Fedora |
 | **32-bit graphics libraries** | Old and 32-bit Windows games need a parallel set of these. Missing them is the classic "the game starts and instantly closes". | Fedora (+ NVIDIA's own on the NVIDIA image) |
 | **xone**, **xpadneo** | Xbox wireless dongle, and Xbox controllers over Bluetooth. | Universal Blue's signed module box |
 
-And three **optional** game launchers appear in the app chooser window at your
+And four **optional** gaming apps appear in the app chooser window at your
 first login, all unticked — tick any you want:
 
 - **Heroic** — for games bought on Epic, GOG or Amazon.
 - **Lutris** — for everything else: old discs, itch.io, emulators, Battle.net.
 - **ProtonUp-Qt** — installs community versions of Proton, for the occasional
   game the built-in one will not run.
+- **Protontricks** — applies the per-game fixes some Windows titles need.
 
 Steam is **not** on that list. It is already in the operating system, so the
 chooser shows it at the top under "Included with AquariusOS" with an **Open**
@@ -65,6 +65,14 @@ button, next to Aquarius Editor and Aquarius Writer.
 > different route, and giving one question two answers makes the list harder to
 > read rather than more useful. It is one click away on Flathub for anybody who
 > wants it.
+>
+> **Protontricks is a Flatpak rather than part of the OS, and that was measured
+> rather than guessed.** The system package of the same name pulls in the whole
+> of Wine — 1.3 GB of `wine-core` plus about 180 MB of supporting pieces — in a
+> machine where nothing else touches the system Wine at all, because Steam
+> brings its own Proton and umu fetches its own runtime. That is a gigabyte and
+> a half of installer for a tool most people never open. As a Flatpak it is the
+> same tool and costs nothing until somebody asks for it.
 
 ---
 
