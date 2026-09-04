@@ -262,6 +262,10 @@ ARG IMAGE_VENDOR=stoneharborent
 #   /ctx          our scripts (/ctx/build_files), settings files
 #                 (/ctx/system_files) and the ingest helper (/ctx/ingest)
 #   /ctx-nvidia   the NVIDIA parts — empty on the AMD/Intel image, see above
+#   /ctx-akmods   Universal Blue's common box of ready-made, already-signed
+#                 kernel modules (the virtual camera and the Xbox drivers) —
+#                 and, inside it, a copy of the exact kernel they were built
+#                 for, which is the kernel AquariusOS ships. Both images.
 # A mount is borrowed for the length of one command and leaves nothing behind,
 # which is why none of our scripts end up inside the finished OS.
 #
@@ -322,7 +326,33 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     /ctx/build_files/55-aquarius-session.sh
 
+# 5.8 The kernel pin. Runs on BOTH images, and must run before ANY step that
+#     installs a kernel module.
+#
+#     Four features in this image are kernel modules — the NVIDIA driver, the
+#     OBS virtual camera, and the two Xbox controller drivers — and a kernel
+#     module only loads on the exact kernel it was built against. All four come
+#     ready-made and already signed from Universal Blue, built against whichever
+#     Fedora kernel they last rebuilt on. This step makes that kernel OUR kernel,
+#     swapping it in from the copy Universal Blue ship inside the module box for
+#     exactly this purpose.
+#
+#     ⚠️ IT USED TO LIVE INSIDE STEP 6, AND THAT WAS THE BUG. Step 6 does nothing
+#     on the AMD/Intel image, so the AMD/Intel image had no pin at all: the first
+#     time Fedora got ahead of Universal Blue it published, green, with no
+#     virtual camera and no Xbox drivers (build 33900370878, 2026-09-04).
+#     One decision, one place, both images. See docs/restart/kernel.md.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=bind,from=nvidia-src,source=/,target=/ctx-nvidia \
+    --mount=type=bind,from=akmods-src,source=/,target=/ctx-akmods \
+    --mount=type=cache,dst=/var/cache/libdnf5 \
+    NVIDIA="${NVIDIA}" /ctx/build_files/58-kernel-pin.sh
+
 # 6. NVIDIA. Does nothing at all on the AMD / Intel image.
+#
+#    After step 5.8, always: the driver has to be installed against the kernel
+#    that is finally in the image, and this step now CHECKS that match rather
+#    than making it.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=nvidia-src,source=/,target=/ctx-nvidia \
     --mount=type=cache,dst=/var/cache/libdnf5 \
@@ -349,11 +379,11 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     NVIDIA="${NVIDIA}" /ctx/build_files/62-resolve-runtime.sh
 
-# 6c. The virtual camera. Runs AFTER step 6 because step 6 sometimes replaces
-#     this image's kernel, and a kernel module belongs to one exact kernel — ask
-#     the question before the swap and the answer is about a kernel that is no
-#     longer here. On a mismatch this step skips the module and says so; it
-#     never changes which kernel AquariusOS ships.
+# 6c. The virtual camera. Runs AFTER step 5.8, because that step sometimes
+#     replaces this image's kernel and a kernel module belongs to one exact
+#     kernel — ask the question before the swap and the answer is about a kernel
+#     that is no longer here. Since 2026-09-04 a mismatch here STOPS THE BUILD:
+#     the kernel is pinned, so a mismatch can only mean something is broken.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=akmods-src,source=/,target=/ctx-akmods \
     --mount=type=cache,dst=/var/cache/libdnf5 \
@@ -408,11 +438,11 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 #     its 32-bit driver libraries (already downloaded by step 6, so this costs
 #     nothing extra), and Universal Blue's common one for xone and xpadneo.
 #
-#     ⚠️ AFTER STEP 6, ALWAYS. Step 6 sometimes replaces this image's kernel,
-#     and a kernel module belongs to one exact kernel — ask before the swap and
-#     the answer is about a kernel that is no longer here. On a mismatch this
-#     step leaves the controller drivers out and writes down why, exactly like
-#     the virtual camera in step 6c. It never changes which kernel we ship.
+#     ⚠️ AFTER STEP 5.8, ALWAYS. That step sometimes replaces this image's
+#     kernel, and a kernel module belongs to one exact kernel — ask before the
+#     swap and the answer is about a kernel that is no longer here. Since
+#     2026-09-04 a mismatch here STOPS THE BUILD, exactly like the virtual
+#     camera in step 6c, because the pin means a mismatch is a real fault.
 #
 #     There is no Game Mode session and no handheld support in here, on
 #     purpose: standing decision 6, and docs/restart/gaming.md says why.
@@ -426,12 +456,12 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 #    text login banners, and then a rebuild of the boot ramdisk so that all of
 #    it is really used.
 #
-#    ⚠️ THIS STEP MUST STAY AFTER STEP 6, AND DO NOT REORDER IT.
+#    ⚠️ THIS STEP MUST STAY AFTER STEP 5.8, AND DO NOT REORDER IT.
 #    It rebuilds the boot ramdisk, and a boot ramdisk is built for one exact
-#    kernel version. Step 6 sometimes REPLACES this image's kernel (the NVIDIA
-#    driver only works with the kernel it was compiled against). Run this before
-#    that and the NVIDIA image ends up with a ramdisk for a kernel that no
-#    longer exists — an image that builds, publishes, and then will not start.
+#    kernel version. Step 5.8 sometimes REPLACES this image's kernel (the
+#    ready-made modules only work with the kernel they were compiled against).
+#    Run this before that and the image ends up with a ramdisk for a kernel that
+#    no longer exists — an image that builds, publishes, and then will not start.
 #    The file's own header explains it at length.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
