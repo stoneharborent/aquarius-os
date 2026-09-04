@@ -215,7 +215,12 @@ wanted_ids() { wanted_entries | cut -f 1; }
 catalog() {
     local entries
     entries="$(wanted_entries)"
-    [ -n "${entries}" ] || return 1
+    # Silence here would be read by a chooser window as "there are no apps",
+    # which is never true on an image that ships a list. Say what is wrong.
+    if [ -z "${entries}" ]; then
+        say "ERROR — the shipped app list could not be read; this is a bug in AquariusOS, not something you did" >&2
+        return 1
+    fi
     if [ ! -r "${CATALOG_FILE}" ]; then
         say "ERROR — ${CATALOG_FILE} is missing from this copy of AquariusOS; this is a bug in AquariusOS, not something you did" >&2
         return 1
