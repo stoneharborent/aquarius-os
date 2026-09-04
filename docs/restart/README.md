@@ -269,6 +269,7 @@ thing locally. `just` with no arguments lists everything available.
 - **Making camera files open in an editor (the ingest helper):** [`ingest.md`](ingest.md)
 - **Mac-style keyboard shortcuts (Copy is Command-C):** [`aquarius-keys.md`](aquarius-keys.md)
 - **How big things are on the screen (and why it was too small):** [`aquarius-display.md`](aquarius-display.md)
+- **The login screen — why it looked like stock Fedora, and the two answers:** [`login.md`](login.md)
 - **DaVinci Resolve — installing it, and why it lives in a container:** [`resolve.md`](resolve.md)
 - **Gaming: what ships, the launch options worth knowing, and what is deliberately not here:** [`gaming.md`](gaming.md)
 - **Which kernel AquariusOS ships, and why it is pinned:** [`kernel.md`](kernel.md)

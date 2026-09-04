@@ -1,0 +1,291 @@
+#!/usr/bin/bash
+# =============================================================================
+# aquarius-gdm-display — make the LOGIN SCREEN the same size as your desktop
+# =============================================================================
+# WHAT PROBLEM THIS SOLVES, IN PLAIN ENGLISH
+#
+# There are two different programs on this computer that draw a screen with
+# your name and a password box on it, and people reasonably assume they are one
+# thing:
+#
+#   THE LOGIN SCREEN   the one you see straight after the computer boots,
+#                      before anybody has logged in. That is GDM, GNOME's own
+#                      login program. It runs as its own user, "gdm", with its
+#                      own settings, and it has never seen your settings.
+#
+#   THE LOCK SCREEN    the one you see when you walk away and come back. That
+#                      one is drawn INSIDE your session, by your desktop, with
+#                      your wallpaper and your screen size.
+#
+# On Royce's 55" 4K monitor on 2026-09-04 the second looked right and the first
+# looked tiny: little name tiles in the middle of an enormous flat grey screen.
+# Nothing was broken. GDM had simply never been told that this monitor wants to
+# be run at 125%, because the place that answer is written down —
+# ~/.config/monitors.xml, inside a home folder — is a place the "gdm" user
+# cannot read.
+#
+# This program is the missing messenger. It runs as root, finds the display
+# arrangement the people who use this computer have already chosen, and puts a
+# copy somewhere the login screen can read it.
+#
+# -----------------------------------------------------------------------------
+# WHERE IT PUTS THE COPY, AND WHY IN TWO PLACES
+# -----------------------------------------------------------------------------
+#   /etc/xdg/monitors.xml               THE PRIMARY TARGET.
+#       GNOME's window manager (mutter) looks for a display arrangement in two
+#       tiers: your own (~/.config/monitors.xml) and a SYSTEM one, found through
+#       the standard XDG_CONFIG_DIRS search path, whose default first entry is
+#       /etc/xdg. A system-level file is exactly the right shape for this
+#       problem: it is the machine's answer, any user's own file still beats it,
+#       and the "gdm" user can read it because it is not inside anybody's home.
+#       Reference: mutter's own doc/monitor-configuration.md.
+#
+#   /var/lib/gdm/.config/monitors.xml   THE OLDER TARGET, kept as a belt.
+#       This is the path GNOME's system-administrator guide has told people to
+#       copy to for a decade, and it is what every guide on the internet says.
+#       Reports against GDM 49 say it is no longer read reliably, which is why
+#       it is second and not first. Writing both costs nothing and means we are
+#       right whichever one this version of GDM honours.
+#
+#   /var/lib/aquarius/display-scale     ONE NUMBER, for our own login screen.
+#       Not GNOME's. This is the scale the AquariusOS greeter (greetd + the
+#       Aquarius Shell) reads, because it runs as an unprivileged "greeter" user
+#       that also cannot see inside anybody's home. See docs/restart/login.md.
+#
+# -----------------------------------------------------------------------------
+# WHEN IT RUNS
+# -----------------------------------------------------------------------------
+#   1. At every boot, before the login screen starts
+#      (aquarius-gdm-display.service, ordered Before=display-manager.service).
+#   2. Every time somebody logs OUT of a session
+#      (/etc/gdm/PostSession/Default, which GDM runs as root at that moment).
+#
+# Between the two, the login screen is never more than one logout behind the
+# desktop. The first covers "I changed the scale, then rebooted"; the second
+# covers "I changed the scale, then logged out to switch sessions".
+#
+# -----------------------------------------------------------------------------
+# WHAT IT WILL NOT DO
+# -----------------------------------------------------------------------------
+# It will not INVENT a display arrangement. If nobody on this computer has ever
+# opened Settings > Displays and chosen a scale, there is no monitors.xml to
+# copy, and this program says so and changes nothing. Guessing here would mean
+# writing a file naming a monitor and a video mode we cannot see from outside a
+# running session, and a wrong monitors.xml is worse than none: it can leave a
+# screen blank.
+#
+# The fix in that case is one sentence long and is in docs/restart/login.md:
+# open Settings > Displays, set Scale, log out.
+#
+# -----------------------------------------------------------------------------
+# RUNNING IT BY HAND
+# -----------------------------------------------------------------------------
+#   sudo /usr/libexec/aquarius-gdm-display            do it
+#   sudo /usr/libexec/aquarius-gdm-display --dry-run  say what it would do
+#   sudo /usr/libexec/aquarius-gdm-display --status   what the login screen has
+# =============================================================================
+
+set -uo pipefail
+
+AQ_SYSTEM_XML="/etc/xdg/monitors.xml"
+AQ_GDM_DIR="/var/lib/gdm/.config"
+AQ_GDM_XML="${AQ_GDM_DIR}/monitors.xml"
+AQ_STATE_DIR="/var/lib/aquarius"
+AQ_SCALE_FILE="${AQ_STATE_DIR}/display-scale"
+AQ_SCALE_HELPER="/usr/libexec/aquarius-display-scale"
+
+AQ_DRY_RUN=0
+
+say() { echo "aquarius-gdm-display: $*"; }
+
+usage() {
+    sed -n '2,90p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+case "${1:-}" in
+    -h | --help | help)
+        usage
+        exit 0
+        ;;
+    --dry-run)
+        AQ_DRY_RUN=1
+        ;;
+    --status)
+        echo "The login screen's copy:"
+        for f in "${AQ_SYSTEM_XML}" "${AQ_GDM_XML}"; do
+            if [ -r "${f}" ]; then
+                echo "  ${f}  ($(wc -c < "${f}" | tr -d ' ') bytes)"
+                sed -n 's/.*<scale>\(.*\)<\/scale>.*/    scale: \1/p' "${f}" | sort -u
+            else
+                echo "  ${f}  (not written yet)"
+            fi
+        done
+        if [ -r "${AQ_SCALE_FILE}" ]; then
+            echo "  ${AQ_SCALE_FILE}  -> $(cat "${AQ_SCALE_FILE}")"
+        else
+            echo "  ${AQ_SCALE_FILE}  (not written yet)"
+        fi
+        exit 0
+        ;;
+    "")
+        :
+        ;;
+    *)
+        echo "aquarius-gdm-display: '$1' is not something this understands." >&2
+        echo "                      Try --help, --dry-run or --status." >&2
+        exit 1
+        ;;
+esac
+
+if [ "$(id -u)" -ne 0 ] && [ "${AQ_DRY_RUN}" -eq 0 ]; then
+    echo "aquarius-gdm-display: this has to be run as root — it writes into /etc" >&2
+    echo "                      and into the login screen's own folder." >&2
+    echo "                      Try:  sudo /usr/libexec/aquarius-gdm-display" >&2
+    exit 1
+fi
+
+# -----------------------------------------------------------------------------
+# 1. Find the display arrangement to copy
+# -----------------------------------------------------------------------------
+# Every real person on this computer has a home folder under /home. We take the
+# MOST RECENTLY CHANGED monitors.xml among them, because on a single-person
+# machine there is only one, and on a shared one the person who most recently
+# adjusted their screens is the best available guess at what the screen in front
+# of the machine wants. (The login screen is one screen shared by everybody; it
+# can only have one answer.)
+#
+# Timestamps are used here to CHOOSE BETWEEN candidate files, which is a
+# different thing from the project's "never check a timestamp" rule. That rule
+# is about proving a build step ran; nothing is being proved here.
+AQ_NEWEST=""
+AQ_NEWEST_HOME=""
+for aq_home in /home/*; do
+    [ -d "${aq_home}" ] || continue
+    aq_candidate="${aq_home}/.config/monitors.xml"
+    [ -r "${aq_candidate}" ] || continue
+    if [ -z "${AQ_NEWEST}" ] || [ "${aq_candidate}" -nt "${AQ_NEWEST}" ]; then
+        AQ_NEWEST="${aq_candidate}"
+        AQ_NEWEST_HOME="${aq_home}"
+    fi
+done
+
+if [ -z "${AQ_NEWEST}" ]; then
+    say "nobody on this computer has chosen a screen size yet, so there is"
+    say "nothing to give the login screen. It will run at 100%."
+    say ""
+    say "To fix that: open Settings > Displays, set Scale to what you want,"
+    say "then log out. The login screen will match from then on."
+    exit 0
+fi
+
+say "using ${AQ_NEWEST}"
+
+# -----------------------------------------------------------------------------
+# 2. Check it before trusting it
+# -----------------------------------------------------------------------------
+# A truncated or half-written monitors.xml handed to the login screen is a
+# genuinely bad outcome — mutter can end up with no usable output configuration
+# and show a blank screen. So: it has to parse as XML, and it has to actually be
+# a monitors file, before it goes anywhere.
+if ! python3 -c '
+import sys, xml.etree.ElementTree as ET
+try:
+    root = ET.parse(sys.argv[1]).getroot()
+except Exception as problem:
+    print("  it is not valid XML: %s" % problem)
+    sys.exit(1)
+if root.tag != "monitors":
+    print("  its top element is <%s>, not <monitors>" % root.tag)
+    sys.exit(1)
+if root.find("configuration") is None:
+    print("  it has no <configuration> in it")
+    sys.exit(1)
+sys.exit(0)
+' "${AQ_NEWEST}"; then
+    say "that file is not a usable display arrangement, so nothing was copied."
+    say "The login screen keeps whatever it had. Nothing is broken."
+    exit 0
+fi
+
+AQ_SCALES="$(sed -n 's/.*<scale>\(.*\)<\/scale>.*/\1/p' "${AQ_NEWEST}" | sort -u | tr '\n' ' ')"
+say "the screen sizes in it: ${AQ_SCALES:-(none named — the monitors run at 100%)}"
+
+# -----------------------------------------------------------------------------
+# 3. Work out the one number our own greeter reads
+# -----------------------------------------------------------------------------
+# aquarius-display-scale already knows how to answer "what is this session
+# scaled by", and it takes the two files it reads as hidden arguments so that it
+# can be tested without a monitor. That is exactly the shape we need here: run
+# it as root, point it at this person's two files, and it falls through to the
+# monitors.xml answer because wlr-randr cannot answer from outside a session.
+#
+# Re-using it rather than parsing the XML a second time is deliberate: two
+# pieces of code that both work out "the scale" is two pieces of code that can
+# disagree, and this project has the Aquarius Session and the login screen
+# needing the same answer.
+AQ_SCALE="1"
+if [ -x "${AQ_SCALE_HELPER}" ]; then
+    AQ_SCALE_SAYS="$("${AQ_SCALE_HELPER}" --effective-scale \
+        --monitors-xml "${AQ_NEWEST}" \
+        --conf "${AQ_NEWEST_HOME}/.config/aquarius/display.conf" 2> /dev/null)"
+    case "${AQ_SCALE_SAYS}" in
+        [0-9]* ) AQ_SCALE="${AQ_SCALE_SAYS}" ;;
+        *)       say "WARNING: ${AQ_SCALE_HELPER} did not give a number; using 1." ;;
+    esac
+else
+    say "WARNING: ${AQ_SCALE_HELPER} is missing; the greeter's scale file will say 1."
+fi
+say "our own greeter will draw at ${AQ_SCALE}x"
+
+if [ "${AQ_DRY_RUN}" -eq 1 ]; then
+    say "--dry-run: nothing was written."
+    say "  would write ${AQ_SYSTEM_XML}"
+    say "  would write ${AQ_GDM_XML}"
+    say "  would write ${AQ_SCALE_FILE} containing ${AQ_SCALE}"
+    exit 0
+fi
+
+# -----------------------------------------------------------------------------
+# 4. Write the copies
+# -----------------------------------------------------------------------------
+# install(1) rather than cp: it sets the owner and the permissions in the same
+# breath, and it writes to a temporary name and renames, so a reader can never
+# see a half-written file.
+install -D -o root -g root -m 0644 "${AQ_NEWEST}" "${AQ_SYSTEM_XML}"
+say "wrote ${AQ_SYSTEM_XML}"
+
+# The gdm user's own folder. This only exists if the gdm package is installed,
+# which it always is here — but a missing user should be a message, not a stack
+# of errors.
+if getent passwd gdm > /dev/null 2>&1; then
+    install -d -o gdm -g gdm -m 0700 "${AQ_GDM_DIR}"
+    install -o gdm -g gdm -m 0644 "${AQ_NEWEST}" "${AQ_GDM_XML}"
+    say "wrote ${AQ_GDM_XML}"
+else
+    say "there is no 'gdm' user on this machine, so the second copy was skipped."
+fi
+
+install -d -o root -g root -m 0755 "${AQ_STATE_DIR}"
+printf '%s\n' "${AQ_SCALE}" > "${AQ_SCALE_FILE}"
+chmod 0644 "${AQ_SCALE_FILE}"
+say "wrote ${AQ_SCALE_FILE}"
+
+# -----------------------------------------------------------------------------
+# 5. SELinux
+# -----------------------------------------------------------------------------
+# AquariusOS runs SELinux in enforcing mode. A file copied into another user's
+# folder keeps the security label of where it came from, and a file under
+# /var/lib/gdm wearing a home-folder label is a file the login screen is refused
+# permission to read — with the refusal landing in the audit log, where nobody
+# looks, and the symptom being "the setting did nothing".
+#
+# restorecon puts the label the system's own policy says that path should have.
+if command -v restorecon > /dev/null 2>&1; then
+    restorecon -F "${AQ_SYSTEM_XML}" 2> /dev/null || true
+    [ -e "${AQ_GDM_XML}" ] && restorecon -RF "${AQ_GDM_DIR}" 2> /dev/null || true
+    restorecon -RF "${AQ_STATE_DIR}" 2> /dev/null || true
+    say "security labels put back to what the policy says they should be"
+fi
+
+say "done. The login screen will use this arrangement from the next time it starts."
+exit 0
