@@ -151,7 +151,7 @@ APPLICATIONS = "/usr/share/applications"
 # The order the shelves appear in. An app whose category is not one of these
 # still appears — at the end, under its own heading — rather than vanishing,
 # because a missing app is a much worse fault than an unexpected heading.
-CATEGORY_ORDER = ["Video", "Audio", "Design", "Streaming", "Utilities"]
+CATEGORY_ORDER = ["Video", "Audio", "Design", "Streaming", "Utilities", "Gaming"]
 
 # What to draw when we have no real icon: a symbol from the Adwaita icon theme,
 # which is always present. Never a blank square.
@@ -161,13 +161,23 @@ CATEGORY_ICON = {
     "Design": "image-x-generic-symbolic",
     "Streaming": "camera-web-symbolic",
     "Utilities": "applications-utilities-symbolic",
+    "Gaming": "input-gaming-symbolic",
 }
 FALLBACK_ICON = "application-x-executable-symbolic"
 
 # The apps that are already inside the image and are not downloads. Listed here
 # by their menu entry, not by name: the name, the sentence and the icon are read
 # out of the entry itself, so this window cannot disagree with the app grid.
-INCLUDED_DESKTOP = ["aquarius-editor.desktop", "aquarius-writer.desktop"]
+#
+# Steam is on this list rather than on the Gaming shelf because it is a system
+# program on AquariusOS, not a Flatpak — see the note at the top of the Gaming
+# section in the .preinstall file. An entry whose file is missing is skipped
+# silently, so this list never breaks the window.
+INCLUDED_DESKTOP = [
+    "aquarius-editor.desktop",
+    "aquarius-writer.desktop",
+    "steam.desktop",
+]
 
 
 # -----------------------------------------------------------------------------

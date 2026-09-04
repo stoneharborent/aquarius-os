@@ -253,3 +253,57 @@ Branch=stable
 #    it installs what it can and tries the stragglers again at the next start.
 [Flatpak Preinstall com.google.Chrome]
 Branch=stable
+
+
+# ==============================================================================
+# GAMING
+# ==============================================================================
+# ⚠️ STEAM IS NOT ON THIS LIST AND MUST NOT BE ADDED TO IT.
+#
+# Steam is built into AquariusOS as an ordinary system program, installed by
+# build_files/68-gaming.sh from the Terra repository, exactly as Bazzite does
+# it. That is not an inconsistency with "creator apps ship as Flatpaks" — it is
+# the one place where the sandbox is the problem rather than the solution. A
+# sandboxed Steam cannot see controllers properly, cannot reach an external
+# drive full of games without being told to, and keeps its own separate copy of
+# the graphics driver that has to match the system's. Every gaming-focused
+# Linux ships Steam as a system package for those three reasons.
+#
+# So Steam is already there when the machine starts, and the chooser shows it
+# under "Included with AquariusOS" rather than as something to install.
+#
+# The three below are the OTHER game launchers — the ones worth offering and
+# not worth assuming. None of them is ticked by default
+# (Recommended=false in catalog.ini).
+# ------------------------------------------------------------------------------
+
+# Heroic — the launcher for games bought on Epic, GOG and Amazon. Steam is not
+# the only shop, and none of the others has a Linux client of their own.
+[Flatpak Preinstall com.heroicgameslauncher.hgl]
+Branch=stable
+
+# Lutris — the launcher for everything that is not on a modern shop at all: old
+# Windows discs, itch.io downloads, emulators, Battle.net. It runs Windows games
+# through umu-launcher, which AquariusOS installs as a system package, so it
+# works properly here rather than downloading its own copy.
+[Flatpak Preinstall net.lutris.Lutris]
+Branch=stable
+
+# ProtonUp-Qt — installs alternative versions of Proton (GE-Proton and friends).
+# Occasionally a Windows game will not run on the Proton that comes with Steam
+# and runs perfectly on a community build. This is the button for that, and it
+# saves a person from following a forum post full of terminal commands.
+[Flatpak Preinstall net.davidotek.pupgui2]
+Branch=stable
+
+# Protontricks — the per-game fix-it tool for awkward Windows titles.
+#
+# ⚠️ IT IS HERE, AND NOT IN THE OPERATING SYSTEM, FOR A MEASURED REASON. The
+# system package of the same name pulls in the whole of Wine: 1.3 GB of
+# wine-core plus about 180 MB of mingw64 pieces, in an image where nothing else
+# touches the system Wine at all — Steam brings its own Proton and umu fetches
+# its own runtime. That is a gigabyte and a half of installer spent on a tool
+# most people never open. As a Flatpak it costs nothing until somebody asks
+# for it, and it is the same tool.
+[Flatpak Preinstall com.github.Matoking.protontricks]
+Branch=stable

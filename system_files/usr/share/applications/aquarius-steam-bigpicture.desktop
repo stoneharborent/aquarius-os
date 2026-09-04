@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Steam (Big Picture)
+GenericName=Game Launcher
+Comment=Steam's full-screen, controller-first interface — the couch mode of a desktop PC
+Exec=steam -bigpicture
+TryExec=steam
+Icon=steam
+Terminal=false
+StartupNotify=true
+Categories=Game;
+Keywords=steam;big picture;bigpicture;games;gaming;controller;gamepad;couch;tv;fullscreen;

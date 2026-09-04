@@ -58,6 +58,10 @@ on:
       # Aquarius Desktop to go to GNOME bounced off the login screen two or
       # three times. Same arrangement again: builds and checks, never publishes.
       - restart/session-teardown
+      # Phase R4 — the desktop gaming layer: Steam, Proton's supporting cast,
+      # the controller drivers, and the Gaming shelf in the app chooser. Same
+      # arrangement: builds and checks, never publishes.
+      - restart/r4-gaming
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -1833,7 +1837,9 @@ jobs:
             org.localsend.localsend_app md.obsidian.Obsidian com.google.Chrome \
             com.obsproject.Studio.Plugin.OBSVkCapture \
             com.obsproject.Studio.Plugin.PipeWireAudioCapture \
-            org.freedesktop.Platform.VulkanLayer.OBSVkCapture
+            org.freedesktop.Platform.VulkanLayer.OBSVkCapture \
+            com.heroicgameslauncher.hgl net.lutris.Lutris net.davidotek.pupgui2 \
+            com.github.Matoking.protontricks
           do
             if grep -qx "${want}" /tmp/ids.txt; then ok "on the list: ${want}"
             else bad "MISSING from the list: ${want}"; fi
@@ -1986,20 +1992,28 @@ jobs:
           if [ "${FIELDS}" = "8 " ]; then ok "every catalog line has the promised 8 fields"
           else bad "catalog lines have ${FIELDS}fields — the chooser is written against exactly 8"; fi
 
-          if awk -F'\t' '$4 !~ /^(Video|Audio|Design|Streaming|Utilities)$/' /tmp/catalog.txt | grep -q .; then
+          # Six shelves since R4, when Gaming was added (build_files/68-gaming.sh).
+          SHELVES='^(Video|Audio|Design|Streaming|Utilities|Gaming)$'
+          if awk -F'\t' -v s="${SHELVES}" '$4 !~ s' /tmp/catalog.txt | grep -q .; then
             bad "an app names a category the chooser cannot draw:"
-            awk -F'\t' '$4 !~ /^(Video|Audio|Design|Streaming|Utilities)$/ {print "       " $1 " -> " $4}' /tmp/catalog.txt
+            awk -F'\t' -v s="${SHELVES}" '$4 !~ s {print "       " $1 " -> " $4}' /tmp/catalog.txt
           else
-            ok "every app sits on one of the five shelves the chooser draws"
+            ok "every app sits on one of the six shelves the chooser draws"
           fi
 
-          # 11 apps a person picks from, 5 plug-ins that follow OBS Studio.
+          # The apps a person picks from, and the plug-ins that follow OBS
+          # Studio. Derived from the shipped list rather than written down as a
+          # number, so that adding an app to AquariusOS does not mean editing
+          # this file — the invariant is that the two agree, not that either is
+          # any particular size. The floor is there so an empty catalog, which
+          # would satisfy "they agree" perfectly, still fails.
           VISIBLE="$(awk -F'\t' '$6=="runtime:no"' /tmp/catalog.txt | wc -l)"
           HIDDEN="$(awk -F'\t' '$6=="runtime:yes"' /tmp/catalog.txt | wc -l)"
-          if [ "${VISIBLE}" -eq 11 ] && [ "${HIDDEN}" -eq 5 ]; then
+          EXPECT_VISIBLE=$(( blocks - runtimes ))
+          if [ "${VISIBLE}" -eq "${EXPECT_VISIBLE}" ] && [ "${HIDDEN}" -eq "${runtimes}" ] && [ "${VISIBLE}" -ge 10 ]; then
             ok "the chooser would offer ${VISIBLE} apps and quietly bring ${HIDDEN} plug-ins with OBS"
           else
-            bad "the chooser would offer ${VISIBLE} apps with ${HIDDEN} plug-ins — expected 11 and 5"
+            bad "the chooser would offer ${VISIBLE} apps with ${HIDDEN} plug-ins — the shipped list says ${EXPECT_VISIBLE} and ${runtimes}"
           fi
 
           # Every plug-in must say which app it belongs to, or it can never be
@@ -2601,6 +2615,287 @@ jobs:
             --entrypoint /usr/bin/bash \
             -e EXPECTED_NVIDIA="${NVIDIA}" \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-resolve.sh
+
+      # ------------------------------------------------------------------------
+      # The gaming layer (Phase R4)
+      # ------------------------------------------------------------------------
+      # ⚠️ WHAT THIS CAN AND CANNOT PROVE.
+      #
+      # There is no graphics card in a GitHub runner, no controller plugged
+      # into it and no Steam account, so nothing here can show that a game
+      # runs. What it CAN show is that every piece AquariusOS is responsible
+      # for arrived and is the piece we meant: the programs, the 32-bit
+      # libraries a Windows game needs, the controller kernel modules matched
+      # to THIS image's kernel, the udev rules, the Gaming shelf in the app
+      # chooser — and, the check that matters most, that adding Terra did not
+      # quietly replace Fedora's graphics driver.
+      #
+      # The real proof is the bench: docs/restart/gaming.md.
+      - name: Check the gaming layer is really in there
+        run: |
+          set -euo pipefail
+          cat > /tmp/verify-gaming.sh <<'SCRIPT'
+          set -u
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+
+          echo "== the programs =="
+          for pkg in steam gamescope gamemode mangohud vkBasalt umu-launcher \
+                     steam-devices terra-release; do
+            if rpm -q "${pkg}" > /dev/null 2>&1; then
+              ok "${pkg} $(rpm -q --queryformat '%{VERSION}-%{RELEASE}' "${pkg}")"
+            else
+              bad "${pkg} is NOT installed"
+            fi
+          done
+
+          echo "== where they came from =="
+          rpm -q --queryformat '     %{NAME}-%{VERSION} (vendor: %{VENDOR})\n' \
+            steam umu-launcher gamescope mangohud 2>&1 || true
+
+          echo "== THE ONE THAT MATTERS: Fedora still owns the graphics driver =="
+          # Terra publishes a Valve-patched Mesa. We deliberately do not take
+          # it: this machine's job is colour-accurate video work and a graphics
+          # driver that moves on a gaming schedule is the wrong risk. If a
+          # future edit ever adds terra-release-mesa, everything else would
+          # still pass and only this check would notice.
+          if rpm -q terra-release-mesa > /dev/null 2>&1; then
+            bad "terra-release-mesa is installed — the graphics driver is no longer Fedora's"
+          else
+            ok "terra-release-mesa is not installed"
+          fi
+          for pkg in mesa-dri-drivers mesa-vulkan-drivers; do
+            vendor="$(rpm -q --queryformat '%{VENDOR}' "${pkg}" 2>/dev/null || echo missing)"
+            echo "     ${pkg}: ${vendor}"
+            case "${vendor}" in
+              *Fedora*) ok "${pkg} is Fedora's" ;;
+              *)        bad "${pkg}'s vendor is '${vendor}' — not Fedora's" ;;
+            esac
+          done
+
+          echo "== Terra is present but switched off =="
+          # So that nothing on a user's machine can take a Terra package by
+          # accident later. Read out of the repository file itself.
+          if [ -r /etc/yum.repos.d/terra.repo ]; then
+            ok "the Terra repository file is in the image"
+            sed 's/^/     /' /etc/yum.repos.d/terra.repo
+            if dnf repolist --enabled 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx 'terra'; then
+              bad "Terra is ENABLED — it could replace Fedora packages without anybody asking"
+            else
+              ok "Terra is disabled by default"
+            fi
+          else
+            bad "there is no /etc/yum.repos.d/terra.repo — Steam's source is not recorded in the image"
+          fi
+
+          echo "== the 32-bit libraries a Windows game needs =="
+          # Missing these is the classic "the game launches and instantly
+          # closes" on Linux, and it produces no error message worth reading.
+          for pkg in mesa-dri-drivers mesa-vulkan-drivers mesa-libGL vulkan-loader mangohud vkBasalt; do
+            if rpm -q "${pkg}.i686" > /dev/null 2>&1; then
+              ok "${pkg}.i686"
+            else
+              bad "${pkg}.i686 is missing — 32-bit games would not start"
+            fi
+          done
+
+          if [ "${EXPECTED_NVIDIA}" = "1" ]; then
+            echo "== and the 32-bit NVIDIA libraries (NVIDIA image only) =="
+            if rpm -q --queryformat '%{ARCH}\n' nvidia-driver-libs 2>/dev/null | grep -qx i686; then
+              ok "nvidia-driver-libs is present in its 32-bit form"
+              rpm -q --queryformat '     %{NAME}-%{VERSION}.%{ARCH}\n' nvidia-driver-libs
+            else
+              bad "no 32-bit nvidia-driver-libs — 32-bit games would not reach the graphics card"
+            fi
+          fi
+
+          echo "== the Xbox controller drivers =="
+          # These may legitimately be absent: the ready-made modules are built
+          # against one exact kernel, and for a day or two after a Fedora
+          # kernel update they do not match ours. The rule is that the image
+          # must SAY which happened, and must never claim a driver it does not
+          # have. So the stamp file is required; its answer is not.
+          stamp=/usr/share/aquarius/gaming/controllers.txt
+          if [ -r "${stamp}" ]; then
+            ok "the image records what happened to the controller drivers"
+            sed 's/^/     /' "${stamp}"
+          else
+            bad "${stamp} is missing — the image cannot say whether the Xbox drivers are in it"
+          fi
+          kver="$(ls -1 /usr/lib/modules | head -1)"
+          echo "     this image runs kernel: ${kver}"
+          for pair in "xone:xone_dongle" "xpadneo:hid-xpadneo"; do
+            name="${pair%%:*}"; mod="${pair##*:}"
+            status="$(sed -n "s/^${name}=//p" "${stamp}" 2>/dev/null || true)"
+            found="$(find "/usr/lib/modules/${kver}" -name "${mod}.ko*" 2>/dev/null | head -1)"
+            case "${status}" in
+              installed)
+                if [ -n "${found}" ]; then
+                  ok "${name}: says installed, and ${mod} really is under this kernel"
+                else
+                  bad "${name}: the stamp says installed but no ${mod} module is under ${kver}"
+                fi
+                if grep -q "${mod}" "/usr/lib/modules/${kver}/modules.dep" 2>/dev/null; then
+                  ok "${name}: the kernel's index knows about it"
+                else
+                  bad "${name}: not in modules.dep — the kernel would not find it at boot"
+                fi
+                ;;
+              unavailable)
+                if [ -n "${found}" ]; then
+                  bad "${name}: the stamp says unavailable but a module is there — the image is lying about itself"
+                else
+                  ok "${name}: not in this image, and the image says so (kernel skew — rebuild tomorrow)"
+                fi
+                ;;
+              *)
+                bad "${name}: the stamp says '${status}', which is neither installed nor unavailable"
+                ;;
+            esac
+          done
+
+          echo "== the controller USB rules =="
+          if rpm -ql steam-devices 2>/dev/null | grep -q 'rules.d'; then
+            ok "steam-devices installed udev rules"
+            rpm -ql steam-devices | grep 'rules.d' | sed 's/^/     /'
+          else
+            bad "no udev rules from steam-devices — controllers would need administrator rights"
+          fi
+
+          echo "== the memory-map limit Proton needs =="
+          # Games under Proton ask for far more memory maps than the historic
+          # Linux limit allows, and going over it does not fail cleanly.
+          grep -rhs '^[[:space:]]*vm\.max_map_count' /usr/lib/sysctl.d /etc/sysctl.d > /tmp/mm.txt 2>/dev/null || true
+          if [ -s /tmp/mm.txt ]; then
+            sed 's/^/     /' /tmp/mm.txt
+            highest="$(awk -F= '{gsub(/[^0-9]/,"",$2); if ($2+0>m) m=$2+0} END {print m+0}' /tmp/mm.txt)"
+            if [ "${highest}" -ge 1048576 ]; then
+              ok "vm.max_map_count is ${highest}"
+            else
+              bad "vm.max_map_count is only ${highest} — Proton games would stutter and then die"
+            fi
+          else
+            bad "nothing sets vm.max_map_count at all"
+          fi
+
+          echo "== gamemode starts on demand, and is not enabled at boot =="
+          if [ -r /usr/share/dbus-1/services/com.feralinteractive.GameMode.service ]; then
+            ok "gamemode is wired to start when a game asks for it"
+          else
+            bad "gamemode has no D-Bus activation file"
+          fi
+
+          echo "== MangoHud is installed and OFF =="
+          # An overlay stuck over every 3D program — Blender included — is
+          # nobody's idea of a default.
+          if grep -rqs 'MANGOHUD=1' /usr/lib/environment.d /etc/environment.d 2>/dev/null; then
+            bad "something switches MangoHud on for everything"
+          else
+            ok "nothing turns MangoHud on by itself"
+          fi
+
+          echo "== gamescope's permissions came from Fedora, not from us =="
+          # Fedora's own gamescope package grants CAP_SYS_NICE in the RPM. That
+          # permission has a history of confusing gamescope on NVIDIA
+          # (gamescope #521 / #1370), but overriding a distribution's packaging
+          # on every build, for a fault we have not seen on our own hardware,
+          # is the wrong trade — docs/restart/gaming.md carries the one-line
+          # test to run if the bench ever does see it.
+          #
+          # What must never happen is OUR build quietly granting a capability.
+          # So the question is not "are there capabilities" but "did the
+          # package declare them".
+          declared="$(rpm -q --filecaps gamescope 2>/dev/null | awk '$1 == "/usr/bin/gamescope" { $1 = ""; sub(/^[[:space:]]+/, ""); print }')"
+          echo "     the package declares: ${declared:-(none)}"
+          if command -v getcap > /dev/null 2>&1; then
+            actual="$(getcap /usr/bin/gamescope 2>/dev/null | awk '{ $1 = ""; sub(/^[[:space:]]+/, ""); print }')"
+            echo "     the file actually has: ${actual:-(none)}"
+            if [ -z "${actual}" ]; then
+              ok "gamescope carries no capabilities at all"
+            elif [ -n "${declared}" ]; then
+              ok "the capabilities on gamescope are the ones Fedora's package ships"
+            else
+              bad "gamescope has capabilities its package does not declare — something in the build granted them"
+            fi
+          else
+            echo "     (getcap is not in the image; the package's declaration above is the answer)"
+          fi
+
+          echo "== the menu entries =="
+          for f in /usr/share/applications/steam.desktop \
+                   /usr/share/applications/aquarius-steam-bigpicture.desktop; do
+            if [ -r "$f" ]; then ok "$(basename "$f")"; else bad "$f is missing"; fi
+          done
+          grep -q '^Exec=steam -bigpicture$' /usr/share/applications/aquarius-steam-bigpicture.desktop \
+            && ok "the Big Picture entry starts Steam full screen" \
+            || bad "the Big Picture entry does not run 'steam -bigpicture'"
+
+          echo "== the Gaming shelf in the app chooser =="
+          # Read with the chooser's own parser, in the finished image — the
+          # same discipline as the creator apps, and for the same reason.
+          /usr/libexec/aquarius-flatpak-preinstall --catalog > /tmp/cat.txt 2>/dev/null || true
+          awk -F'\t' '$4 == "Gaming" { print "     " $1 "  " $2 "  [" $5 "]" }' /tmp/cat.txt
+          gaming="$(awk -F'\t' '$4 == "Gaming"' /tmp/cat.txt | wc -l)"
+          if [ "${gaming}" -ge 4 ]; then
+            ok "${gaming} apps on the Gaming shelf"
+          else
+            bad "only ${gaming} apps on the Gaming shelf"
+          fi
+          ticked="$(awk -F'\t' '$4 == "Gaming" && $5 == "recommended:yes"' /tmp/cat.txt | wc -l)"
+          if [ "${ticked}" -eq 0 ]; then
+            ok "none of them are ticked by default"
+          else
+            bad "${ticked} gaming app(s) are ticked by default"
+          fi
+          for id in com.heroicgameslauncher.hgl net.lutris.Lutris net.davidotek.pupgui2 com.github.Matoking.protontricks; do
+            if awk -F'\t' -v want="${id}" '$1 == want { found = 1 } END { exit !found }' /tmp/cat.txt; then
+              ok "${id} is offered"
+            else
+              bad "${id} is not on the shelf"
+            fi
+          done
+          # Steam must NOT be a Flatpak card — it is a system program, and the
+          # chooser shows it in the "Included with AquariusOS" group instead.
+          if grep -q 'com.valvesoftware.Steam' /tmp/cat.txt; then
+            bad "Steam is listed as a Flatpak to install — it is already in the image"
+          else
+            ok "Steam is not offered as a download (it is already installed)"
+          fi
+          grep -q '"steam.desktop"' /usr/libexec/aquarius-creator-apps \
+            && ok "the chooser lists Steam under Included with AquariusOS" \
+            || bad "the chooser does not know Steam is included"
+
+          echo "== and the whole of Wine did not come along for the ride =="
+          # protontricks and winetricks were in the first version of this layer
+          # and between them pulled in 1.5 GB of Wine that nothing in this image
+          # uses - Steam brings its own Proton, umu fetches its own runtime.
+          # Protontricks is offered as a Flatpak instead. If Wine ever returns
+          # it will be as somebody's silent dependency, and this is the only
+          # thing that would notice.
+          if rpm -q wine-core > /dev/null 2>&1; then
+            bad "wine-core is installed — 1.3 GiB nothing in this image needs; find what pulled it in"
+          else
+            ok "wine-core is not in this image"
+          fi
+
+          echo "== the note that ships in the image =="
+          if [ -r /usr/share/aquarius/gaming/README.md ]; then
+            ok "/usr/share/aquarius/gaming/README.md is there"
+          else
+            bad "the plain-language gaming note is missing from the image"
+          fi
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::The gaming layer is incomplete."
+            exit 1
+          fi
+          echo "All gaming checks passed."
+          SCRIPT
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            -e EXPECTED_NVIDIA="${NVIDIA}" \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-gaming.sh
 
       # ------------------------------------------------------------------------
       # PUBLISHING
