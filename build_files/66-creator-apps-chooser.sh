@@ -156,6 +156,72 @@ else
 fi
 
 # ==============================================================================
+# 2b. The last page — the one Royce landed on with a blank top
+# ==============================================================================
+# ⚠️ THE 2026-09-04 BENCH FAULT, PART TWO. The "All set." page was an
+# Adw.StatusPage, which draws a small system symbol and cannot be given the
+# Aquarius mark, so the page you land on after installing was empty at the top
+# while the two pages before it both carry the logo.
+#
+# These checks are text checks, and that is a deliberate limitation: building a
+# GTK window needs a screen, and there is no screen in a build container, so the
+# only thing a build can ask is "is the window still written the way we fixed
+# it". It is worth asking. The fault it guards against is somebody reaching for
+# Adw.StatusPage again because it is the obvious widget for a page like this.
+say "The last page carries the Aquarius mark"
+aq_file_has "${CHOOSER}" 'def hero\(' \
+    "there is one hero helper (the mark, the heading and the line under it)"
+aq_file_has "${CHOOSER}" 'aquarius_ui\.mark_image' \
+    "the hero helper gets the mark from the shared window pieces"
+aq_file_has "${CHOOSER}" 'mark, self\.done_title, self\.done_blurb = hero\(' \
+    "the done page is built from that same helper, so the mark is on it"
+aq_file_has "${CHOOSER}" 'mark, title, blurb = hero\(' \
+    "and so is the first page, which is what makes them match"
+# Looking for the CALL — "Adw.StatusPage(" with its bracket — and not for the
+# name, because the comments in that file explain at length why it is not one.
+if grep -q 'Adw\.StatusPage(' "${CHOOSER}"; then
+    bad "the done page is an Adw.StatusPage again — it cannot show the Aquarius mark"
+else
+    ok "no Adw.StatusPage is built anywhere in the window"
+fi
+# That page has three wordings — everything worked, you stopped it, some of them
+# failed — and all three fill in the SAME heading and line, under the same mark.
+# Three of each is how we know no variant was left drawing its own thing.
+for part in done_title done_blurb; do
+    count="$(grep -cF "self.${part}.set_label" "${CHOOSER}" || true)"
+    if [ "${count}" -ge 3 ]; then
+        ok "all ${count} wordings of the done page fill in ${part}"
+    else
+        bad "only ${count} wording(s) fill in ${part} — one variant of the done page is not filled in"
+    fi
+done
+
+say "The last page offers 'Open apps'"
+aq_file_has "${CHOOSER}" 'pill_button\("Open apps", suggested=True\)' \
+    "the suggested button says 'Open apps', not 'Open <one app>'"
+if grep -q 'first_app' "${CHOOSER}"; then
+    bad "the done page still opens whichever app happened to be installed first"
+else
+    ok "it no longer picks one app to open on the person's behalf"
+fi
+# The two desktops AquariusOS ships, and the way out if neither answers.
+aq_file_has "${CHOOSER}" '"qs", "ipc", "call", "search", "toggle"' \
+    "in the Aquarius Session it opens the search palette (the Super+Space one)"
+aq_file_has "${CHOOSER}" '"ShowApplications"' \
+    "in GNOME it asks GNOME Shell for the app grid"
+# Again the call and not the name: "Eval" in quotes is a D-Bus method being
+# asked for; Eval in a sentence is the comment saying why we do not ask for it.
+if grep -q '"Eval"' "${CHOOSER}"; then
+    bad "it calls GNOME Shell's Eval, which modern GNOME refuses unless the session is in unsafe mode"
+else
+    ok "it does not call Eval, which would be refused"
+fi
+aq_file_has "${CHOOSER}" 'def _back_to_the_list' \
+    "and if neither desktop answers it goes back to the app list instead"
+aq_file_has "${CHOOSER}" 'self\.footer\.set_visible\(True\)' \
+    "which puts the footer back, so that page still has its buttons"
+
+# ==============================================================================
 # 3. The menu entries
 # ==============================================================================
 say "The two menu entries"

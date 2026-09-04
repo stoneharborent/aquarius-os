@@ -73,6 +73,11 @@ on:
       # Shell), shipped switched OFF. Same arrangement: builds and checks,
       # never publishes.
       - restart/login
+      # The "All set." page — the 2026-09-04 bench test again: the last page of
+      # the creator-apps window was blank at the top (no Aquarius mark) and its
+      # main button offered to open one app instead of showing them all. Same
+      # arrangement: builds and checks, never publishes.
+      - restart/chooser-done
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -2475,6 +2480,45 @@ jobs:
 
           echo "-- what the chooser will show --"
           awk -F'\t' '$6=="runtime:no" {printf "     [%s] %-28s %s\n", ($5=="recommended:yes" ? "x" : " "), $2, $4}' /tmp/catalog.txt
+
+          # ------------------------------------------------------------------
+          # THE LAST PAGE OF THAT WINDOW — read back out of the finished image
+          # ------------------------------------------------------------------
+          # ⚠️ THE 2026-09-04 BENCH FAULT. "All set." was drawn with a widget
+          # that cannot carry the Aquarius mark, so the page you land on after
+          # installing was blank at the top, and its main button offered to
+          # open whichever app happened to install first rather than showing
+          # you the apps. Both are fixed; these two checks are what stops them
+          # coming back. The build already checks the same things in
+          # build_files/66-creator-apps-chooser.sh — this asks the copy that is
+          # actually in the image.
+          CHOOSER=/usr/libexec/aquarius-creator-apps
+          if grep -q 'mark, self\.done_title, self\.done_blurb = hero(' "${CHOOSER}"; then
+            ok "the 'All set.' page is built from the same hero helper as page 1, so it carries the mark"
+          else
+            bad "the done page does not use the hero helper — it would have no Aquarius mark on it"
+          fi
+          if grep -q 'Adw\.StatusPage(' "${CHOOSER}"; then
+            bad "the done page is an Adw.StatusPage again, which cannot show the mark"
+          else
+            ok "nothing in that window is an Adw.StatusPage"
+          fi
+          if grep -q 'pill_button("Open apps", suggested=True)' "${CHOOSER}"; then
+            ok "the suggested button on that page is 'Open apps'"
+          else
+            bad "the done page's suggested button is not 'Open apps'"
+          fi
+          if grep -q 'first_app' "${CHOOSER}"; then
+            bad "the done page still opens one app on the person's behalf"
+          else
+            ok "it no longer picks a single app to open"
+          fi
+          if grep -q '"qs", "ipc", "call", "search", "toggle"' "${CHOOSER}" \
+             && grep -q '"ShowApplications"' "${CHOOSER}"; then
+            ok "'Open apps' knows both desktops: the Aquarius palette and GNOME's app grid"
+          else
+            bad "'Open apps' is missing one of its two routes (qs ipc / org.gnome.Shell.ShowApplications)"
+          fi
 
           # ------------------------------------------------------------------
           # `aq apps` — the same job in a terminal
