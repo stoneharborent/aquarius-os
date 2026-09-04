@@ -245,7 +245,12 @@ systemctl enable gdm.service
 # symptom — the login screen flashing and returning — gives no clue why.
 # Setting it here costs nothing and removes the whole class of problem.
 say "Permissions"
-chmod 0755 "${AQ_LAUNCHER}" /usr/libexec/aquarius-shell-start
+chmod 0755 "${AQ_LAUNCHER}" /usr/libexec/aquarius-shell-start \
+    /usr/libexec/aquarius-session-portals
+# The clean-up library is READ, not run, so it does not need to be executable —
+# but it does have to be readable by everybody, because every person logging in
+# reads it.
+chmod 0644 /usr/libexec/aquarius-session-lib
 chmod 0644 "${AQ_SESSION_ENTRY}" "${AQ_PORTAL_CONF}"
 chmod 0644 "${AQ_LABWC_DIR}"/*
 chmod 0755 "${AQ_LABWC_DIR}"
@@ -492,6 +497,112 @@ if bash -n /usr/libexec/aquarius-shell-start; then
     ok "the failure-dialog helper is valid shell script"
 else
     bad "/usr/libexec/aquarius-shell-start has a syntax error"
+fi
+
+# ==============================================================================
+# Logging out — the 2026-09-04 fix
+# ==============================================================================
+# THE BUG: logging out of the Aquarius Desktop to go to GNOME bounced off the
+# login screen two or three times before GNOME would start, because the session
+# left its settings on the user's systemd noticeboard and left its background
+# programs running for GNOME to trip over.
+#
+# THE FIX: /usr/libexec/aquarius-session-lib. What it does and why is written
+# out at length in the file itself and in docs/restart/aquarius-session.md.
+#
+# THREE THINGS ARE CHECKED HERE, and each fails differently if it is skipped:
+# the pieces are present, the lists inside them agree with the launcher, and the
+# whole sequence behaves when it is actually run against stand-in commands.
+# ==============================================================================
+say "Logging out cleanly"
+
+AQ_SESSION_LIB="/usr/libexec/aquarius-session-lib"
+AQ_SESSION_PORTALS="/usr/libexec/aquarius-session-portals"
+
+if [ -r "${AQ_SESSION_LIB}" ]; then
+    ok "${AQ_SESSION_LIB} is installed"
+else
+    bad "${AQ_SESSION_LIB} is missing — the launcher refuses to start without it, so NOBODY could log in to the Aquarius Desktop at all"
+fi
+
+if bash -n "${AQ_SESSION_LIB}"; then
+    ok "the clean-up library is valid shell script"
+else
+    bad "the clean-up library has a syntax error — every login would fail"
+fi
+
+if [ -x "${AQ_SESSION_PORTALS}" ]; then
+    ok "${AQ_SESSION_PORTALS} is installed and executable"
+else
+    bad "${AQ_SESSION_PORTALS} is missing or not executable — arriving here from GNOME would leave GNOME's portals in charge and screen recording would silently show no screens"
+fi
+
+if bash -n "${AQ_SESSION_PORTALS}"; then
+    ok "the portal helper is valid shell script"
+else
+    bad "${AQ_SESSION_PORTALS} has a syntax error"
+fi
+
+aq_file_has "${AQ_LAUNCHER}" "^trap 'aq_session_teardown' EXIT" \
+    "the launcher runs the clean-up on EVERY way out of the session, including a crash"
+aq_file_has "${AQ_LABWC_DIR}/autostart" 'aquarius-session-portals' \
+    "logging in takes the portals back from whichever desktop had them last"
+
+# ------------------------------------------------------------------------------
+# And now actually RUN it. This is the part that matters.
+#
+# The test replaces systemctl, pkill and dbus-update-activation-environment with
+# stand-ins that write down what they were asked to do, runs the real clean-up
+# against them, and then checks the transcript: the right order, the right
+# units, exact-name kills limited to one person, and — the important one — that
+# every `export` in the installed launcher appears in the installed library's
+# list. A settings leak into the next login fails the build here rather than
+# turning up on the bench in three months.
+#
+# It runs against the INSTALLED copies, not the ones in the repository, for the
+# same reason the update-overlay tests do: those are a different question.
+# ------------------------------------------------------------------------------
+if [ -x /ctx/tests/test-session-teardown.sh ]; then
+    say "Running tests/test-session-teardown.sh against the installed files"
+    if /ctx/tests/test-session-teardown.sh "${AQ_SESSION_LIB}" "${AQ_LAUNCHER}"; then
+        ok "logging out leaves the machine clean"
+    else
+        bad "the logout clean-up is wrong — see the failures above. Logging out of Aquarius into GNOME would bounce off the login screen, which is the bug of 2026-09-04 returning."
+    fi
+else
+    bad "tests/test-session-teardown.sh is missing from the build context (the Containerfile gathers it with 'COPY tests /tests'). Without it the logout clean-up would ship untested."
+fi
+
+# ------------------------------------------------------------------------------
+# Every user service that runs inside our session must be PART OF it.
+#
+# `PartOf=graphical-session.target` is what makes a service stop when the
+# desktop ends. Without it, a service started at login keeps running after
+# logout — which is the leftover-programs half of the bug this section is about.
+#
+# The rule is deliberately narrow: it applies to units that ASK to be started
+# with a graphical session (WantedBy=graphical-session.target). Units started
+# some other way — aq-ingest-watch.path watches a folder and is nothing to do
+# with any desktop — are exempt, and correctly so.
+# ------------------------------------------------------------------------------
+say "Every service of ours that starts with the desktop also stops with it"
+
+AQ_SESSION_UNIT_FAILS=0
+for aq_unit in /usr/lib/systemd/user/aquarius-*.service /usr/lib/systemd/user/aq-*.service; do
+    [ -r "${aq_unit}" ] || continue
+    if ! grep -qE '^WantedBy=.*graphical-session\.target' "${aq_unit}"; then
+        echo "  note   $(basename "${aq_unit}") does not start with the graphical session; nothing to check"
+        continue
+    fi
+    if grep -qE '^PartOf=.*graphical-session\.target' "${aq_unit}"; then
+        ok "$(basename "${aq_unit}") stops when the desktop does"
+    else
+        bad "$(basename "${aq_unit}") starts with the graphical session but has no 'PartOf=graphical-session.target' — it would keep running after logout and get in the way of the next desktop"
+        AQ_SESSION_UNIT_FAILS=1
+    fi
+done
+if [ "${AQ_SESSION_UNIT_FAILS}" -eq 0 ]; then
+    ok "every Aquarius user service is tied to the session's lifetime"
 fi
 
 say "The window manager's configuration"

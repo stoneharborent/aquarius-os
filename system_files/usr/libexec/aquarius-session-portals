@@ -1,0 +1,40 @@
+#!/usr/bin/bash
+# =============================================================================
+# aquarius-session-portals — make the portals ours at the start of a login
+# =============================================================================
+# WHAT A PORTAL IS, IN ONE SENTENCE
+#   The middleman an application talks to when it wants to record the screen or
+#   open a file — one front door, several back ends behind it.
+#
+# WHAT THIS PROGRAM DOES, IN ONE SENTENCE
+#   Stops any portal left running by the LAST desktop, so that the next one to
+#   start belongs to this one.
+#
+# WHY THAT IS NECESSARY
+#   A portal reads which desktop it is in exactly once, when it starts, and
+#   never looks again. Log out of GNOME and into Aquarius and the portal that
+#   is still running from before is still convinced it is in GNOME — so it
+#   ignores /usr/share/xdg-desktop-portal/aquarius-portals.conf, screen
+#   recording never reaches the wlroots back end, and OBS shows an empty list
+#   of screens with no error anywhere.
+#
+#   Stopping them costs nothing. Every one is started on demand: the moment an
+#   application asks for a portal, D-Bus starts a fresh one, and the fresh one
+#   reads our settings.
+#
+# WHERE IT IS CALLED FROM
+#   /usr/share/aquarius/labwc/autostart, at the end, once per login. It is a
+#   separate program rather than three more lines in that file so the autostart
+#   stays short and the logic sits beside its twin — the logout clean-up in
+#   /usr/libexec/aquarius-session-lib.
+#
+# Full explanation: docs/restart/aquarius-session.md, "Switching between GNOME
+# and the Aquarius Desktop".
+# =============================================================================
+
+set -uo pipefail
+
+# shellcheck source=./aquarius-session-lib
+. /usr/libexec/aquarius-session-lib
+
+aq_session_portals_refresh

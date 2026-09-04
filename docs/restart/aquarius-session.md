@@ -189,6 +189,154 @@ That file is the first thing to look at, always.
 
 ---
 
+## Switching between GNOME and the Aquarius Desktop
+
+**This should just work, in both directions, first time.** Log out of one, pick
+the other at the login screen, and it starts. If it takes two or three attempts,
+something is wrong and this section is the one to read.
+
+### The bug this section exists for
+
+On the bench on **2026-09-04**, Royce reported it in one sentence:
+
+> "When logging out of Aquarius to go to GNOME, it kicks me back to the login
+> screen a couple of times before letting me log in."
+
+That is fixed. Here is what was happening, because understanding it is what
+stops it coming back.
+
+When you log in, Linux starts a personal background manager for you. It is
+yours, not any one desktop's, and it outlives a logout. Think of it as a
+noticeboard plus a few running helpers.
+
+The Aquarius Desktop pins things to that noticeboard on purpose — "the screen is
+called wayland-0", "this desktop is called Aquarius", and a handful more.
+Everything started later reads them, so it knows where it is. Every Wayland
+desktop does this, GNOME included.
+
+**The bug was that nobody ever rubbed the noticeboard out again.** So you logged
+out, and left behind notes pointing at a screen that no longer existed, a note
+telling the screen-recording system to use a back end that only works with our
+window manager, and — worse — programs still running and still believing all of
+it: the Aquarius bar, the wallpaper, the keyboard remapper, the recording
+portal.
+
+GNOME then started and could not do its job. It could not take the name that
+every notification on the machine is delivered to, because our bar still had it.
+Its portals were already running and pointed at a compositor that had died. Its
+own start-up waited for things that were never going to answer, timed out, and
+gave up — and GDM does exactly one thing when a session gives up while starting:
+it puts the login screen back. Try again, same leftovers, same failure. Only
+once the stragglers had been killed off by their own timeouts, a minute or so
+later, was the machine clean enough for GNOME to start.
+
+### What happens now when you log out
+
+`man systemd.special` says a desktop must do two things when its session ends:
+stop `graphical-session.target`, and **unset the variables it set**. We were
+doing the first and had never done the second. GNOME does both, which is exactly
+why GNOME never had this problem and we did.
+
+So `/usr/bin/aquarius-session` now stays alive for the few seconds after the
+window manager exits and runs a clean-up, in this order:
+
+1. **Stop the services** — the keyboard remapper, all four portal back ends,
+   `labwc-session.target` and `graphical-session.target`.
+2. **Wait, but not forever** — up to ten seconds for the graphical session to
+   really be over. A stuck service must not turn a logout into a hang, so after
+   ten seconds it stops waiting and moves on.
+3. **Remove the settings** — this is the actual fix:
+   `XDG_SESSION_TYPE`, `XDG_SESSION_DESKTOP`, `XDG_CURRENT_DESKTOP`,
+   `QS_CONFIG_PATH`, `QT_QPA_PLATFORM`, `AQ_LOG`, `AQ_UI_SCALE`,
+   `WAYLAND_DISPLAY` and `DISPLAY`.
+   **`LANG` is deliberately left alone** — it is a fact about which language you
+   read, not about which desktop you were in, and removing it would walk
+   straight back into the 2026-09-03 bug where everything fell back to a 1968
+   character set.
+4. **Close anything still running** — `qs`/`quickshell` (the bar),
+   `swaybg` (the wallpaper), `xremap-wlroots` and `xremap-gnome` (the keyboard
+   remapper), `slurp`, and `xdg-desktop-portal-wlr`. Each is asked politely
+   first, given three seconds, and only then forced. This is necessary because
+   **Linux does not kill your programs when you log out** — Fedora ships
+   `KillUserProcesses=no`, which is a good default (it lets a long build survive
+   a logout) and means these are ours to tidy up.
+5. **Clear the failure marks**, so the next login does not inherit a service
+   systemd has decided to stop retrying.
+
+The clean-up is armed with a `trap`, which means it runs on **every** way out —
+the normal Super+Shift+E, a crash of the window manager, or the login screen
+ending the session. Not "if we remember to call it", which is the version that
+quietly does not run on the path that mattered.
+
+You can watch it happen. The last few lines of
+`~/.local/state/aquarius-session/session.log` are the clean-up talking, and they
+begin `[logout]`:
+
+```
+[logout] cleaning up so the next login starts fresh
+[logout] stopping the desktop's background services
+[logout] the graphical session has stopped
+[logout] forgetting this desktop's settings: XDG_SESSION_TYPE ...
+[logout] asked these to close: qs swaybg
+[logout] done — GNOME or Aquarius will start from a clean slate
+```
+
+**Logging out takes about three seconds longer than it used to.** That is the
+polite pause in step 4, and it is deliberate: three seconds once is a much
+better trade than a login that fails twice.
+
+### The same problem in the other direction
+
+GNOME has the same habit we just fixed in ourselves: it leaves its portals
+running. Somebody coming here straight from GNOME would find a portal already
+awake and still convinced it is in GNOME — so it ignores
+`aquarius-portals.conf` entirely, and OBS shows an empty list of screens with no
+error anywhere.
+
+So the Aquarius session stops the portals at the **start** of a login too, from
+`/usr/libexec/aquarius-session-portals`, run at the end of the window manager's
+`autostart` file. That costs nothing: portals are started on demand, so the next
+one to start is a fresh one that reads our settings.
+
+### The bench check
+
+Do this twice each way. It takes two minutes and it is the only real proof.
+
+1. Log in to **Aquarius Desktop**. Log out with **Super + Shift + E**.
+2. At the login screen pick **GNOME**. It must log in **first time** — no bounce
+   back to the greeter.
+3. Log out of GNOME. Pick **Aquarius Desktop**. It must log in **first time**.
+4. **Do steps 1–3 again.** Once could be luck; the original bug was intermittent
+   in exactly that way.
+5. While in Aquarius after a round trip, check screen recording still works:
+   open OBS, add a *Screen Capture (PipeWire)* source, and confirm you get the
+   dimmed "which screen?" overlay rather than an empty list. That is the check
+   that proves the portals were really refreshed rather than inherited.
+
+**If it still bounces**, these two commands say why. Run them from GNOME right
+after a failed attempt, while it is fresh:
+
+```
+journalctl --user -b --since "-15 min" | grep -iE "fail|error"
+journalctl -b -u gdm
+```
+
+The first is your own session's story — look for a service that timed out or a
+name that could not be taken. The second is the login screen's own account of
+what it tried to start and why it gave up. Send both, plus
+`~/.local/state/aquarius-session/session.log`, which should end with the
+`[logout]` lines above. **If those `[logout]` lines are missing, the clean-up
+never ran**, and that is a completely different problem from the clean-up
+running and not being enough.
+
+One more, worth knowing: `systemctl --user show-environment` prints the
+noticeboard. Run it in GNOME after logging out of Aquarius. It must **not**
+mention `Aquarius`, and `WAYLAND_DISPLAY` must be GNOME's screen rather than a
+leftover. That single command is the shortest possible proof that the fix is
+working.
+
+---
+
 ## What it is made of
 
 Four pieces. Two of them AquariusOS compiles itself, which is unusual and worth
@@ -345,7 +493,9 @@ of the OS from the boot menu — every AquariusOS update keeps the last one.
 | Path | What it is |
 | --- | --- |
 | `/usr/share/wayland-sessions/aquarius.desktop` | The entry that makes "Aquarius Desktop" appear at the login screen. |
-| `/usr/bin/aquarius-session` | The launcher the login screen runs. Sets the environment, then starts labwc. Heavily commented — worth reading. |
+| `/usr/bin/aquarius-session` | The launcher the login screen runs. Sets the environment, starts labwc, and cleans up after it. Heavily commented — worth reading. |
+| `/usr/libexec/aquarius-session-lib` | The list of settings the session uses, and the clean-up that removes them again at logout. **Read this before changing anything about logging in or out.** |
+| `/usr/libexec/aquarius-session-portals` | Run once at login: stops the portals the last desktop left behind, so ours start fresh. |
 | `/usr/share/aquarius/labwc/` | The window manager's configuration: `rc.xml` (key bindings), `autostart`, `shutdown`, `environment`. |
 | `/usr/share/aquarius/shell/` | The Aquarius Shell's QML. |
 | `/usr/libexec/aquarius-shell-start` | Runs the shell, and puts a dialog on screen if it fails. |
@@ -466,10 +616,19 @@ In order. Stop at the first failure and read the log.
     `aq display status` should say `ui=1.0`: the knob is back at neutral, and
     nothing is being multiplied to get this size.
 11. **Leave.** Press **Super + Shift + E**. You should be back at the login
-    screen within a second or two.
+    screen within a few seconds. (It takes about three seconds longer than it
+    used to — that is the logout clean-up doing its job, and it is deliberate.)
 12. **Go back to GNOME.** Pick GNOME at the login screen and confirm it is
     exactly as it was — same wallpaper, same dock, same everything. This is the
     check that proves the fallback is intact.
+13. **The switch, twice each way.** ⚠️ **This is the 2026-09-04 bug's own test
+    and it is the one to run first after an update.** GNOME must log in **first
+    time** after leaving Aquarius, and Aquarius must log in **first time** after
+    leaving GNOME — no bouncing off the login screen. Do the whole round trip
+    twice, because the original bug was intermittent. Then, in GNOME, run
+    `systemctl --user show-environment` — it must not mention `Aquarius`
+    anywhere. Full explanation and what to send if it fails: the section
+    "Switching between GNOME and the Aquarius Desktop" above.
 
 If any of 1–3 fails, the answer is in
 `~/.local/state/aquarius-session/session.log`. Log in with GNOME and read it.

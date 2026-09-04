@@ -189,3 +189,26 @@ if [ -x /usr/libexec/aquarius-creator-apps ]; then
         /usr/libexec/aquarius-creator-apps --first-run
     ) >> "${AQ_LOG:-/dev/null}" 2>&1 &
 fi
+
+# ---------------------------------------------------------------------------
+# 6. Make the portals OURS rather than the last desktop's.  (added 2026-09-04)
+#
+# A "portal" is the middleman an application talks to when it wants to record
+# the screen or open a file. It reads which desktop it is in exactly once, when
+# it starts, and never looks again — and GNOME leaves its portals running when
+# you log out of it. So somebody arriving here straight from GNOME finds a
+# portal that is still convinced it is in GNOME, ignores our
+# aquarius-portals.conf entirely, and OBS shows an empty list of screens with
+# no error anywhere.
+#
+# Stopping them is free: every one is started on demand, so the next time
+# anything asks for a portal a fresh one starts and reads our settings.
+#
+# It has to be here rather than in /usr/bin/aquarius-session because it must
+# happen AFTER WAYLAND_DISPLAY exists — which is step 1 above, a few lines back.
+# The twin of this, which does the same thing on the way OUT, is in
+# /usr/libexec/aquarius-session-lib.
+# ---------------------------------------------------------------------------
+if [ -x /usr/libexec/aquarius-session-portals ]; then
+    /usr/libexec/aquarius-session-portals >> "${AQ_LOG:-/dev/null}" 2>&1 || true
+fi
