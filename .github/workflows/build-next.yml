@@ -48,6 +48,12 @@ on:
       # repository's own session files, and taking the shell commit that has it.
       # Same arrangement again: builds and checks, never publishes.
       - restart/shell-autostart
+      # Phase R3 polish — everything Royce asked for after the 2026-09-04 bench
+      # test: a password prompt in the Aquarius Session, the Resolve installer's
+      # wording, a "Remove DaVinci Resolve" window, Resolve at the right size
+      # with the right mouse pointer, and langpacks-en baked in. Same
+      # arrangement: builds and checks, never publishes.
+      - restart/r3-polish
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -227,6 +233,7 @@ jobs:
             gnome-shell-extension-caffeine gnome-shell-extension-gsconnect \
             xdg-desktop-portal-gnome xorg-x11-server-Xwayland flatpak \
             podman toolbox distrobox \
+            langpacks-en langpacks-core-en \
             rsms-inter-fonts jetbrains-mono-fonts
           do
             if rpm -q "${pkg}" > /dev/null 2>&1; then
@@ -971,6 +978,61 @@ jobs:
             bad "greetd is switched on too. Two login managers is a black screen; greetd ships switched OFF on purpose."
           else
             ok "greetd is installed but switched off, as intended"
+          fi
+
+          echo "== the thing that asks you for your password =="
+          # ⚠️ THE 2026-09-04 BENCH FAULT. Pressing Install in the creator-apps
+          # window failed with "Error creating textual authentication agent …
+          # /dev/tty", because this session had no polkit authentication agent.
+          # Four things have to be true, and each of them was true on its own
+          # while the feature was still broken, which is why all four are here.
+          for pkg in lxqt-policykit polkit-qt6-1; do
+            if rpm -q "${pkg}" > /dev/null 2>&1; then
+              ok "${pkg} $(rpm -q --queryformat '%{VERSION}-%{RELEASE}' "${pkg}")"
+            else
+              bad "${pkg} is NOT installed — nothing in the Aquarius Session could ask for a password"
+            fi
+          done
+          if [ -x /usr/libexec/lxqt-policykit-agent ]; then
+            ok "the agent binary is at /usr/libexec/lxqt-policykit-agent"
+          else
+            bad "/usr/libexec/lxqt-policykit-agent is missing"
+          fi
+          if [ -x /usr/libexec/aquarius-polkit-agent ]; then
+            ok "aquarius-polkit-agent is present and runnable"
+          else
+            bad "/usr/libexec/aquarius-polkit-agent is missing or not runnable"
+          fi
+          if bash -n /usr/libexec/aquarius-polkit-agent 2>/tmp/pk-syn.txt; then
+            ok "aquarius-polkit-agent is valid shell"
+          else
+            bad "aquarius-polkit-agent has a syntax error"; cat /tmp/pk-syn.txt
+          fi
+          # Run it. --which is the question that matters: can the helper FIND an
+          # agent on this image? A package being installed does not answer that,
+          # because the helper looks for a path, not a package name.
+          if /usr/libexec/aquarius-polkit-agent --which > /tmp/pk-which.txt 2>&1; then
+            ok "the helper finds an agent: $(cat /tmp/pk-which.txt)"
+          else
+            bad "the helper cannot find any authentication agent on this image"; cat /tmp/pk-which.txt
+          fi
+          # And the session has to start it, or all of the above is a package
+          # nobody runs. labwc reads exactly one file and this is it.
+          if grep -q 'aquarius-polkit-agent' /usr/share/aquarius/labwc/autostart; then
+            ok "the Aquarius session's autostart starts the agent at login"
+          else
+            bad "the session never starts the agent — this is the bench fault, back again"
+          fi
+          # GNOME has an agent of its own inside GNOME Shell. The package's own
+          # autostart entry must be switched off, or GNOME starts a second one
+          # and which agent you get is decided by timing.
+          PKA=/etc/xdg/autostart/lxqt-policykit-agent.desktop
+          if [ ! -e "${PKA}" ]; then
+            ok "the agent ships no autostart entry of its own"
+          elif grep -q '^Hidden=true$' "${PKA}"; then
+            ok "the agent's own autostart entry is switched off, so GNOME keeps its own agent"
+          else
+            bad "${PKA} is still active — GNOME would start a second agent"
           fi
 
           echo "== no library is missing on the finished image =="
@@ -2181,19 +2243,73 @@ jobs:
             else bad "$f has a syntax error"; cat /tmp/syn.txt; fi
           done
 
-          echo "== the installer window =="
+          echo "== the shared window pieces =="
+          # Three windows import this one file. A fault in it breaks all three,
+          # so it is checked the way they use it — by importing it.
+          if python3 -c 'import sys; sys.path.insert(0, "/usr/lib/aquarius/python"); import aquarius_ui; print("       StepRow, LogPane and the rest imported")' 2>/tmp/ui.txt; then
+            ok "aquarius_ui imports cleanly"
+          else
+            bad "aquarius_ui cannot be imported — every AquariusOS window would fail to open"; cat /tmp/ui.txt
+          fi
+
+          echo "== the installer and uninstaller windows =="
           # "Install DaVinci Resolve" in the app grid opens a real application
           # window, not a terminal. It is Python against GTK 4 and libadwaita,
           # so three things have to be true, and a missing one shows up as an
           # icon that does nothing when clicked.
-          GUI=/usr/libexec/aquarius-resolve-installer
-          if [ -x "${GUI}" ]; then ok "aquarius-resolve-installer is present and runnable"
-          else bad "${GUI} is missing or not runnable — 'Install DaVinci Resolve' would do nothing"; fi
-          if python3 -c 'import py_compile, sys; py_compile.compile(sys.argv[1], cfile="/tmp/aq-gui-check.pyc", doraise=True)' "${GUI}" 2>/tmp/py.txt; then
-            ok "aquarius-resolve-installer is valid Python"
+          for GUI in /usr/libexec/aquarius-resolve-installer \
+                     /usr/libexec/aquarius-resolve-uninstaller; do
+            if [ -x "${GUI}" ]; then ok "$(basename "${GUI}") is present and runnable"
+            else bad "${GUI} is missing or not runnable — its app-grid entry would do nothing"; fi
+            if python3 -c 'import py_compile, sys; py_compile.compile(sys.argv[1], cfile="/tmp/aq-gui-check.pyc", doraise=True)' "${GUI}" 2>/tmp/py.txt; then
+              ok "$(basename "${GUI}") is valid Python"
+            else
+              bad "${GUI} has a syntax error"; cat /tmp/py.txt
+            fi
+          done
+          # ⚠️ ROYCE'S RULE, 2026-09-04: nothing a person READS may name another
+          # Linux. The comments still say Rocky, because whoever maintains these
+          # needs to know; the printable strings must not.
+          leak=0
+          for f in /usr/libexec/aquarius-resolve-install \
+                   /usr/libexec/aquarius-resolve-installer \
+                   /usr/libexec/aquarius-resolve-uninstaller \
+                   /usr/share/applications/aquarius-install-resolve.desktop \
+                   /usr/share/applications/aquarius-remove-resolve.desktop; do
+            [ -r "$f" ] || continue
+            if grep -vE '^[[:space:]]*#' "$f" | grep -qi 'rocky'; then
+              bad "$(basename "$f") names Rocky Linux where a person can see it:"
+              grep -vE '^[[:space:]]*#' "$f" | grep -i rocky | sed 's/^/       /'
+              leak=1
+            fi
+          done
+          [ "$leak" -eq 0 ] && ok "nothing a person reads names another Linux"
+          # Removing is a window too, and reads the same channel with 3 steps.
+          if aquarius-resolve-install --remove --dry-run --progress-fd 3 3>/tmp/rm.txt >/dev/null 2>&1 \
+             || /usr/libexec/aquarius-resolve-install --remove --dry-run --progress-fd 3 3>/tmp/rm.txt >/dev/null 2>&1; then
+            ok "the removal rehearsal ran"
+            sed 's/^/       /' /tmp/rm.txt
           else
-            bad "${GUI} has a syntax error"; cat /tmp/py.txt
+            bad "'aquarius-resolve-install --remove --dry-run' does not run"
           fi
+          if grep -q '^STEP 3/3 Keeping your projects and settings$' /tmp/rm.txt; then
+            ok "by default removing KEEPS your projects and settings"
+          else
+            bad "the default removal does not say it keeps your projects — that is the one thing it must never get wrong"
+          fi
+          # And the size and pointer Resolve is started with.
+          LAUNCH=/usr/libexec/aquarius-resolve-launch
+          for want in QT_AUTO_SCREEN_SCALE_FACTOR=0 'QT_SCALE_FACTOR=${SCALE}' \
+                      'QT_DEVICE_PIXEL_RATIO=${SCALE}' 'aquarius-display-scale --effective-scale' \
+                      XCURSOR_THEME= XCURSOR_SIZE= XCURSOR_PATH=; do
+            if grep -qF "$want" "$LAUNCH"; then ok "the launcher passes $want"
+            else bad "the launcher no longer passes $want — Resolve would open small, or with the wrong pointer"; fi
+          done
+          EFF="$(/usr/libexec/aquarius-display-scale --effective-scale 2>&1 || true)"
+          case "$EFF" in
+            ''|*[!0-9.]*) bad "'--effective-scale' printed '$EFF', not a number — the launcher would have nothing to hand Resolve" ;;
+            *) ok "'--effective-scale' answers '$EFF' even on a machine with no screens" ;;
+          esac
           # Importing needs no screen — it loads the typelib files and stops.
           # This is the check that catches a missing python3-gobject, which is
           # the one package of the three that GNOME does not already bring in.

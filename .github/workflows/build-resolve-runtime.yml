@@ -48,6 +48,10 @@ on:
     branches:
       - restart/fedora-bootc
       - restart/r3-resolve
+      # Phase R3 polish. It adds the cursor theme to the runtime, so the
+      # runtime has to be rebuilt — under a `dev-restart-r3-polish` tag, which
+      # is the whole point of the arrangement described above.
+      - restart/r3-polish
     paths:
       - 'resolve-runtime/**'
       - '.github/workflows/build-resolve-runtime.yml'

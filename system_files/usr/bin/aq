@@ -22,9 +22,10 @@
 #     aq resolve install      set up DaVinci Resolve
 #     aq resolve status       is it installed, and can it see the graphics card
 #     aq resolve run          start it
-#     aq resolve shell        a terminal inside its container
+#     aq resolve shell        a terminal inside the environment it runs in
 #     aq resolve update       install a newer Resolve over the top
-#     aq resolve remove       delete the container
+#     aq resolve remove       remove Resolve and that environment
+#     aq resolve scale 1.5    how big Resolve's own interface is drawn
 #     aq apps list            which creator apps you have
 #     aq apps install ID      install one you skipped
 #
@@ -87,7 +88,7 @@ USAGE
 
     aq resolve …        DaVinci Resolve: set it up, start it, check on it.
                         Run 'aq resolve --help' for the whole list. Resolve runs
-                        inside a small Rocky Linux on this computer, because
+                        inside its own protected environment on this computer,
                         that is the only way it works reliably on Linux — the
                         help text explains why in plain English.
     aq ingest FILE...   Make files from a camera, phone or drone open properly
@@ -527,6 +528,7 @@ display() {
 AQ_RESOLVE_ENV=/usr/share/aquarius/resolve/runtime.env
 AQ_RESOLVE_INSTALLER=/usr/libexec/aquarius-resolve-install
 AQ_RESOLVE_INSTALLER_GUI=/usr/libexec/aquarius-resolve-installer
+AQ_RESOLVE_UNINSTALLER_GUI=/usr/libexec/aquarius-resolve-uninstaller
 AQ_RESOLVE_LAUNCHER=/usr/libexec/aquarius-resolve-launch
 
 resolve_usage() {
@@ -550,31 +552,38 @@ aq resolve — DaVinci Resolve on AquariusOS
     aq resolve run  Start Resolve. (You can also just click it in your apps.)
 
     aq resolve status
-                    Is it installed, which Rocky Linux is it running in, and
-                    can it see the graphics card. Start here when something
-                    is wrong.
+                    Is it installed, what is it running in, and can it see
+                    the graphics card. Start here when something is wrong.
 
     aq resolve update [file]
                     Install a newer Resolve over the top of the old one, from a
                     new download. Your projects and settings are untouched.
 
     aq resolve shell
-                    A terminal INSIDE the container Resolve lives in. For
+                    A terminal INSIDE the environment Resolve lives in. For
                     poking about; you do not need this in normal use.
 
-    aq resolve remove
-                    Delete the container. Removes Resolve and the Rocky Linux
-                    around it. YOUR PROJECTS AND MEDIA ARE NOT IN THERE — they
-                    are in your ordinary folders, which the container only
-                    borrows — so this is safe and it is the right first move
-                    when a setup has gone wrong.
+    aq resolve remove [--gui] [--purge]
+                    Remove Resolve and the environment it ran in. YOUR PROJECTS
+                    AND MEDIA ARE NOT IN THERE — they are in your ordinary
+                    folders, which that environment only borrows — so this is
+                    safe, and it is the right first move when a setup has gone
+                    wrong. --gui does it in a window instead of here, which is
+                    what "Remove DaVinci Resolve" in your apps opens. --purge
+                    also deletes your Resolve settings and project database,
+                    which is never the default.
 
-WHY A CONTAINER
+    aq resolve scale [N]
+                    How big Resolve's own interface is drawn. With no number it
+                    says what it is set to. A number between 0.5 and 3 fixes it
+                    there; 'auto' goes back to following your desktop.
+
+WHY A SEPARATE ENVIRONMENT
     Resolve ships its own copy of a library from 2021 that clashes with any
-    modern Linux's own, and dies before its window opens. Enterprise Linux —
-    Rocky — still carries the matching version, so in there it cannot happen.
-    That is also the userland Blackmagic themselves build against and the film
-    industry standardised on.
+    modern Linux's own, and dies before its window opens. It is the single most
+    common reason people give up on Resolve on Linux. Inside its own
+    environment the clash cannot happen, and AquariusOS updating cannot break
+    it either.
 
     You will not notice it. Resolve appears in your apps like any other program
     and reads and writes your ordinary folders.
@@ -620,7 +629,7 @@ resolve_status() {
     # shellcheck source=/dev/null
     . "${AQ_RESOLVE_ENV}"
 
-    echo "  Runs in  : a Rocky Linux container called '${container}'"
+    echo "  Runs in  : its own environment, called '${container}'"
     echo "  Built from: ${AQ_RESOLVE_RUNTIME_IMAGE}:${AQ_RESOLVE_RUNTIME_TAG}"
 
     if ! resolve_installed; then
@@ -705,6 +714,119 @@ resolve_status() {
     echo "      It should say CUDA, with your card listed underneath."
 }
 
+# =============================================================================
+# aq resolve scale — how big Resolve's own interface is drawn
+# =============================================================================
+# WHY THIS EXISTS AND `aq display` DOES NOT COVER IT
+#
+# Resolve is an X11 application, and X11 has no idea what a screen scale is. On
+# a Wayland desktop it runs through XWayland, which tells every X11 program the
+# screen is at 100% no matter what the screen is really at. So a desktop at 125%
+# draws everything correctly except Resolve, which comes out small — exactly
+# what Royce saw on the 4K bench on 2026-09-04.
+#
+# The launcher fixes it by reading the session's scale and handing it to Resolve
+# on the way in, so normally there is nothing to do here. This command is for the
+# cases where the automatic answer is not the one you want:
+#
+#   aq resolve scale        what is it set to, and where that answer came from
+#   aq resolve scale 1.5    fix it there, whatever the rest of the desktop does
+#   aq resolve scale auto   go back to following the desktop
+#
+# It takes effect the next time Resolve starts. Nothing is asked of a running
+# Resolve, because Qt reads its scale once, when it starts, and nothing can
+# change it afterwards.
+# =============================================================================
+
+AQ_RESOLVE_CONF="${AQ_CONF_DIR}/resolve.conf"
+
+resolve_scale_get() {
+    [ -r "${AQ_RESOLVE_CONF}" ] || return 0
+    sed -n 's/^[[:space:]]*scale[[:space:]]*=[[:space:]]*\([0-9.]*\).*/\1/p' \
+        "${AQ_RESOLVE_CONF}" | tail -n 1
+}
+
+resolve_scale_set() {
+    local value="$1" tmp
+    mkdir -p "${AQ_CONF_DIR}" || {
+        echo "aq: could not create ${AQ_CONF_DIR}." >&2
+        return 1
+    }
+    tmp="${AQ_RESOLVE_CONF}.new.$$"
+    {
+        cat << 'EOF'
+# How DaVinci Resolve is started. Written by 'aq resolve scale'.
+#
+#   scale=1.5                    Resolve's interface at 150%, whatever the rest
+#                                of the desktop is at. Delete the line, or run
+#                                'aq resolve scale auto', to follow the desktop.
+#
+#   qt_variable=device-pixel-ratio
+#                                Use Resolve's OTHER scaling variable instead of
+#                                the default one. Only worth trying if the
+#                                default makes the interface look wrong — see
+#                                docs/restart/resolve.md.
+EOF
+        if [ -r "${AQ_RESOLVE_CONF}" ]; then
+            grep -E '^[[:space:]]*(qt_variable)[[:space:]]*=' "${AQ_RESOLVE_CONF}" || true
+        fi
+        if [ -n "${value}" ]; then
+            echo "scale=${value}"
+        fi
+    } > "${tmp}" || return 1
+    mv -f "${tmp}" "${AQ_RESOLVE_CONF}"
+}
+
+resolve_scale_status() {
+    local mine session
+    mine="$(resolve_scale_get)"
+    echo "DaVinci Resolve's interface size"
+    if [ -n "${mine}" ]; then
+        echo "  ${mine} — your own setting, from ${AQ_RESOLVE_CONF}"
+        echo "  It stays there whatever the rest of the desktop is set to."
+    else
+        session="$(display_effective_scale)"
+        echo "  ${session} — following the rest of the desktop (no setting of your own)."
+        echo "  Change the desktop with 'aq display scale', or fix Resolve on its"
+        echo "  own with 'aq resolve scale 1.5'."
+    fi
+    echo ""
+    echo "  Resolve reads this when it starts, so it applies to the NEXT time you"
+    echo "  open it. Resolve's own Preferences → User → UI Settings → Interface"
+    echo "  Scale still works too, and is the better tool for fine adjustment."
+}
+
+# The one number the launcher will use. Asked of the same helper, so this and
+# Resolve can never give different answers.
+display_effective_scale() {
+    local n=""
+    if [ -x "${AQ_DISPLAY_HELPER}" ]; then
+        n="$("${AQ_DISPLAY_HELPER}" --effective-scale 2> /dev/null)"
+    fi
+    case "${n}" in
+        '' | *[!0-9.]* | *.*.*) printf '1' ;;
+        *) printf '%s' "${n}" ;;
+    esac
+}
+
+resolve_scale() {
+    case "${1:-}" in
+        "" | status) resolve_scale_status ;;
+        auto)
+            resolve_scale_set "" || return 1
+            echo "Resolve now follows the rest of the desktop, which is at $(display_effective_scale)."
+            echo "  It applies the next time you open Resolve."
+            ;;
+        *)
+            display_check_number "$1" scale || return 1
+            resolve_scale_set "$1" || return 1
+            echo "Resolve's interface is now set to ${1} times normal size."
+            echo "  It applies the next time you open Resolve. If it is already"
+            echo "  running, close it and open it again."
+            ;;
+    esac
+}
+
 resolve_shell() {
     local container
     container="$(resolve_container)"
@@ -713,65 +835,47 @@ resolve_shell() {
         echo "    Run:  aq resolve install" >&2
         return 1
     fi
-    echo "You are about to be inside the Rocky Linux container Resolve lives in."
+    echo "You are about to be inside the environment Resolve lives in."
     echo "Your home folder is the same folder in there. 'exit' brings you back."
     echo ""
     exec distrobox enter --name "${container}"
 }
 
 resolve_remove() {
-    local container
-    container="$(resolve_container)"
+    # ⚠️ THE REMOVING ITSELF IS NOT HERE ANY MORE. It moved into
+    # /usr/libexec/aquarius-resolve-install --remove on 2026-09-04, when the
+    # "Remove DaVinci Resolve" window was added, for the same reason installing
+    # lives there: one place owns the container, and a window and a terminal
+    # doing the same job must not be two implementations of it.
+    #
+    #   aq resolve remove              ask here, then remove
+    #   aq resolve remove --gui        the window instead of this terminal
+    #   aq resolve remove --purge      also delete your Resolve settings and
+    #                                  project database. Never the default.
+    #   aq resolve remove --dry-run    a rehearsal; removes nothing.
+    local want_gui=0 arg
+    local -a passthrough=()
+    for arg in "$@"; do
+        if [ "${arg}" = "--gui" ]; then
+            want_gui=1
+        else
+            passthrough+=("${arg}")
+        fi
+    done
 
-    if ! resolve_installed; then
-        echo "There is nothing to remove — the '${container}' container does not exist."
-        return 0
+    if [ "${want_gui}" = "1" ]; then
+        [ -x "${AQ_RESOLVE_UNINSTALLER_GUI}" ] || {
+            echo "aq: ${AQ_RESOLVE_UNINSTALLER_GUI} is missing from this system." >&2
+            return 1
+        }
+        exec "${AQ_RESOLVE_UNINSTALLER_GUI}" ${passthrough[@]+"${passthrough[@]}"}
     fi
 
-    echo "This deletes the container DaVinci Resolve lives in, and Resolve with it."
-    echo ""
-    echo "YOUR PROJECTS AND MEDIA ARE NOT IN THERE. They are in your ordinary"
-    echo "folders, which the container only borrows while it is running. Nothing"
-    echo "you have made is touched by this."
-    echo ""
-    read -r -p "Delete it? [y/N] " reply
-    case "${reply}" in
-        [yY]*) ;;
-        *)
-            echo "Nothing was changed."
-            return 0
-            ;;
-    esac
-
-    # The menu entries go first. An icon left behind that starts a container
-    # that no longer exists is worse than no icon.
-    local apps
-    apps="${XDG_DATA_HOME:-${HOME}/.local/share}/applications"
-    local removed=0
-    while IFS= read -r entry; do
-        [ -n "${entry}" ] || continue
-        # Only entries that point INTO our container. Somebody who also has
-        # Resolve installed some other way keeps their own launcher.
-        grep -q 'aquarius-resolve-launch\|aquarius-resolve-run' "${entry}" || continue
-        rm -f "${entry}" && removed=$((removed + 1))
-    done < <(find "${apps}" -maxdepth 1 -type f \
-        \( -iname '*resolve*.desktop' \
-        -o -iname '*davinci*.desktop' \
-        -o -iname '*blackmagic*.desktop' \) 2> /dev/null)
-    [ "${removed}" -gt 0 ] && echo "Removed ${removed} menu entries."
-    update-desktop-database "${apps}" > /dev/null 2>&1 || true
-
-    if distrobox rm --force "${container}"; then
-        rm -f "${XDG_DATA_HOME:-${HOME}/.local/share}/aquarius/resolve/installed.env"
-        echo "Done. The container is gone."
-        echo ""
-        echo "The downloaded Rocky Linux image is still on this computer, so"
-        echo "setting Resolve up again is quick. To reclaim that space too:"
-        echo "    podman image prune -a"
-    else
-        echo "The container could not be removed." >&2
+    [ -x "${AQ_RESOLVE_INSTALLER}" ] || {
+        echo "aq: ${AQ_RESOLVE_INSTALLER} is missing from this system." >&2
         return 1
-    fi
+    }
+    "${AQ_RESOLVE_INSTALLER}" --remove ${passthrough[@]+"${passthrough[@]}"}
 }
 
 resolve() {
@@ -826,8 +930,15 @@ resolve() {
             exec "${AQ_RESOLVE_LAUNCHER}" "$@"
             ;;
         status | "") resolve_status ;;
+        scale)
+            shift
+            resolve_scale "${1:-}"
+            ;;
         shell) resolve_shell ;;
-        remove | uninstall) resolve_remove ;;
+        remove | uninstall)
+            shift
+            resolve_remove "$@"
+            ;;
         -h | --help | help) resolve_usage ;;
         *)
             echo "aq: '${1}' is not something 'aq resolve' knows how to do." >&2

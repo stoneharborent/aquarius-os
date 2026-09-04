@@ -127,6 +127,40 @@ aq_dnf install \
     gnome-font-viewer \
     baobab
 
+# ------------------------------------------------------------------------------
+# The English language pack — and why a missing one BROKE AN UPDATE
+# ------------------------------------------------------------------------------
+# ⚠️ THIS IS THE 2026-09-04 BENCH FAULT. READ IT BEFORE REMOVING THIS.
+#
+# On the bench, GNOME noticed that the English language pack was not installed
+# and offered — politely, in a notification — to add it. Royce said yes. GNOME
+# handed the job to rpm-ostree, which added the package as a LAYER on top of the
+# operating system image.
+#
+# On an image-based system like this one, a layered package is a modification of
+# the deployment, and `bootc upgrade` refuses to touch a deployment that has
+# been modified. So the machine stopped being able to update itself, and the
+# message it gave — "Deployment contains local rpm-ostree modifications" — says
+# nothing at all about a language pack.
+#
+# The fix is not to teach people that message. It is to make GNOME never ask:
+# ship the language pack in the image, where it belongs.
+#
+#   langpacks-en       the meta-package GNOME's prompt is asking for. It pulls
+#                      in the translations, the spell-checking dictionary and
+#                      the locale data for English.
+#   langpacks-core-en  the small half of the same thing — the locale itself.
+#                      Named separately because it is a separate package and
+#                      "it comes in as a dependency" is exactly the kind of
+#                      accident this repository asks for by name instead.
+#
+# The recovery for a machine already in this state is in
+# docs/restart/bench-rebase.md, under "The update refuses to run".
+say "The English language pack (so GNOME never offers to layer it)"
+aq_dnf install \
+    langpacks-en \
+    langpacks-core-en
+
 # gnome-software is the app store. On this machine it is a Flatpak store and
 # nothing else — there is no such thing as installing an RPM onto a running
 # AquariusOS, because the system is an image that gets replaced wholesale.
@@ -212,6 +246,8 @@ aq_installed \
     gnome-shell-extension-appindicator \
     gnome-shell-extension-caffeine \
     gnome-shell-extension-gsconnect \
+    langpacks-en \
+    langpacks-core-en \
     gdm \
     dconf \
     glib2

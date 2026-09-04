@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Remove DaVinci Resolve
+GenericName=Video Editor Removal
+Comment=Remove DaVinci Resolve from this computer. Your projects and media are not touched
+Exec=/usr/libexec/aquarius-resolve-uninstaller
+TryExec=/usr/libexec/aquarius-resolve-uninstaller
+Icon=aquarius-logo
+Terminal=false
+StartupNotify=true
+StartupWMClass=org.aquariusos.ResolveUninstaller
+Categories=AudioVideo;Video;AudioVideoEditing;
+Keywords=davinci;resolve;blackmagic;remove;uninstall;delete;

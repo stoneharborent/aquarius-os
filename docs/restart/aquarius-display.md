@@ -127,9 +127,26 @@ KDE have the same problem. On a scaled screen, an X11 application is either
 drawn at its normal size (so it looks small next to everything else) or blown up
 by the window manager (so it looks slightly soft).
 
-Resolve has its own answer, and it is the right one to use: **DaVinci Resolve →
-Preferences → User → UI Settings → UI Display Scale.** Set it there, in the
-application, and Resolve draws its own interface at the size you want, sharply.
+**AquariusOS does fix it for Resolve specifically**, because Resolve is the
+application this operating system exists for. Its launcher asks this helper what
+the session is scaled by — `aquarius-display-scale --effective-scale`, which
+prints one number and always answers — and hands that to Resolve's toolkit on
+the way in. So Resolve opens at the size everything else is, without anybody
+setting anything.
+
+To give Resolve a different size from the rest of the desktop:
+
+```
+aq resolve scale 1.5     Resolve at 150%, whatever the desktop is at
+aq resolve scale auto    back to following the desktop
+```
+
+Resolve's own setting still exists and is still the better tool for fine
+adjustment: **DaVinci Resolve → Preferences → User → UI Settings → UI Display
+Scale.**
+
+Every *other* X11 application is still unscaled, and there is nothing anybody
+can do about that from outside the application.
 
 ---
 

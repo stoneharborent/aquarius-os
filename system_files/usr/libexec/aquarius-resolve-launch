@@ -31,14 +31,74 @@
 # containerised application has this problem and most people assume the
 # application is just ugly.
 #
-# THE FIX, IN THREE PARTS
+# THE FIX, IN FOUR PARTS
 #   XCURSOR_THEME   read out of YOUR desktop settings, right now, at launch —
 #                   not baked in when Resolve was installed, so changing your
 #                   cursor theme just works with nothing to re-run.
-#   XCURSOR_SIZE    the same.
+#   XCURSOR_SIZE    the same — MULTIPLIED BY YOUR SCREEN SCALE. See below.
 #   XCURSOR_PATH    where to FIND that theme from inside the container.
 #                   distrobox mounts the whole host at /run/host, so the themes
 #                   on your real disk are visible there.
+#   the theme itself is also installed inside the runtime image, so that a
+#                   machine using the default pointer works even if the mount
+#                   is not where we expect it.
+#
+# ==============================================================================
+# AND THE SECOND HALF: HOW BIG RESOLVE IS
+# ==============================================================================
+# Reported from the bench, 2026-09-04: "apps resolution and appearing smaller".
+#
+# THE REASON, and it is the same reason as the pointer. Resolve is an X11
+# application. On a Wayland desktop it runs through XWayland, and XWayland hands
+# X11 applications a screen with no scale on it at all — always 96 dots per
+# inch, always 100%. So a desktop running at 125% or 150% draws everything
+# correctly EXCEPT the X11 programs, which come out at their raw size and look
+# small beside everything else. GNOME and KDE have exactly the same problem;
+# no desktop solves it, because there is nothing in X11 to solve it with.
+#
+# What CAN be done is to tell the toolkit inside the application. Resolve is
+# built on Qt 5, which reads its scale out of the environment, so the launcher
+# reads the size your desktop is set to and passes it in. That is the whole
+# feature: Resolve opens at the size everything else is.
+#
+# ⚠️ WHICH VARIABLE — this is the part that is a judgement, so it is written
+#    down rather than assumed:
+#
+#      QT_SCALE_FACTOR          what we set. Qt's own current variable, it takes
+#                               fractional numbers (1.25, 1.5), and it is the
+#                               one still documented by Qt.
+#      QT_AUTO_SCREEN_SCALE_FACTOR=0
+#                               also set, and it matters: left on, Qt asks the
+#                               screen how dense it is, and XWayland always
+#                               answers "96 dpi", so Qt would confidently undo
+#                               the line above.
+#      QT_DEVICE_PIXEL_RATIO    the OTHER one, and the one most DaVinci Resolve
+#                               posts on the internet recommend. It is Qt 5's
+#                               older, deprecated mechanism and it prefers whole
+#                               numbers — non-integer values are reported to make
+#                               images blocky.
+#
+#    ⚠️ THE TWO ARE NOT SET TOGETHER, ON PURPOSE. Qt 5 reads both, and where
+#       both are set they can multiply — 1.25 and 1.25 becoming 1.56 — which
+#       looks like the scaling being broken rather than being doubled. So one at
+#       a time, ours by default, and the other reachable in one line for the
+#       bench to compare:
+#
+#           aq resolve scale 1.5                          set the size
+#           echo 'qt_variable=device-pixel-ratio' >> ~/.config/aquarius/resolve.conf
+#
+# WHERE THE NUMBER COMES FROM, in order:
+#   1. AQUARIUS_RESOLVE_SCALE in the environment — a one-off, for getting out of
+#      trouble.
+#   2. `aq resolve scale N`, saved in ~/.config/aquarius/resolve.conf — for when
+#      you want Resolve at a different size from everything else.
+#   3. The size this session is running at, asked of aquarius-display-scale,
+#      which is the same answer `aq display` gives.
+#   4. 1. Which is what every other Linux does, and what looked too small.
+#
+# Resolve's OWN setting — Preferences → User → UI Settings → Interface Scale —
+# still exists and still wins for the parts of Resolve that use it. It is the
+# better tool for fine adjustment; this is what makes the first launch right.
 #
 # USAGE
 #   aquarius-resolve-launch [program-inside-the-container] [arguments…]
@@ -103,6 +163,46 @@ CURSOR_SIZE="${XCURSOR_SIZE:-$(read_setting cursor-size)}"
 [ -n "${CURSOR_THEME}" ] || CURSOR_THEME="Adwaita"
 [ -n "${CURSOR_SIZE}" ] || CURSOR_SIZE="24"
 
+# ------------------------------------------------------------------------------
+# How big is this screen drawing things?
+# ------------------------------------------------------------------------------
+# Asked of the same helper `aq display` asks, so that Resolve and the rest of
+# the desktop can never disagree about the answer. It always prints a number —
+# it falls back through your own setting, then GNOME's, then 1 — so an empty
+# answer here means the helper is missing, not that the question is unanswerable.
+CONF="${XDG_CONFIG_HOME:-${HOME}/.config}/aquarius/resolve.conf"
+
+conf_value() { # conf_value <key>
+    [ -r "${CONF}" ] || return 0
+    sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*\([^#]*\).*/\1/p" "${CONF}" \
+        | tail -n 1 | tr -d '[:space:]'
+}
+
+session_scale() {
+    local n=""
+    if [ -x /usr/libexec/aquarius-display-scale ]; then
+        n="$(/usr/libexec/aquarius-display-scale --effective-scale 2> /dev/null)"
+    fi
+    case "${n}" in
+        '' | *[!0-9.]* | *.*.*) printf '1' ;;
+        *) printf '%s' "${n}" ;;
+    esac
+}
+
+SCALE="${AQUARIUS_RESOLVE_SCALE:-}"
+[ -n "${SCALE}" ] || SCALE="$(conf_value scale)"
+[ -n "${SCALE}" ] || SCALE="$(session_scale)"
+case "${SCALE}" in
+    '' | *[!0-9.]* | *.*.*) SCALE="1" ;;
+esac
+
+# The pointer is measured in real pixels, so it needs the same multiplication
+# the rest of the interface is getting. 24 at 125% is 30; 24 at 150% is 36. An
+# unscaled pointer on a scaled screen is exactly the "much smaller than the
+# desktop cursor" the bench reported in August.
+CURSOR_SIZE="$(awk -v b="${CURSOR_SIZE}" -v s="${SCALE}" \
+    'BEGIN { v = int(b * s + 0.5); if (v < 1) v = 24; print v }')"
+
 # Where a theme may be found, from inside the container. Its own folder first
 # (fastest, if it happens to have it), then yours through /run/host, then your
 # personal ones. Your home folder is the same path in both places — distrobox
@@ -118,24 +218,33 @@ ENV_FLAGS=(
 # ------------------------------------------------------------------------------
 # The size of Resolve's own interface
 # ------------------------------------------------------------------------------
-# ⚠️ THE RIGHT PLACE TO CHANGE THIS IS INSIDE RESOLVE, NOT HERE.
-#     Preferences → User → UI Settings → Interface Scale.
-# Resolve has its own scaling and it is better than Qt's, because Resolve knows
-# which parts of its interface should scale and which should not. Forcing Qt's
-# scaling on top of it gives you blurry text.
+# The long version is at the top of this file. The short version: XWayland tells
+# every X11 program the screen is at 100%, whatever the screen is really at, so
+# Resolve has to be told separately or it opens small on a 4K desktop.
 #
-# This override exists for one situation: a 4K screen where Resolve has opened a
-# window LARGER than the screen, so its edges — and its close button — are off
-# the display and you cannot reach Preferences to fix it. Start it once with:
-#
-#     AQUARIUS_RESOLVE_SCALE=1 /usr/libexec/aquarius-resolve-launch
-#
-# get a window you can see, set the Interface Scale properly, and never use this
-# again.
-if [ -n "${AQUARIUS_RESOLVE_SCALE:-}" ]; then
-    ENV_FLAGS+=(--env "QT_AUTO_SCREEN_SCALE_FACTOR=0")
-    ENV_FLAGS+=(--env "QT_SCALE_FACTOR=${AQUARIUS_RESOLVE_SCALE}")
-fi
+# QT_AUTO_SCREEN_SCALE_FACTOR=0 is not optional. Left on, Qt asks XWayland how
+# dense the screen is, gets "96 dpi" — the only answer XWayland ever gives — and
+# quietly overrides the line below with 1.
+QT_VARIABLE="$(conf_value qt_variable)"
+[ -n "${QT_VARIABLE}" ] || QT_VARIABLE="${AQUARIUS_RESOLVE_QT_VAR:-scale-factor}"
+
+ENV_FLAGS+=(--env "QT_AUTO_SCREEN_SCALE_FACTOR=0")
+case "${QT_VARIABLE}" in
+    device-pixel-ratio)
+        # Qt 5's older mechanism. Most Resolve advice on the internet names this
+        # one, and it prefers whole numbers. Never set alongside the other:
+        # Qt 5 reads both and they can multiply.
+        ENV_FLAGS+=(--env "QT_DEVICE_PIXEL_RATIO=${SCALE}")
+        ;;
+    *)
+        ENV_FLAGS+=(--env "QT_SCALE_FACTOR=${SCALE}")
+        ;;
+esac
+
+# Said out loud, because a launcher that silently changes how an application
+# looks is a launcher nobody can debug. This goes to the terminal when started
+# from one, and nowhere at all when started from an icon.
+echo "aquarius-resolve-launch: interface at ${SCALE}x (${QT_VARIABLE}), pointer ${CURSOR_THEME} at ${CURSOR_SIZE}px" >&2
 
 # `distrobox enter --additional-flags` takes ONE string, so the flags are joined
 # into one. None of these values can contain a space in practice — a cursor

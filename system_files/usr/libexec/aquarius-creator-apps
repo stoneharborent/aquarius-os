@@ -457,9 +457,19 @@ def run_window(first_run):
 
     gi.require_version("Gtk", "4.0")
     gi.require_version("Adw", "1")
-    from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango
+    from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango  # noqa: F401
 
-    PENDING, ACTIVE, DONE, FAILED = range(4)
+    # ⚠️ IMPORTED HERE AND NOT AT THE TOP OF THE FILE, ON PURPOSE. Importing it
+    # pulls GTK in, and --dry-run has to keep working in a build container with
+    # no screen and no GTK — which is the check that would have caught the
+    # September 2026 fault where this window could not read its own list.
+    #
+    # The step rows, the Details log, the Aquarius mark and the standard page
+    # are shared with the two DaVinci Resolve windows. See the header of
+    # /usr/lib/aquarius/python/aquarius_ui.py.
+    sys.path.insert(0, "/usr/lib/aquarius/python")
+    import aquarius_ui
+    from aquarius_ui import ACTIVE, DONE, FAILED, PENDING  # noqa: F401
 
     stamp_path = os.path.join(GLib.get_user_config_dir(), "aquarius", "creator-apps-seen")
     icon_cache = os.path.join(GLib.get_user_cache_dir(), "aquarius", "app-icons")
@@ -764,41 +774,9 @@ def run_window(first_run):
         def chosen(self):
             return (not self.installed) and self.check.get_active()
 
-    class StepRow(Adw.ActionRow):
-        """One app on the installing page, with a spinner or a tick in front."""
-
-        def __init__(self, title):
-            super().__init__(title=title)
-            self.set_title_lines(0)
-            self._spinner = Gtk.Spinner()
-            self._icon = Gtk.Image()
-            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-            box.set_size_request(20, -1)
-            box.set_valign(Gtk.Align.CENTER)
-            box.append(self._spinner)
-            box.append(self._icon)
-            self.add_prefix(box)
-            self.set_state(PENDING)
-
-        def set_state(self, state):
-            self._spinner.set_visible(state == ACTIVE)
-            if state == ACTIVE:
-                self._spinner.start()
-            else:
-                self._spinner.stop()
-            self._icon.set_visible(state in (DONE, FAILED))
-            if state == DONE:
-                self._icon.set_from_icon_name("emblem-ok-symbolic")
-                self._icon.remove_css_class("error")
-                self._icon.add_css_class("success")
-            elif state == FAILED:
-                self._icon.set_from_icon_name("dialog-error-symbolic")
-                self._icon.remove_css_class("success")
-                self._icon.add_css_class("error")
-            if state == PENDING:
-                self.add_css_class("dim-label")
-            else:
-                self.remove_css_class("dim-label")
+    # The step rows are the shared ones. This class used to be written out
+    # here AND in the Resolve installer, identically, in two files.
+    StepRow = aquarius_ui.StepRow
 
     # -- the window --------------------------------------------------------
     class ChooserWindow(Adw.ApplicationWindow):
@@ -808,7 +786,6 @@ def run_window(first_run):
             self.apps = [e for e in entries if not e.runtime]
             self.cards = {}
             self.step_rows = {}
-            self.log_lines = []
             self.proc = None
             self.plan = []
             self.failures = {}
@@ -1128,23 +1105,8 @@ def run_window(first_run):
             self.bar.set_show_text(False)
             self.bar.set_margin_top(4)
 
-            self.log_view = Gtk.TextView()
-            self.log_view.set_editable(False)
-            self.log_view.set_cursor_visible(False)
-            self.log_view.set_monospace(True)
-            self.log_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
-            self.log_view.set_left_margin(8)
-            self.log_view.set_right_margin(8)
-            self.log_view.set_top_margin(6)
-            self.log_view.set_bottom_margin(6)
-            self.log_scroll = Gtk.ScrolledWindow()
-            self.log_scroll.set_child(self.log_view)
-            self.log_scroll.set_min_content_height(200)
-            self.log_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-            self.log_scroll.add_css_class("card")
-
-            self.details = Gtk.Expander(label="Details")
-            self.details.set_child(self.log_scroll)
+            self.log = aquarius_ui.LogPane(height=200)
+            self.details = self.log.widget
             self.details.set_margin_top(4)
 
             self.cancel_button = Gtk.Button(label="Cancel")
@@ -1153,8 +1115,7 @@ def run_window(first_run):
             )
             self.cancel_button.connect("clicked", self._on_cancel_clicked)
 
-            self.copy_button = Gtk.Button(label="Copy details")
-            self.copy_button.connect("clicked", self._on_copy_clicked)
+            self.copy_button = aquarius_ui.copy_button("Copy details", self.log.text)
             self.copy_button.set_visible(False)
 
             self.working_close = Gtk.Button(label="Close")
@@ -1260,8 +1221,7 @@ def run_window(first_run):
             self.plan = plan
             self.failures = {}
             self.cancelled = False
-            self.log_lines = []
-            self._set_log("")
+            self.log.clear()
             self.bar.set_fraction(0.0)
             self.details.set_expanded(False)
             self.cancel_button.set_visible(True)
@@ -1424,6 +1384,30 @@ def run_window(first_run):
             # said no, or nothing asked you"; 127 is "the asking itself failed".
             # Both need a different sentence from "an app would not install".
             if code in (126, 127) and not self.failures:
+                # ⚠️ TELLING THE TWO APART MATTERS, AND THIS IS THE 2026-09-04
+                # BENCH FAULT. "You said no" and "nothing was able to ask you"
+                # look identical from here, and the second one is not something
+                # a person can fix by pressing Try again — it is a fault in the
+                # session, and saying "enter your password when asked" to
+                # somebody who was never asked is the worst kind of wrong.
+                #
+                # pkexec says which it was, in the log we already have: with no
+                # authentication agent registered it falls back to asking in a
+                # terminal, finds there is no terminal behind a window, and
+                # complains about /dev/tty.
+                log = self.log.text()
+                if "authentication agent" in log or "/dev/tty" in log:
+                    self._show_failure(
+                        "Nothing in this desktop session was able to ask you "
+                        "for your password, so nothing was installed. That is "
+                        "a fault in AquariusOS, not something you did.\n\n"
+                        "Two ways round it: log out and back in (the part that "
+                        "asks for passwords starts with the session, so a fresh "
+                        "login often fixes it), or log into GNOME at the login "
+                        "screen and install from there. Either way, the apps "
+                        "are still waiting in Aquarius Apps."
+                    )
+                    return GLib.SOURCE_REMOVE
                 self._show_failure(
                     "AquariusOS was not given permission to install apps for "
                     "this computer, so nothing was installed. Press Try again "
@@ -1531,37 +1515,11 @@ def run_window(first_run):
                 "stopping in the middle is how you get a broken one."
             )
 
-        def _on_copy_clicked(self, _button):
-            text = "".join(
-                line if line.endswith("\n") else line + "\n" for line in self.log_lines
-            )
-            display = Gdk.Display.get_default()
-            if display is not None:
-                # NOT clipboard.set(text): that is a C macro with no
-                # introspection, so it is not there to call from Python. This is
-                # the real one. (The same note is in aquarius-resolve-installer,
-                # where it was found first.)
-                value = GObject.Value(str, text)
-                display.get_clipboard().set_content(
-                    Gdk.ContentProvider.new_for_value(value)
-                )
-            _button.set_label("Copied")
-            GLib.timeout_add_seconds(
-                2, lambda: (_button.set_label("Copy details"), False)[1]
-            )
-
         # -- the log -------------------------------------------------------
         def _append_log(self, text):
-            self.log_lines.append(text)
-            buffer = self.log_view.get_buffer()
-            buffer.insert(buffer.get_end_iter(), text)
-            mark = buffer.create_mark(None, buffer.get_end_iter(), False)
-            self.log_view.scroll_mark_onscreen(mark)
-            buffer.delete_mark(mark)
-            return GLib.SOURCE_REMOVE
-
-        def _set_log(self, text):
-            self.log_view.get_buffer().set_text(text)
+            # One line into the shared Details log. Called from GLib.idle_add by
+            # the threads reading the installer, hence the SOURCE_REMOVE.
+            return self.log.append(text)
 
         # -- window plumbing -----------------------------------------------
         def _on_key(self, _controller, keyval, _keycode, _state):

@@ -231,15 +231,48 @@ for f in /usr/libexec/aquarius-resolve-install \
     fi
 done
 
-# The window itself. Same idea, different language: py_compile parses it and
-# writes out the byte-code without running a line of it.
-AQ_GUI=/usr/libexec/aquarius-resolve-installer
-if [ ! -f "${AQ_GUI}" ]; then
-    bad "${AQ_GUI} is missing — 'Install DaVinci Resolve' would do nothing"
+# ------------------------------------------------------------------------------
+# The shared window pieces
+# ------------------------------------------------------------------------------
+# Three windows — the creator-apps chooser, the Resolve installer and the
+# Resolve uninstaller — are built out of the same step rows, the same Details
+# log and the same Aquarius mark. Those used to be three copies of two hundred
+# lines. Since 2026-09-04 they are one file, and all three IMPORT it, which
+# means a fault in it breaks all three at once. So it is checked first, and it
+# is checked by importing it exactly the way they do.
+say "DaVinci Resolve — the shared window pieces"
+AQ_UI=/usr/lib/aquarius/python/aquarius_ui.py
+if [ ! -r "${AQ_UI}" ]; then
+    bad "${AQ_UI} is missing — all three AquariusOS windows would fail to start"
 else
+    ok "aquarius_ui.py is here"
+    if python3 -c 'import py_compile, sys; py_compile.compile(sys.argv[1], cfile="/tmp/aq-ui-check.pyc", doraise=True)' "${AQ_UI}"; then
+        ok "aquarius_ui.py is valid Python"
+    else
+        bad "${AQ_UI} has a syntax error"
+    fi
+    # The real question: can it be IMPORTED, from the path the windows add?
+    # Importing pulls GTK in, which needs no screen, and it is the check that
+    # catches a missing typelib or a bad name at the top of the file.
+    if python3 -c 'import sys; sys.path.insert(0, "/usr/lib/aquarius/python"); import aquarius_ui; print("  StepRow, LogPane, %d shared pieces" % len([n for n in dir(aquarius_ui) if not n.startswith("_")]))'; then
+        ok "aquarius_ui imports cleanly on this image"
+    else
+        bad "aquarius_ui cannot be imported — every AquariusOS window would fail to open"
+    fi
+fi
+rm -f /tmp/aq-ui-check.pyc
+
+# The two windows. Same idea as the scripts above, different language:
+# py_compile parses them and writes byte-code without running a line.
+for AQ_GUI in /usr/libexec/aquarius-resolve-installer \
+    /usr/libexec/aquarius-resolve-uninstaller; do
+    if [ ! -f "${AQ_GUI}" ]; then
+        bad "${AQ_GUI} is missing — the app-grid entry would do nothing"
+        continue
+    fi
     chmod 0755 "${AQ_GUI}"
     if [ -x "${AQ_GUI}" ]; then
-        ok "aquarius-resolve-installer is present and runnable"
+        ok "$(basename "${AQ_GUI}") is present and runnable"
     else
         bad "${AQ_GUI} is not runnable"
     fi
@@ -247,11 +280,43 @@ else
     # leave a __pycache__ folder beside the script, and that folder would then
     # be baked into /usr/libexec in the finished operating system.
     if python3 -c 'import py_compile, sys; py_compile.compile(sys.argv[1], cfile="/tmp/aq-gui-check.pyc", doraise=True)' "${AQ_GUI}"; then
-        ok "aquarius-resolve-installer is valid Python"
+        ok "$(basename "${AQ_GUI}") is valid Python"
     else
         bad "${AQ_GUI} has a syntax error"
     fi
-fi
+    # ⚠️ AND IT MUST SAY WHERE THE SHARED PIECES ARE. Without this line the
+    # window imports nothing, fails on its first widget, and the icon does
+    # nothing when clicked.
+    aq_file_has "${AQ_GUI}" 'sys\.path\.insert\(0, "/usr/lib/aquarius/python"\)' \
+        "$(basename "${AQ_GUI}") knows where the shared window pieces live"
+done
+rm -f /tmp/aq-gui-check.pyc
+
+# ------------------------------------------------------------------------------
+# Nothing a person reads may name another Linux
+# ------------------------------------------------------------------------------
+# ⚠️ ROYCE'S RULE, 2026-09-04. A person installing a video editor is not helped
+# by being told which distribution is inside the box — it tells them nothing
+# they can act on and gives them something new to worry about. The comments in
+# these files still say Rocky, because whoever maintains them needs to know.
+# Anything a USER reads says "environment".
+#
+# So this looks at the printable strings only: every line that is not a comment.
+say "DaVinci Resolve — no other Linux is named where a person can see it"
+AQ_LEAK=0
+for f in /usr/libexec/aquarius-resolve-install \
+    /usr/libexec/aquarius-resolve-installer \
+    /usr/libexec/aquarius-resolve-uninstaller \
+    /usr/share/applications/aquarius-install-resolve.desktop \
+    /usr/share/applications/aquarius-remove-resolve.desktop; do
+    [ -r "${f}" ] || continue
+    if grep -vE '^[[:space:]]*#' "${f}" | grep -qi 'rocky'; then
+        bad "$(basename "${f}") names Rocky Linux in something a person reads:"
+        grep -vE '^[[:space:]]*#' "${f}" | grep -i 'rocky' | sed 's/^/       /' >&2
+        AQ_LEAK=1
+    fi
+done
+[ "${AQ_LEAK}" -eq 0 ] && ok "nothing a person reads names another Linux"
 
 # The window and the script have to agree on the progress lines, and the only
 # way to know they still do is to run them. --dry-run walks all six steps and
@@ -283,6 +348,94 @@ if grep -q '^PERCENT ' /tmp/aq-progress.txt; then
 else
     bad "no PERCENT line was sent — the progress bar would never fill"
 fi
+# ------------------------------------------------------------------------------
+# The removing side of the same channel
+# ------------------------------------------------------------------------------
+# "Remove DaVinci Resolve" is a window too now, and it reads the same STEP /
+# DONE lines from the same script. Three steps rather than six, so it is checked
+# separately — a window drawing three rows against a script sending six is a
+# progress bar that never finishes.
+say "DaVinci Resolve — the removing side of the progress channel"
+if /usr/libexec/aquarius-resolve-install --remove --dry-run --progress-fd 3 \
+    3> /tmp/aq-remove-progress.txt > /tmp/aq-remove-dryrun.txt 2>&1; then
+    ok "the removal rehearsal ran"
+else
+    bad "'aquarius-resolve-install --remove --dry-run' does not run"
+    cat /tmp/aq-remove-dryrun.txt
+fi
+echo "  What it said on the progress channel:"
+sed 's/^/       /' /tmp/aq-remove-progress.txt
+AQ_REMOVE_STEPS="$(grep -c '^STEP ' /tmp/aq-remove-progress.txt || true)"
+if [ "${AQ_REMOVE_STEPS}" = "3" ]; then
+    ok "all three removal steps were announced"
+else
+    bad "the removal rehearsal announced ${AQ_REMOVE_STEPS} steps, not 3"
+fi
+if [ "$(tail -1 /tmp/aq-remove-progress.txt)" = "DONE" ]; then
+    ok "it finished with DONE"
+else
+    bad "the removal rehearsal did not end with DONE — the window would never say it had finished"
+fi
+# ⚠️ THE ONE THAT MATTERS MOST. Without --purge the person's project database
+# must be KEPT, and the step must say so. A removal that quietly deleted
+# somebody's project library would be the worst bug in this operating system.
+aq_file_has /tmp/aq-remove-progress.txt '^STEP 3/3 Keeping your projects and settings$' \
+    "by default the third step KEEPS your projects and settings"
+if /usr/libexec/aquarius-resolve-install --remove --purge --dry-run --progress-fd 3 \
+    3> /tmp/aq-purge-progress.txt > /dev/null 2>&1; then
+    aq_file_has /tmp/aq-purge-progress.txt '^STEP 3/3 Deleting your Resolve settings and project database$' \
+        "and --purge, which nothing ticks by default, deletes them instead"
+else
+    bad "'--remove --purge --dry-run' does not run"
+fi
+rm -f /tmp/aq-remove-progress.txt /tmp/aq-remove-dryrun.txt /tmp/aq-purge-progress.txt
+
+# ------------------------------------------------------------------------------
+# Resolve comes up the right size, with the right pointer
+# ------------------------------------------------------------------------------
+# ⚠️ THE 2026-09-04 BENCH REPORT: "apps resolution and appearing smaller", and
+# the pointer changing shape inside Resolve. Both have the same cause — Resolve
+# is an X11 program, XWayland tells X11 programs the screen is at 100% whatever
+# it is really at, and the container has neither your scale nor your cursor
+# theme. The launcher carries all of it in. These check the lines are still
+# there, because a launcher that silently stops passing them looks exactly like
+# a launcher that is working.
+say "DaVinci Resolve — the size and the pointer"
+AQ_LAUNCH=/usr/libexec/aquarius-resolve-launch
+aq_file_has "${AQ_LAUNCH}" 'QT_AUTO_SCREEN_SCALE_FACTOR=0' \
+    "Qt is stopped from asking XWayland how dense the screen is (it always answers 96 dpi)"
+aq_file_has "${AQ_LAUNCH}" 'QT_SCALE_FACTOR=\$\{SCALE\}' \
+    "the session's scale is handed to Resolve"
+aq_file_has "${AQ_LAUNCH}" 'QT_DEVICE_PIXEL_RATIO=\$\{SCALE\}' \
+    "and the other Qt 5 variable is reachable for the bench to compare"
+aq_file_has "${AQ_LAUNCH}" 'aquarius-display-scale --effective-scale' \
+    "the scale is asked of the same helper 'aq display' asks"
+aq_file_has "${AQ_LAUNCH}" 'XCURSOR_THEME=' "your cursor theme is carried in"
+aq_file_has "${AQ_LAUNCH}" 'XCURSOR_SIZE=' "so is its size"
+aq_file_has "${AQ_LAUNCH}" 'XCURSOR_PATH=' "and where to find the theme from inside"
+
+# The helper has to actually answer, with a number, on a machine with no screen
+# at all — which is what a build container is, and what running Resolve from
+# GNOME or over SSH looks like too.
+AQ_EFFECTIVE="$(/usr/libexec/aquarius-display-scale --effective-scale 2>&1 || true)"
+echo "  --effective-scale on this machine (no screens at all): '${AQ_EFFECTIVE}'"
+case "${AQ_EFFECTIVE}" in
+    '' | *[!0-9.]*)
+        bad "'--effective-scale' did not print a plain number, so the launcher would have nothing to hand Resolve"
+        ;;
+    *) ok "'--effective-scale' answers with a number even where there are no screens" ;;
+esac
+
+# And the front door for changing it by hand.
+if /usr/bin/aq resolve scale > /tmp/aq-resolve-scale.txt 2>&1; then
+    ok "'aq resolve scale' runs"
+    sed 's/^/       /' /tmp/aq-resolve-scale.txt
+else
+    bad "'aq resolve scale' does not run"
+    cat /tmp/aq-resolve-scale.txt
+fi
+rm -f /tmp/aq-resolve-scale.txt
+
 # The two questions the window asks before it starts anything.
 #
 # Captured into a variable rather than piped into grep. `grep -q` stops at the
@@ -352,6 +505,26 @@ else
     fi
 fi
 
+# The way out, which is a window too now. An operating system with a friendly
+# way in and a terminal command for the way out has said something it did not
+# mean to.
+AQ_DESKTOP_RM=/usr/share/applications/aquarius-remove-resolve.desktop
+if [ ! -r "${AQ_DESKTOP_RM}" ]; then
+    bad "${AQ_DESKTOP_RM} is missing — there would be no way to remove Resolve without a terminal"
+else
+    aq_file_has "${AQ_DESKTOP_RM}" '^Exec=/usr/libexec/aquarius-resolve-uninstaller$' \
+        "the Remove entry points at the uninstaller window"
+    aq_file_has "${AQ_DESKTOP_RM}" '^Terminal=false$' \
+        "it opens its own window rather than expecting a terminal"
+    aq_file_has "${AQ_DESKTOP_RM}" '^StartupWMClass=org\.aquariusos\.ResolveUninstaller$' \
+        "the desktop knows which window belongs to this entry"
+    if desktop-file-validate "${AQ_DESKTOP_RM}"; then
+        ok "the Remove entry passes freedesktop's own validator"
+    else
+        bad "${AQ_DESKTOP_RM} is not a valid desktop entry — it would never appear in the app grid"
+    fi
+fi
+
 # The USB rules for licence dongles and control panels. These have to be on the
 # host: Resolve's own installer writes them inside the container, where they
 # apply to nothing, and AquariusOS's system folder is read-only so nothing can
@@ -379,6 +552,8 @@ else
     aq_file_has /usr/bin/aq '^    resolve\)' "aq knows the 'resolve' subcommand"
     aq_file_has /usr/bin/aq 'AQ_RESOLVE_INSTALLER_GUI=/usr/libexec/aquarius-resolve-installer' \
         "'aq resolve install --gui' knows where the window is"
+    aq_file_has /usr/bin/aq 'AQ_RESOLVE_UNINSTALLER_GUI=/usr/libexec/aquarius-resolve-uninstaller' \
+        "'aq resolve remove --gui' knows where its window is"
     # Run it for real. A help screen that crashes is a help screen nobody can
     # read at the moment they most need it.
     if /usr/bin/aq resolve --help > /tmp/aq-resolve-help.txt 2>&1; then

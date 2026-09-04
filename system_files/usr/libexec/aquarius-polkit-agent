@@ -1,0 +1,313 @@
+#!/usr/bin/bash
+# ==============================================================================
+# aquarius-polkit-agent — the thing that asks you for your password
+# ==============================================================================
+# PLAIN ENGLISH
+#
+# Some jobs on a computer need an administrator: installing an app for everybody
+# who uses the machine, changing a system setting. On Linux the part that stops
+# and asks "are you sure? type your password" is a small background program
+# called a POLKIT AUTHENTICATION AGENT. Every desktop ships one. GNOME has one
+# built into GNOME Shell. KDE has its own.
+#
+# The Aquarius Desktop had none, and this file is why it now does.
+#
+# ------------------------------------------------------------------------------
+# ⚠️ THE BENCH FAULT THIS FIXES — 2026-09-04
+# ------------------------------------------------------------------------------
+# Royce logged into the Aquarius Session, the creator-apps window appeared, he
+# ticked his apps and pressed Install, and got this:
+#
+#     Error creating textual authentication agent: Error opening current
+#     controlling terminal for the process ('/dev/tty'): No such device or
+#     address
+#
+# That message is `pkexec` — the "may I?" command the chooser runs — discovering
+# that nobody in this session is able to ask the question. With no agent
+# registered, pkexec falls back to asking in a TERMINAL, and there is no
+# terminal behind a window you clicked in an app grid. So it gave up, and the
+# apps did not install.
+#
+# Nothing was broken. The session was simply missing a piece every desktop has.
+#
+# ------------------------------------------------------------------------------
+# WHICH AGENT, AND WHY THAT ONE
+# ------------------------------------------------------------------------------
+# lxqt-policykit — /usr/libexec/lxqt-policykit-agent. The reasoning:
+#
+#   * It is an OFFICIAL FEDORA PACKAGE (2.4.0 in Fedora 44), so it is built,
+#     patched and updated by Fedora along with everything else in this image.
+#     hyprpolkitagent, the obvious Qt6/QML alternative, exists only in a COPR —
+#     somebody's personal build repository — and this image does not take its
+#     desktop from those. polkit-gnome, which everyone still recommends, is
+#     orphaned and has not been in Fedora for years.
+#
+#   * It is Qt 6, and this session already has Qt 6 in it for Quickshell. So it
+#     adds a dialog, not a second toolkit: the packages it needs beyond what is
+#     already here are polkit-qt6-1 and liblxqt, and nothing else.
+#
+#   * It is one binary with no LXQt desktop attached. Installing it does not
+#     install LXQt, does not add a session to the login screen, and does not put
+#     anything in the app grid.
+#
+# The alternatives were mate-polkit (GTK 3, official, fine, but it drags in
+# libappindicator and an older toolkit) and xfce-polkit (GTK 3, version 0.3,
+# barely maintained). This decision is written up in docs/restart/aquarius-session.md.
+#
+# ------------------------------------------------------------------------------
+# THE GUARD — what happens if the Aquarius Shell grows its own agent
+# ------------------------------------------------------------------------------
+# Quickshell has a polkit module, and the shell's own documentation says it
+# "provides polkit". Today it does not — the bench proved that, which is why
+# this file exists — but one day it may, and then there would be two agents
+# fighting over one job.
+#
+# ⚠️ THERE IS NO CLEAN WAY TO ASK "IS AN AGENT ALREADY REGISTERED?", and it is
+#    worth writing down why, so nobody spends an afternoon looking for one.
+#    An agent registers by calling RegisterAuthenticationAgent on polkitd over
+#    the SYSTEM bus, handing over an object path on its own connection. polkitd
+#    remembers the connection, not a name — so there is no well-known bus name
+#    to look for, no property to read, and no "is one registered" method on the
+#    interface. `busctl` cannot answer the question because the answer is not
+#    published anywhere.
+#
+# So the guard is arranged out of the two facts that ARE reliable:
+#
+#   1. POLKIT ITSELF REFUSES THE SECOND AGENT. Whoever registers first wins, and
+#      the loser is told "an authentication agent already exists for the given
+#      subject". That is polkitd arbitrating, not us guessing.
+#
+#   2. WE DELIBERATELY GO SECOND. This waits for the shell to be up and then
+#      waits a few seconds more, so that a shell which does provide an agent
+#      always gets there first and ours is the one that stands down.
+#
+# When ours does stand down it says so in the session log and stops trying. It
+# does not restart itself into a fight.
+#
+# ⚠️ AND THE OTHER HALF OF THE ARRANGEMENT, FOR THE SHELL REPOSITORY: if the
+#    Aquarius Shell ever does start its own agent, it must NOT also start this
+#    one. The clean way to switch this off is a line in the person's own
+#    configuration:
+#
+#        echo 'agent=none' >> ~/.config/aquarius/polkit.conf
+#
+#    ...which this reads before doing anything at all.
+#
+# ------------------------------------------------------------------------------
+# USAGE
+# ------------------------------------------------------------------------------
+#   aquarius-polkit-agent            start it (this is what the session runs)
+#   aquarius-polkit-agent --dry-run  say what it would run and change nothing.
+#                                    This is what the build runs, on a machine
+#                                    with no screen and no session.
+#   aquarius-polkit-agent --which    print the agent binary it would use
+#
+# The niri equivalent of the session line that runs this is in the aquarius-shell
+# repository (session/niri/config.kdl). See docs/restart/aquarius-session.md.
+# ==============================================================================
+
+set -uo pipefail
+
+: "${HOME:=/tmp}"
+
+# The agents this knows about, best first. The first one that exists on the
+# machine is used. lxqt-policykit is what the image installs; the others are
+# here so that somebody who layers a different one on a test machine gets it
+# used rather than ignored.
+AGENTS=(
+    /usr/libexec/lxqt-policykit-agent
+    /usr/libexec/polkit-mate-authentication-agent-1
+    /usr/bin/hyprpolkitagent
+    /usr/libexec/polkit-kde-authentication-agent-1
+    /usr/libexec/xfce-polkit
+    /usr/libexec/polkit-gnome-authentication-agent-1
+)
+
+CONF="${XDG_CONFIG_HOME:-${HOME}/.config}/aquarius/polkit.conf"
+
+# How long to give the shell before we register. Two waits, because they answer
+# two different questions: the first is "has the shell started at all", the
+# second is "has it had time to register an agent if it has one".
+SHELL_WAIT_SECONDS="${AQ_POLKIT_SHELL_WAIT:-15}"
+GRACE_SECONDS="${AQ_POLKIT_GRACE:-3}"
+
+MODE="run"
+for arg in "$@"; do
+    case "${arg}" in
+        --dry-run) MODE="dry" ;;
+        --which) MODE="which" ;;
+        -h | --help)
+            sed -n '2,110p' "$0" | sed 's/^# \{0,1\}//'
+            exit 0
+            ;;
+        *)
+            echo "aquarius-polkit-agent: I do not understand '${arg}'." >&2
+            exit 1
+            ;;
+    esac
+done
+
+log() { printf '[polkit-agent] %s\n' "$*"; }
+
+# ------------------------------------------------------------------------------
+# Which agent is on this machine?
+# ------------------------------------------------------------------------------
+pick_agent() {
+    local candidate
+    if [ -n "${AQ_POLKIT_AGENT:-}" ]; then
+        printf '%s' "${AQ_POLKIT_AGENT}"
+        return 0
+    fi
+    for candidate in "${AGENTS[@]}"; do
+        if [ -x "${candidate}" ]; then
+            printf '%s' "${candidate}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+AGENT="$(pick_agent || true)"
+
+if [ "${MODE}" = "which" ]; then
+    if [ -n "${AGENT}" ]; then
+        printf '%s\n' "${AGENT}"
+        exit 0
+    fi
+    echo "no polkit authentication agent is installed on this machine" >&2
+    exit 1
+fi
+
+if [ -z "${AGENT}" ]; then
+    log "No polkit authentication agent is installed on this machine."
+    log "Nothing can ask you for your password, so installing apps for the"
+    log "whole computer will fail. That is a fault in AquariusOS — the image"
+    log "is supposed to ship lxqt-policykit."
+    exit 1
+fi
+
+# ------------------------------------------------------------------------------
+# Has somebody switched this off?
+# ------------------------------------------------------------------------------
+# One line, one purpose: `agent=none` means "do not start one, I have my own".
+# It is what the Aquarius Shell would write on the day it grows an agent of its
+# own, and it is what a person writes if they prefer a different one.
+if [ -r "${CONF}" ] && grep -Eq '^[[:space:]]*agent[[:space:]]*=[[:space:]]*none[[:space:]]*$' "${CONF}"; then
+    log "${CONF} says agent=none — not starting one. Something else is expected"
+    log "to be asking for passwords in this session."
+    exit 0
+fi
+
+if [ "${MODE}" = "dry" ]; then
+    log "would wait up to ${SHELL_WAIT_SECONDS}s for the shell, then ${GRACE_SECONDS}s more"
+    log "would then run: ${AGENT}"
+    log "would stand down quietly if something else had already registered"
+    exit 0
+fi
+
+# ------------------------------------------------------------------------------
+# Go second, on purpose
+# ------------------------------------------------------------------------------
+# `qs` is the Quickshell binary the Aquarius Shell runs as. Waiting for it is
+# not a dependency — if it never appears we carry on anyway after the timeout,
+# because a session with no bar still needs to be able to ask for a password.
+waited=0
+while [ "${waited}" -lt "${SHELL_WAIT_SECONDS}" ]; do
+    if pgrep -u "$(id -u)" -x qs > /dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+    waited=$((waited + 1))
+done
+sleep "${GRACE_SECONDS}"
+
+# ------------------------------------------------------------------------------
+# Run it, and say honestly what happened
+# ------------------------------------------------------------------------------
+# The agent is a background program that normally runs for the whole session.
+# Three endings are possible and all three are handled:
+#
+#   it keeps running          the ordinary case. This process waits on it.
+#   it stops almost at once   nearly always "somebody else got there first".
+#                             That is a correct outcome, not a failure.
+#   it stops later            a crash. Worth restarting a couple of times,
+#                             worth giving up after that rather than spinning.
+# ⚠️ RUN IT IN THE BACKGROUND AND WATCH, RATHER THAN JUST RUNNING IT. This
+#    looks like extra machinery and it is not. An agent that LOSES the race does
+#    not necessarily stop: lxqt-policykit prints "cannot register" and then
+#    carries on running, doing nothing, for the whole session. Waiting for it to
+#    exit would mean waiting forever while holding a useless process, and the
+#    stand-down below would never happen.
+#
+# ⚠️ AND THE MATCH IS BEST-EFFORT, DELIBERATELY. There is no machine-readable
+#    way to be told "another agent is already registered" — polkit says it in a
+#    sentence, and the exact sentence belongs to whichever agent is running. So
+#    this reads the words. It is a guess in the safe direction: the worst
+#    outcome of matching wrongly is that a crash is not retried.
+COMPLAINT='already (exists|registered)|cannot register|failed to register'
+
+attempt=0
+while [ "${attempt}" -lt 3 ]; do
+    attempt=$((attempt + 1))
+    started="$(date +%s)"
+    complaints="$(mktemp -t aq-polkit-agent.XXXXXX)"
+
+    log "starting ${AGENT} (attempt ${attempt})"
+    "${AGENT}" > "${complaints}" 2>&1 &
+    agent_pid="$!"
+
+    # The first five seconds are where a registration refusal shows up.
+    stood_down=0
+    watched=0
+    while [ "${watched}" -lt 10 ]; do
+        if grep -qiE "${COMPLAINT}" "${complaints}" 2> /dev/null; then
+            stood_down=1
+            break
+        fi
+        kill -0 "${agent_pid}" 2> /dev/null || break
+        sleep 0.5
+        watched=$((watched + 1))
+    done
+
+    if [ "${stood_down}" = "1" ]; then
+        kill "${agent_pid}" 2> /dev/null || true
+        sed 's/^/[polkit-agent] /' "${complaints}"
+        log "another authentication agent is already registered in this session,"
+        log "so this one is standing down. That is the correct outcome — see the"
+        log "guard explained at the top of /usr/libexec/aquarius-polkit-agent."
+        rm -f "${complaints}"
+        wait "${agent_pid}" 2> /dev/null || true
+        exit 0
+    fi
+
+    # Still up after five seconds: it registered. Stay here for the session.
+    wait "${agent_pid}"
+    rc="$?"
+    ran=$(($(date +%s) - started))
+
+    # Whatever it printed belongs in the session log either way.
+    sed 's/^/[polkit-agent] /' "${complaints}"
+    late_complaint=0
+    grep -qiE "${COMPLAINT}" "${complaints}" 2> /dev/null && late_complaint=1
+    rm -f "${complaints}"
+
+    if [ "${late_complaint}" = "1" ]; then
+        log "it stopped saying it could not register. Something else is doing"
+        log "the job, so this is standing down rather than fighting it."
+        exit 0
+    fi
+
+    if [ "${ran}" -lt 3 ]; then
+        log "it stopped after ${ran}s (exit ${rc}). Not restarting it in a loop —"
+        log "something is wrong with the agent itself rather than with timing."
+        exit "${rc}"
+    fi
+
+    log "it stopped after ${ran}s (exit ${rc}). Restarting it."
+    sleep 2
+done
+
+log "the authentication agent has stopped three times. Giving up."
+log "Password prompts will not appear in this session. 'sudo' in a terminal"
+log "still works, and so does logging into GNOME, which has its own agent."
+exit 1

@@ -340,6 +340,92 @@ of the OS from the boot menu — every AquariusOS update keeps the last one.
 
 ---
 
+## Asking for your password
+
+Some jobs need an administrator — installing an app for everybody who uses the
+computer, changing a system setting. The part of Linux that stops and asks
+"type your password" is a small background program called a **polkit
+authentication agent**. Every desktop ships one; GNOME's is built into GNOME
+Shell.
+
+**The Aquarius Session shipped without one, and it broke a real thing.** On the
+bench on 2026-09-04, ticking creator apps and pressing Install produced:
+
+```
+Error creating textual authentication agent: Error opening current controlling
+terminal for the process ('/dev/tty'): No such device or address
+```
+
+That is `pkexec` finding that nobody in the session can ask the question, so it
+tries to ask in a terminal — and there is no terminal behind a window you
+clicked in an app grid. Nothing was broken; the session was simply missing a
+piece.
+
+### What it uses now, and why that one
+
+`lxqt-policykit` — the single binary `/usr/libexec/lxqt-policykit-agent`.
+
+| Candidate | Verdict |
+| --- | --- |
+| **lxqt-policykit** | **Chosen.** Official Fedora package (2.4.0 in Fedora 44), Qt 6 — and this session already carries Qt 6 for Quickshell, so it adds a dialog rather than a second toolkit. Needs only `polkit-qt6-1` and `liblxqt` on top of what is here. One binary; it does not install LXQt, add a session to the login screen, or put anything in the app grid. |
+| hyprpolkitagent | The nicest fit on paper — Qt 6 and QML, right beside Quickshell — but it exists only in a COPR, somebody's personal build repository. This image does not take its desktop from those. |
+| mate-polkit | Official and fine, but GTK 3, and it drags in `libappindicator`. The runner-up. |
+| xfce-polkit | Official, tiny, GTK 3 — and version 0.3, barely maintained. |
+| polkit-gnome | What the internet still recommends. Orphaned; Fedora dropped it years ago. |
+| polkit-kde-agent-1 | Works, and pulls a slice of KDE in behind it. |
+
+### How it starts, and the guard
+
+`/usr/libexec/aquarius-polkit-agent` is started from the session's `autostart`
+file. It does three things: waits for the shell to be up and then waits three
+seconds more, picks the agent, and runs it — writing what it decided into the
+session log.
+
+The waiting is the guard. Quickshell has a polkit module and the shell may one
+day register an agent of its own; **polkit itself refuses the second agent**,
+whoever registers first wins, and this deliberately goes second so the shell's
+would win. When ours is refused it says so in the log and stops, rather than
+restarting into a fight.
+
+⚠️ **There is no way to ask "is an agent already registered?", and it is worth
+knowing why** so nobody goes looking. An agent registers by calling
+`RegisterAuthenticationAgent` on polkitd over the system bus and handing over an
+object path on its own connection. polkitd remembers the connection, not a name
+— so there is no well-known bus name to look for, no property to read, and no
+"is one registered" method. `busctl` cannot answer it because the answer is not
+published anywhere.
+
+To switch ours off (for instance on the day the shell provides its own):
+
+```
+mkdir -p ~/.config/aquarius
+echo 'agent=none' >> ~/.config/aquarius/polkit.conf
+```
+
+### For the aquarius-shell repository
+
+The shell repo carries its own copies of the session files, for people running
+the session from a clone. They need the same line. In
+`session/labwc/autostart`:
+
+```sh
+if [ -x /usr/libexec/aquarius-polkit-agent ]; then
+    /usr/libexec/aquarius-polkit-agent >> "${AQ_LOG:-/dev/null}" 2>&1 &
+fi
+```
+
+...and the niri equivalent, in `session/niri/config.kdl`:
+
+```kdl
+spawn-at-startup "/usr/libexec/aquarius-polkit-agent"
+```
+
+**And the other half of the arrangement:** if the shell ever does start an agent
+of its own, it must not also start this one — it should write `agent=none` into
+`~/.config/aquarius/polkit.conf` rather than leave two programs racing.
+
+---
+
 ## Where everything lives on the machine
 
 | Path | What it is |
@@ -349,6 +435,8 @@ of the OS from the boot menu — every AquariusOS update keeps the last one.
 | `/usr/share/aquarius/labwc/` | The window manager's configuration: `rc.xml` (key bindings), `autostart`, `shutdown`, `environment`. |
 | `/usr/share/aquarius/shell/` | The Aquarius Shell's QML. |
 | `/usr/libexec/aquarius-shell-start` | Runs the shell, and puts a dialog on screen if it fails. |
+| `/usr/libexec/aquarius-polkit-agent` | Starts the thing that asks you for your password. See the section above. |
+| `~/.config/aquarius/polkit.conf` | `agent=none` here switches that off. |
 | `/usr/libexec/aquarius-display-scale` | Sets each monitor to the right size at login. Without it every screen stays at 100% and a 4K desktop is tiny. Guide: [`aquarius-display.md`](aquarius-display.md). |
 | `~/.config/aquarius/display.conf` | Your own screen-size answers, written by `aq display`. |
 | `/usr/share/xdg-desktop-portal/aquarius-portals.conf` | Which portal back end answers which request. |

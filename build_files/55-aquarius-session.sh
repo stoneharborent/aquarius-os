@@ -150,6 +150,36 @@ aq_dnf install \
     libnotify \
     procps-ng
 
+# ------------------------------------------------------------------------------
+# The thing that asks for a password
+# ------------------------------------------------------------------------------
+# ⚠️ THE 2026-09-04 BENCH FAULT. Royce ticked his creator apps, pressed Install,
+# and got:
+#
+#     Error creating textual authentication agent: Error opening current
+#     controlling terminal for the process ('/dev/tty')
+#
+# That is `pkexec` finding that nothing in this session can ask "type your
+# password". Every desktop ships a small background program for that job — a
+# polkit authentication agent — and GNOME has one built into GNOME Shell. This
+# session had none.
+#
+# WHY lxqt-policykit AND NOT ONE OF THE OTHERS
+#   * It is an official Fedora package (2.4.0 in Fedora 44). hyprpolkitagent,
+#     the obvious Qt6/QML alternative, is only in a COPR; polkit-gnome, which
+#     the internet still recommends, is orphaned and Fedora dropped it.
+#   * It is Qt 6, and this session already carries Qt 6 for Quickshell — so it
+#     adds a dialog, not a second toolkit. Beyond what is here already it needs
+#     polkit-qt6-1 and liblxqt and nothing else.
+#   * It is one binary. It does not install LXQt, does not add a session to the
+#     login screen, and does not put anything in the app grid.
+#
+# The runner-up was mate-polkit (GTK 3, official, but it drags in
+# libappindicator and an older toolkit). The full comparison is in
+# docs/restart/aquarius-session.md.
+say "The thing that asks you for your password (polkit agent)"
+aq_dnf install lxqt-policykit
+
 # dbus-tools carries dbus-update-activation-environment, which is how the
 # launcher hands the session's environment to systemd and D-Bus so the portals
 # start with the right values. --skip-unavailable because the launcher already
@@ -650,6 +680,41 @@ aq_scale_case "with nothing saved, a 55-inch 4K is left at 100% (81 dpi — the 
 aq_scale_case "your own 'aq display scale' beats the GNOME setting (150%)" \
     "${AQ_T}/monitors.xml" "${AQ_T}/display.conf" "150%"
 
+# ------------------------------------------------------------------------------
+# --effective-scale: one number, for the DaVinci Resolve launcher
+# ------------------------------------------------------------------------------
+# ⚠️ THE 2026-09-04 BENCH REPORT: Resolve "appearing smaller". Resolve is an X11
+# program, XWayland tells X11 programs the screen is always at 100%, so the
+# launcher has to be told separately — and this is where it asks. If this ever
+# prints something that is not a number, Resolve silently opens at the wrong
+# size and nothing says why.
+say "The one number the DaVinci Resolve launcher reads"
+aq_effective() { # aq_effective "<what>" "<monitors.xml>" "<display.conf>" "<expected>"
+    local what="$1" got
+    got="$("${AQ_DISPLAY_HELPER}" --effective-scale \
+        --outputs-from "${AQ_T}/ark.json" \
+        --monitors-xml "$2" --conf "$3" 2>&1)"
+    if [ "${got}" = "$4" ]; then
+        ok "${what} — it printed ${got}"
+    else
+        bad "${what} — expected '$4', got '${got}'"
+    fi
+}
+aq_effective "it agrees with the GNOME scale the session inherits" \
+    "${AQ_T}/monitors.xml" /nonexistent "1.25"
+aq_effective "and with your own 'aq display scale'" \
+    "${AQ_T}/monitors.xml" "${AQ_T}/display.conf" "1.5"
+
+# And with no screens at all, which is what a build machine is — and what
+# running Resolve from GNOME or over SSH looks like too. It must still answer.
+AQ_EFF_NOSCREEN="$("${AQ_DISPLAY_HELPER}" --effective-scale 2>&1 || true)"
+case "${AQ_EFF_NOSCREEN}" in
+    '' | *[!0-9.]*)
+        bad "with no screens it printed '${AQ_EFF_NOSCREEN}', not a number — the launcher would have nothing to hand Resolve"
+        ;;
+    *) ok "with no screens at all it still answers with a number (${AQ_EFF_NOSCREEN})" ;;
+esac
+
 # The other end of the ladder: a dense laptop panel must NOT be left at 100%.
 cat > "${AQ_T}/laptop.json" << 'JSON'
 [{"name":"eDP-1","description":"a 14-inch 2880x1800 laptop panel",
@@ -727,12 +792,101 @@ aq_file_has /etc/xdg/xdg-desktop-portal-wlr/config '^chooser_cmd=slurp' \
     "and it asks with slurp"
 
 # ==============================================================================
-# 8. Nothing in this session may fight the shell
+# 8. The thing that asks you for your password
 # ==============================================================================
-# The Aquarius Shell IS the notification service and IS the permission-prompt
-# agent for this session. A second one of either would race it for the same
-# D-Bus name, and whichever lost would be the one whose notifications never
-# appear — intermittently, differently on each boot.
+# ⚠️ THIS SECTION EXISTS BECAUSE OF THE BENCH TEST, 2026-09-04. Pressing
+#    "Install" in the creator-apps window failed with "Error creating textual
+#    authentication agent … /dev/tty", which is `pkexec` finding that nothing in
+#    this session is able to ask for a password.
+#
+# ⚠️ AND IT CORRECTS SOMETHING THIS FILE USED TO CLAIM. Until today the section
+#    below said "the Aquarius Shell IS the permission-prompt agent for this
+#    session". That was the plan, not the fact. Quickshell has a polkit module
+#    and the shell's documentation mentions polkit, but the shell does not
+#    register an agent, and a plan written down as a fact is how a session ships
+#    without one.
+#
+# So the image now installs an agent and the session starts it, with a guard so
+# that a shell which one day grows its own always wins. The whole arrangement,
+# including why "is an agent already registered?" is a question nobody can ask,
+# is in the header of /usr/libexec/aquarius-polkit-agent.
+say "The polkit authentication agent"
+aq_installed lxqt-policykit polkit-qt6-1
+
+AQ_POLKIT_HELPER=/usr/libexec/aquarius-polkit-agent
+AQ_POLKIT_BIN=/usr/libexec/lxqt-policykit-agent
+
+if [ -x "${AQ_POLKIT_BIN}" ]; then
+    ok "the agent itself is here: ${AQ_POLKIT_BIN}"
+else
+    bad "${AQ_POLKIT_BIN} is missing — nothing in the Aquarius Session could ask for a password"
+fi
+
+if [ -x "${AQ_POLKIT_HELPER}" ]; then
+    ok "aquarius-polkit-agent is present and runnable"
+else
+    bad "${AQ_POLKIT_HELPER} is missing or not runnable"
+fi
+if bash -n "${AQ_POLKIT_HELPER}"; then
+    ok "aquarius-polkit-agent is valid shell"
+else
+    bad "${AQ_POLKIT_HELPER} has a syntax error"
+fi
+
+# Run it for real, in the mode that changes nothing. This is the check that
+# would have caught the fault: it proves the helper can FIND an agent on this
+# image, rather than proving a package is installed and hoping.
+if "${AQ_POLKIT_HELPER}" --which > /tmp/aq-polkit-which.txt 2>&1; then
+    ok "the helper finds an agent on this image: $(cat /tmp/aq-polkit-which.txt)"
+else
+    bad "the helper cannot find any authentication agent on this image"
+    cat /tmp/aq-polkit-which.txt
+fi
+if "${AQ_POLKIT_HELPER}" --dry-run > /tmp/aq-polkit-dry.txt 2>&1; then
+    ok "the helper's rehearsal runs"
+    sed 's/^/       /' /tmp/aq-polkit-dry.txt
+else
+    bad "the helper's rehearsal does not run"
+    cat /tmp/aq-polkit-dry.txt
+fi
+rm -f /tmp/aq-polkit-which.txt /tmp/aq-polkit-dry.txt
+
+# And the session has to actually start it. labwc reads one file; if the line is
+# not in that file, everything above is a package nobody runs.
+aq_file_has "${AQ_LABWC_DIR}/autostart" 'aquarius-polkit-agent' \
+    "the Aquarius session starts the authentication agent at login"
+
+# ------------------------------------------------------------------------------
+# Switch OFF the agent's own autostart entry
+# ------------------------------------------------------------------------------
+# lxqt-policykit ships /etc/xdg/autostart/lxqt-policykit-agent.desktop. labwc
+# never looks in that folder, so it does nothing for us — but GNOME reads it at
+# every login, and GNOME already has an agent of its own inside GNOME Shell.
+# Two agents in one session is a race: one registers, the other is refused, and
+# which one you got is decided by timing.
+#
+# Hidden=true is the freedesktop way to say "ignore this entry". It switches the
+# entry off in EVERY session, including ours — which is right, because ours does
+# not read the folder and starts the agent deliberately, through the helper,
+# with the guard.
+say "The agent does not also start itself in GNOME"
+AQ_POLKIT_AUTOSTART=/etc/xdg/autostart/lxqt-policykit-agent.desktop
+if [ -e "${AQ_POLKIT_AUTOSTART}" ]; then
+    if ! grep -q '^Hidden=true$' "${AQ_POLKIT_AUTOSTART}"; then
+        printf 'Hidden=true\n' >> "${AQ_POLKIT_AUTOSTART}"
+    fi
+    aq_file_has "${AQ_POLKIT_AUTOSTART}" '^Hidden=true$' \
+        "the agent's own autostart entry is switched off, so GNOME does not start a second agent"
+else
+    ok "the agent ships no autostart entry of its own — nothing to switch off"
+fi
+
+# ==============================================================================
+# 8b. Nothing else in this session may fight the shell
+# ==============================================================================
+# The Aquarius Shell IS the notification service for this session. A second one
+# would race it for the same D-Bus name, and whichever lost would be the one
+# whose notifications never appear — intermittently, differently on each boot.
 #
 # The reason this is safe: labwc does not read /etc/xdg/autostart at all. It
 # runs exactly one file, the `autostart` next to rc.xml, and that file is ours.

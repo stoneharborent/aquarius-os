@@ -104,27 +104,42 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
+
+# The shared pieces every AquariusOS window is built out of — the step rows, the
+# Details log, the Aquarius mark, the standard page. See the header of
+# /usr/lib/aquarius/python/aquarius_ui.py. The folder is not on Python's search
+# path, so we say where it is.
+sys.path.insert(0, "/usr/lib/aquarius/python")
+import aquarius_ui  # noqa: E402
+from aquarius_ui import ACTIVE, DONE, FAILED, PENDING  # noqa: E402,F401
 
 APP_ID = "org.aquariusos.ResolveInstaller"
 CLI = "/usr/libexec/aquarius-resolve-install"
 LAUNCHER = "/usr/libexec/aquarius-resolve-launch"
-MARK = "/usr/share/icons/hicolor/scalable/apps/aquarius-logo.svg"
 BLACKMAGIC = "https://www.blackmagicdesign.com/products/davinciresolve"
+
+# How long the whole thing takes, in one place, because it is said in four.
+MINUTES = "about fifteen minutes"
 
 # The step names drawn before anything starts. The script sends its own wording
 # with every STEP line and that wins the moment it arrives; this list is only so
 # that the page is not empty for the first second.
+#
+# ⚠️ NO NAME OF ANOTHER LINUX APPEARS IN ANY OF THESE, and that is Royce's rule
+# from the 2026-09-04 bench test: the person reading this window is installing a
+# video editor, and being told which distribution is inside the box tells them
+# nothing they can act on and quite a lot they now have to worry about. The
+# comments in the scripts still say Rocky, because whoever maintains this does
+# need to know. What a user reads says "environment".
 DEFAULT_STEPS = [
     "Checking your graphics card",
     "Finding your download",
-    "Downloading the Rocky Linux runtime",
-    "Building the container",
+    "Downloading the environment Resolve runs in",
+    "Setting that environment up",
     "Installing DaVinci Resolve",
     "Adding it to your apps",
 ]
-
-PENDING, ACTIVE, DONE, FAILED = range(4)
 
 
 def cli_query(*args):
@@ -148,47 +163,9 @@ def cli_query(*args):
     return out.stdout.strip()
 
 
-class StepRow(Adw.ActionRow):
-    """One line in the list of steps, with a spinner or a tick in front of it."""
-
-    def __init__(self, title):
-        super().__init__(title=title)
-        self.set_title_lines(0)
-        self._spinner = Gtk.Spinner()
-        # "emblem-ok-symbolic" and "dialog-error-symbolic" are in the Adwaita
-        # icon theme, which the image installs. Pending steps show nothing at
-        # all rather than a third icon: an empty box beside a grey label reads
-        # as "not yet" without needing to be learnt.
-        self._icon = Gtk.Image()
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        box.set_size_request(20, -1)
-        box.set_valign(Gtk.Align.CENTER)
-        box.append(self._spinner)
-        box.append(self._icon)
-        self.add_prefix(box)
-        self.set_state(PENDING)
-
-    def set_state(self, state):
-        self._state = state
-        self._spinner.set_visible(state == ACTIVE)
-        if state == ACTIVE:
-            self._spinner.start()
-        else:
-            self._spinner.stop()
-        self._icon.set_visible(state in (DONE, FAILED))
-        if state == DONE:
-            self._icon.set_from_icon_name("emblem-ok-symbolic")
-            self._icon.remove_css_class("error")
-            self._icon.add_css_class("success")
-        elif state == FAILED:
-            self._icon.set_from_icon_name("dialog-error-symbolic")
-            self._icon.remove_css_class("success")
-            self._icon.add_css_class("error")
-        # Steps not reached yet are dimmed, so the eye lands on the live one.
-        if state == PENDING:
-            self.add_css_class("dim-label")
-        else:
-            self.remove_css_class("dim-label")
+# The step rows are the shared ones now — the identical class used to live
+# here and in the creator-apps window. See /usr/lib/aquarius/python/aquarius_ui.py.
+StepRow = aquarius_ui.StepRow
 
 
 class InstallerWindow(Adw.ApplicationWindow):
@@ -199,7 +176,6 @@ class InstallerWindow(Adw.ApplicationWindow):
         self.proc = None
         self.cancelled = False
         self.finished = False
-        self.log_lines = []
         self.step_rows = []
         self._determinate = False
         self._pulse_source = None
@@ -241,34 +217,48 @@ class InstallerWindow(Adw.ApplicationWindow):
     # -- page 1: choose -----------------------------------------------------
 
     def _build_choose_page(self):
-        mark = Gtk.Image()
-        if os.path.exists(MARK):
-            mark.set_from_file(MARK)
-        else:
-            mark.set_from_icon_name("applications-multimedia")
-        mark.set_pixel_size(64)
-        mark.set_margin_top(8)
+        mark = aquarius_ui.mark_image()
+        title = aquarius_ui.title_label("Install DaVinci Resolve")
 
-        title = Gtk.Label(label="Install DaVinci Resolve")
-        title.add_css_class("title-1")
-        title.set_wrap(True)
-        title.set_justify(Gtk.Justification.CENTER)
-
-        # Two sentences. What will happen, and where the file comes from.
-        blurb = Gtk.Label(
-            label=(
-                "AquariusOS will set up DaVinci Resolve for you, in a small "
-                "Rocky Linux of its own so that it cannot clash with anything "
-                "else on this computer — it takes about fifteen minutes, nearly "
-                "all of it downloading.\n\n"
-                "Blackmagic do not allow anyone else to hand out their "
-                "installer, so download DaVinci Resolve for Linux from them "
-                "first, then choose the file below."
-            )
+        # ⚠️ THIS PARAGRAPH IS SHORTER THAN IT WAS, ON PURPOSE (Royce,
+        # 2026-09-04). It used to explain the container, name the Linux inside
+        # it, and say why the clash could not happen — three facts that are
+        # true, interesting to whoever maintains this, and of no use whatever to
+        # somebody who wants to edit a video. What survives is the two things
+        # they can act on: it is safe, and it takes a while.
+        blurb = aquarius_ui.body_label(
+            "Resolve runs inside its own protected environment on this "
+            "computer, so it stays stable across updates and cannot clash with "
+            "anything else you have installed. Setting that up takes %s, "
+            "nearly all of it downloading." % MINUTES
         )
-        blurb.set_wrap(True)
-        blurb.set_justify(Gtk.Justification.CENTER)
-        blurb.add_css_class("dim-label")
+
+        # What will happen, before it happens. Four rows, so that the fifteen
+        # minutes has a shape rather than being a wait of unknown character.
+        plan = aquarius_ui.numbered_steps(
+            [
+                (
+                    "Pick the download",
+                    "The file you got from Blackmagic. AquariusOS looks in your "
+                    "Downloads folder first.",
+                ),
+                (
+                    "Set up the environment",
+                    "A one-off download of %s. It happens once, not every time "
+                    "you open Resolve." % MINUTES,
+                ),
+                (
+                    "Install Resolve into it",
+                    "Blackmagic's own installer runs, where it has everything "
+                    "it expects to find.",
+                ),
+                (
+                    "Find Resolve in your apps",
+                    "It appears alongside everything else and opens like any "
+                    "other program.",
+                ),
+            ]
+        )
 
         group = Adw.PreferencesGroup()
 
@@ -289,41 +279,69 @@ class InstallerWindow(Adw.ApplicationWindow):
         self.gpu_row.add_prefix(self.gpu_icon)
         group.add(self.gpu_row)
 
-        get_it = Gtk.LinkButton(uri=BLACKMAGIC, label="Get it from Blackmagic")
-        get_it.set_tooltip_text("Opens Blackmagic's download page in your browser")
+        # Where the file comes from, said next to the button that gets it.
+        # Blackmagic's licence does not let anybody else hand out the installer,
+        # so this line is not a convenience — it is the only way in.
+        source = aquarius_ui.body_label(
+            "Blackmagic don't let anyone else hand out their installer, so "
+            "download DaVinci Resolve for Linux from them first — the free "
+            "version is fine — then choose the file above."
+        )
+        get_it = aquarius_ui.link_button(
+            BLACKMAGIC,
+            "Get it from Blackmagic",
+            "Opens Blackmagic's download page in your browser",
+        )
+        get_it.set_halign(Gtk.Align.CENTER)
 
-        self.install_button = Gtk.Button(label="Install")
-        self.install_button.add_css_class("suggested-action")
-        self.install_button.add_css_class("pill")
+        # The honest small print, shut by default. It has to be somewhere,
+        # because a person who imports their first camera file and finds it will
+        # not open needs to have been told BEFORE that happens rather than
+        # after. It must not be the first thing they read, because it is about a
+        # limit inside Resolve that AquariusOS already works around.
+        free_vs_studio = aquarius_ui.expander_note(
+            "Free or Studio? (worth 30 seconds, on Linux)",
+            "Resolve comes in a free version and a paid one called Studio, and "
+            "on Linux the difference is bigger than on a Mac.\n\n"
+            "The free version cannot open ordinary phone and camera MP4 files "
+            "at all on Linux — the H.264 and H.265 picture formats they use are "
+            "Studio-only here, and need an NVIDIA card. And no version of "
+            "Resolve on Linux, paid or free, can play AAC sound, which is what "
+            "is inside those same files.\n\n"
+            "AquariusOS fixes both from the outside, and this is the part no "
+            "other operating system does: right-click your footage in Files and "
+            "choose \"Make Editor-Ready\" (or run aq ingest). It makes a copy "
+            "that Resolve opens with picture and sound, and leaves your "
+            "originals alone.\n\n"
+            "So the free version is genuinely usable here. Studio is worth "
+            "buying if you want to open camera files directly, and you buy it "
+            "from Blackmagic — AquariusOS installs whichever one you downloaded.",
+        )
+
+        self.install_button = aquarius_ui.pill_button("Install", suggested=True)
         self.install_button.connect("clicked", self._on_install_clicked)
 
-        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        buttons.set_halign(Gtk.Align.CENTER)
-        buttons.set_margin_top(8)
-        buttons.append(get_it)
-        buttons.append(self.install_button)
+        buttons = aquarius_ui.button_row([self.install_button])
 
         # Shown only when a run was stopped or a person came back from a
         # failure, so that the page can say what state the machine is in.
-        self.choose_note = Gtk.Label()
-        self.choose_note.set_wrap(True)
-        self.choose_note.set_justify(Gtk.Justification.CENTER)
+        self.choose_note = aquarius_ui.body_label("")
         self.choose_note.set_visible(False)
-        self.choose_note.add_css_class("dim-label")
 
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
-        box.set_margin_top(24)
-        box.set_margin_bottom(24)
-        box.set_margin_start(18)
-        box.set_margin_end(18)
-        for w in (mark, title, blurb, group, buttons, self.choose_note):
-            box.append(w)
-
-        clamp = Adw.Clamp(maximum_size=560)
-        clamp.set_child(box)
-        scroller = Gtk.ScrolledWindow(vexpand=True)
-        scroller.set_child(clamp)
-        return scroller
+        return aquarius_ui.page(
+            [
+                mark,
+                title,
+                blurb,
+                plan,
+                group,
+                source,
+                get_it,
+                buttons,
+                free_vs_studio,
+                self.choose_note,
+            ]
+        )
 
     def _refresh_choose_page(self):
         """Fill in what we know about this machine, without blocking the window."""
@@ -432,20 +450,14 @@ class InstallerWindow(Adw.ApplicationWindow):
     # -- page 2: installing -------------------------------------------------
 
     def _build_working_page(self):
-        self.working_title = Gtk.Label(label="Installing DaVinci Resolve")
-        self.working_title.add_css_class("title-2")
-        self.working_title.set_wrap(True)
-        self.working_title.set_justify(Gtk.Justification.CENTER)
-
-        self.working_blurb = Gtk.Label(
-            label=(
-                "This takes about fifteen minutes and most of it is quiet. "
-                "You can leave it and come back."
-            )
+        self.working_title = aquarius_ui.title_label(
+            "Installing DaVinci Resolve", "title-2"
         )
-        self.working_blurb.set_wrap(True)
-        self.working_blurb.set_justify(Gtk.Justification.CENTER)
-        self.working_blurb.add_css_class("dim-label")
+
+        self.working_blurb = aquarius_ui.body_label(
+            "This takes %s and most of it is quiet. You can leave it and come "
+            "back." % MINUTES
+        )
 
         self.steps_group = Adw.PreferencesGroup()
         self._build_step_rows(DEFAULT_STEPS)
@@ -454,31 +466,15 @@ class InstallerWindow(Adw.ApplicationWindow):
         self.bar.set_show_text(False)
         self.bar.set_margin_top(4)
 
-        self.log_view = Gtk.TextView()
-        self.log_view.set_editable(False)
-        self.log_view.set_cursor_visible(False)
-        self.log_view.set_monospace(True)
-        self.log_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
-        self.log_view.set_left_margin(8)
-        self.log_view.set_right_margin(8)
-        self.log_view.set_top_margin(6)
-        self.log_view.set_bottom_margin(6)
-        self.log_scroll = Gtk.ScrolledWindow()
-        self.log_scroll.set_child(self.log_view)
-        self.log_scroll.set_min_content_height(220)
-        self.log_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        self.log_scroll.add_css_class("card")
-
-        self.details = Gtk.Expander(label="Details")
-        self.details.set_child(self.log_scroll)
-        self.details.set_margin_top(4)
+        # The Details log — the shared one. It follows its own tail like a
+        # terminal, and it is what Copy details copies.
+        self.log = aquarius_ui.LogPane()
+        self.details = self.log.widget
 
         self.cancel_button = Gtk.Button(label="Cancel")
         self.cancel_button.connect("clicked", self._on_cancel_clicked)
 
-        self.copy_button = Gtk.Button(label="Copy details")
-        self.copy_button.set_tooltip_text("Copy the whole log to the clipboard")
-        self.copy_button.connect("clicked", self._on_copy_clicked)
+        self.copy_button = aquarius_ui.copy_button("Copy details", self.log.text)
         self.copy_button.set_visible(False)
 
         self.retry_button = Gtk.Button(label="Try again")
@@ -501,26 +497,17 @@ class InstallerWindow(Adw.ApplicationWindow):
         ):
             self.working_buttons.append(w)
 
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
-        box.set_margin_top(24)
-        box.set_margin_bottom(24)
-        box.set_margin_start(18)
-        box.set_margin_end(18)
-        for w in (
-            self.working_title,
-            self.working_blurb,
-            self.steps_group,
-            self.bar,
-            self.details,
-            self.working_buttons,
-        ):
-            box.append(w)
-
-        clamp = Adw.Clamp(maximum_size=560)
-        clamp.set_child(box)
-        scroller = Gtk.ScrolledWindow(vexpand=True)
-        scroller.set_child(clamp)
-        return scroller
+        return aquarius_ui.page(
+            [
+                self.working_title,
+                self.working_blurb,
+                self.steps_group,
+                self.bar,
+                self.details,
+                self.working_buttons,
+            ],
+            spacing=14,
+        )
 
     def _build_step_rows(self, titles):
         for row in self.step_rows:
@@ -543,35 +530,29 @@ class InstallerWindow(Adw.ApplicationWindow):
             "The file you downloaded can be deleted."
         )
 
-        tips = Gtk.Label(
-            label=(
-                "Two things worth doing the first time you open it. On a 4K "
-                "screen the interface starts small — set it inside Resolve, at "
-                "Preferences → User → UI Settings → Interface Scale, and "
-                "restart Resolve; the system display scale is ignored. And "
-                "check it found your card at Preferences → System → Memory and "
-                "GPU, where the GPU processing mode should say CUDA."
-            )
+        # One thing to check, not two. Resolve used to open tiny on a 4K screen
+        # and the tip here was how to fix it by hand; AquariusOS now hands
+        # Resolve the size your desktop is set to (see aquarius-resolve-launch),
+        # so the remaining tip is the one nobody can do for you.
+        tips = aquarius_ui.body_label(
+            "Worth checking the first time you open it: Preferences → System → "
+            "Memory and GPU, where the GPU processing mode should say CUDA and "
+            "your card should be listed.\n\n"
+            "Resolve opens at the size your desktop is set to. If you want it "
+            "different from everything else, run  aq resolve scale 1.5  in a "
+            "terminal, or use Resolve's own Preferences → User → UI Settings → "
+            "Interface Scale."
         )
-        tips.set_wrap(True)
-        tips.set_justify(Gtk.Justification.CENTER)
-        tips.add_css_class("dim-label")
         tips.set_margin_top(6)
 
-        open_button = Gtk.Button(label="Open DaVinci Resolve")
-        open_button.add_css_class("suggested-action")
-        open_button.add_css_class("pill")
+        open_button = aquarius_ui.pill_button("Open DaVinci Resolve", suggested=True)
         open_button.connect("clicked", self._on_open_clicked)
         self.open_button = open_button
 
-        close_button = Gtk.Button(label="Close")
-        close_button.add_css_class("pill")
+        close_button = aquarius_ui.pill_button("Close")
         close_button.connect("clicked", lambda _b: self.close())
 
-        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        buttons.set_halign(Gtk.Align.CENTER)
-        buttons.append(open_button)
-        buttons.append(close_button)
+        buttons = aquarius_ui.button_row([open_button, close_button], margin_top=0)
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         box.append(buttons)
@@ -585,8 +566,7 @@ class InstallerWindow(Adw.ApplicationWindow):
 
     def _on_install_clicked(self, _button):
         self.choose_note.set_visible(False)
-        self.log_lines = []
-        self._set_log("")
+        self.log.clear()
         self.cancelled = False
         self.finished = False
         self.current_step = 0
@@ -722,17 +702,9 @@ class InstallerWindow(Adw.ApplicationWindow):
         return GLib.SOURCE_CONTINUE
 
     def _append_log(self, text):
-        self.log_lines.append(text)
-        buf = self.log_view.get_buffer()
-        buf.insert(buf.get_end_iter(), text if text.endswith("\n") else text + "\n")
-        # Follow the tail, the way a terminal does.
-        mark = buf.create_mark(None, buf.get_end_iter(), False)
-        self.log_view.scroll_to_mark(mark, 0.0, True, 0.0, 1.0)
-        buf.delete_mark(mark)
-        return GLib.SOURCE_REMOVE
-
-    def _set_log(self, text):
-        self.log_view.get_buffer().set_text(text)
+        # One line into the Details log. Called from GLib.idle_add by the
+        # threads reading the script, which is why it returns SOURCE_REMOVE.
+        return self.log.append(text)
 
     def _process_exited(self, code):
         self.proc = None
@@ -765,9 +737,10 @@ class InstallerWindow(Adw.ApplicationWindow):
         self.working_title.add_css_class("error")
         self.working_blurb.set_label(
             message
-            + "\n\nNothing on this computer was changed — it all happens inside "
-            "a container. It is safe to try again. To start from a completely "
-            "clean container first, open a terminal and run: aq resolve remove"
+            + "\n\nNothing on this computer was changed — it all happens "
+            "inside a separate environment. It is safe to try again. To start "
+            "from completely clean first, open \"Remove DaVinci Resolve\" in "
+            "your apps."
         )
         for row in self.step_rows:
             if row._state == ACTIVE:
@@ -784,19 +757,6 @@ class InstallerWindow(Adw.ApplicationWindow):
         return GLib.SOURCE_REMOVE
 
     # -- the buttons --------------------------------------------------------
-
-    def _on_copy_clicked(self, _button):
-        text = "".join(
-            line if line.endswith("\n") else line + "\n" for line in self.log_lines
-        )
-        display = Gdk.Display.get_default()
-        if display is not None:
-            # NOT clipboard.set(text): that is a C macro with no introspection,
-            # so it is not there to call from Python. This is the real one.
-            value = GObject.Value(str, text)
-            display.get_clipboard().set_content(Gdk.ContentProvider.new_for_value(value))
-        _button.set_label("Copied")
-        GLib.timeout_add_seconds(2, lambda: (_button.set_label("Copy details"), False)[1])
 
     def _on_retry_clicked(self, _button):
         # Back to page 1 rather than straight into another attempt: the reason
@@ -819,9 +779,9 @@ class InstallerWindow(Adw.ApplicationWindow):
         self.header_title.set_subtitle("Stopped")
         self.working_title.set_label("Setup stopped")
         self.working_blurb.set_label(
-            "Nothing on this computer was changed. If a half-built container "
-            "was left behind, clear it away by opening a terminal and running: "
-            "aq resolve remove"
+            "Nothing on this computer was changed. If a half-built "
+            "environment was left behind, clear it away with \"Remove DaVinci "
+            "Resolve\" in your apps."
         )
         for row in self.step_rows:
             if row._state == ACTIVE:
