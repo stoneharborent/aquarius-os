@@ -143,6 +143,34 @@ fi
 /usr/libexec/aquarius-shell-start &
 
 # ---------------------------------------------------------------------------
+# 4b. The thing that asks you for your password.
+#
+# ⚠️ THIS LINE EXISTS BECAUSE OF THE BENCH TEST, 2026-09-04, WHEN PRESSING
+#    "INSTALL" IN THE CREATOR-APPS WINDOW FAILED WITH:
+#
+#      Error creating textual authentication agent: Error opening current
+#      controlling terminal for the process ('/dev/tty')
+#
+# Installing an app for the whole computer needs an administrator, and the part
+# of Linux that stops and asks for a password is a small background program
+# called a polkit authentication agent. GNOME has one built in. This session had
+# none, so `pkexec` tried to ask in a terminal — and there is no terminal behind
+# a window you clicked in an app grid.
+#
+# The helper picks the agent, waits so that a shell with an agent of its own
+# always wins the race, and says in this log what it decided. The long version,
+# including why "is one already registered?" cannot be asked, is in the header
+# of /usr/libexec/aquarius-polkit-agent.
+#
+# It is started here rather than as a systemd user service on purpose: an agent
+# registers itself against A SESSION, and this file is the only place that runs
+# once, inside one, with the session's environment already set up.
+# ---------------------------------------------------------------------------
+if [ -x /usr/libexec/aquarius-polkit-agent ]; then
+    /usr/libexec/aquarius-polkit-agent >> "${AQ_LOG:-/dev/null}" 2>&1 &
+fi
+
+# ---------------------------------------------------------------------------
 # 5. The creator apps window, once, on the first login.
 #
 # ⚠️ THIS LINE EXISTS BECAUSE LABWC DOES NOT READ /etc/xdg/autostart.

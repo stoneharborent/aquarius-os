@@ -1424,6 +1424,30 @@ def run_window(first_run):
             # said no, or nothing asked you"; 127 is "the asking itself failed".
             # Both need a different sentence from "an app would not install".
             if code in (126, 127) and not self.failures:
+                # ⚠️ TELLING THE TWO APART MATTERS, AND THIS IS THE 2026-09-04
+                # BENCH FAULT. "You said no" and "nothing was able to ask you"
+                # look identical from here, and the second one is not something
+                # a person can fix by pressing Try again — it is a fault in the
+                # session, and saying "enter your password when asked" to
+                # somebody who was never asked is the worst kind of wrong.
+                #
+                # pkexec says which it was, in the log we already have: with no
+                # authentication agent registered it falls back to asking in a
+                # terminal, finds there is no terminal behind a window, and
+                # complains about /dev/tty.
+                log = "".join(self.log_lines)
+                if "authentication agent" in log or "/dev/tty" in log:
+                    self._show_failure(
+                        "Nothing in this desktop session was able to ask you "
+                        "for your password, so nothing was installed. That is "
+                        "a fault in AquariusOS, not something you did.\n\n"
+                        "Two ways round it: log out and back in (the part that "
+                        "asks for passwords starts with the session, so a fresh "
+                        "login often fixes it), or log into GNOME at the login "
+                        "screen and install from there. Either way, the apps "
+                        "are still waiting in Aquarius Apps."
+                    )
+                    return GLib.SOURCE_REMOVE
                 self._show_failure(
                     "AquariusOS was not given permission to install apps for "
                     "this computer, so nothing was installed. Press Try again "

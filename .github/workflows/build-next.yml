@@ -980,6 +980,61 @@ jobs:
             ok "greetd is installed but switched off, as intended"
           fi
 
+          echo "== the thing that asks you for your password =="
+          # ⚠️ THE 2026-09-04 BENCH FAULT. Pressing Install in the creator-apps
+          # window failed with "Error creating textual authentication agent …
+          # /dev/tty", because this session had no polkit authentication agent.
+          # Four things have to be true, and each of them was true on its own
+          # while the feature was still broken, which is why all four are here.
+          for pkg in lxqt-policykit polkit-qt6-1; do
+            if rpm -q "${pkg}" > /dev/null 2>&1; then
+              ok "${pkg} $(rpm -q --queryformat '%{VERSION}-%{RELEASE}' "${pkg}")"
+            else
+              bad "${pkg} is NOT installed — nothing in the Aquarius Session could ask for a password"
+            fi
+          done
+          if [ -x /usr/libexec/lxqt-policykit-agent ]; then
+            ok "the agent binary is at /usr/libexec/lxqt-policykit-agent"
+          else
+            bad "/usr/libexec/lxqt-policykit-agent is missing"
+          fi
+          if [ -x /usr/libexec/aquarius-polkit-agent ]; then
+            ok "aquarius-polkit-agent is present and runnable"
+          else
+            bad "/usr/libexec/aquarius-polkit-agent is missing or not runnable"
+          fi
+          if bash -n /usr/libexec/aquarius-polkit-agent 2>/tmp/pk-syn.txt; then
+            ok "aquarius-polkit-agent is valid shell"
+          else
+            bad "aquarius-polkit-agent has a syntax error"; cat /tmp/pk-syn.txt
+          fi
+          # Run it. --which is the question that matters: can the helper FIND an
+          # agent on this image? A package being installed does not answer that,
+          # because the helper looks for a path, not a package name.
+          if /usr/libexec/aquarius-polkit-agent --which > /tmp/pk-which.txt 2>&1; then
+            ok "the helper finds an agent: $(cat /tmp/pk-which.txt)"
+          else
+            bad "the helper cannot find any authentication agent on this image"; cat /tmp/pk-which.txt
+          fi
+          # And the session has to start it, or all of the above is a package
+          # nobody runs. labwc reads exactly one file and this is it.
+          if grep -q 'aquarius-polkit-agent' /usr/share/aquarius/labwc/autostart; then
+            ok "the Aquarius session's autostart starts the agent at login"
+          else
+            bad "the session never starts the agent — this is the bench fault, back again"
+          fi
+          # GNOME has an agent of its own inside GNOME Shell. The package's own
+          # autostart entry must be switched off, or GNOME starts a second one
+          # and which agent you get is decided by timing.
+          PKA=/etc/xdg/autostart/lxqt-policykit-agent.desktop
+          if [ ! -e "${PKA}" ]; then
+            ok "the agent ships no autostart entry of its own"
+          elif grep -q '^Hidden=true$' "${PKA}"; then
+            ok "the agent's own autostart entry is switched off, so GNOME keeps its own agent"
+          else
+            bad "${PKA} is still active — GNOME would start a second agent"
+          fi
+
           echo "== no library is missing on the finished image =="
           for b in /usr/bin/labwc /usr/bin/quickshell; do
             [ -e "${b}" ] || continue
