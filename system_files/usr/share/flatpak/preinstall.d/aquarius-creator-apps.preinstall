@@ -3,24 +3,36 @@
 # ==============================================================================
 # PLAIN ENGLISH
 #
-# This file is a SHOPPING LIST. It does not install anything by itself. It says
-# "these apps are part of AquariusOS", and the first time the machine has an
-# internet connection a small service goes and fetches them.
+# This file is a SHOPPING LIST. It does not install anything by itself, and
+# nothing on it is installed without being asked for. It says "these are the
+# apps AquariusOS suggests" — and at the first login a window shows them, with
+# the everyday ones already ticked, and installs the ones left ticked.
+#
+# ⚠️ CHANGED 2026-09-04. Until then this list WAS installed automatically: a
+#    service fetched every entry on the first boot the machine was online,
+#    about ten gigabytes, whether or not anybody wanted any of it. Downloading
+#    that much of other people's software before its owner has said yes is not
+#    a decision an operating system should make, so now it asks. The apps have
+#    not changed and neither has this file — what changed is who presses go.
 #
 # Every app on this list is a Flatpak — a self-contained app that comes from
 # Flathub, the Linux app store, and updates on its author's schedule instead of
 # ours. That is standing decision 4 of this project: creator apps ship as
-# Flatpaks, preinstalled, not baked into the operating system. It is why the
+# Flatpaks, offered rather than baked into the operating system. It is why the
 # installer stays about four gigabytes instead of about fifteen, and it is why
 # a Blender release from next Tuesday reaches you next Tuesday.
 #
-# THE PRICE, SAID OUT LOUD: the apps are NOT inside the installer. On the first
-# boot, with a normal home connection, the machine spends roughly ten to twenty
-# minutes quietly downloading them in the background. You can use the computer
-# the whole time. A notification tells you what is happening and another one
-# tells you when it is done. If the machine is not online yet, nothing breaks
-# and nothing is lost — it tries again at the next start-up, forever, until the
-# list is satisfied.
+# THE PRICE, SAID OUT LOUD: the apps are NOT inside the installer. Whatever is
+# ticked has to be downloaded, which on a normal home connection is roughly ten
+# to twenty minutes if everything is kept, and less if it is not. You can use
+# the computer the whole time. If the machine is not online yet, nothing breaks
+# and nothing is lost — the same window, or `aq apps install`, will do the job
+# whenever it is.
+#
+# ⚠️ THIS FILE IS FLATPAK'S FORMAT, AND ONLY FLATPAK'S KEYS BELONG IN IT.
+#    The names, descriptions and categories the chooser window shows live in
+#    /usr/share/aquarius/apps/catalog.ini, one entry per ID below. The two must
+#    describe exactly the same set of apps, and the build fails if they do not.
 #
 # ------------------------------------------------------------------------------
 # THE FILE FORMAT — Flatpak's own, not something we invented
