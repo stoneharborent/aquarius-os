@@ -473,6 +473,11 @@ class UninstallerWindow(Adw.ApplicationWindow):
                 else:
                     row.set_state(PENDING)
             self.header_title.set_subtitle("Step %d of %d" % (n, total))
+            # From the first step onward the bar shows real progress rather than
+            # sweeping back and forth. Removing sends no PERCENT lines — its
+            # steps are quick and discrete — so whole steps ARE the honest
+            # picture, and a bar doing both at once just looks broken.
+            self._determinate = True
             self.bar.set_fraction(max(0, n - 1) / float(max(1, total)))
             return GLib.SOURCE_REMOVE
 
@@ -493,6 +498,8 @@ class UninstallerWindow(Adw.ApplicationWindow):
 
     def _pulse(self):
         if self.finished or self.cancelled or self.proc is None:
+            return GLib.SOURCE_REMOVE
+        if getattr(self, "_determinate", False):
             return GLib.SOURCE_REMOVE
         self.bar.pulse()
         return GLib.SOURCE_CONTINUE
