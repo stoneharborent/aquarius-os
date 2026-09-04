@@ -232,6 +232,20 @@ sleep "${GRACE_SECONDS}"
 #                             That is a correct outcome, not a failure.
 #   it stops later            a crash. Worth restarting a couple of times,
 #                             worth giving up after that rather than spinning.
+# ⚠️ RUN IT IN THE BACKGROUND AND WATCH, RATHER THAN JUST RUNNING IT. This
+#    looks like extra machinery and it is not. An agent that LOSES the race does
+#    not necessarily stop: lxqt-policykit prints "cannot register" and then
+#    carries on running, doing nothing, for the whole session. Waiting for it to
+#    exit would mean waiting forever while holding a useless process, and the
+#    stand-down below would never happen.
+#
+# ⚠️ AND THE MATCH IS BEST-EFFORT, DELIBERATELY. There is no machine-readable
+#    way to be told "another agent is already registered" — polkit says it in a
+#    sentence, and the exact sentence belongs to whichever agent is running. So
+#    this reads the words. It is a guess in the safe direction: the worst
+#    outcome of matching wrongly is that a crash is not retried.
+COMPLAINT='already (exists|registered)|cannot register|failed to register'
+
 attempt=0
 while [ "${attempt}" -lt 3 ]; do
     attempt=$((attempt + 1))
@@ -239,26 +253,49 @@ while [ "${attempt}" -lt 3 ]; do
     complaints="$(mktemp -t aq-polkit-agent.XXXXXX)"
 
     log "starting ${AGENT} (attempt ${attempt})"
-    "${AGENT}" > "${complaints}" 2>&1
+    "${AGENT}" > "${complaints}" 2>&1 &
+    agent_pid="$!"
+
+    # The first five seconds are where a registration refusal shows up.
+    stood_down=0
+    watched=0
+    while [ "${watched}" -lt 10 ]; do
+        if grep -qiE "${COMPLAINT}" "${complaints}" 2> /dev/null; then
+            stood_down=1
+            break
+        fi
+        kill -0 "${agent_pid}" 2> /dev/null || break
+        sleep 0.5
+        watched=$((watched + 1))
+    done
+
+    if [ "${stood_down}" = "1" ]; then
+        kill "${agent_pid}" 2> /dev/null || true
+        sed 's/^/[polkit-agent] /' "${complaints}"
+        log "another authentication agent is already registered in this session,"
+        log "so this one is standing down. That is the correct outcome — see the"
+        log "guard explained at the top of /usr/libexec/aquarius-polkit-agent."
+        rm -f "${complaints}"
+        wait "${agent_pid}" 2> /dev/null || true
+        exit 0
+    fi
+
+    # Still up after five seconds: it registered. Stay here for the session.
+    wait "${agent_pid}"
     rc="$?"
     ran=$(($(date +%s) - started))
 
     # Whatever it printed belongs in the session log either way.
     sed 's/^/[polkit-agent] /' "${complaints}"
+    late_complaint=0
+    grep -qiE "${COMPLAINT}" "${complaints}" 2> /dev/null && late_complaint=1
+    rm -f "${complaints}"
 
-    # ⚠️ BEST-EFFORT, AND DELIBERATELY SO. There is no machine-readable way to
-    # be told "another agent is already registered" — polkit says it in a
-    # sentence, and the exact sentence belongs to whichever agent is running.
-    # Matching on the words is a guess. It is a guess in the safe direction:
-    # the worst outcome of matching wrongly is that we do not retry a crash.
-    if grep -qiE 'already (exists|registered)|cannot register|failed to register' "${complaints}"; then
-        log "another authentication agent is already registered in this session,"
-        log "so this one is standing down. That is the correct outcome — see the"
-        log "guard explained at the top of /usr/libexec/aquarius-polkit-agent."
-        rm -f "${complaints}"
+    if [ "${late_complaint}" = "1" ]; then
+        log "it stopped saying it could not register. Something else is doing"
+        log "the job, so this is standing down rather than fighting it."
         exit 0
     fi
-    rm -f "${complaints}"
 
     if [ "${ran}" -lt 3 ]; then
         log "it stopped after ${ran}s (exit ${rc}). Not restarting it in a loop —"
