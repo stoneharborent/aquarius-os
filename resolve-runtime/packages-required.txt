@@ -113,10 +113,15 @@ findutils
 # `enter` — which works, but turns the first launch into a silent five-minute
 # download. Baking them in makes the first launch instant and makes the image
 # self-contained.
-# The list is distrobox's own documented requirement set.
+# The list is distrobox's own documented requirement set, minus one name.
+#
+# ⚠️ NOT `curl`. The Rocky base image already ships `curl-minimal`, which
+# provides /usr/bin/curl and is all distrobox wants — and asking for the full
+# `curl` package makes dnf refuse the whole transaction, because the two cannot
+# both be installed. The build on 2026-09-04 failed on exactly this. The same
+# goes for `libcurl` versus `libcurl-minimal`.
 bash
 bc
-curl
 diffutils
 gnupg2
 less

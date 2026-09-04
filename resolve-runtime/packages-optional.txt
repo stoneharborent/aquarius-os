@@ -23,9 +23,11 @@ xcb-util-cursor
 # --- Compute -----------------------------------------------------------------
 # The filesystem layout package that OpenCL vendors drop their .icd files into.
 opencl-filesystem
-# Mesa's software OpenCL. Present on a machine with no GPU passthrough at all,
-# which is how the CI smoke test runs.
-mesa-libOpenCL
+#
+# NOT mesa-libOpenCL. Enterprise Linux 9 does not package it at all (checked
+# 2026-09-04) — Mesa's software OpenCL is a Fedora/RPM Fusion thing. It does not
+# matter: the OpenCL that Resolve uses comes from the graphics card's own driver,
+# passed in from the host at run time, not from Mesa.
 
 # --- Old-name compatibility --------------------------------------------------
 # Some Resolve builds link against libnsl.so.1, which Enterprise Linux 9 renamed
@@ -42,8 +44,9 @@ vulkan-loader
 mesa-vulkan-drivers
 libatomic
 SDL2
-libcurl
 openssl-libs
+# NOT libcurl — the base image ships libcurl-minimal and the two conflict. See
+# the note about `curl` in packages-required.txt.
 
 # --- Diagnostics -------------------------------------------------------------
 # glxinfo, for answering "does this container see the graphics card at all?" —
