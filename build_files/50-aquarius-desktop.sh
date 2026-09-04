@@ -148,7 +148,55 @@ else
 fi
 
 # ==============================================================================
-# 4. The login screen logo
+# 4. The login screen
+# ==============================================================================
+# ⚠️ READ THIS BEFORE CHANGING ANYTHING IN THIS SECTION — 2026-09-04.
+#
+# Royce photographed the bench machine booting and asked a fair question: why
+# does the screen I log in at look like stock Fedora, when the screen I unlock
+# at looks like AquariusOS?
+#
+# THE ANSWER IS THAT THEY ARE TWO DIFFERENT PROGRAMS.
+#
+#   THE LOGIN SCREEN is GDM. It runs before anybody has logged in, as its own
+#   user, with its own settings database, and it is GNOME's program, not ours.
+#   Everything we can change about it, we change from this section.
+#
+#   THE LOCK SCREEN is drawn inside a running session by that session's own
+#   desktop, with that person's wallpaper and screen size. It looks like
+#   AquariusOS because it IS AquariusOS.
+#
+# WHAT WE CAN AND CANNOT DO TO GDM, having checked (2026-09-04):
+#
+#   CAN   the logo, the screen SIZE (see below), light-vs-dark, the typefaces,
+#         the mouse pointer, the icon set. All through GDM's own dconf
+#         database, which is a supported, documented mechanism.
+#
+#   CANNOT  the background. There is no setting for it. GNOME's login screen
+#         paints its background from a CSS rule (#lockDialogGroup) compiled
+#         into gnome-shell's own resource bundle, and through GNOME 50 there is
+#         still no key that overrides it. The only ways round it are patching
+#         that bundle or loading a GNOME Shell extension into the greeter, and
+#         both are exactly the theme treadmill this project refuses to walk
+#         (see the posture note at the top of this file).
+#
+#         So GDM stays a clean, correctly-sized, light GNOME login screen with
+#         our logo on it — and the REAL branded login screen is a different
+#         thing entirely: our own greeter, drawn by the Aquarius Shell, shipped
+#         alongside greetd. That is Part B, in docs/restart/login.md.
+#
+# THE SIZE PROBLEM AND WHY IT IS NOT A SETTING
+#   GDM had no idea the bench monitor runs at 125%, so it drew everything at
+#   100% on a 55" 4K screen. The scale of a monitor is not a dconf key; it
+#   lives in a file called monitors.xml, and the copy that has the answer is
+#   inside a home folder that the "gdm" user is not allowed to read.
+#
+#   The fix is a messenger, not a setting: /usr/libexec/aquarius-gdm-display
+#   copies that file somewhere GDM can read it, at boot and at every logout.
+#   Its header explains all of it. What we deliberately do NOT do is set
+#   text-scaling-factor here as well — that would make the text bigger a second
+#   time on top of the monitor scale, and the login screen would end up too
+#   big instead of too small.
 # ==============================================================================
 # GDM reads its settings from its own dconf database, which is separate from
 # every user's. Two files are needed and neither does anything on its own:
@@ -189,6 +237,52 @@ cat > /etc/dconf/db/gdm.d/01-aquarius-logo << EOF
 logo='${LOGO_PNG}'
 EOF
 
+# ------------------------------------------------------------------------------
+# The login screen's appearance
+# ------------------------------------------------------------------------------
+# A second file rather than more lines in the first, because these are a
+# different KIND of setting: the one above is GDM's own (org.gnome.login-screen),
+# and these are the ordinary desktop appearance settings, which the greeter
+# reads because the greeter is itself a GNOME Shell wearing the "gdm" user's
+# settings.
+#
+# EVERY VALUE HERE MATCHES THE ONE A REAL ACCOUNT GETS from
+# zz1-aquarius-10-look.gschema.override. That is the whole point: the login
+# screen should not be a different-looking place you pass through on the way to
+# AquariusOS.
+#
+#   color-scheme      'prefer-light'. GNOME 47 made the login screen dark by
+#                     default; AquariusOS is Ice, and Ice is light. Note the
+#                     value is NOT 'default' (which is what a user account gets)
+#                     — for the greeter, 'default' means "GNOME decides", and
+#                     GNOME decides dark. 'prefer-light' is the one that asks.
+#                     Honest limitation, reported upstream by others: even in
+#                     light mode a few pieces of GNOME's own top bar can stay
+#                     dark. We are not chasing those.
+#   accent-color      'blue' — the nearest of GNOME's nine fixed words to
+#                     Aquarius Blue. Same compromise, same reason, as the
+#                     desktop: see the note at the top of this file.
+#   font-name         Inter, the interface typeface, so the person's name under
+#                     their picture is set in ours and not Fedora's.
+#   cursor-theme      the pointer. Left at Adwaita deliberately — AquariusOS has
+#                     no cursor theme of its own yet (it is on the R5 list) —
+#                     but written down explicitly so that the day it does, this
+#                     is the one line that changes and the login screen does not
+#                     get forgotten.
+#
+# NOT SET, ON PURPOSE: text-scaling-factor. See the long note above — the screen
+# size is fixed by monitors.xml, and doing it twice makes it wrong the other way.
+cat > /etc/dconf/db/gdm.d/02-aquarius-look << 'EOF'
+[org/gnome/desktop/interface]
+color-scheme='prefer-light'
+accent-color='blue'
+font-name='Inter 11'
+document-font-name='Inter 11'
+monospace-font-name='JetBrains Mono 10'
+cursor-theme='Adwaita'
+icon-theme='Adwaita'
+EOF
+
 if ! aq_have dconf; then
     echo "AQUARIUS ERROR: the 'dconf' command is not in this image." >&2
     exit 1
@@ -204,6 +298,116 @@ if grep -a -q "${LOGO_PNG}" /etc/dconf/db/gdm 2> /dev/null; then
     ok "the built database really names our logo"
 else
     bad "/etc/dconf/db/gdm does not mention ${LOGO_PNG} — it was built without our file"
+fi
+
+# The appearance keys, read back out of the BUILT database rather than out of
+# the file we just wrote. dconf update can skip a file it dislikes without
+# saying anything, so "the file exists" proves nothing at all.
+for aq_want in prefer-light 'Inter 11' 'JetBrains Mono 10' Adwaita; do
+    if grep -a -q "${aq_want}" /etc/dconf/db/gdm 2> /dev/null; then
+        ok "the login screen database carries '${aq_want}'"
+    else
+        bad "/etc/dconf/db/gdm does not contain '${aq_want}' — the login screen would keep GNOME's own value"
+    fi
+done
+
+# ------------------------------------------------------------------------------
+# The login screen's SIZE — the messenger, and the two things that run it
+# ------------------------------------------------------------------------------
+say "Telling the login screen what size the screen is"
+
+AQ_GDM_DISPLAY="/usr/libexec/aquarius-gdm-display"
+chmod 0755 "${AQ_GDM_DISPLAY}"
+
+if [ -x "${AQ_GDM_DISPLAY}" ]; then
+    ok "$(basename "${AQ_GDM_DISPLAY}") is installed and executable"
+else
+    bad "${AQ_GDM_DISPLAY} is missing — the login screen would stay at 100% on a 4K monitor"
+fi
+
+# It has to be valid shell before it is worth enabling anything that runs it.
+if bash -n "${AQ_GDM_DISPLAY}"; then
+    ok "it is valid shell"
+else
+    bad "${AQ_GDM_DISPLAY} does not parse as shell"
+fi
+
+systemctl enable aquarius-gdm-display.service
+if systemctl is-enabled aquarius-gdm-display.service > /dev/null 2>&1; then
+    ok "it will run at every boot, before the login screen starts"
+else
+    bad "aquarius-gdm-display.service is not switched on — the login screen would never be told the screen size"
+fi
+
+# ------------------------------------------------------------------------------
+# The logout half
+# ------------------------------------------------------------------------------
+# ⚠️ WE REPLACE A FILE THE gdm PACKAGE OWNS, AND HERE IS WHY THAT IS THE ONLY
+# WAY TO DO IT.
+#
+# GDM runs exactly ONE script when a session ends: /etc/gdm/PostSession/Default
+# (or one named after the display, which nothing here creates). It is not a
+# folder of drop-ins — there is no way to add a step without editing that file.
+# Appending to it does not work either: Fedora's copy is two lines and the
+# second is `exit 0`, so anything added after it never runs.
+#
+# So we write our own, and we keep Fedora's out of harm's way at
+# /usr/share/aquarius/gdm-PostSession-Default.orig so that the difference is a
+# readable fact rather than a memory.
+#
+# THE ONE RULE THIS SCRIPT MUST OBEY: it must always succeed. GDM runs it while
+# a person is logging out; a script that fails or hangs there is a machine that
+# will not let go of a session.
+say "The logout half of the login-screen size fix"
+
+install -d -m 0755 /etc/gdm/PostSession
+if [ -f /etc/gdm/PostSession/Default ]; then
+    install -D -m 0755 /etc/gdm/PostSession/Default \
+        /usr/share/aquarius/gdm-PostSession-Default.orig
+    ok "Fedora's own PostSession script kept at /usr/share/aquarius/gdm-PostSession-Default.orig"
+else
+    echo "NOTE: this image had no /etc/gdm/PostSession/Default to keep."
+fi
+
+cat > /etc/gdm/PostSession/Default << 'EOF'
+#!/bin/sh
+# =============================================================================
+# GDM runs this, as root, every time somebody logs out.
+# =============================================================================
+# AquariusOS replaced Fedora's copy of this file, which was two lines long and
+# did nothing. The original is kept at
+# /usr/share/aquarius/gdm-PostSession-Default.orig if you ever want to compare.
+#
+# The one thing added is the login screen's screen size. When you change the
+# Scale in Settings > Displays and then log out, this is what carries that
+# answer across to the login screen you are about to be looking at. Without it
+# the change would not show up until the next reboot.
+#
+# THE RULE: this script must always finish, and always succeed. A logout that
+# hangs or fails here is a computer that will not let go of your session, so
+# every line is fenced with `|| true` and the last line is `exit 0`.
+# =============================================================================
+if [ -x /usr/libexec/aquarius-gdm-display ]; then
+    /usr/libexec/aquarius-gdm-display || true
+fi
+
+exit 0
+EOF
+chmod 0755 /etc/gdm/PostSession/Default
+
+aq_file_has /etc/gdm/PostSession/Default '/usr/libexec/aquarius-gdm-display' \
+    "the logout hook runs the login-screen size messenger"
+aq_file_has /etc/gdm/PostSession/Default '^exit 0$' \
+    "the logout hook always succeeds (a failing one would trap a session)"
+if bash -n /etc/gdm/PostSession/Default; then
+    ok "the logout hook is valid shell"
+else
+    bad "/etc/gdm/PostSession/Default does not parse as shell — every logout would print an error"
+fi
+if [ -x /etc/gdm/PostSession/Default ]; then
+    ok "the logout hook is executable (GDM ignores it silently otherwise)"
+else
+    bad "/etc/gdm/PostSession/Default is not executable — GDM would skip it without a word"
 fi
 
 # ==============================================================================

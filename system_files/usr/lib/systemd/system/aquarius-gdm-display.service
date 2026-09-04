@@ -1,0 +1,45 @@
+# =============================================================================
+# aquarius-gdm-display.service — give the login screen your screen size
+# =============================================================================
+# WHAT THIS IS FOR
+#
+# The login screen (GDM) runs as its own user and cannot read inside anybody's
+# home folder, so it has never seen the display scale you chose in Settings.
+# On a 4K monitor that is the difference between a readable login screen and
+# tiny name tiles in the middle of a huge grey field.
+#
+# This service runs one small program, once, at every boot, BEFORE the login
+# screen starts — so by the time the login screen draws, the answer is already
+# in a place it can read. The program is
+# /usr/libexec/aquarius-gdm-display; its own header explains the whole thing.
+#
+# THE OTHER HALF is /etc/gdm/PostSession/Default, which GDM runs as root every
+# time somebody logs out. Between the two, the login screen is never more than
+# one logout behind the desktop.
+#
+# WHY Before= AND NOT Wants=
+#   display-manager.service is the link systemd uses to mean "whichever login
+#   screen is switched on" — GDM today, possibly greetd later. Naming it in
+#   Before= means "if it is going to start, run me first" and says nothing about
+#   whether it should start, which is not this service's business.
+#
+# It is deliberately harmless: if nobody has ever chosen a screen size, it says
+# so and exits successfully. A login screen must never fail to appear because a
+# convenience did not have anything to do.
+# =============================================================================
+[Unit]
+Description=Give the login screen the display size this computer's users chose
+Documentation=https://github.com/stoneharborent/aquarius-os/blob/restart/fedora-bootc/docs/restart/login.md
+Before=display-manager.service
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/aquarius-gdm-display
+RemainAfterExit=no
+# The program handles its own problems and says so in the journal. A failure
+# here must never hold up the login screen, so systemd is told not to care.
+SuccessExitStatus=0 1
+
+[Install]
+WantedBy=graphical.target

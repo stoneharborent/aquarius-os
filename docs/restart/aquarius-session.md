@@ -473,36 +473,40 @@ comments in that file give you the two lines to change.
 
 ## The other login screen: greetd
 
-AquariusOS uses **GDM**, GNOME's login screen. That is not changing yet.
+AquariusOS uses **GDM**, GNOME's login screen. That is still what this image
+boots to.
 
-A second login manager called **greetd** is installed, configured and switched
-**off**. It is where this is eventually going — a login screen drawn by the
-Aquarius Shell itself — and it is in the image now so that the switch is two
-commands rather than a rebuild.
+Since 2026-09-04 there is a real alternative sitting beside it, installed,
+configured and switched **off**: **greetd**, with a login screen drawn by the
+Aquarius Shell itself — the Ice wallpaper, the Aquarius mark, a clock and a
+password box.
 
 To try it:
 
 ```bash
-sudo systemctl disable gdm
-sudo systemctl enable greetd
+sudo aq login use greetd
 sudo systemctl reboot
 ```
-
-You will get a plain text login screen with a clock, your username filled in,
-and a list of sessions you move through with the arrow keys. It is not pretty
-and it is not meant to be.
 
 To go back:
 
 ```bash
-sudo systemctl disable greetd
-sudo systemctl enable gdm
+sudo aq login use gdm
 sudo systemctl reboot
 ```
 
-⚠️ **Never enable both.** Exactly one login manager may be switched on;
-two is a black screen with no way in. If that happens, boot the previous version
-of the OS from the boot menu — every AquariusOS update keeps the last one.
+Both work from a text console (Ctrl+Alt+F3), and `aq login status` says which
+one is on.
+
+**The whole story — what it looks like, what each key does, why it cannot lock
+you out, and the bench list — is in [`login.md`](login.md).** Read that one, not
+this section.
+
+⚠️ **Never enable both.** Exactly one login manager may be switched on; two is a
+black screen with no way in. `aq login use` is the supported way precisely
+because it turns one off before it turns the other on. If it does happen, boot
+the previous version of the OS from the boot menu — every AquariusOS update
+keeps the last one.
 
 ---
 
@@ -609,7 +613,7 @@ of its own, it must not also start this one — it should write `agent=none` int
 | `~/.config/aquarius/display.conf` | Your own screen-size answers, written by `aq display`. |
 | `/usr/share/xdg-desktop-portal/aquarius-portals.conf` | Which portal back end answers which request. |
 | `/etc/xdg/xdg-desktop-portal-wlr/config` | How screen recording picks a screen. |
-| `/etc/greetd/config.toml` | The alternative login screen, switched off. |
+| `/etc/greetd/config.toml` | The AquariusOS login screen, installed and switched off. See [`login.md`](login.md). |
 | `~/.local/state/aquarius-session/session.log` | **The log. Read this first when something is wrong.** |
 | `/usr/share/aquarius/shell-build.txt` | Exactly which commit of the shell this image contains. |
 | `/usr/share/aquarius/quickshell-build.txt` | Which Quickshell, and which Qt it was built against. |

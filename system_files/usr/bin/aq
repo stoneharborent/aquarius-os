@@ -110,6 +110,19 @@ USAGE
                         have each one. 'aq apps install <id>' adds one you
                         skipped; 'aq apps status' says how many you have.
 
+    aq login status     Which login screen this computer starts with — GNOME's
+                        (GDM) or the AquariusOS one (greetd) — and whether the
+                        AquariusOS one is ready to be switched on.
+
+    aq login use greetd Use the AquariusOS login screen: the Ice wallpaper, the
+                        Aquarius mark, and a password box drawn by our own
+                        desktop. Takes effect at the next restart.
+
+    aq login use gdm    Go back to GNOME's login screen. This is the one the
+                        computer starts with out of the box, and it is what to
+                        type if the other one gives you trouble — it works from
+                        a text console (Ctrl+Alt+F3) too.
+
     aq --help           This message.
     aq --version        Which AquariusOS this is.
 
@@ -1220,6 +1233,196 @@ apps_install() {
     flatpak install -y --system flathub "${line[@]}"
 }
 
+# -----------------------------------------------------------------------------
+# aq login — which of the two login screens this computer starts with
+# -----------------------------------------------------------------------------
+# WHAT A "LOGIN SCREEN" IS HERE, because the word covers two different things:
+#
+#   THE LOGIN SCREEN   what you see straight after the computer starts, before
+#                      anybody has logged in. There are two on this machine and
+#                      exactly one may be switched on.
+#
+#   THE LOCK SCREEN    what you see when you walk away and come back. That is
+#                      drawn by your desktop, inside your session, and this
+#                      command has nothing to do with it.
+#
+# The two login screens:
+#
+#   gdm      GNOME's. What AquariusOS starts with. Plain, and completely
+#            reliable. It has an accessibility menu, which the other one does
+#            not yet.
+#   greetd   Ours. The Ice wallpaper, the Aquarius mark, a clock, a password
+#            box, and a choice of desktop — drawn by the Aquarius Shell itself.
+#
+# ⚠️ EXACTLY ONE MAY BE SWITCHED ON. systemd enforces that through a link called
+# display-manager.service, and two login managers both claiming it is one of the
+# classic ways to end up at a black screen with no way in. So this command turns
+# one off and the other on, in that order, and refuses to do half the job.
+#
+# THE WAY BACK IS ALWAYS THERE. If the AquariusOS login screen misbehaves:
+#   1. press Ctrl+Alt+F3 for a text login, log in there
+#   2. sudo aq login use gdm
+#   3. sudo systemctl reboot
+# And if the graphical screen fails to start at all, it falls through to a plain
+# text login by itself rather than leaving you stuck — see
+# /usr/libexec/aquarius-greeter.
+AQ_GREETER_LAUNCHER="/usr/libexec/aquarius-greeter"
+AQ_GREETD_CONF="/etc/greetd/config.toml"
+
+login_usage() {
+    cat << 'EOF'
+aq login — which login screen this computer starts with
+
+USAGE
+    aq login status        Which one is switched on, and is the other ready.
+    aq login use greetd    Switch to the AquariusOS login screen.
+    aq login use gdm       Switch back to GNOME's.
+
+Either 'use' command needs an administrator, so put 'sudo' in front of it, and
+neither takes effect until you restart.
+
+IF SOMETHING GOES WRONG
+    Press Ctrl+Alt+F3 for a plain text login. Log in there and run:
+        sudo aq login use gdm
+        sudo systemctl reboot
+EOF
+}
+
+login_which() {
+    # `systemctl is-enabled` is asked twice rather than reading the
+    # display-manager.service link, because the link is systemd's business and
+    # the question we are actually asking is "which one is switched on".
+    if systemctl is-enabled greetd.service > /dev/null 2>&1; then
+        echo greetd
+    elif systemctl is-enabled gdm.service > /dev/null 2>&1; then
+        echo gdm
+    else
+        echo none
+    fi
+}
+
+login_status() {
+    local now
+    now="$(login_which)"
+
+    case "${now}" in
+        greetd)
+            echo "This computer starts with the AQUARIUS login screen (greetd)."
+            echo "To go back to GNOME's:  sudo aq login use gdm"
+            ;;
+        gdm)
+            echo "This computer starts with GNOME's login screen (GDM)."
+            echo "To try the AquariusOS one:  sudo aq login use greetd"
+            ;;
+        *)
+            echo "NO login screen is switched on. That is not normal — this"
+            echo "computer would start to a text prompt."
+            echo "To fix it:  sudo aq login use gdm"
+            ;;
+    esac
+
+    echo
+    echo "Is the AquariusOS login screen ready to switch on?"
+    local ready=1
+    if [ -x "${AQ_GREETER_LAUNCHER}" ]; then
+        echo "  yes  ${AQ_GREETER_LAUNCHER} is here"
+    else
+        echo "  NO   ${AQ_GREETER_LAUNCHER} is missing"
+        ready=0
+    fi
+    if [ -r "${AQ_GREETD_CONF}" ]; then
+        echo "  yes  ${AQ_GREETD_CONF} is here"
+    else
+        echo "  NO   ${AQ_GREETD_CONF} is missing"
+        ready=0
+    fi
+    if [ -r /usr/share/aquarius/shell/greeter/greeter.qml ]; then
+        echo "  yes  the login screen itself is installed"
+    else
+        echo "  NO   /usr/share/aquarius/shell/greeter/greeter.qml is missing."
+        echo "       Switching to greetd would give the plain text login screen."
+        ready=0
+    fi
+
+    if [ "${ready}" -eq 1 ]; then
+        echo
+        echo "Everything it needs is here."
+    fi
+}
+
+login_use() {
+    local wanted="${1:-}"
+    local turn_off
+
+    case "${wanted}" in
+        greetd) turn_off="gdm" ;;
+        gdm)    turn_off="greetd" ;;
+        *)
+            echo "aq: 'aq login use' takes either 'greetd' or 'gdm'." >&2
+            echo "    greetd is the AquariusOS login screen; gdm is GNOME's." >&2
+            return 1
+            ;;
+    esac
+
+    if [ "$(id -u)" -ne 0 ]; then
+        echo "aq: changing the login screen needs an administrator." >&2
+        echo "    Try:  sudo aq login use ${wanted}" >&2
+        return 1
+    fi
+
+    if [ "${wanted}" = "greetd" ] && [ ! -x "${AQ_GREETER_LAUNCHER}" ]; then
+        echo "aq: ${AQ_GREETER_LAUNCHER} is not on this computer, so there is" >&2
+        echo "    no AquariusOS login screen to switch to. Nothing changed." >&2
+        return 1
+    fi
+
+    # Off first, then on. The other order would leave both switched on for a
+    # moment, and if the second command failed it would leave both switched on
+    # for good — which is the black-screen case.
+    systemctl disable "${turn_off}.service" > /dev/null 2>&1 || true
+    if ! systemctl enable "${wanted}.service"; then
+        echo "aq: could not switch ${wanted} on. Putting ${turn_off} back." >&2
+        systemctl enable "${turn_off}.service" > /dev/null 2>&1 || true
+        return 1
+    fi
+
+    echo "Done. This computer will start with ${wanted} from now on."
+    echo
+    if [ "${wanted}" = "greetd" ]; then
+        echo "Restart to see it:  sudo systemctl reboot"
+        echo
+        echo "WHAT TO EXPECT"
+        echo "  The Ice wallpaper, a clock, and a card with your name and a"
+        echo "  password box. Enter signs in. The pill underneath says which"
+        echo "  desktop is about to start; the left and right arrow keys change"
+        echo "  it, so GNOME is one keypress away."
+        echo
+        echo "IF IT MISBEHAVES"
+        echo "  It falls back to a plain text login screen on its own rather"
+        echo "  than leaving you stuck. From there, or from Ctrl+Alt+F3:"
+        echo "      sudo aq login use gdm"
+        echo "      sudo systemctl reboot"
+    else
+        echo "Restart to see it:  sudo systemctl reboot"
+    fi
+}
+
+login() {
+    case "${1:-}" in
+        "" | -h | --help | help) login_usage ;;
+        status) login_status ;;
+        use)
+            shift
+            login_use "${1:-}"
+            ;;
+        *)
+            echo "aq: '${1}' is not something 'aq login' knows how to do." >&2
+            echo "    It understands: status, use." >&2
+            return 1
+            ;;
+    esac
+}
+
 apps() {
     case "${1:-}" in
         "" | -h | --help | help) apps_usage ;;
@@ -1267,6 +1470,10 @@ case "${1:-}" in
     apps)
         shift
         apps "$@"
+        ;;
+    login)
+        shift
+        login "$@"
         ;;
     keys)
         case "${2:-}" in

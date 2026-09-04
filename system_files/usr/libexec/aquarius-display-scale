@@ -503,13 +503,35 @@ def main(argv=None):
     # ends in a number and 1 is the last resort.
     parser.add_argument("--effective-scale", action="store_true",
                         help="print the one number this session is scaled by")
-    # The two below exist so that this program can be tested without a monitor,
-    # in a container, in CI. They are not for people.
+    # --outputs-from exists so that this program can be tested without a
+    # monitor, in a container, in CI. It is not for people.
     parser.add_argument("--outputs-from", metavar="FILE",
                         help=argparse.SUPPRESS)
+
+    # ------------------------------------------------------------------------
+    # --monitors-xml and --conf — "read somebody ELSE'S answer"
+    # ------------------------------------------------------------------------
+    # ⚠️ THESE ARE NOT TEST-ONLY, AND THEY USED TO BE HIDDEN. They were made
+    # visible on 2026-09-04 because the AquariusOS LOGIN SCREEN depends on them,
+    # and a hidden option that a shipped feature depends on is an option
+    # somebody will one day delete as unused.
+    #
+    # The login screen runs as its own user with no home folder worth reading,
+    # so it cannot look in ~/.config for the two files this program normally
+    # reads. /usr/libexec/aquarius-greeter-shell therefore points it at the
+    # system-wide copies instead:
+    #
+    #   --monitors-xml /etc/xdg/monitors.xml
+    #       the display arrangement, copied there from whoever last set a Scale
+    #       in Settings > Displays, by /usr/libexec/aquarius-gdm-display
+    #   --conf /var/lib/aquarius/greeter-display.conf
+    #       an optional override for the login screen alone
     parser.add_argument("--monitors-xml", metavar="FILE",
-                        help=argparse.SUPPRESS)
-    parser.add_argument("--conf", metavar="FILE", help=argparse.SUPPRESS)
+                        help="read the display arrangement from this file "
+                             "instead of ~/.config/monitors.xml")
+    parser.add_argument("--conf", metavar="FILE",
+                        help="read the saved scale from this file instead of "
+                             "~/.config/aquarius/display.conf")
     args = parser.parse_args(argv)
 
     conf_path = args.conf or os.path.join(
