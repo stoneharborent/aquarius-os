@@ -206,6 +206,22 @@ is why permission is needed at all, and it is the right way round: the extra
 permissions creator apps need are shipped as system-wide overrides, and
 `aq apps status` reports on the system installation. One place, one answer.
 
+> **⚠️ The one thing that cannot be tested without a screen.** A password prompt
+> needs something to draw it — a "permission agent". GNOME brings its own. In the
+> Aquarius session the **shell** is the permission agent, by the same design that
+> makes it the notification service, and that is checked at build time only in the
+> negative: the build proves nothing *else* claims the job. **Whether a prompt
+> really appears in the Aquarius session is a bench question**, and it is the one
+> to answer first. If pressing Install in the Aquarius session produces no prompt
+> and the window says permission was refused, the cause is the agent, not the
+> installer — and the way through in the meantime is one line in a terminal:
+>
+> ```
+> sudo /usr/libexec/aquarius-creator-apps-install <app id> <app id> …
+> ```
+>
+> ...or `aq apps install --all`. Both do exactly what the window would have done.
+
 > **Why one app at a time?** So that every line on the page can be true. One
 > long command has one answer at the end; eleven short ones have eleven. It
 > costs nothing — the same bytes are downloaded, and shared runtimes are still

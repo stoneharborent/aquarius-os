@@ -107,11 +107,16 @@ fi
 say "Python can build the window"
 # Two separate questions, because they fail for different reasons and a build
 # log that says which is a build log worth reading.
-if python3 -m py_compile "${CHOOSER}"; then
+# ⚠️ NOT `python3 -m py_compile`, which would leave a __pycache__ folder sitting
+#    in /usr/libexec forever, in the shipped image, as a souvenir of the build.
+#    Compiling to a named file in /tmp asks the same question and leaves nothing.
+if python3 -c 'import py_compile, sys; py_compile.compile(sys.argv[1], cfile="/tmp/aq-chooser.pyc", doraise=True)' \
+    "${CHOOSER}"; then
     ok "the window is valid Python"
 else
     bad "the window is not valid Python"
 fi
+rm -f /tmp/aq-chooser.pyc
 if bash -n "${HELPER}"; then
     ok "the installer is valid shell"
 else
@@ -219,8 +224,13 @@ else
     ok "the installer service has no [Install] section, so nothing switches it on"
 fi
 
-AQ_WANTS="$(find /etc/systemd/system /usr/lib/systemd/system -name 'aquarius-flatpak-preinstall.service' \
-    -path '*.wants/*' 2> /dev/null | sort)"
+# The `|| true` is not decoration: under `set -e` with `pipefail`, a find that
+# is handed a folder that does not exist exits non-zero, the whole pipeline is
+# judged failed, and the assignment takes the script down with it — a build that
+# dies with no message at all rather than a check that says something.
+AQ_WANTS="$(find /etc/systemd/system /usr/lib/systemd/system \
+    -name 'aquarius-flatpak-preinstall.service' -path '*.wants/*' 2> /dev/null \
+    | sort || true)"
 if [ -n "${AQ_WANTS}" ]; then
     bad "something has linked the installer service into a .wants folder, which starts it at boot:"
     printf '%s\n' "${AQ_WANTS}" | sed 's/^/       /' >&2
