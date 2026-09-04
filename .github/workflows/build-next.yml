@@ -2296,12 +2296,19 @@ jobs:
             bad "/usr/libexec/aquarius-appimage-install is missing — the chooser would offer an app nobody can install"
           fi
           if [ -r /usr/share/aquarius/apps/aquarius-editor.desktop.in ]; then
-            if desktop-file-validate /usr/share/aquarius/apps/aquarius-editor.desktop.in 2>/tmp/dfv.txt; then
+            # ⚠️ Validated through a copy with the right name.
+            # desktop-file-validate refuses any filename not ending in
+            # `.desktop`, before reading a line of it — and this one is a
+            # template on purpose. Checking the copy also asks the more honest
+            # question: is the file valid under the name it will really have?
+            cp /usr/share/aquarius/apps/aquarius-editor.desktop.in /tmp/aquarius-editor.desktop
+            if desktop-file-validate /tmp/aquarius-editor.desktop 2>/tmp/dfv.txt; then
               ok "the menu-entry template it installs is valid"
             else
               bad "the menu-entry template is not valid — the app would install and never appear"
               sed 's/^/       /' /tmp/dfv.txt
             fi
+            rm -f /tmp/aquarius-editor.desktop
           else
             bad "/usr/share/aquarius/apps/aquarius-editor.desktop.in is missing"
           fi

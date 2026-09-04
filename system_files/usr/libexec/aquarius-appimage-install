@@ -187,16 +187,22 @@ if [ "$(id -u)" -eq 0 ] && [ "${DRY_RUN}" -eq 0 ]; then
     exit 1
 fi
 
-if [ -z "${HOME:-}" ] || [ ! -d "${HOME}" ]; then
+# ⚠️ A REHEARSAL DOES NOT NEED A HOME FOLDER, AND ASKING FOR ONE BROKE THE
+#    BUILD (2026-09-04, first run of this branch). The image build runs as root
+#    in a container where HOME points at a folder that does not exist, so this
+#    check refused to rehearse and every check after it failed. It is a real
+#    requirement for a real install and a meaningless one for a rehearsal,
+#    which writes into a throwaway folder of its own a few lines below.
+if [ "${DRY_RUN}" -eq 0 ] && { [ -z "${HOME:-}" ] || [ ! -d "${HOME}" ]; }; then
     say "ERROR — this session has no home folder, so there is nowhere to install to."
     progress "FAIL There is no home folder to install into."
     exit 1
 fi
 
-APP_ROOT="${HOME}/.local/lib/aquarius"
+APP_ROOT="${HOME:-/nonexistent}/.local/lib/aquarius"
 VERSIONS_ROOT="${APP_ROOT}/versions"
-DESKTOP_DIR="${HOME}/.local/share/applications"
-ICON_ROOT="${HOME}/.local/share/icons/hicolor"
+DESKTOP_DIR="${HOME:-/nonexistent}/.local/share/applications"
+ICON_ROOT="${HOME:-/nonexistent}/.local/share/icons/hicolor"
 
 # ------------------------------------------------------------------------------
 # ⚠️ A REHEARSAL WRITES TO A THROWAWAY HOME FOLDER, NOT TO NOWHERE

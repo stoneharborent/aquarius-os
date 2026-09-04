@@ -664,11 +664,26 @@ for entry in "${AQUARIUS_DOWNLOAD_APPS[@]}"; do
         "" \
         "It is the menu entry ${aq_id} installs into each person's home folder." \
         "Without it the app installs and never appears anywhere."
-    if desktop-file-validate "${tpl}"; then
+    # ⚠️ VALIDATED THROUGH A COPY WITH THE RIGHT NAME, AND THAT IS NOT A DODGE.
+    #    desktop-file-validate refuses outright — before reading a single line —
+    #    any filename that does not end in `.desktop`:
+    #
+    #        error: filename does not have a .desktop extension
+    #
+    #    which is exactly what this file's name does not do, on purpose: it is a
+    #    template, and a real `.desktop` file sitting in /usr/share/aquarius
+    #    would be one more thing somebody could mistake for a menu entry. So the
+    #    copy is validated under the name it will really have on a machine,
+    #    which is also the more honest question to ask. (Found on the first CI
+    #    run of this branch, 2026-09-04.)
+    tpl_check="/tmp/${aq_short}.desktop"
+    cp "${tpl}" "${tpl_check}"
+    if desktop-file-validate "${tpl_check}"; then
         ok "$(basename "${tpl}") is a valid menu entry"
     else
         bad "$(basename "${tpl}") is not a valid menu entry — the app would install and never appear"
     fi
+    rm -f "${tpl_check}"
     aq_file_has "${tpl}" "^Exec=/usr/bin/${aq_short}\$" \
         "it starts the app through /usr/bin/${aq_short}, not by a path into the home folder"
 
