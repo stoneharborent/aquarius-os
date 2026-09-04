@@ -1690,10 +1690,24 @@ jobs:
           # 2026-09-04 the app chooser asks the person which apps they want;
           # an image that enables this service downloads about ten gigabytes
           # before anybody has been asked, which is the behaviour we removed.
-          if systemctl is-enabled aquarius-flatpak-preinstall.service >/dev/null 2>&1; then
-            bad "aquarius-flatpak-preinstall.service is switched on — it would fetch every app before the person was asked; the chooser is supposed to ask first"
+          # NOT `systemctl is-enabled` as a yes/no: a unit with no [Install]
+          # section prints "static" and EXITS ZERO, so asking it that way says
+          # "switched on" about a service nothing can switch on. Read what
+          # actually decides it — the [Install] section and the .wants links.
+          PREUNIT=/usr/lib/systemd/system/aquarius-flatpak-preinstall.service
+          if [ ! -r "${PREUNIT}" ]; then
+            bad "${PREUNIT} is missing — 'aq apps install --all' would have nothing to run"
+          elif grep -q '^\[Install\]' "${PREUNIT}"; then
+            bad "the installer has an [Install] section — it would fetch every app before the person was asked; the chooser is supposed to ask first"
           else
-            ok "the installer is not switched on (correct — the chooser asks first)"
+            ok "the installer has no [Install] section, so nothing switches it on (correct — the chooser asks first)"
+          fi
+          WANTS="$(find /etc/systemd/system /usr/lib/systemd/system -name 'aquarius-flatpak-preinstall.service' -path '*.wants/*' 2>/dev/null | sort || true)"
+          if [ -n "${WANTS}" ]; then
+            bad "something linked the installer into a .wants folder, which starts it at boot:"
+            printf '%s\n' "${WANTS}" | sed 's/^/       /'
+          else
+            ok "and nothing has linked it into a .wants folder either"
           fi
           if [ -x /usr/libexec/aquarius-flatpak-preinstall ]; then ok "the installer script is there and runnable"
           else bad "/usr/libexec/aquarius-flatpak-preinstall is missing"; fi
@@ -1702,10 +1716,11 @@ jobs:
           # separate service precisely because the apps now arrive from the
           # chooser: an app installed by somebody else's hand still needs them,
           # and OBS with no camera permission is a silent failure.
-          if systemctl is-enabled aquarius-flatpak-overrides.service >/dev/null 2>&1; then
+          OVRSTATE="$(systemctl is-enabled aquarius-flatpak-overrides.service 2>&1 || true)"
+          if [ "${OVRSTATE}" = "enabled" ]; then
             ok "the permissions service is switched on"
           else
-            bad "aquarius-flatpak-overrides.service is not switched on — OBS would install and then not see a camera"
+            bad "aquarius-flatpak-overrides.service says '${OVRSTATE}', not 'enabled' — OBS would install and then not see a camera"
           fi
 
           # And it must actually do the copying when run.
