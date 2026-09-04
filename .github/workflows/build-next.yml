@@ -2542,7 +2542,7 @@ jobs:
           # Aquarius Editor is not a Flatpak, so it has no block in Flatpak's
           # file at all — it lives only in catalog.ini, marked Type=appimage.
           # The catalog is the UNION, and that is what is checked.
-          OURS="$(aquarius-flatpak-preinstall --list-appimage 2>/dev/null | grep -c . || true)"
+          OURS="$(/usr/libexec/aquarius-flatpak-preinstall --list-appimage 2>/dev/null | grep -c . || true)"
           CAT_LINES="$(wc -l < /tmp/catalog.txt)"
           if [ "${CAT_LINES}" -eq "$(( blocks + OURS ))" ]; then
             ok "${CAT_LINES} catalog lines for ${blocks} Flatpaks and ${OURS} app(s) of ours"
@@ -2551,7 +2551,7 @@ jobs:
           fi
           if [ "${OURS}" -ge 1 ]; then
             ok "${OURS} app(s) of ours are offered as downloads:"
-            aquarius-flatpak-preinstall --list-appimage | sed 's/^/       /'
+            /usr/libexec/aquarius-flatpak-preinstall --list-appimage | sed 's/^/       /'
           else
             bad "NO app of ours is offered as a download — Aquarius Editor is neither in the image nor in the catalog, so nobody could ever get it"
           fi
