@@ -225,15 +225,30 @@ is why permission is needed at all, and it is the right way round: the extra
 permissions creator apps need are shipped as system-wide overrides, and
 `aq apps status` reports on the system installation. One place, one answer.
 
-> **⚠️ The one thing that cannot be tested without a screen.** A password prompt
-> needs something to draw it — a "permission agent". GNOME brings its own. In the
-> Aquarius session the **shell** is the permission agent, by the same design that
-> makes it the notification service, and that is checked at build time only in the
-> negative: the build proves nothing *else* claims the job. **Whether a prompt
-> really appears in the Aquarius session is a bench question**, and it is the one
-> to answer first. If pressing Install in the Aquarius session produces no prompt
-> and the window says permission was refused, the cause is the agent, not the
-> installer — and the way through in the meantime is one line in a terminal:
+> **⚠️ This is what failed on the bench on 2026-09-04, and it is now fixed.** A
+> password prompt needs something to draw it — a "permission agent". GNOME has
+> one built into GNOME Shell. The Aquarius Session had **none**, and this
+> document used to say the shell was the agent, which was the plan rather than
+> the fact. So pressing Install produced:
+>
+> ```
+> Error creating textual authentication agent: Error opening current controlling
+> terminal for the process ('/dev/tty'): No such device or address
+> ```
+>
+> ...which is `pkexec` finding nobody able to ask the question and falling back
+> to asking in a terminal, behind a window that has none.
+>
+> The image now installs `lxqt-policykit` and the session starts it at login
+> through `/usr/libexec/aquarius-polkit-agent`. The reasoning, the alternatives
+> considered, and the guard for the day the shell grows an agent of its own are
+> in [`aquarius-session.md`](aquarius-session.md#asking-for-your-password).
+>
+> The window also tells the two failures apart now: "you said no" and "nothing
+> was able to ask you" are different problems, and only the first is worth
+> pressing Try again over.
+>
+> If it ever happens again, the way through is one line in a terminal:
 >
 > ```
 > sudo /usr/libexec/aquarius-creator-apps-install <app id> <app id> …
