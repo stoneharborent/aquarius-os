@@ -134,6 +134,72 @@ The log of everything it has ever done is at
 
 ---
 
+## If the right-click menu is missing
+
+**Fixed on 2026-09-04. This section is here so the next person recognises it.**
+
+The symptom is that you right-click a video in Files and there is no **Make
+Editor-Ready** in the menu. Nothing else is wrong: the terminal way (`aq
+ingest`) still works, no error appears, no notification, nothing in the log.
+
+That silence is the point. GNOME Files never tells you when one of its
+extensions fails to load — the menu item is simply not there.
+
+**Two things to try first**, in this order:
+
+1. **Restart Files**, then try again:
+   ```
+   nautilus -q
+   ```
+   Files starts again by itself the next time you open a folder. Do this after
+   every system update: Files keeps running in the background, and a copy that
+   started before the update is still using the old extension.
+
+2. **Right-click the card's folder in the file list, not the device in the
+   sidebar.** The sidebar entry is a place, not a folder, and no menu item
+   appears on it.
+
+**If it is still missing**, ask Files to say what went wrong. Close it first,
+then start it from a terminal with its debugging switched on:
+
+```
+nautilus -q
+NAUTILUS_PYTHON_DEBUG=misc nautilus
+```
+
+Right-click a video in the window that opens and read the terminal. A broken
+extension prints a traceback there and nowhere else.
+
+### The one that happened, 2026-09-04
+
+On the bench machine (Fedora 44, `nautilus-50.3`, `nautilus-python-4.1.0`) that
+command printed:
+
+```
+File "/usr/share/nautilus-python/extensions/aquarius_editor_ready.py", line 54, in <module>
+    gi.require_version("Nautilus", "4.0")
+ValueError: Namespace Nautilus is already loaded with version 4.1
+```
+
+In plain English: our menu file asked for version 4.0 of the plug-in interface,
+and the Files that Fedora 44 ships had already loaded version 4.1 of it. The
+two cannot both be true, so Python stopped reading our file at that line — a
+long way before the line that adds the menu item.
+
+The fix was to stop naming one version: the file now asks for the newest
+interface it knows about, falls back to the older one, and accepts whichever
+version Files has already loaded. It ships in every image built after
+2026-09-04.
+
+**Why the build did not catch it:** the build checked that the file *compiled*,
+and it did — this failure only happens when the file *runs*. Every build now
+loads the extension inside the finished image, hands it a pretend `clip.mp4`,
+and refuses to publish unless a "Make Editor-Ready" item comes back
+(`ingest/tests/test_nautilus_extension.py`, run by the
+"Check the 'Make Editor-Ready' menu really loads in Files" step).
+
+---
+
 ## Bench test, for Royce
 
 The point of this test is a **real camera file**, not a synthetic one. The 95

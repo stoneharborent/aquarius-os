@@ -78,6 +78,12 @@ on:
       # main button offered to open one app instead of showing them all. Same
       # arrangement: builds and checks, never publishes.
       - restart/chooser-done
+      # The missing right-click menu — the 2026-09-04 bench test again:
+      # right-clicking a video in Files offered no "Make Editor-Ready", because
+      # the extension asked for an extension interface version that Fedora 44's
+      # Files had already loaded a newer one of, and stopped dead. Same
+      # arrangement: builds and checks, never publishes.
+      - restart/nautilus-fix
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -2735,6 +2741,40 @@ jobs:
           podman run --rm --pull=never -i \
             --entrypoint /usr/bin/bash \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-creator.sh
+
+      - name: Check the 'Make Editor-Ready' menu really loads in Files
+        run: |
+          set -euo pipefail
+          # WHY THIS IS A CHECK OF ITS OWN
+          #
+          # The check above proves the extension FILE is in the image. On
+          # 2026-09-04 that was true and the menu item still was not there: on
+          # the bench, right-clicking an MP4 in Files offered nothing.
+          #
+          # The reason is that a Python file being present, and even compiling,
+          # says nothing about whether it RUNS. This one stopped on its first
+          # line, because it demanded extension interface 4.0 while the Nautilus
+          # that Fedora 44 ships had already loaded 4.1:
+          #
+          #   ValueError: Namespace Nautilus is already loaded with version 4.1
+          #
+          # Files says nothing when an extension fails like that. The menu item
+          # is simply absent. So this step loads the extension the way Files
+          # loads it — inside the finished image, against the real Nautilus that
+          # image ships — and then right-clicks a video at it and insists on
+          # getting a menu item back. It is the only check here that runs our
+          # extension rather than looking at it.
+          #
+          # AQ_NAUTILUS_REQUIRED=1 means "you may not skip": the test skips
+          # itself where GNOME's libraries are missing, which is right on a Mac
+          # and would be a silent hole here.
+          podman run --rm --pull=never \
+            -v "${GITHUB_WORKSPACE}/ingest/tests/test_nautilus_extension.py:/tmp/test_nautilus_extension.py:ro" \
+            -e AQ_NAUTILUS_REQUIRED=1 \
+            -e AQ_NAUTILUS_EXT=/usr/share/nautilus-python/extensions/aquarius_editor_ready.py \
+            --entrypoint /usr/bin/python3 \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" \
+            /tmp/test_nautilus_extension.py
 
       - name: Check the NVIDIA image can encode video on the graphics card
         if: matrix.nvidia == 1

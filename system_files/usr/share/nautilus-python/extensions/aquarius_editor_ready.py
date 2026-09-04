@@ -46,12 +46,38 @@ import subprocess
 
 import gi
 
-# ⚠️ "4.0" IS NOT THE VERSION OF NAUTILUS. It is the version of the extension
-# interface, which has been 4.0 since Nautilus 43 (the release that moved to
-# GTK4) and is still 4.0 on the Nautilus that Fedora 44 ships. Asking for the
-# wrong number here is not a warning — the extension fails to load and the menu
-# item silently never appears.
-gi.require_version("Nautilus", "4.0")
+# ⚠️ NEVER PIN A SINGLE INTERFACE VERSION HERE. This bit line, and the reason
+# it is written the way it is, cost Royce a bench session on 2026-09-04.
+#
+# The number below is not the version of Nautilus. It is the version of the
+# extension interface. It was 4.0 from Nautilus 43 (the move to GTK4) until
+# Fedora 44 shipped Nautilus 50, which brought interface 4.1 with it.
+#
+# The old line said, flatly, `gi.require_version("Nautilus", "4.0")`. What
+# happens then is this: nautilus-python has ALREADY loaded the interface — at
+# 4.1 — before it hands this file to Python. Asking for 4.0 at that point is not
+# a polite preference, it is a contradiction, and Python stops the file dead:
+#
+#     ValueError: Namespace Nautilus is already loaded with version 4.1
+#
+# The extension never finishes loading, so it never registers its menu, so the
+# "Make Editor-Ready" item is simply not in the right-click menu — with no error
+# anywhere a person would look. (To see it: run `NAUTILUS_PYTHON_DEBUG=misc
+# nautilus` in a terminal and read the traceback it prints.)
+#
+# So: ask for the newest interface we know about, fall back to the older one,
+# and if neither request can be honoured, say nothing at all and carry on. That
+# last case is the normal one — Files has already loaded the interface for us
+# and there is nothing left to ask for.
+for _interface_version in ("4.1", "4.0"):
+    try:
+        gi.require_version("Nautilus", _interface_version)
+        break
+    except ValueError:
+        # Either this machine's Files does not offer that interface version, or
+        # it has already loaded a different one, which is fine — the import
+        # below then simply uses the one that is already loaded.
+        continue
 
 from gi.repository import GObject, Nautilus  # noqa: E402  (must follow require_version)
 
@@ -82,8 +108,15 @@ FOLDER_TYPE = "inode/directory"
 
 
 def _is_interesting(file_info):
-    """True if this is something aq-ingest could do anything with."""
-    mime = file_info.get_mime_type() or ""
+    """True if this is something aq-ingest could do anything with.
+
+    The type is lower-cased first. Almost every type comes back lower-case
+    already, but a few camera formats are written with capitals in places
+    (MPEG-2 transport streams, the .MTS files a Sony camera makes, are listed as
+    "video/MP2T" in some versions of the type database), and a capital letter
+    must not be the reason a clip is left out of the menu.
+    """
+    mime = (file_info.get_mime_type() or "").lower()
     return (
         mime.startswith("video/")
         or mime in PHOTO_TYPES
