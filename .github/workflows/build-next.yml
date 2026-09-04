@@ -48,6 +48,12 @@ on:
       # repository's own session files, and taking the shell commit that has it.
       # Same arrangement again: builds and checks, never publishes.
       - restart/shell-autostart
+      # Phase R3 polish — everything Royce asked for after the 2026-09-04 bench
+      # test: a password prompt in the Aquarius Session, the Resolve installer's
+      # wording, a "Remove DaVinci Resolve" window, Resolve at the right size
+      # with the right mouse pointer, and langpacks-en baked in. Same
+      # arrangement: builds and checks, never publishes.
+      - restart/r3-polish
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -227,6 +233,7 @@ jobs:
             gnome-shell-extension-caffeine gnome-shell-extension-gsconnect \
             xdg-desktop-portal-gnome xorg-x11-server-Xwayland flatpak \
             podman toolbox distrobox \
+            langpacks-en langpacks-core-en \
             rsms-inter-fonts jetbrains-mono-fonts
           do
             if rpm -q "${pkg}" > /dev/null 2>&1; then

@@ -325,5 +325,35 @@ system.
 **Step 2 says "unauthorized" or "manifest unknown".** The package went private.
 See "Before you start" above — it is a one-time click on GitHub.
 
+**The update refuses to run: "Deployment contains local rpm-ostree
+modifications".** Something added a package on top of the operating system
+image, and this machine only updates when nothing has. This is not a fault you
+caused — on 2026-09-04 it was GNOME itself, which noticed the English language
+pack was missing, offered in a notification to install it, and then layered it.
+(That specific cause is fixed: `langpacks-en` is now baked into the image, so
+GNOME has nothing to offer.)
+
+Find out what was added:
+
+```
+rpm-ostree status -v | grep LayeredPackages
+```
+
+Then take it all off again and reboot:
+
+```
+sudo rpm-ostree reset
+sudo systemctl reboot
+```
+
+`reset` removes every layered package and every local override, and puts the
+machine back to the plain image. It does not touch your home folder, your
+files, your Flatpaks or your Resolve container — none of those are part of the
+operating system image. After the reboot, `sudo bootc upgrade` works again.
+
+If you genuinely wanted the thing that was layered, say so rather than layering
+it again: on this operating system the right answer is to add it to the image,
+where it survives every update.
+
 **Everything works but it looks wrong.** Screenshots are genuinely the fastest
 way to sort that out — the look is the one thing CI cannot check.
