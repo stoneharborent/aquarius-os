@@ -946,11 +946,12 @@ else
     ok "the catalog describes nothing that is not on the list"
 fi
 
-# Every entry must sit on one of the five shelves the chooser knows how to draw.
+# Every entry must sit on one of the six shelves the chooser knows how to draw.
+# (Gaming was added in R4 — build_files/68-gaming.sh.)
 AQ_BAD_CATEGORY="$(/usr/libexec/aquarius-flatpak-preinstall --catalog 2>/dev/null \
-    | awk -F'\t' '$4 !~ /^(Video|Audio|Design|Streaming|Utilities)$/ {print $1 " -> " $4}' || true)"
+    | awk -F'\t' '$4 !~ /^(Video|Audio|Design|Streaming|Utilities|Gaming)$/ {print $1 " -> " $4}' || true)"
 if [ -z "${AQ_BAD_CATEGORY}" ]; then
-    ok "every app is on one of the five shelves the chooser draws"
+    ok "every app is on one of the six shelves the chooser draws"
 else
     bad "these apps name a category the chooser does not know:"
     printf '%s\n' "${AQ_BAD_CATEGORY}" | sed 's/^/       /'
