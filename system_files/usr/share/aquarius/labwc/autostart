@@ -168,11 +168,20 @@ fi
 # desktop has settled and the person is looking at their computer rather than at
 # a login screen when it appears.
 #
-# ⚠️ THE COPY IN THE aquarius-shell REPOSITORY NEEDS THE SAME LINE. That repo is
-# the home of this file (session/labwc/autostart there, and the niri equivalent
-# in session/niri/config.kdl); AquariusOS ships its own copy. Whoever next syncs
-# them must carry this block across, or a shell-built session will silently
-# never offer anybody their creator apps.
+# THE aquarius-shell REPOSITORY HAS A TWIN OF THIS BLOCK (2026-09-04), in its
+# session/labwc/autostart, plus the niri equivalent in session/niri/config.kdl.
+# That copy is what runs when somebody starts the session from a clone of the
+# shell — on the bench, or on plain Fedora. It is NOT what ships: the image
+# build (build_files/stage-aquarius-shell.sh) deliberately leaves that repo's
+# session/ folder behind and installs these files instead, because ours are
+# adapted to system paths and carry steps that repo has no business knowing
+# about (the wallpaper, the display-scale helper, the shell-start dialog).
+#
+# ⚠️ SO THIS FILE IS THE AUTHORITATIVE ONE, AND THE TWO ARE KEPT IN STEP BY
+# HAND. The five lines below are byte-for-byte identical to the shell repo's,
+# so a diff between the two files shows only prose. Change one, change the
+# other — and the shell repo's own test 17b fails if a login-time line appears
+# in one of its two session files and not the other.
 # ---------------------------------------------------------------------------
 if [ -x /usr/libexec/aquarius-creator-apps ]; then
     (
