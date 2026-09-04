@@ -62,6 +62,11 @@ on:
       # the controller drivers, and the Gaming shelf in the app chooser. Same
       # arrangement: builds and checks, never publishes.
       - restart/r4-gaming
+      # The kernel pin — making BOTH images ship the kernel Universal Blue's
+      # ready-made modules were built for, so the AMD/Intel image can never
+      # again publish without the virtual camera and the Xbox drivers. Same
+      # arrangement again: builds and checks, never publishes.
+      - restart/kernel-pin
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -1377,6 +1382,119 @@ jobs:
             --entrypoint /usr/bin/bash \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-names.sh
 
+      # ------------------------------------------------------------------------
+      # THE KERNEL, AND EVERY READY-MADE MODULE THAT DEPENDS ON IT
+      # ------------------------------------------------------------------------
+      # Four features in this image are kernel modules: the NVIDIA driver, the
+      # OBS virtual camera, and the two Xbox controller drivers. A kernel module
+      # only loads on the exact kernel it was built against, so all four stand
+      # or fall together with one question — is the kernel in this image the one
+      # Universal Blue built their modules for?
+      #
+      # ⚠️ THIS CHECK EXISTS BECAUSE THE ANSWER WAS SILENTLY "NO" ONCE.
+      # On 2026-09-04 (build 33900370878) Fedora shipped kernel 7.1.13 while
+      # Universal Blue's modules were still built for 7.1.12. The NVIDIA image
+      # swapped its kernel and was fine. The AMD/Intel image had no such step,
+      # so it built green, published, and shipped with NO virtual camera and NO
+      # Xbox drivers. Every other check in this workflow passed.
+      #
+      # build_files/58-kernel-pin.sh now pins the kernel on BOTH images, and
+      # this reads that back inside the finished image: the pin note, the
+      # package database, and the actual folder on disk all have to say the same
+      # version, and every module has to be filed under it. It runs on both
+      # variants, before the NVIDIA-specific checks below.
+      - name: Check the kernel is the one the modules were built for
+        run: |
+          set -euo pipefail
+          cat > /tmp/verify-kernel.sh <<'SCRIPT'
+          set -u
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+
+          echo "== what the build wrote down =="
+          PIN=/usr/share/aquarius/kernel.txt
+          if [ ! -r "${PIN}" ]; then
+            bad "${PIN} is missing — the kernel pin step did not run"
+            PINNED=""
+          else
+            sed 's/^/     /' "${PIN}"
+            PINNED="$(sed -n 's/^kernel=//p' "${PIN}")"
+            if [ -n "${PINNED}" ]; then
+              ok "the image says it was pinned to ${PINNED}"
+            else
+              bad "${PIN} has no kernel= line in it"
+            fi
+          fi
+
+          echo "== the kernel package =="
+          INSTALLED="$(rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core)"
+          echo "     kernel-core says: ${INSTALLED}"
+          rpm -qa --queryformat '     %{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n' 'kernel*' | sort
+
+          echo "== the kernel folder on disk =="
+          # This is the `uname -r` of an image you cannot boot: the one folder
+          # under /usr/lib/modules is the kernel every module has to be filed
+          # under. A bootable image must have exactly one.
+          ls -1 /usr/lib/modules/ | sed 's/^/     /'
+          COUNT="$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf . | wc -c)"
+          KVER="$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | head -1)"
+          if [ "${COUNT}" -eq 1 ]; then
+            ok "exactly one kernel folder: ${KVER}"
+          else
+            bad "${COUNT} kernel folders under /usr/lib/modules — there must be exactly one"
+          fi
+
+          if [ "${KVER}" = "${INSTALLED}" ]; then
+            ok "the folder on disk and the package database agree"
+          else
+            bad "the package database says ${INSTALLED} but the folder on disk is ${KVER}"
+          fi
+          if [ -n "${PINNED}" ] && [ "${KVER}" = "${PINNED}" ]; then
+            ok "and that is exactly what the build pinned"
+          elif [ -n "${PINNED}" ]; then
+            bad "the build pinned ${PINNED} but this image ships ${KVER} — something moved the kernel after the pin"
+          fi
+
+          echo "== the ready-made modules that depend on it =="
+          # These come from ghcr.io/ublue-os/akmods and are in BOTH images. Two
+          # questions per module, because they fail differently: is the package
+          # installed, and did its file land where THIS kernel looks?
+          check_kmod() {   # check_kmod <package> <module file pattern> <what it is for>
+            pkg="$1"; pat="$2"; what="$3"
+            if rpm -q "${pkg}" > /dev/null 2>&1; then
+              ok "${pkg} $(rpm -q --queryformat '%{VERSION}-%{RELEASE}' "${pkg}") — ${what}"
+            else
+              bad "${pkg} is NOT installed — ${what} does not work on this image"
+              return
+            fi
+            found="$(find "/usr/lib/modules/${KVER}" -name "${pat}" 2>/dev/null | head -1)"
+            if [ -n "${found}" ]; then
+              ok "  its module is under this image's kernel: ${found}"
+            else
+              bad "  no ${pat} under /usr/lib/modules/${KVER} — the module would never load"
+            fi
+          }
+          check_kmod kmod-v4l2loopback 'v4l2loopback.ko*' "OBS's Start Virtual Camera button"
+          check_kmod kmod-xone         'xone_*.ko*'      "the Xbox Wireless Adapter (the USB dongle)"
+          check_kmod kmod-xpadneo      'hid-xpadneo.ko*' "Xbox controllers over Bluetooth"
+
+          if [ "${EXPECTED_NVIDIA}" = "1" ]; then
+            echo "== and the NVIDIA driver, which comes from the matching box =="
+            check_kmod kmod-nvidia 'nvidia.ko*' "the NVIDIA graphics driver"
+          fi
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::The kernel and the ready-made kernel modules in this image do not agree. Do not publish it. See docs/restart/kernel.md."
+            exit 1
+          fi
+          echo "All kernel checks passed."
+          SCRIPT
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            -e EXPECTED_NVIDIA="${NVIDIA}" \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-kernel.sh
+
       - name: Check the NVIDIA driver
         if: matrix.nvidia == 1
         run: |
@@ -2221,12 +2339,12 @@ jobs:
                 fi
                 ;;
               unavailable)
-                echo "::warning::The virtual camera is NOT in this image. OBS works; its Start Virtual Camera button will not. See /usr/share/aquarius/virtual-camera.txt in the log above. This is usually kernel skew a day or two after a Fedora kernel update — build again tomorrow."
-                if [ -e /usr/lib/modules-load.d/aquarius-v4l2loopback.conf ]; then
-                  bad "the module was not installed, but the image still tries to load it at boot"
-                else
-                  ok "and nothing tries to load a module that is not here (correct)"
-                fi
+                # This used to be a warning and a shrug. Since 2026-09-04 the
+                # kernel is pinned to the one Universal Blue's modules were
+                # built for (build_files/58-kernel-pin.sh), so `unavailable`
+                # cannot happen in a build that finished — and if it somehow
+                # does, the image is missing a feature it claims to have.
+                bad "the image says the virtual camera is NOT in it. The kernel is pinned now, so this should be impossible — see /usr/share/aquarius/kernel.txt above and docs/restart/kernel.md"
                 ;;
               *)
                 bad "${STAMP} says status=${STATUS}, which is not a status this check knows"
@@ -2711,11 +2829,11 @@ jobs:
           fi
 
           echo "== the Xbox controller drivers =="
-          # These may legitimately be absent: the ready-made modules are built
-          # against one exact kernel, and for a day or two after a Fedora
-          # kernel update they do not match ours. The rule is that the image
-          # must SAY which happened, and must never claim a driver it does not
-          # have. So the stamp file is required; its answer is not.
+          # These used to be allowed to be absent, because the ready-made
+          # modules are built against one exact kernel and for a day or two
+          # after a Fedora kernel update they did not match ours. Since
+          # 2026-09-04 the kernel is pinned to theirs, so they must be here:
+          # the stamp file is required AND its answer has to be `installed`.
           stamp=/usr/share/aquarius/gaming/controllers.txt
           if [ -r "${stamp}" ]; then
             ok "the image records what happened to the controller drivers"
@@ -2743,11 +2861,10 @@ jobs:
                 fi
                 ;;
               unavailable)
-                if [ -n "${found}" ]; then
-                  bad "${name}: the stamp says unavailable but a module is there — the image is lying about itself"
-                else
-                  ok "${name}: not in this image, and the image says so (kernel skew — rebuild tomorrow)"
-                fi
+                # Same change as the virtual camera, same date, same reason: the
+                # kernel is pinned, so a missing controller driver is a fault
+                # rather than a scheduling accident.
+                bad "${name}: the image says this driver is NOT in it. The kernel is pinned now, so this should be impossible — see /usr/share/aquarius/kernel.txt and docs/restart/kernel.md"
                 ;;
               *)
                 bad "${name}: the stamp says '${status}', which is neither installed nor unavailable"

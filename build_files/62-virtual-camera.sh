@@ -49,36 +49,43 @@
 # kernel update those are not the same one.
 #
 # ------------------------------------------------------------------------------
-# WHAT WE DO WHEN THEY DO NOT MATCH — AND WHY IT IS NOT A BUILD FAILURE
+# THEY CANNOT NOT MATCH ANY MORE — AND A MISMATCH IS NOW A BUILD FAILURE
 # ------------------------------------------------------------------------------
-# 60-nvidia.sh, faced with the same problem, REPLACES this image's kernel with
-# the one the NVIDIA modules were built for. It can do that because without the
-# NVIDIA driver the NVIDIA image has no reason to exist.
+# ⚠️ THIS CHANGED ON 2026-09-04 AND IT IS THE POINT OF THIS FILE'S HISTORY.
 #
-# We deliberately do NOT do that here. Changing which kernel AquariusOS ships,
-# on both images, for a webcam feature, is a much bigger decision than this
-# step is entitled to make — and it would mean a kernel chosen by a third
-# party's build schedule rather than by us.
+# This step used to treat a kernel mismatch as a normal Tuesday: it skipped the
+# module, wrote `status=unavailable` into a stamp file, and let the build go
+# green. The reasoning was that changing which kernel AquariusOS ships, for a
+# webcam, was a bigger decision than this step was entitled to make.
 #
-# So on a mismatch this step SKIPS the module, says so at the top of the build
-# log in plain words, removes the "load this at boot" file so the machine is
-# not left asking for something that is not there, and writes down what
-# happened in a file anybody can read:
+# What actually happened is the thing that reasoning did not predict. Fedora
+# shipped kernel 7.1.13 while Universal Blue's modules were still built for
+# 7.1.12, and the AMD/Intel image published — green, with no red anywhere — with
+# no virtual camera AND no Xbox controller drivers. Nobody would have known
+# without reading a file inside the image (build 33900370878).
+#
+# So the decision was made properly instead, one step earlier and once for both
+# images: build_files/58-kernel-pin.sh pins this image's kernel to the one
+# Universal Blue's modules were built for. After that step, a mismatch here is
+# not a schedule accident — it means the pin did not happen, or something moved
+# the kernel afterwards, or Universal Blue changed their layout. Every one of
+# those is a real bug, so every one of them now STOPS THE BUILD.
+#
+# The stamp file stays, because it is still the honest answer to "does the
+# virtual camera work on this image?" and both CI and `aq` read it:
 #
 #     /usr/share/aquarius/virtual-camera.txt
 #
-# That file is the honest answer to "does the virtual camera work on this
-# image?", the CI checks read it, and `aq` can print it. It is the same
-# arrangement as /usr/share/aquarius/shell-build.txt, for the same reason: an
-# image that is missing one optional feature and says so is far better than
-# either a build that will not finish or an image that lies.
+# It is simply no longer possible for a published image to have
+# `status=unavailable` in it — the build that would have written it does not
+# finish.
 #
 # Everything else about OBS — screen capture, cameras, capture cards, the
-# plug-ins — is unaffected either way.
+# plug-ins — never depended on any of this.
 #
-# ⚠️ THIS STEP MUST RUN AFTER 60-nvidia.sh. That step sometimes replaces this
-#    image's kernel. Compare against the old one and the answer is about a
-#    kernel that is no longer here.
+# ⚠️ THIS STEP MUST RUN AFTER 58-kernel-pin.sh AND 60-nvidia.sh. Step 5.8
+#    sometimes replaces this image's kernel. Ask the question before the swap
+#    and the answer is about a kernel that is no longer here.
 # ==============================================================================
 
 # shellcheck source=build_files/aq-lib.sh
@@ -108,6 +115,9 @@ stamp() {           # stamp <status> <line> ...
 }
 
 # The machine is left with no instruction to load a module it does not have.
+# Only reached on a failure path now — the build stops straight afterwards — but
+# it still runs, so that the half-built image in the build cache is not left
+# lying about itself either.
 disarm() {
     rm -f "${MODULES_LOAD}"
     echo "Removed ${MODULES_LOAD} — nothing will try to load a module that is not here."
@@ -136,12 +146,14 @@ fi
 # ------------------------------------------------------------------------------
 say "The box of ready-made kernel modules"
 if [ ! -d "${AKMODS}" ] || [ -z "$(ls -A "${AKMODS}" 2> /dev/null || true)" ]; then
-    echo "The box is empty or was not mounted."
     disarm
     stamp unavailable "The pre-built module box was not available to this build." \
         "Nothing was installed and nothing will try to load."
-    aq_finish "Virtual camera"
-    exit 0
+    echo "AQUARIUS ERROR: ${AKMODS} is empty or was not mounted." >&2
+    echo "                That box is fetched for BOTH images by the Containerfile" >&2
+    echo "                and step 5.8 has already read a kernel out of it, so an" >&2
+    echo "                empty box here means the mount on this step is missing." >&2
+    exit 1
 fi
 
 echo "Top of the tree:"
@@ -154,14 +166,15 @@ find "${AKMODS}" -maxdepth 3 -name '*v4l2*' 2> /dev/null | head -20 || true
 AQ_KMOD_RPM="$(find "${AKMODS}" -name 'kmod-v4l2loopback-*.rpm' 2> /dev/null | sort | head -1)"
 
 if [ -z "${AQ_KMOD_RPM}" ]; then
-    echo "There is no kmod-v4l2loopback package in the box."
-    echo "Everything that IS in it:"
-    find "${AKMODS}" -name '*.rpm' -printf '  %f\n' 2> /dev/null | head -40 || true
     disarm
     stamp unavailable "Universal Blue's module box no longer contains v4l2loopback." \
         "Look at the listing in the build log for this step and pick the new name."
-    aq_finish "Virtual camera"
-    exit 0
+    echo "AQUARIUS ERROR: there is no kmod-v4l2loopback package in the box." >&2
+    echo "                Universal Blue have renamed or dropped it. Everything" >&2
+    echo "                that IS in the box:" >&2
+    find "${AKMODS}" -name '*.rpm' -printf '                  %f\n' 2> /dev/null | head -40 >&2 || true
+    echo "                Their README: https://github.com/ublue-os/akmods" >&2
+    exit 1
 fi
 
 echo "  found: $(basename "${AQ_KMOD_RPM}")"
@@ -180,29 +193,35 @@ printf '%s\n' "${AQ_KMOD_REQUIRES}" | sed 's/^/  /'
 if printf '%s\n' "${AQ_KMOD_REQUIRES}" | grep -qF "${AQ_KVER}"; then
     ok "it was built for ${AQ_KVER} — the same kernel this image runs"
 else
-    echo ""
-    echo "  ---------------------------------------------------------------"
-    echo "  THE VIRTUAL CAMERA IS NOT IN THIS IMAGE, AND THAT IS NOT A BUG."
-    echo "  ---------------------------------------------------------------"
-    echo "  This image runs kernel ${AQ_KVER}."
-    echo "  The ready-made module was built for a different one, so it would"
-    echo "  not load. Rather than ship something that cannot work, it is left"
-    echo "  out and written down."
-    echo ""
-    echo "  This happens for a day or two after a Fedora kernel update, while"
-    echo "  Fedora and Universal Blue rebuild on their own schedules. The fix"
-    echo "  is to build again tomorrow. Nothing needs changing."
-    echo ""
-    echo "  Everything else about OBS is unaffected: screen recording,"
-    echo "  cameras, capture cards and the plug-ins all still work. Only the"
-    echo "  'Start Virtual Camera' button is missing."
-    echo "  ---------------------------------------------------------------"
-    echo ""
     disarm
     stamp unavailable "Kernel skew: this image runs ${AQ_KVER}," \
-        "the pre-built module was made for another kernel. Rebuild in a day or two."
-    aq_finish "Virtual camera"
-    exit 0
+        "the pre-built module was made for another kernel."
+    echo ""
+    echo "  ---------------------------------------------------------------"
+    echo "  THIS IS A REAL BUG NOW, AND THE BUILD STOPS HERE."
+    echo "  ---------------------------------------------------------------"
+    echo "  This image runs kernel ${AQ_KVER}, and the ready-made module was"
+    echo "  built for a different one, so it would not load."
+    echo ""
+    echo "  Until 2026-09-04 that was allowed to happen quietly: the feature"
+    echo "  was left out and the image shipped without it. It is not allowed"
+    echo "  any more, because build_files/58-kernel-pin.sh runs first and pins"
+    echo "  this image's kernel to exactly the one these modules were built"
+    echo "  for. If they still disagree, one of these is true:"
+    echo ""
+    echo "    * step 5.8 did not run, or runs after this step — check the"
+    echo "      order of the RUN lines in the Containerfile;"
+    echo "    * something between step 5.8 and here moved the kernel;"
+    echo "    * Universal Blue publishes two module boxes that disagree with"
+    echo "      each other, which step 5.8 also checks for and refuses."
+    echo ""
+    echo "  What step 5.8 recorded about the kernel:"
+    sed 's/^/    /' /usr/share/aquarius/kernel.txt 2> /dev/null \
+        || echo "    (there is no /usr/share/aquarius/kernel.txt at all)"
+    echo "  ---------------------------------------------------------------"
+    echo ""
+    echo "::error::The virtual camera module does not match this image's kernel (${AQ_KVER}). See build_files/58-kernel-pin.sh."
+    exit 1
 fi
 
 # ------------------------------------------------------------------------------

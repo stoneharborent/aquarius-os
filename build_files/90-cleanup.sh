@@ -29,9 +29,9 @@ aq_dnf clean all || true
 # ------------------------------------------------------------------------------
 # A bootable image must contain one kernel and no more — `bootc container lint`
 # refuses an image with two, because there is no way to say which one it should
-# boot. This normally takes care of itself, but the NVIDIA image can swap its
-# kernel for the one the driver was built against, and a swap can leave the old
-# folder behind holding generated files that no package owns.
+# boot. This normally takes care of itself, but step 5.8 can swap the kernel for
+# the one Universal Blue's ready-made modules were built against, and a swap can
+# leave the old folder behind holding generated files that no package owns.
 say "Checking there is exactly one kernel"
 AQ_KERNEL="$(rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core)"
 echo "The installed kernel is ${AQ_KERNEL}. Folders under /usr/lib/modules:"
@@ -51,6 +51,28 @@ if [ "${AQ_KERNEL_COUNT}" -eq 1 ]; then
 else
     bad "${AQ_KERNEL_COUNT} kernel folders in /usr/lib/modules — a bootable image must have one"
     ls -la /usr/lib/modules/
+fi
+
+# ------------------------------------------------------------------------------
+# And it is still the kernel step 5.8 pinned
+# ------------------------------------------------------------------------------
+# 58-kernel-pin.sh decided which kernel this image ships and wrote it down.
+# Everything since has installed kernel modules built for that exact version. If
+# anything in between quietly moved the kernel, every one of those modules is
+# now unloadable — so the last thing the build does is read the note back and
+# compare it with what is actually installed. Content, never timestamps.
+say "Checking the kernel is still the one that was pinned"
+AQ_PIN="/usr/share/aquarius/kernel.txt"
+if [ ! -r "${AQ_PIN}" ]; then
+    bad "${AQ_PIN} is missing — build_files/58-kernel-pin.sh did not run"
+else
+    sed 's/^/       /' "${AQ_PIN}"
+    AQ_PINNED="$(sed -n 's/^kernel=//p' "${AQ_PIN}")"
+    if [ "${AQ_PINNED}" = "${AQ_KERNEL}" ]; then
+        ok "the kernel is ${AQ_KERNEL}, exactly as step 5.8 pinned it"
+    else
+        bad "step 5.8 pinned ${AQ_PINNED} but the image now has ${AQ_KERNEL} — every ready-made kernel module in this image would fail to load"
+    fi
 fi
 
 # ------------------------------------------------------------------------------

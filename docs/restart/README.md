@@ -121,7 +121,7 @@ parts. The comment above that trick in the file explains it properly.
 
 ### 2. `build_files/` — the steps
 
-Twelve numbered scripts, run in order, plus four `stage-` scripts that are not
+Thirteen numbered scripts, run in order, plus four `stage-` scripts that are not
 part of the operating system at all — they compile or fetch the pieces Fedora
 does not give us (labwc, Quickshell, the Aquarius Shell, xremap), in throwaway
 containers, and only the results are copied in. The numbers on the rest are the
@@ -142,6 +142,7 @@ after it.
 | `40-gnome-desktop.sh` | GNOME — a hand-written short list, with a note on everything deliberately left out. |
 | `50-aquarius-desktop.sh` | Makes it *ours*: wallpaper, logos, Ice theme, fonts, dock, the right-click ingest menu. |
 | `55-aquarius-session.sh` | The **Aquarius Desktop** — our own shell on the labwc window manager, added beside GNOME as a second choice at the login screen. Installs what the two compiled programs need, sets up the portals, and switches greetd off. See [`aquarius-session.md`](aquarius-session.md). |
+| `58-kernel-pin.sh` | **Which kernel AquariusOS ships.** Pins it to the one Universal Blue's ready-made, already-signed kernel modules were built for — the NVIDIA driver, the OBS virtual camera and the two Xbox controller drivers all depend on it exactly. Runs on BOTH images and before every step that installs a module. See [`kernel.md`](kernel.md). |
 | `60-nvidia.sh` | The NVIDIA driver. Does nothing on the AMD/Intel image. The hardest file in the repo — see [`nvidia-notes.md`](nvidia-notes.md). |
 | `62-resolve-runtime.sh` | **DaVinci Resolve — everything except Resolve.** Resolve itself may not be shipped by anybody but Blackmagic, so this puts in place the setup that builds a Rocky Linux container on the user's own machine and installs their own download into it, plus the launcher, the `aq resolve` commands, the USB rules for licence dongles, and the graphics-card plumbing. Why a container at all: [`resolve.md`](resolve.md). |
 | `62-resolve-runtime.sh` (the windows) | Also checks the two DaVinci Resolve windows — Install and Remove — the shared window pieces in `/usr/lib/aquarius/python/aquarius_ui.py`, and the rule that nothing a person reads may name another Linux. |
@@ -150,12 +151,12 @@ after it.
 | `55-aquarius-session.sh` (password prompts) | Also installs the polkit authentication agent and checks the session starts it. Without one, nothing in the Aquarius Desktop can ask for a password and installing creator apps fails with a message about `/dev/tty` — the 2026-09-04 bench fault. See [`aquarius-session.md`](aquarius-session.md#asking-for-your-password). |
 | `55-aquarius-session.sh` (screen size) | Also installs `/usr/libexec/aquarius-display-scale`, which sets each monitor to the right size at every login. Without it labwc leaves every screen at 100% and a 4K desktop is physically tiny — the bench's first complaint on 2026-09-03. Guide: [`aquarius-display.md`](aquarius-display.md). |
 | `75-aquarius-keys.sh` | Mac-style keyboard shortcuts, on by default — Copy is Command-C. Installs what the step above built, and checks the whole feature. Plain-language guide: [`aquarius-keys.md`](aquarius-keys.md). |
-| `62-virtual-camera.sh` | The fake webcam behind OBS Studio's "Start Virtual Camera" button. Takes a ready-made, already-signed kernel module from Universal Blue. ⚠️ Must run after `60-nvidia.sh`, which sometimes replaces this image's kernel. If the module and our kernel do not match it leaves the feature out and writes down why, rather than shipping something that cannot work. |
+| `62-virtual-camera.sh` | The fake webcam behind OBS Studio's "Start Virtual Camera" button. Takes a ready-made, already-signed kernel module from Universal Blue. ⚠️ Must run after `58-kernel-pin.sh`, which sometimes replaces this image's kernel. Since 2026-09-04 a mismatch STOPS the build instead of quietly leaving the feature out — see [`kernel.md`](kernel.md). |
 | `64-creator-apps.sh` | **The creator layer.** Bakes Aquarius Editor and Aquarius Writer into the image, checks the list of creator Flatpaks against Flathub, validates the extra permissions those apps need, switches the permissions service on (and deliberately leaves the bulk app installer OFF, because the chooser at first login asks the person which apps they want), and promotes the ingest helper. The biggest and slowest step. See [`creator-apps.md`](creator-apps.md). |
 | `66-creator-apps-chooser.sh` | **The window that offers those apps to a person** — "Your creator apps" at the first login, "Aquarius Apps" in the app grid afterwards. Installs what a GTK window needs to run from Python, checks both menu entries, checks that nothing installs itself any more, and — the check that matters — reads the real list in the finished image with the window's own parser. See [`creator-apps.md`](creator-apps.md). |
-| `68-gaming.sh` | **The gaming layer.** Adds Terra (and switches it straight off again), installs Steam, umu-launcher, gamescope, gamemode, MangoHud, vkBasalt and the 32-bit graphics libraries a Windows game needs, takes the Xbox controller drivers from the same signed module box as the virtual camera, and proves that none of it replaced Fedora's graphics driver. ⚠️ Must run after `60-nvidia.sh`, for the same kernel reason as `62-virtual-camera.sh`. See [`gaming.md`](gaming.md). |
-| `80-boot-branding.sh` | Everything you see BEFORE the login screen: the Aquarius boot splash, the name in the boot menu, the text login banners — and a rebuild of the boot ramdisk, without which none of it takes effect. ⚠️ Must run after `60-nvidia.sh`; see [`boot-branding.md`](boot-branding.md). |
-| `90-cleanup.sh` | Sweeps up, and refuses to ship an image with two kernels in it. |
+| `68-gaming.sh` | **The gaming layer.** Adds Terra (and switches it straight off again), installs Steam, umu-launcher, gamescope, gamemode, MangoHud, vkBasalt and the 32-bit graphics libraries a Windows game needs, takes the Xbox controller drivers from the same signed module box as the virtual camera, and proves that none of it replaced Fedora's graphics driver. ⚠️ Must run after `58-kernel-pin.sh`, for the same kernel reason as `62-virtual-camera.sh`. See [`gaming.md`](gaming.md). |
+| `80-boot-branding.sh` | Everything you see BEFORE the login screen: the Aquarius boot splash, the name in the boot menu, the text login banners — and a rebuild of the boot ramdisk, without which none of it takes effect. ⚠️ Must run after `58-kernel-pin.sh`; see [`boot-branding.md`](boot-branding.md). |
+| `90-cleanup.sh` | Sweeps up, refuses to ship an image with two kernels in it, and re-checks that the kernel is still the one `58-kernel-pin.sh` pinned. |
 
 ### There is a SECOND recipe, and it does not build the operating system
 
@@ -270,6 +271,7 @@ thing locally. `just` with no arguments lists everything available.
 - **How big things are on the screen (and why it was too small):** [`aquarius-display.md`](aquarius-display.md)
 - **DaVinci Resolve — installing it, and why it lives in a container:** [`resolve.md`](resolve.md)
 - **Gaming: what ships, the launch options worth knowing, and what is deliberately not here:** [`gaming.md`](gaming.md)
+- **Which kernel AquariusOS ships, and why it is pinned:** [`kernel.md`](kernel.md)
 - **Why the NVIDIA driver is done the way it is:** [`nvidia-notes.md`](nvidia-notes.md)
 - **Why Fedora and not Bazzite/Arch/Ubuntu:** [`../base-distro-reassessment-2026-09.md`](../base-distro-reassessment-2026-09.md)
 - **The plan for R2, R3 and R4:** `ROADMAP.md`, one folder above the repo

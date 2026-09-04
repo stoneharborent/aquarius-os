@@ -29,24 +29,31 @@
 #
 # ⚠️ AND HERE IS THE ONE GENUINELY TRICKY PART.
 #
-# Their box was built against SOME Fedora kernel. Our image contains SOME Fedora
-# kernel. Most days those are the same kernel, because both track mainline
-# Fedora — as of 2026-09-02 both are 7.1.12-200.fc44. But "most days" is not
-# "always": Fedora ships a kernel update, the two rebuild on different
-# schedules, and for a day or two they differ.
+# Their box was built against SOME Fedora kernel. Our image starts from Fedora
+# and therefore contains SOME Fedora kernel. Most days those are the same
+# kernel, because both track mainline Fedora. But "most days" is not "always":
+# Fedora ships a kernel update, the two rebuild on different schedules, and for
+# a day or two they differ.
 #
 # If they differ and we install anyway, the image builds perfectly and the
 # machine boots to a black screen.
 #
-# So we do not hope. The box also contains a copy of the exact kernel it was
-# built against. This script compares the two, and if they differ it REPLACES
-# the kernel in our image with theirs. After that the match is not likely, it is
-# guaranteed by construction. This is the mechanism Universal Blue's own README
-# documents for exactly this situation.
+# So we do not hope — but the deciding is no longer done HERE. Until 2026-09-04
+# this script did the kernel swap itself, and that was the bug: the AMD/Intel
+# image, which never runs this script, was left with no such protection and
+# silently shipped without the OBS virtual camera and without the Xbox
+# controller drivers whenever Fedora got ahead of Universal Blue.
 #
-# The cost is that the NVIDIA image's kernel can be a few days behind the
-# AMD/Intel image's. That is the correct trade: a slightly older kernel that
-# boots beats a newer one that does not.
+# The swap now happens once, for BOTH images, in build_files/58-kernel-pin.sh —
+# which runs before this step and pins the image's kernel to the one Universal
+# Blue's modules were built for. By the time this script runs, the match is
+# guaranteed by construction. All this script does about the kernel is CHECK
+# that, loudly, because a driver installed against the wrong kernel is the
+# classic black screen and it is worth two lines to be certain.
+#
+# The cost of the pin is that AquariusOS's kernel can be a few days behind
+# Fedora's newest. That is the correct trade and it is explained at length in
+# 58-kernel-pin.sh and docs/restart/kernel.md.
 #
 # ------------------------------------------------------------------------------
 # WHY NOT RPM FUSION'S akmod-nvidia-open INSTEAD?
@@ -130,9 +137,14 @@ cat "${AQ_VARS}"
 source "${AQ_VARS}"
 
 # ------------------------------------------------------------------------------
-# The kernel match
+# The kernel match — checked here, decided in step 5.8
 # ------------------------------------------------------------------------------
-say "Making the kernel match the driver"
+# 58-kernel-pin.sh has already made this image's kernel the one Universal Blue's
+# modules were built for, on both images, and it refused to continue if the two
+# Universal Blue boxes disagreed. So this is not a decision, it is a
+# verification: if it ever fails, the pin step did not run, or ran after this
+# one, and the Containerfile's step order is wrong.
+say "Checking the kernel matches the driver"
 
 AQ_IMAGE_KERNEL="$(rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core)"
 echo "  kernel in this image      : ${AQ_IMAGE_KERNEL}"
@@ -144,44 +156,19 @@ if [ -z "${KERNEL_VERSION:-}" ]; then
 fi
 
 if [ "${AQ_IMAGE_KERNEL}" = "${KERNEL_VERSION}" ]; then
-    ok "the kernels already match — nothing to swap"
+    ok "the kernel is ${AQ_IMAGE_KERNEL}, which is what the driver was built for"
 else
-    echo
-    echo "They do not match. Replacing this image's kernel with the one the"
-    echo "driver was built against. This is normal and expected: Fedora and"
-    echo "Universal Blue rebuild on different schedules, so for a day or two"
-    echo "after a Fedora kernel update the two drift apart."
-    echo
-
-    AQ_KERNEL_RPMS="${AKMODS}/kernel-rpms"
-    if [ ! -d "${AQ_KERNEL_RPMS}" ] || [ -z "$(ls -A "${AQ_KERNEL_RPMS}" 2> /dev/null || true)" ]; then
-        echo "AQUARIUS ERROR: this image's kernel is ${AQ_IMAGE_KERNEL} but the NVIDIA" >&2
-        echo "                driver needs ${KERNEL_VERSION}, and the box does not" >&2
-        echo "                contain a copy of that kernel to swap in." >&2
-        echo "                Installing anyway would produce an image that builds" >&2
-        echo "                and then boots to a black screen. Stopping instead." >&2
-        echo "                Expected the kernel RPMs at: ${AQ_KERNEL_RPMS}" >&2
-        exit 1
-    fi
-
-    echo "Kernel packages available to swap in:"
-    ls -1 "${AQ_KERNEL_RPMS}"
-
-    # --no-autoremove matters: without it, removing the kernel takes half the
-    # system with it, because a great many packages are (indirectly) marked as
-    # having been installed for the kernel's sake.
-    aq_dnf remove --no-autoremove \
-        kernel kernel-core kernel-modules kernel-modules-core kernel-modules-extra \
-        || true
-    aq_dnf install "${AQ_KERNEL_RPMS}"/*.rpm
-
-    AQ_IMAGE_KERNEL="$(rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core)"
-    if [ "${AQ_IMAGE_KERNEL}" = "${KERNEL_VERSION}" ]; then
-        ok "the kernel is now ${AQ_IMAGE_KERNEL}, matching the driver"
-    else
-        bad "after the swap the kernel is ${AQ_IMAGE_KERNEL}, still not ${KERNEL_VERSION}"
-        aq_finish "NVIDIA"
-    fi
+    echo "AQUARIUS ERROR: this image's kernel is ${AQ_IMAGE_KERNEL} and the NVIDIA" >&2
+    echo "                driver was built for ${KERNEL_VERSION}." >&2
+    echo "                They should already match: build_files/58-kernel-pin.sh" >&2
+    echo "                pins the kernel to Universal Blue's, and it runs before" >&2
+    echo "                this step. If you are reading this, either that step did" >&2
+    echo "                not run, or something after it moved the kernel, or the" >&2
+    echo "                Containerfile's step order has been changed." >&2
+    echo "                What step 5.8 recorded:" >&2
+    sed 's/^/                  /' /usr/share/aquarius/kernel.txt >&2 2> /dev/null || \
+        echo "                  (there is no /usr/share/aquarius/kernel.txt at all)" >&2
+    exit 1
 fi
 
 # ------------------------------------------------------------------------------

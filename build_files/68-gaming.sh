@@ -363,12 +363,20 @@ esac
 # 6c takes the virtual camera from and is signed with the key this image
 # already trusts.
 #
-# AND THE SAME HONESTY RULE. If the box was built for a different kernel than
-# this image runs — which happens for a day or two after a Fedora kernel update
-# — we do NOT install it and we do NOT change which kernel AquariusOS ships for
-# the sake of a controller. The feature is left out, written down in
-# /usr/share/aquarius/gaming/controllers.txt, and the next day's build has it.
-# Every other controller keeps working either way.
+# ⚠️ AND A MISMATCH IS A BUILD FAILURE NOW (changed 2026-09-04).
+#
+# This used to be allowed to fail softly: if the modules were built for another
+# kernel the drivers were left out, `unavailable` was written into
+# /usr/share/aquarius/gaming/controllers.txt, and the build went green. On
+# 2026-09-04 that is exactly how the AMD/Intel image shipped with no Xbox
+# drivers and no virtual camera and nobody noticed (build 33900370878).
+#
+# The kernel is now pinned to Universal Blue's, once, for both images, in
+# build_files/58-kernel-pin.sh. So a mismatch here is no longer a schedule
+# accident — it is a broken build — and it stops the build. The stamp file
+# stays because it is still how the image answers "are the Xbox drivers in
+# here?", and CI still reads it; it simply cannot say `unavailable` in anything
+# that gets published.
 say "Xbox controller drivers"
 
 AQ_KVER="$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | head -1)"
@@ -455,6 +463,9 @@ install_controller_kmod() { # install_controller_kmod <name> <module file patter
 
 if [ ! -d "${AKMODS}" ] || [ -z "$(ls -A "${AKMODS}" 2> /dev/null || true)" ]; then
     echo "Universal Blue's module box is empty or was not mounted."
+    echo "It is fetched for BOTH images by the Containerfile and step 5.8 has"
+    echo "already read a kernel out of it, so an empty box here means the mount"
+    echo "on THIS step is missing."
     CONTROLLER_NOTE="The pre-built module box was not available to this build."
 else
     if install_controller_kmod xone 'xone_*.ko*' "the Xbox Wireless Adapter (the USB dongle)"; then
@@ -479,20 +490,21 @@ else
     else
         echo
         echo "  ---------------------------------------------------------------"
-        echo "  THE XBOX DRIVERS ARE NOT IN THIS IMAGE, AND THAT IS NOT A BUG."
+        echo "  NEITHER XBOX DRIVER WENT IN. THIS IS A BUG, NOT A TUESDAY."
         echo "  ---------------------------------------------------------------"
         echo "  This image runs kernel ${AQ_KVER} and the ready-made modules"
         echo "  were built for a different one, so they would not load."
         echo ""
-        echo "  This happens for a day or two after a Fedora kernel update."
-        echo "  Building again tomorrow fixes it; nothing needs changing."
-        echo ""
-        echo "  Everything else still works: PlayStation controllers over USB"
-        echo "  and Bluetooth, Xbox controllers over a USB cable, and every"
-        echo "  generic gamepad. Only the Xbox wireless dongle and the nicer"
-        echo "  Xbox Bluetooth behaviour are missing."
+        echo "  build_files/58-kernel-pin.sh runs before this step and pins this"
+        echo "  image's kernel to exactly the one these modules were built for,"
+        echo "  so the two should not be able to disagree. Check, in order:"
+        echo "    * did step 5.8 run, and does it run BEFORE this step in the"
+        echo "      Containerfile?"
+        echo "    * did anything between step 5.8 and here move the kernel?"
+        echo "    * has Universal Blue changed the layout of their module box?"
+        echo "      (the listing further up this step shows what is in it)"
         echo "  ---------------------------------------------------------------"
-        CONTROLLER_NOTE="Kernel skew: this image runs ${AQ_KVER} and the pre-built modules were made for another kernel. Rebuild in a day or two."
+        CONTROLLER_NOTE="Kernel skew: this image runs ${AQ_KVER} and the pre-built modules were made for another kernel."
     fi
 fi
 
@@ -512,6 +524,26 @@ chmod 0644 "${CONTROLLER_STAMP}"
 echo
 echo "Wrote ${CONTROLLER_STAMP}:"
 sed 's/^/       /' "${CONTROLLER_STAMP}"
+
+# And now judge it. Both drivers are expected in every image: the kernel is
+# pinned to the one they were built for, so anything less is a broken build and
+# not a scheduling accident. This is deliberately a `bad` rather than an
+# immediate exit, so that one build tells you about every problem in the gaming
+# layer instead of one at a time.
+for aq_pair in "xone:${XONE_STATUS}" "xpadneo:${XPADNEO_STATUS}"; do
+    aq_name="${aq_pair%%:*}"
+    aq_state="${aq_pair##*:}"
+    if [ "${aq_state}" = "installed" ]; then
+        ok "${aq_name} is in this image, built for kernel ${AQ_KVER}"
+    else
+        bad "${aq_name} is NOT in this image — see the explanation above this line"
+    fi
+done
+if [ "${XONE_STATUS}" != "installed" ] || [ "${XPADNEO_STATUS}" != "installed" ]; then
+    echo "  What step 5.8 recorded about the kernel:" >&2
+    sed 's/^/    /' /usr/share/aquarius/kernel.txt >&2 2> /dev/null \
+        || echo "    (there is no /usr/share/aquarius/kernel.txt at all)" >&2
+fi
 
 # The USB rules that let a controller be used without administrator rights.
 # These come from steam-devices and they are the difference between "Steam sees
