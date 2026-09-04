@@ -1,0 +1,8 @@
+# Kdenlive — extra permissions granted by AquariusOS
+#
+# A video editor is only useful if it can reach the footage. Kdenlive's own
+# Flathub permissions cover your home folder; these add the places footage
+# actually lives on a creator's machine — the card reader and the external
+# drives — which are outside home and are otherwise invisible to it.
+[Context]
+filesystems=xdg-videos;xdg-music;xdg-pictures;/run/media;/media;/mnt;

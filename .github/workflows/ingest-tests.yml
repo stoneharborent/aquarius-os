@@ -22,6 +22,11 @@ on:
   push:
     branches:
       - restart/fedora-bootc
+      # Phase R3b promotes the ingest helper (aq ingest, the watch folder), so
+      # its branch has to run these tests too — the 95 fixtures are the only
+      # thing standing between a rules-engine change and a silently wrong
+      # conversion of somebody's footage.
+      - restart/r3-apps
     paths:
       - 'ingest/**'
       - '.github/workflows/ingest-tests.yml'

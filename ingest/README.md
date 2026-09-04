@@ -36,6 +36,30 @@ the same way on both flavours of AquariusOS: in Dolphin on the KDE images and in
 on the GNOME ones. The beginner walkthrough, with pictures of what each message means, is
 [`../docs/ingest-right-click.md`](../docs/ingest-right-click.md).
 
+**The `aq` way.** Since R3b the AquariusOS command has a front door onto the same
+program, so it is discoverable from `aq --help` rather than being a name you have to
+already know:
+
+```bash
+aq ingest ~/Videos/CardDump
+aq ingest --dry-run ~/Videos/CardDump
+```
+
+**The automatic way: a watch folder.** Off until you turn it on, which is what the
+specification asks for — the right-click menu is the main surface.
+
+```bash
+aq ingest watch on          # watch ~/Videos/Ingest
+aq ingest watch status
+aq ingest watch off
+```
+
+It is a systemd *path unit* (`/usr/lib/systemd/user/aq-ingest-watch.path`) rather than a
+program sitting on an inotify watch all day: nothing of ours runs between drops. The
+helper behind it is `/usr/libexec/aquarius-ingest-watch`, and the one thing worth reading
+in it is the stability check — nothing is touched until its size has stopped changing for
+three seconds, because a folder "changes" the moment a copy *starts*.
+
 **The terminal way**, which is the same tool with the same options:
 
 ```bash
@@ -140,14 +164,20 @@ A record of every run is kept at `~/.local/state/aquarius/ingest.log`.
   — Plasma 6's folder, not Plasma 5's, and it has to stay executable or KDE ignores it.
 - The Nautilus menu item is `system_files/usr/share/nautilus-python/extensions/aquarius_editor_ready.py`.
   GNOME has no settings-file way to add a menu item, so this one is a small Python program.
-  It needs the `nautilus-python` package, which `build_files/gnome-desktop.sh` installs on
-  the GNOME images. Both files ship on both images and each is ignored where it does not
-  belong; `tests/test_desktop.py` compares them so the two cannot drift apart.
-- `build_files/build.sh` installs `aq-ingest` to `/usr/bin/` and this package into Python's
-  own `site-packages`, and fails the build if the command won't start. The Containerfile's
-  `COPY ingest /ingest` line is what makes this folder visible to that step.
-- `tests/test_desktop.py` guards all of the above, so a wiring change that would silently
-  kill the right-click menu fails a test instead.
+  It needs the `nautilus-python` package, which `build_files/40-gnome-desktop.sh` installs.
+- `build_files/50-aquarius-desktop.sh` installs `aq-ingest` to `/usr/bin/` and this package
+  into Python's own `site-packages`, and fails the build if the command won't start. The
+  Containerfile's `COPY ingest /ingest` line is what makes this folder visible to that step.
+- `build_files/64-creator-apps.sh` adds the R3b half: it checks that `aq ingest` is wired
+  up and discoverable, that the watch-folder units are installed, that the watch folder is
+  **off**, and that the helper really runs on a brand-new account (asked with a throwaway
+  home folder, inside the image).
+
+> **Note on the old `tests/test_desktop.py`.** It went with the Bazzite line. It worked by
+> looking for particular lines of text inside `build_files/build.sh` and inside the KDE
+> right-click menu, and neither exists any more. What it was trying to prove is now proved
+> directly against the finished image in `.github/workflows/build-next.yml`, which is a
+> stronger check than reading a build script. The old file is still on `main`.
 
 ### Running the tests
 

@@ -1,0 +1,311 @@
+#!/usr/bin/python3
+# =============================================================================
+# AquariusOS — the ingest watch folder
+# =============================================================================
+# PLAIN ENGLISH
+#
+# Drop a file from a camera or a phone into ~/Videos/Ingest and an
+# editor-ready copy appears next to it, without you clicking anything.
+#
+# That is milestone 3 of the ingest helper's specification
+# (docs/ingest-helper-spec.md, "Watch folder"). Milestones 1 and 2 — the
+# command and the right-click menu — shipped earlier; this is the third
+# surface, and like the spec says, IT IS OFF UNTIL YOU TURN IT ON. The
+# right-click menu stays the main way in.
+#
+#     aq ingest watch on        turn it on (and make the folder)
+#     aq ingest watch off       turn it off
+#     aq ingest watch status    is it on, which folders, what happened last
+#
+# ------------------------------------------------------------------------------
+# HOW IT WATCHES, AND WHY IT IS NOT A PROGRAM THAT RUNS ALL DAY
+# ------------------------------------------------------------------------------
+# systemd can watch a folder by itself. A "path unit" (aq-ingest-watch.path)
+# asks the kernel to poke it when the folder changes, and only then does it
+# start the small job that does the work. Nothing of ours is running the rest
+# of the time — no memory, no processor, nothing to crash while you sleep.
+#
+# The alternative would have been a Python program sitting on an inotify watch
+# forever. It would do the same job and it would be one more thing that can die
+# quietly in the background. systemd is already very good at this and it is
+# already running.
+#
+# ------------------------------------------------------------------------------
+# THE PART THAT MATTERS MOST: WAIT UNTIL THE FILE HAS FINISHED ARRIVING
+# ------------------------------------------------------------------------------
+# A folder "changes" the instant a copy STARTS. Converting a file that is still
+# being written gives a broken, truncated result — and a camera card or a
+# network copy can take minutes.
+#
+# So nothing is touched until its size has stopped changing for three seconds
+# (the spec's own rule). Files that are obviously in progress are skipped
+# outright: anything beginning with a dot, and anything ending .part, .tmp,
+# .crdownload or .download.
+# =============================================================================
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+SERVICE_UNIT = "aq-ingest-watch.service"
+PATH_UNIT = "aq-ingest-watch.path"
+DEFAULT_FOLDER = "~/Videos/Ingest"
+
+# How long a file's size must stay the same before we believe it has landed.
+# Three seconds is the spec's number: long enough for a slow card reader to
+# stutter, short enough that nobody notices the wait.
+STABLE_SECONDS = 3.0
+
+# Names that are obviously a copy in progress.
+IN_PROGRESS_SUFFIXES = (".part", ".tmp", ".crdownload", ".download", ".partial")
+
+# The folder aq-ingest writes its results into. Never fed back in, or every run
+# would re-examine its own output.
+OUTPUT_DIR_NAME = "EditorReady"
+
+
+def config_path() -> Path:
+    base = os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")
+    return Path(base) / "aquarius" / "ingest.toml"
+
+
+def load_watch_folders() -> list[Path]:
+    """Ask the ingest helper's own settings loader, so there is one answer."""
+    try:
+        from aq_ingest.config import load_settings
+    except Exception as exc:  # pragma: no cover - only if the package is broken
+        print(f"aquarius-ingest-watch: cannot read the ingest settings: {exc}", file=sys.stderr)
+        return []
+    try:
+        settings = load_settings()
+    except Exception as exc:
+        print(f"aquarius-ingest-watch: {exc}", file=sys.stderr)
+        return []
+    return [Path(os.path.expanduser(f)) for f in settings.watch_folders]
+
+
+# -----------------------------------------------------------------------------
+# Writing the setting back
+# -----------------------------------------------------------------------------
+# The settings file is full of explanatory comments and they are worth keeping,
+# so this replaces the one line rather than rewriting the file. If the line is
+# not there — somebody deleted it — it is appended.
+WATCH_LINE = re.compile(r"^\s*watch_folders\s*=.*$", re.MULTILINE)
+
+
+def write_watch_folders(folders: list[str]) -> None:
+    path = config_path()
+    if not path.exists():
+        from aq_ingest.config import load_settings
+
+        load_settings(create=True)
+
+    text = path.read_text(encoding="utf-8")
+    rendered = ", ".join('"' + f.replace('"', '\\"') + '"' for f in folders)
+    new_line = f"watch_folders = [{rendered}]"
+    if WATCH_LINE.search(text):
+        text = WATCH_LINE.sub(new_line, text, count=1)
+    else:
+        if not text.endswith("\n"):
+            text += "\n"
+        text += new_line + "\n"
+    path.write_text(text, encoding="utf-8")
+
+    # Read it back through the real loader. If this raises, the file we just
+    # wrote is not one the helper can read, and it is far better to hear that
+    # now than at three in the morning when a card is being copied.
+    from aq_ingest.config import load_settings
+
+    got = load_settings()
+    expected = tuple(folders)
+    if got.watch_folders != expected:
+        raise SystemExit(
+            "aquarius-ingest-watch: the settings file was written but reads back as "
+            f"{list(got.watch_folders)} instead of {folders}. Nothing has been switched on.\n"
+            f"Look at {path}."
+        )
+
+
+def systemctl(*args: str) -> subprocess.CompletedProcess:
+    # A timeout, because this also runs inside the image build, where there is
+    # no user session for systemctl to talk to. Without one, a systemctl that
+    # decides to wait for a bus that will never appear would hang the build
+    # with nothing on screen to explain it.
+    try:
+        return subprocess.run(
+            ["systemctl", "--user", *args],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="")
+
+
+# -----------------------------------------------------------------------------
+# on / off / status
+# -----------------------------------------------------------------------------
+def cmd_enable(folder: str | None) -> int:
+    target = folder or DEFAULT_FOLDER
+    expanded = Path(os.path.expanduser(target))
+    try:
+        expanded.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(f"aq: could not create {expanded}: {exc}", file=sys.stderr)
+        return 1
+
+    write_watch_folders([target])
+
+    result = systemctl("enable", "--now", PATH_UNIT)
+    print(f"Watching {expanded} for files to make editor-ready.")
+    print("  Drop a clip from a camera or a phone in there and an editor-ready")
+    print("  copy appears in its EditorReady folder a few seconds later.")
+    print("  The original is never changed.")
+    if result.returncode != 0:
+        print()
+        print("  It is switched on in your settings, but could not be started right")
+        print("  now — which is normal over SSH, where there is no login session to")
+        print("  start it in. It begins at your next login.")
+        if result.stderr.strip():
+            print("  " + result.stderr.strip().replace("\n", "\n  "))
+    return 0
+
+
+def cmd_disable() -> int:
+    systemctl("disable", "--now", PATH_UNIT)
+    write_watch_folders([])
+    print("The watch folder is off. Nothing is watched.")
+    print("  Files already converted are left exactly where they are.")
+    print("  Turn it back on with:  aq ingest watch on")
+    return 0
+
+
+def cmd_status() -> int:
+    folders = load_watch_folders()
+    enabled = systemctl("is-enabled", PATH_UNIT).stdout.strip() or "not set up"
+    active = systemctl("is-active", PATH_UNIT).stdout.strip() or "unknown"
+
+    print("Ingest watch folder")
+    if folders:
+        for f in folders:
+            exists = "" if f.is_dir() else "   (this folder does not exist yet)"
+            print(f"  Watching  : {f}{exists}")
+    else:
+        print("  Watching  : nothing. This is the default.")
+        print("              Turn it on with:  aq ingest watch on")
+    print(f"  Switched on: {enabled}")
+    print(f"  Listening  : {active}")
+    print(f"  Settings   : {config_path()}")
+
+    log = Path(
+        os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state")
+    ) / "aquarius" / "ingest.log"
+    if log.exists():
+        print(f"  Log        : {log}")
+        try:
+            tail = log.read_text(encoding="utf-8", errors="replace").splitlines()[-3:]
+        except OSError:
+            tail = []
+        for line in tail:
+            print(f"    {line}")
+    else:
+        print("  Log        : nothing has been converted on this account yet.")
+    return 0
+
+
+# -----------------------------------------------------------------------------
+# The run itself
+# -----------------------------------------------------------------------------
+def is_in_progress(path: Path) -> bool:
+    name = path.name
+    if name.startswith("."):
+        return True
+    return name.lower().endswith(IN_PROGRESS_SUFFIXES)
+
+
+def settled(path: Path) -> bool:
+    """True when the file's size has not changed for STABLE_SECONDS."""
+    try:
+        first = path.stat().st_size
+    except OSError:
+        return False
+    time.sleep(STABLE_SECONDS)
+    try:
+        return path.stat().st_size == first
+    except OSError:
+        return False
+
+
+def cmd_run() -> int:
+    folders = load_watch_folders()
+    if not folders:
+        print("aquarius-ingest-watch: no folders are being watched. Nothing to do.")
+        return 0
+
+    candidates: list[Path] = []
+    for folder in folders:
+        if not folder.is_dir():
+            print(f"aquarius-ingest-watch: {folder} does not exist — skipping it.")
+            continue
+        for entry in sorted(folder.iterdir()):
+            if entry.is_dir():
+                continue
+            if entry.name == OUTPUT_DIR_NAME or OUTPUT_DIR_NAME in entry.parts:
+                continue
+            if is_in_progress(entry):
+                print(f"  still arriving, leaving alone: {entry.name}")
+                continue
+            candidates.append(entry)
+
+    if not candidates:
+        print("aquarius-ingest-watch: nothing new has finished arriving.")
+        return 0
+
+    ready = [p for p in candidates if settled(p)]
+    if not ready:
+        print("aquarius-ingest-watch: files are still being written. Will look again.")
+        return 0
+
+    print(f"aquarius-ingest-watch: making {len(ready)} file(s) editor-ready.")
+    # aq-ingest already skips anything whose output is present and up to date,
+    # so handing it a file twice costs nothing and changes nothing. That is what
+    # makes this safe to fire on every folder change.
+    result = subprocess.run(
+        ["/usr/bin/aq-ingest", *[str(p) for p in ready]],
+        check=False,
+    )
+    return result.returncode
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="aquarius-ingest-watch",
+        description="The AquariusOS ingest watch folder. Normally driven by 'aq ingest watch'.",
+    )
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--enable", nargs="?", const="", metavar="FOLDER",
+                       help="watch FOLDER (default ~/Videos/Ingest) and switch the watcher on")
+    group.add_argument("--disable", action="store_true", help="switch the watcher off")
+    group.add_argument("--status", action="store_true", help="say what is being watched")
+    group.add_argument("--run", action="store_true",
+                       help="process anything that has finished arriving (systemd calls this)")
+    args = parser.parse_args(argv)
+
+    if args.status:
+        return cmd_status()
+    if args.disable:
+        return cmd_disable()
+    if args.run:
+        return cmd_run()
+    return cmd_enable(args.enable or None)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

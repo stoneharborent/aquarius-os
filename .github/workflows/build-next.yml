@@ -38,6 +38,9 @@ on:
       # above, so a side branch cannot overwrite the images real machines
       # update from. See the PUBLISHING heading in the job.
       - restart/aquarius-keys
+      # Phase R3b — the creator apps layer and the ingest helper. Same
+      # arrangement: builds and checks, never publishes.
+      - restart/r3-apps
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -1489,12 +1492,426 @@ jobs:
           PY
           done
 
+      - name: Check the creator apps are really in there
+        run: |
+          set -euo pipefail
+          cat > /tmp/verify-creator.sh <<'SCRIPT'
+          set -u
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+
+          # ====================================================================
+          # 1. THE TWO APPS THAT ARE BAKED INTO THE IMAGE
+          # ====================================================================
+          # Re-asked here, on the FINISHED, PACKAGED image, and not only during
+          # the build. That is not belt and braces for its own sake: the tool
+          # that packages a bootable image rewrites every file, and the whole
+          # bug of 2026-08-28 was about file permissions. A permission that is
+          # correct when it is set and wrong when it is shipped is exactly the
+          # kind of thing this step exists to catch.
+          echo "== Aquarius Editor and Aquarius Writer =="
+
+          if [ -r /usr/share/aquarius/creator-apps.txt ]; then
+            echo "-- what the build says it installed --"
+            sed 's/^/     /' /usr/share/aquarius/creator-apps.txt
+          else
+            bad "/usr/share/aquarius/creator-apps.txt is missing — the build did not record what it did"
+          fi
+
+          for app in aquarius-editor aquarius-writer; do
+            dir="/usr/lib/aquarius/${app}"
+
+            if [ -d "${dir}" ]; then ok "${app}: unpacked at ${dir} ($(du -sh "${dir}" | cut -f1))"
+            else bad "${app}: ${dir} does not exist — the app is not in the image"; continue; fi
+
+            if [ -x "${dir}/AppRun" ]; then ok "${app}: AppRun is there"
+            else bad "${app}: ${dir}/AppRun is missing or not runnable"; fi
+
+            if [ -x "/usr/bin/${app}" ]; then ok "${app}: /usr/bin/${app} is the front door"
+            else bad "${app}: /usr/bin/${app} is missing"; fi
+
+            if [ -f "/usr/share/applications/${app}.desktop" ]; then
+              ok "${app}: it has an app-grid entry"
+            else
+              bad "${app}: no /usr/share/applications/${app}.desktop — it would not appear in the app grid"
+            fi
+
+            # The version stamp, cross-checked against what the build wrote
+            # down. Two files, written by different parts of the same step, so
+            # a disagreement means one of them did not happen.
+            if [ -r "${dir}/VERSION" ]; then
+              v="$(cat "${dir}/VERSION")"
+              ok "${app}: version ${v}"
+              if grep -qx "${app} v${v}" /usr/share/aquarius/creator-apps.txt 2>/dev/null; then
+                ok "${app}: the record agrees it is v${v}"
+              else
+                bad "${app}: VERSION says ${v} but creator-apps.txt does not say v${v}"
+              fi
+            else
+              bad "${app}: ${dir}/VERSION is missing — the launcher could never start a downloaded update"
+            fi
+
+            # ⚠️ EVERY CHECK IN THIS FILE RUNS AS ROOT, AND ROOT IGNORES
+            #    PERMISSIONS. So the questions are asked the way an ordinary
+            #    account experiences them: not "can I", but "could somebody who
+            #    is neither root nor in this file's group".
+            n="$(find "${dir}" \( -type f -o -type d \) ! -perm -o+r | wc -l)"
+            if [ "${n}" -eq 0 ]; then ok "${app}: everything is readable by an ordinary account"
+            else bad "${app}: ${n} file(s)/folder(s) an ordinary account cannot read"; find "${dir}" \( -type f -o -type d \) ! -perm -o+r | head -5; fi
+
+            n="$(find "${dir}" -type f -perm -u+x ! -perm -o+x | wc -l)"
+            if [ "${n}" -eq 0 ]; then ok "${app}: every program in it can be run by an ordinary account"
+            else bad "${app}: ${n} program(s) an ordinary account cannot run — this is the bug of 2026-08-28"; find "${dir}" -type f -perm -u+x ! -perm -o+x | head -5; fi
+
+            n="$(find "${dir}" -type d ! -perm -o+x | wc -l)"
+            if [ "${n}" -eq 0 ]; then ok "${app}: every folder can be opened by an ordinary account"
+            else bad "${app}: ${n} folder(s) an ordinary account cannot open"; fi
+
+            n="$(find "${dir}" ! -type l -perm -o+w | wc -l)"
+            if [ "${n}" -eq 0 ]; then ok "${app}: nothing in it is writable by just anyone"
+            else bad "${app}: ${n} file(s) writable by ANY account, inside /usr"; fi
+
+            n="$(find "${dir}" -xtype l | wc -l)"
+            if [ "${n}" -eq 0 ]; then ok "${app}: no symlink points at nothing"
+            else bad "${app}: ${n} broken symlink(s)"; find "${dir}" -xtype l | head -5; fi
+          done
+
+          # The Electron sandbox helper. Aquarius Editor refuses to start at
+          # all — instantly, with no window — if this file exists and is not
+          # root-owned with the setuid bit. Asked HERE, after packaging,
+          # because "does setuid survive being packaged" is the question.
+          SANDBOX=/usr/lib/aquarius/aquarius-editor/chrome-sandbox
+          if [ -e "${SANDBOX}" ]; then
+            mode="$(stat -c '%a' "${SANDBOX}")"; owner="$(stat -c '%U:%G' "${SANDBOX}")"
+            if [ "${mode}" = "4755" ] && [ "${owner}" = "root:root" ]; then
+              ok "chrome-sandbox survived packaging as root:root 4755"
+            else
+              bad "chrome-sandbox is ${owner} mode ${mode} — Electron would abort silently"
+            fi
+          else
+            echo "  --   this Aquarius Editor has no chrome-sandbox (nothing to check)"
+          fi
+
+          # The app-grid entries, judged by the freedesktop project's own
+          # checker rather than by us reading them.
+          echo "== are the app-grid entries well-formed? =="
+          for d in /usr/share/applications/aquarius-editor.desktop /usr/share/applications/aquarius-writer.desktop; do
+            if desktop-file-validate "${d}" 2>/tmp/dfv.txt; then ok "$(basename "${d}") is valid"
+            else bad "$(basename "${d}") is not valid — the app would never appear"; sed 's/^/       /' /tmp/dfv.txt; fi
+          done
+
+          # Electron on a scaled screen. Without this the Editor's window is
+          # faintly out of focus at 125% and 150%, which is every 4K monitor.
+          echo "== Electron draws sharply on a scaled screen =="
+          if grep -qx 'ELECTRON_OZONE_PLATFORM_HINT=auto' /usr/lib/environment.d/60-aquarius-electron.conf 2>/dev/null; then
+            ok "the session sets ELECTRON_OZONE_PLATFORM_HINT=auto"
+          else
+            bad "/usr/lib/environment.d/60-aquarius-electron.conf does not set ELECTRON_OZONE_PLATFORM_HINT=auto"
+          fi
+          if grep -q 'ELECTRON_OZONE_PLATFORM_HINT' /usr/bin/aquarius-editor; then
+            ok "the Editor's launcher sets it too (for an app started outside a login session)"
+          else
+            bad "/usr/bin/aquarius-editor does not set ELECTRON_OZONE_PLATFORM_HINT"
+          fi
+
+          # ====================================================================
+          # 2. THE APPS THAT ARRIVE FROM FLATHUB ON FIRST BOOT
+          # ====================================================================
+          echo
+          echo "== the creator apps that arrive on first boot =="
+
+          # Flatpak has to be new enough to have the preinstall command at all.
+          # 1.16 is where this mechanism became usable; Fedora 44 ships 1.18.
+          FPV="$(flatpak --version | awk '{print $NF}')"
+          echo "  flatpak ${FPV}"
+          MAJ="${FPV%%.*}"; REST="${FPV#*.}"; MIN="${REST%%.*}"
+          if [ "${MAJ}" -gt 1 ] || { [ "${MAJ}" -eq 1 ] && [ "${MIN}" -ge 16 ]; }; then
+            ok "flatpak ${FPV} is new enough for preinstall (needs 1.16 or later)"
+          else
+            bad "flatpak ${FPV} is too old for the preinstall mechanism"
+          fi
+          if flatpak preinstall --help >/dev/null 2>&1; then
+            ok "'flatpak preinstall' exists — the native mechanism is what runs"
+          else
+            bad "no 'flatpak preinstall' command — the service would fall back to a loop that cannot honour a person's uninstall"
+          fi
+
+          LIST=/usr/share/flatpak/preinstall.d/aquarius-creator-apps.preinstall
+          if [ -s "${LIST}" ]; then ok "the shopping list is in the image"
+          else bad "${LIST} is missing — the OS would advertise a creator suite and install nothing"; fi
+
+          echo "-- every app on the list --"
+          grep -o '^\[Flatpak Preinstall [^]]*\]' "${LIST}" | sed 's/^\[Flatpak Preinstall //; s/\]$//' | sort > /tmp/ids.txt
+          sed 's/^/     /' /tmp/ids.txt
+          echo "  ($(wc -l < /tmp/ids.txt) entries)"
+
+          # The apps Royce chose. Named here so that a deletion from the list is
+          # a failed build and not a quiet regression nobody notices for weeks.
+          for want in \
+            com.obsproject.Studio org.kde.kdenlive org.kde.krita org.blender.Blender \
+            org.ardour.Ardour org.audacityteam.Audacity org.gimp.GIMP org.inkscape.Inkscape \
+            org.localsend.localsend_app md.obsidian.Obsidian com.google.Chrome \
+            com.obsproject.Studio.Plugin.OBSVkCapture \
+            com.obsproject.Studio.Plugin.PipeWireAudioCapture \
+            org.freedesktop.Platform.VulkanLayer.OBSVkCapture
+          do
+            if grep -qx "${want}" /tmp/ids.txt; then ok "on the list: ${want}"
+            else bad "MISSING from the list: ${want}"; fi
+          done
+
+          # Firefox must NOT be on it: it is an ordinary system package, so it
+          # works on a machine that has never been online. Listing it as well
+          # would mean downloading a second browser nobody asked for.
+          if grep -qx 'org.mozilla.firefox' /tmp/ids.txt; then
+            bad "Firefox is on the Flatpak list as well as being an installed package — that is a second, duplicate browser"
+          else
+            ok "Firefox is not on the Flatpak list (it is a system package — correct)"
+          fi
+          if rpm -q firefox >/dev/null 2>&1; then ok "firefox is installed as a system package"
+          else bad "firefox is neither a package nor on the Flatpak list — this image has no browser"; fi
+
+          # A block without Branch= installs nothing, silently.
+          blocks="$(grep -c '^\[Flatpak Preinstall ' "${LIST}")"
+          branches="$(grep -c '^Branch=' "${LIST}")"
+          if [ "${blocks}" -eq "${branches}" ]; then ok "all ${blocks} entries name a branch"
+          else bad "${blocks} entries but ${branches} Branch= lines — an entry without one installs nothing, silently"; fi
+
+          # The plug-ins are runtime extensions, not applications, and Flatpak
+          # will not find one without IsRuntime=true.
+          runtimes="$(grep -c '^IsRuntime=true' "${LIST}")"
+          if [ "${runtimes}" -ge 5 ]; then ok "${runtimes} entries are marked IsRuntime=true (the OBS plug-ins and the Vulkan layer)"
+          else bad "only ${runtimes} entries are marked IsRuntime=true — a plug-in without it is never found"; fi
+
+          # The trigger. Fedora ships the folder and the command and nothing
+          # that runs it, so this service is the whole reason any of it happens.
+          if systemctl is-enabled aquarius-flatpak-preinstall.service >/dev/null 2>&1; then
+            ok "the first-boot installer is switched on"
+          else
+            bad "aquarius-flatpak-preinstall.service is not switched on — nothing would ever fetch the apps"
+          fi
+          if [ -x /usr/libexec/aquarius-flatpak-preinstall ]; then ok "the installer script is there and runnable"
+          else bad "/usr/libexec/aquarius-flatpak-preinstall is missing"; fi
+
+          # ====================================================================
+          # 3. THE EXTRA PERMISSIONS
+          # ====================================================================
+          echo
+          echo "== the extra permissions creator apps need =="
+          # Read back through Flatpak's own parser, not by looking at the text.
+          # /var/lib/flatpak/overrides is the ONLY folder Flatpak reads these
+          # from — checked in Flatpak's source, because the two folders one
+          # would guess are not read at all — and /var is scratch space in a
+          # container, so this leaves nothing behind.
+          mkdir -p /var/lib/flatpak/overrides
+          for f in /usr/share/aquarius/flatpak-overrides/*; do
+            base="$(basename "${f}")"
+            case "${base}" in *.md) continue ;; esac
+            cp "${f}" "/var/lib/flatpak/overrides/${base}"
+            if shown="$(flatpak override --system --show "${base}" 2>&1)" && printf '%s' "${shown}" | grep -q '^\[Context\]'; then
+              ok "${base} — Flatpak reads it: $(printf '%s' "${shown}" | grep -v '^\[' | grep -v '^$' | tr '\n' ' ')"
+            else
+              bad "${base} — Flatpak cannot read this permission file"
+              printf '%s\n' "${shown}" | sed 's/^/       /'
+            fi
+            rm -f "/var/lib/flatpak/overrides/${base}"
+          done
+
+          # OBS is the one that genuinely cannot work without help: no camera,
+          # no capture card and no virtual camera without devices=all.
+          if grep -qE '^devices=.*all' /usr/share/aquarius/flatpak-overrides/com.obsproject.Studio; then
+            ok "OBS is granted the cameras and capture cards"
+          else
+            bad "OBS's override does not grant devices=all — its camera list would be empty"
+          fi
+          # And nothing may take the lazy way out.
+          grep -lE '^filesystems=(.*;)?host(;|$)' /usr/share/aquarius/flatpak-overrides/* >/tmp/host.txt 2>/dev/null || true
+          if [ -s /tmp/host.txt ]; then
+            bad "these grant filesystems=host, which is the same as no sandbox at all:"; sed 's/^/       /' /tmp/host.txt
+          else
+            ok "no app is granted the whole computer (never filesystems=host)"
+          fi
+
+          # ====================================================================
+          # 4. WHERE THE APPS APPEAR
+          # ====================================================================
+          echo
+          echo "== the dock and the app grid =="
+          FAV="$(GSETTINGS_BACKEND=memory gsettings get org.gnome.shell favorite-apps)"
+          echo "  GNOME dock: ${FAV}"
+          for want in aquarius-editor.desktop aquarius-writer.desktop; do
+            if printf '%s' "${FAV}" | grep -q "${want}"; then ok "GNOME dock pins ${want}"
+            else bad "GNOME dock does not pin ${want}"; fi
+          done
+          # Every name on that line has to be a real file, or the icon is
+          # simply missing with no error anywhere.
+          printf '%s' "${FAV}" | tr -d "[]' " | tr ',' '\n' | grep -v '^$' > /tmp/fav.txt
+          while read -r fav; do
+            if [ -r "/usr/share/applications/${fav}" ]; then ok "  dock: ${fav}"
+            else bad "  dock: ${fav} is pinned but is not in this image"; fi
+          done < /tmp/fav.txt
+
+          # The Aquarius Desktop's own dock. Its list may name the Flatpak apps,
+          # because that dock skips a name it cannot find instead of drawing a
+          # dead square.
+          DOCK=/etc/skel/.config/aquarius-shell/dock.json
+          if [ -r "${DOCK}" ]; then
+            if python3 -c "import json,sys; d=json.load(open('${DOCK}')); assert isinstance(d.get('pinned'), list) and d['pinned']" 2>/tmp/dock.txt; then
+              ok "the Aquarius dock's default list is valid JSON: $(python3 -c "import json;print(', '.join(json.load(open('${DOCK}'))['pinned']))")"
+            else
+              bad "${DOCK} is not readable as the dock expects"; sed 's/^/       /' /tmp/dock.txt
+            fi
+            if grep -q 'aquarius-editor.desktop' "${DOCK}" && grep -q 'aquarius-writer.desktop' "${DOCK}"; then
+              ok "the Aquarius dock pins both Aquarius apps"
+            else
+              bad "the Aquarius dock does not pin the Aquarius apps"
+            fi
+          else
+            bad "${DOCK} is missing — a new account would get the shell's built-in default instead of ours"
+          fi
+
+          # ====================================================================
+          # 5. THE INGEST HELPER
+          # ====================================================================
+          echo
+          echo "== the ingest helper (the flagship feature) =="
+          if /usr/bin/aq-ingest --version >/dev/null 2>&1; then ok "aq-ingest runs: $(/usr/bin/aq-ingest --version)"
+          else bad "aq-ingest does not run"; fi
+          if /usr/bin/aq ingest --help 2>&1 | grep -q 'make camera files open in a video editor'; then
+            ok "'aq ingest' is wired up"
+          else
+            bad "'aq ingest --help' does not print its help — the subcommand is not wired up"
+          fi
+          if /usr/bin/aq --help 2>&1 | grep -q 'aq ingest'; then ok "'aq --help' tells people it exists"
+          else bad "'aq --help' does not mention ingest"; fi
+          if [ -r /usr/share/nautilus-python/extensions/aquarius_editor_ready.py ]; then
+            ok "the 'Make Editor-Ready' right-click menu is installed"
+          else
+            bad "the right-click menu is missing"
+          fi
+          for u in aq-ingest-watch.path aq-ingest-watch.service; do
+            if [ -r "/usr/lib/systemd/user/${u}" ]; then ok "${u} is installed"
+            else bad "/usr/lib/systemd/user/${u} is missing"; fi
+          done
+          if [ -e /usr/lib/systemd/user/default.target.wants/aq-ingest-watch.path ]; then
+            bad "the watch folder is switched on by default — it must be opt-in"
+          else
+            ok "the watch folder is off until asked for (correct)"
+          fi
+          if [ -x /usr/libexec/aquarius-ingest-watch ]; then ok "the watch-folder helper is there"
+          else bad "/usr/libexec/aquarius-ingest-watch is missing"; fi
+
+          # ====================================================================
+          # 6. THE VIRTUAL CAMERA
+          # ====================================================================
+          echo
+          echo "== the virtual camera (OBS's Start Virtual Camera button) =="
+          STAMP=/usr/share/aquarius/virtual-camera.txt
+          if [ ! -r "${STAMP}" ]; then
+            bad "${STAMP} is missing — the build did not record whether the virtual camera is in this image"
+          else
+            sed 's/^/     /' "${STAMP}"
+            STATUS="$(sed -n 's/^status=//p' "${STAMP}")"
+            KVER="$(ls -1 /usr/lib/modules/)"
+            case "${STATUS}" in
+              installed)
+                if find "/usr/lib/modules/${KVER}" -name 'v4l2loopback.ko*' | grep -q .; then
+                  ok "the module is in the image, for kernel ${KVER}"
+                else
+                  bad "the build says the virtual camera is installed, and there is no v4l2loopback module for ${KVER}"
+                fi
+                if grep -q 'v4l2loopback' "/usr/lib/modules/${KVER}/modules.dep"; then
+                  ok "the kernel's index knows about it"
+                else
+                  bad "v4l2loopback is not in modules.dep — the kernel would not find it"
+                fi
+                if grep -qx 'v4l2loopback' /usr/lib/modules-load.d/aquarius-v4l2loopback.conf; then
+                  ok "it is loaded at boot"
+                else
+                  bad "nothing loads it at boot, so the Virtual Camera button would still fail"
+                fi
+                if grep -q 'exclusive_caps=1' /usr/lib/modprobe.d/aquarius-v4l2loopback.conf; then
+                  ok "exclusive_caps=1 (without it browsers show a black camera)"
+                else
+                  bad "exclusive_caps is not set — the virtual camera would be listed and black"
+                fi
+                ;;
+              unavailable)
+                echo "::warning::The virtual camera is NOT in this image. OBS works; its Start Virtual Camera button will not. See /usr/share/aquarius/virtual-camera.txt in the log above. This is usually kernel skew a day or two after a Fedora kernel update — build again tomorrow."
+                if [ -e /usr/lib/modules-load.d/aquarius-v4l2loopback.conf ]; then
+                  bad "the module was not installed, but the image still tries to load it at boot"
+                else
+                  ok "and nothing tries to load a module that is not here (correct)"
+                fi
+                ;;
+              *)
+                bad "${STAMP} says status=${STATUS}, which is not a status this check knows"
+                ;;
+            esac
+          fi
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::The creator layer in this image is wrong. Do not publish it."
+            exit 1
+          fi
+          echo "All creator-layer checks passed."
+          SCRIPT
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-creator.sh
+
+      - name: Check the NVIDIA image can encode video on the graphics card
+        if: matrix.nvidia == 1
+        run: |
+          set -euo pipefail
+          # WHY THIS IS A CHECK OF ITS OWN
+          #
+          # NVENC is the video encoder built into every modern NVIDIA card. It
+          # is the difference between exporting a video in three minutes and
+          # exporting it in twenty, and it is the single biggest reason the
+          # NVIDIA image is the primary creator target of this project
+          # (standing decision 5).
+          #
+          # ffmpeg only offers it if it was COMPILED with it. Nothing about
+          # having an NVIDIA driver installed puts it there, so "we ship the
+          # NVIDIA driver" is not evidence, and the only honest question is the
+          # one ffmpeg answers itself.
+          cat > /tmp/verify-nvenc.sh <<'SCRIPT'
+          set -u
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+
+          ffmpeg -hide_banner -encoders > /tmp/enc.txt 2>&1 || true
+          echo "== everything this ffmpeg can encode with an NVIDIA card =="
+          grep -i 'nvenc\|nvidia\|cuda' /tmp/enc.txt | sed 's/^/     /' || echo "     (nothing at all)"
+
+          for enc in h264_nvenc hevc_nvenc; do
+            if grep -qw "${enc}" /tmp/enc.txt; then ok "ffmpeg can encode with ${enc}"
+            else bad "ffmpeg has no ${enc} — exports would fall back to the processor and take many times longer"; fi
+          done
+
+          echo "== and the decoders that make a camera file play smoothly =="
+          ffmpeg -hide_banner -decoders > /tmp/dec.txt 2>&1 || true
+          grep -i 'cuvid\|nvdec' /tmp/dec.txt | sed 's/^/     /' || echo "     (none listed)"
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::This NVIDIA image cannot use the graphics card to encode video."
+            exit 1
+          fi
+          echo "NVENC checks passed."
+          SCRIPT
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-nvenc.sh
+
       # ------------------------------------------------------------------------
       # PUBLISHING
       # ------------------------------------------------------------------------
       # ⚠️ EVERY STEP FROM HERE DOWN ONLY RUNS ON `restart/fedora-bootc`.
       #
-      # Side branches (`restart/aquarius-keys` and any future one) build the
+      # Side branches (`restart/aquarius-keys`, `restart/r3-apps` and any
+      # future one) build the
       # image and run every check above, and then stop. They must not publish,
       # because publishing means pushing to the `aquarius-os-next:latest` tags
       # that real machines update from — so a half-finished side branch would

@@ -1,0 +1,56 @@
+# ==============================================================================
+# AquariusOS — watch a folder for footage to make editor-ready
+# ==============================================================================
+# PLAIN ENGLISH
+#
+# This is the part that WATCHES. It does nothing itself: it asks the kernel to
+# tell it when anything changes in ~/Videos/Ingest, and when something does, it
+# starts aq-ingest-watch.service, which does the actual work and then stops.
+#
+# Nothing of ours is running the rest of the time.
+#
+# ⚠️ IT IS OFF UNLESS YOU TURN IT ON. There is no enable symlink shipped in the
+# image, on purpose — the ingest helper's specification says the right-click
+# menu is the main way in and the watch folder is opt-in. Turn it on with:
+#
+#     aq ingest watch on
+#
+# ------------------------------------------------------------------------------
+# WHY THE FOLDER IS WRITTEN OUT HERE AS WELL AS IN YOUR SETTINGS
+# ------------------------------------------------------------------------------
+# systemd needs a real path to watch and it cannot read a TOML file to find one.
+# So the default folder is named here, and the SETTINGS file is what the job
+# itself reads when it wakes up. They agree because `aq ingest watch on` writes
+# the same folder into both places.
+#
+# If you want to watch a DIFFERENT folder, `aq ingest watch on ~/Some/Folder`
+# puts it in your settings, and then you also need systemd to watch it. Make
+# your own copy of this file — a file in ~/.config/systemd/user/ with the same
+# name completely replaces this one:
+#
+#     mkdir -p ~/.config/systemd/user
+#     cp /usr/lib/systemd/user/aq-ingest-watch.path ~/.config/systemd/user/
+#     # edit the PathChanged= line, then:
+#     systemctl --user daemon-reload
+#     systemctl --user restart aq-ingest-watch.path
+# ==============================================================================
+
+[Unit]
+Description=Watch the ingest folder for footage to make editor-ready
+Documentation=https://github.com/stoneharborent/aquarius-os/blob/main/docs/restart/ingest.md
+
+[Path]
+# %h is your home folder. PathChanged fires when a file in the folder is closed
+# after being written — which is the moment a copy finishes — as well as when
+# one is created or removed.
+PathChanged=%h/Videos/Ingest
+
+# Do not create the folder ourselves. `aq ingest watch on` makes it, and a unit
+# that silently creates folders in somebody's home is a unit you cannot
+# predict. A path unit whose folder does not exist is not an error: systemd
+# watches the nearest folder that does exist and starts paying attention the
+# moment the real one appears.
+MakeDirectory=false
+
+[Install]
+WantedBy=default.target

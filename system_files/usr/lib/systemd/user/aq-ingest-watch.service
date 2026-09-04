@@ -1,0 +1,29 @@
+# ==============================================================================
+# AquariusOS — make the newly arrived footage editor-ready
+# ==============================================================================
+# PLAIN ENGLISH
+#
+# The job that runs when something lands in the watch folder. It is started by
+# aq-ingest-watch.path — never on a timer, never at login — it does its work,
+# and it stops.
+#
+# It waits until each file has finished being copied before touching it. That
+# wait is inside /usr/libexec/aquarius-ingest-watch and is explained there.
+# ==============================================================================
+
+[Unit]
+Description=Make newly arrived footage editor-ready
+Documentation=https://github.com/stoneharborent/aquarius-os/blob/main/docs/restart/ingest.md
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/aquarius-ingest-watch --run
+
+# Converting video is the most processor-hungry thing this computer does. A
+# folder full of clips must never fight the editor you are actually using for
+# the machine, so this job takes what is left over and nothing more.
+Nice=10
+IOSchedulingClass=idle
+
+# A long card offload can legitimately take an hour. Do not shoot it.
+TimeoutStartSec=infinity

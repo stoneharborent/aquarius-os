@@ -1,0 +1,5 @@
+# Audacity — extra permissions granted by AquariusOS
+#
+# Recordings, music beds, and audio pulled off a recorder's SD card.
+[Context]
+filesystems=xdg-music;xdg-videos;/run/media;/media;/mnt;

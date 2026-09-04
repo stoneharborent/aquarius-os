@@ -1,0 +1,243 @@
+# ==============================================================================
+# AquariusOS — the creator apps that come with the operating system
+# ==============================================================================
+# PLAIN ENGLISH
+#
+# This file is a SHOPPING LIST. It does not install anything by itself. It says
+# "these apps are part of AquariusOS", and the first time the machine has an
+# internet connection a small service goes and fetches them.
+#
+# Every app on this list is a Flatpak — a self-contained app that comes from
+# Flathub, the Linux app store, and updates on its author's schedule instead of
+# ours. That is standing decision 4 of this project: creator apps ship as
+# Flatpaks, preinstalled, not baked into the operating system. It is why the
+# installer stays about four gigabytes instead of about fifteen, and it is why
+# a Blender release from next Tuesday reaches you next Tuesday.
+#
+# THE PRICE, SAID OUT LOUD: the apps are NOT inside the installer. On the first
+# boot, with a normal home connection, the machine spends roughly ten to twenty
+# minutes quietly downloading them in the background. You can use the computer
+# the whole time. A notification tells you what is happening and another one
+# tells you when it is done. If the machine is not online yet, nothing breaks
+# and nothing is lost — it tries again at the next start-up, forever, until the
+# list is satisfied.
+#
+# ------------------------------------------------------------------------------
+# THE FILE FORMAT — Flatpak's own, not something we invented
+# ------------------------------------------------------------------------------
+# `flatpak preinstall` is Flatpak's built-in support for exactly this job and
+# `.preinstall` files are its own format (`man flatpak-preinstall`). Flatpak
+# reads two folders:
+#
+#     /usr/share/flatpak/preinstall.d/   ours — this file
+#     /etc/flatpak/preinstall.d/         yours — overrides ours, per machine
+#
+# Each block's heading is an app's full Flathub ID. The keys are:
+#
+#     Install=true|false   whether to install it. Missing means true.
+#     Branch=stable        WHICH VERSION LINE. NOT OPTIONAL — see below.
+#     IsRuntime=true       set on plug-ins and runtime extensions, which are
+#                          not applications and are not found without it.
+#
+# ⚠️ Branch= IS NOT OPTIONAL. Leave it out and Flatpak looks for a branch
+#    called "master", which Flathub apps do not have, and the install quietly
+#    finds nothing at all. Every block below says Branch=stable except the one
+#    that genuinely lives on a different branch, which is commented where it is.
+#
+# ⚠️ A TYPO IN AN ID IS SILENT. Nothing appears, nothing complains. So the
+#    build asks Flathub, at build time, whether every ID below really exists
+#    (build_files/64-creator-apps.sh, "Ask Flathub whether these apps are real")
+#    and refuses to publish an image with a made-up name in this file.
+#
+# ------------------------------------------------------------------------------
+# HOW A PERSON REMOVES ONE OF THESE
+# ------------------------------------------------------------------------------
+# Open Software (the app store), find the app, press Uninstall. Or in a
+# terminal:
+#
+#     flatpak uninstall com.obsproject.Studio
+#
+# AND IT STAYS GONE. Flatpak remembers that you removed a preinstalled app and
+# never puts it back — that is a guarantee of `flatpak preinstall` itself, not
+# something we bolted on. The same is true of every app here. AquariusOS
+# suggests; it does not insist.
+#
+# To stop one being installed in the first place — on a machine you are setting
+# up for somebody else, say — write the opposite into your own copy:
+#
+#     sudo mkdir -p /etc/flatpak/preinstall.d
+#     printf '[Flatpak Preinstall org.blender.Blender]\nInstall=false\n' \
+#       | sudo tee /etc/flatpak/preinstall.d/00-local.preinstall
+#
+# ------------------------------------------------------------------------------
+# TO ADD AN APP
+# ------------------------------------------------------------------------------
+# Copy a block, change the ID, keep Branch=stable. Check the ID really exists
+# first: https://flathub.org/apps/<the-id> should load. Beware — that page
+# answers "yes" to almost anything, because it is drawn in your browser; the
+# honest test, and the one the build uses, is
+# https://flathub.org/api/v2/appstream/<the-id> which returns nothing at all
+# for a name that does not exist.
+#
+# The beginner write-up: docs/restart/creator-apps.md
+# ==============================================================================
+
+
+# ==============================================================================
+# VIDEO
+# ==============================================================================
+
+# OBS Studio — recording and live streaming. The one app on this list that
+# needs help from the operating system as well as from Flathub:
+#
+#   * the virtual camera (the button that makes OBS appear as a webcam in
+#     Zoom, Meet or a browser) needs a kernel module called v4l2loopback, which
+#     a Flatpak cannot install. AquariusOS ships it — build_files/62-virtual-
+#     camera.sh — and loads it at boot.
+#   * cameras and capture cards need permission that Flathub's default sandbox
+#     does not grant. AquariusOS grants it —
+#     /usr/share/aquarius/flatpak-overrides/com.obsproject.Studio.
+#
+# Screen capture needs neither: it goes through the desktop's screen-sharing
+# portal, which is part of the session floor (build_files/30-session.sh) and
+# was proved working on the bench on 2026-09-03.
+[Flatpak Preinstall com.obsproject.Studio]
+Branch=stable
+
+# Kdenlive — the free video editor. It is here as the everyday cutter that
+# opens anything: unlike the free DaVinci Resolve it reads H.264, H.265 and AAC
+# straight off a camera with no conversion at all. When Resolve refuses a file
+# and you do not want to wait for a conversion, this is the way in.
+[Flatpak Preinstall org.kde.kdenlive]
+Branch=stable
+
+
+# ==============================================================================
+# THE OBS PLUG-INS
+# ==============================================================================
+# A plug-in is not an application, so each of these needs IsRuntime=true. Get
+# that wrong and Flatpak looks for an app by that name, finds none, and says
+# nothing.
+#
+# These four are the ones a creator on Linux actually misses, and they are
+# nearly the same set that Bazzite — the gaming distribution with the largest
+# streaming audience on Linux — preinstalls for exactly this reason.
+# ------------------------------------------------------------------------------
+
+# OBS VkCapture — capture a game's own picture directly (Vulkan and OpenGL),
+# instead of capturing the screen and everything on top of it.
+[Flatpak Preinstall com.obsproject.Studio.Plugin.OBSVkCapture]
+Branch=stable
+IsRuntime=true
+
+# The other half of VkCapture, and THE PART EVERYONE FORGETS. This is a Vulkan
+# layer: the piece that sits inside the GAME and hands its frames over. Install
+# the plug-in without this and game capture silently records nothing.
+#
+# ⚠️ ITS BRANCH IS NOT "stable". A Vulkan layer belongs to a version of the
+#    Freedesktop runtime, and its branch is that version number. 25.08 is what
+#    Flathub publishes today and what Bazzite pins. When the Freedesktop
+#    runtime moves on, this line has to move with it — the build's Flathub
+#    check will tell you the ID is fine while the install quietly finds no such
+#    branch, so it is written down here as the thing to look at first if game
+#    capture stops arriving.
+[Flatpak Preinstall org.freedesktop.Platform.VulkanLayer.OBSVkCapture]
+Branch=25.08
+IsRuntime=true
+
+# PipeWire Audio Capture — capture ONE application's sound (the game, the
+# browser tab, the call) instead of everything the speakers are playing. On a
+# modern Linux desktop this is the plug-in that makes a stream mixable, and OBS
+# does not ship it built in.
+[Flatpak Preinstall com.obsproject.Studio.Plugin.PipeWireAudioCapture]
+Branch=stable
+IsRuntime=true
+
+# GStreamer — lets OBS record and stream through GStreamer's encoders as well
+# as its own.
+[Flatpak Preinstall com.obsproject.Studio.Plugin.Gstreamer]
+Branch=stable
+IsRuntime=true
+
+# GStreamer VA-API — hardware video encoding on AMD and Intel graphics, so
+# recording does not cost the processor. (On NVIDIA, OBS uses NVENC, which is
+# built in and needs no plug-in.)
+#
+# Note the capital S in "GStreamerVaapi" and the small s in "Gstreamer" above.
+# That is not a typo in this file: the two plug-ins really are spelled
+# differently on Flathub.
+[Flatpak Preinstall com.obsproject.Studio.Plugin.GStreamerVaapi]
+Branch=stable
+IsRuntime=true
+
+
+# ==============================================================================
+# AUDIO
+# ==============================================================================
+
+# Audacity — the quick one. Record a voiceover, top and tail a file, clean up
+# a hiss. What most video work actually needs from an audio program.
+[Flatpak Preinstall org.audacityteam.Audacity]
+Branch=stable
+
+# Ardour — the full multitrack studio, for when Audacity is not enough: a music
+# bed, a podcast with several microphones, a real mix.
+[Flatpak Preinstall org.ardour.Ardour]
+Branch=stable
+
+
+# ==============================================================================
+# PICTURES AND 3D
+# ==============================================================================
+
+# Krita — digital painting and illustration. Also the best free tool on Linux
+# for a hand-drawn thumbnail.
+[Flatpak Preinstall org.kde.krita]
+Branch=stable
+
+# GIMP — photo and image editing. The Photoshop-shaped hole.
+[Flatpak Preinstall org.gimp.GIMP]
+Branch=stable
+
+# Inkscape — vector drawing. Logos, titles, anything that has to stay sharp at
+# any size.
+[Flatpak Preinstall org.inkscape.Inkscape]
+Branch=stable
+
+# Blender — 3D, motion graphics and, quietly, one of the better video editors
+# on Linux. The biggest download on this list by a distance.
+[Flatpak Preinstall org.blender.Blender]
+Branch=stable
+
+
+# ==============================================================================
+# THE DESK
+# ==============================================================================
+
+# Obsidian — notes and writing in plain Markdown files. Listed here alongside
+# Aquarius Writer, which is built into the OS, because they are not the same
+# job: Writer is a studio for long-form work, Obsidian is where the rest of a
+# working life is written down.
+[Flatpak Preinstall md.obsidian.Obsidian]
+Branch=stable
+
+# LocalSend — send a file from your phone to this computer, and back, over your
+# own network. No cloud, no account, no cable. For a creator this is how
+# footage shot on a phone gets onto the machine in ten seconds.
+[Flatpak Preinstall org.localsend.localsend_app]
+Branch=stable
+
+# Google Chrome. Firefox is NOT on this list, and that is deliberate: Firefox
+# is installed as an ordinary system package (build_files/40-gnome-desktop.sh),
+# so it is in the image and works the moment the machine boots, with no
+# download at all. Chrome is here because plenty of creator tooling — upload
+# dashboards, Meet, some editors' web consoles — is written against it.
+#
+# ⚠️ Chrome is an odd one and it fails differently from everything else here.
+#    Flathub is not allowed to hand out Chrome itself, so the Flatpak is a
+#    small wrapper that downloads Google's own installer at install time. When
+#    Google removes an old build before Flathub catches up, this one app fails
+#    while everything else installs perfectly. The service handles exactly that:
+#    it installs what it can and tries the stragglers again at the next start.
+[Flatpak Preinstall com.google.Chrome]
+Branch=stable

@@ -1,0 +1,12 @@
+{
+  "pinned": [
+    "org.gnome.Nautilus.desktop",
+    "aquarius-editor.desktop",
+    "aquarius-writer.desktop",
+    "com.obsproject.Studio.desktop",
+    "org.kde.kdenlive.desktop",
+    "org.mozilla.firefox.desktop",
+    "org.gnome.Ptyxis.desktop",
+    "org.gnome.Settings.desktop"
+  ]
+}

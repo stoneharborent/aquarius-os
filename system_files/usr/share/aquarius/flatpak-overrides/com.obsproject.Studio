@@ -1,0 +1,21 @@
+# OBS Studio — extra permissions granted by AquariusOS
+#
+# devices=all
+#   Cameras, capture cards, and the virtual-camera device. Flathub's OBS asks
+#   only for `dri` (the graphics card), because most people stream a game.
+#   A creator plugs in a real camera or an Elgato-style capture card, and
+#   without this OBS shows an empty "Video Capture Device" list with no
+#   explanation. It is also what lets OBS WRITE to the virtual camera, so the
+#   "Start Virtual Camera" button works in Zoom, Meet and a browser.
+#   (The kernel side of that button is build_files/62-virtual-camera.sh.)
+#
+# filesystems
+#   Where recordings go and where footage comes from. NOT `host` — see the
+#   README in this folder.
+#
+# NOT here, on purpose: screen recording. That goes through the desktop's
+# screen-sharing portal, which needs no permission at all, and was proved
+# working on the bench on 2026-09-03.
+[Context]
+devices=all;
+filesystems=xdg-videos;xdg-music;xdg-pictures;/run/media;/media;/mnt;

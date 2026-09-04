@@ -1,0 +1,18 @@
+# Obsidian — extra permissions granted by AquariusOS
+#
+# A "vault" is just a folder of Markdown files, and Obsidian cannot open one it
+# is not allowed to see. Obsidian's Flathub permissions cover your home folder,
+# so a vault in Documents or anywhere else under home already works. These add
+# the two cases that otherwise fail with a confusing "cannot open folder":
+#
+#   * a vault on an external or second drive (/run/media, /media, /mnt)
+#   * a vault in a synced folder mounted outside home
+#
+# IF YOUR VAULT IS SOMEWHERE ELSE, add it yourself — this file is ours and the
+# next system update replaces it, so do not edit it. Do this instead:
+#
+#     flatpak override --user --filesystem=/path/to/your/vault md.obsidian.Obsidian
+#
+# A per-user override always wins over ours and is never touched by an update.
+[Context]
+filesystems=xdg-documents;/run/media;/media;/mnt;

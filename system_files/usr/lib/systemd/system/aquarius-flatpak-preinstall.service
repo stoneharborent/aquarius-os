@@ -1,0 +1,76 @@
+# ==============================================================================
+# AquariusOS — fetch the creator apps the first time this machine is online
+# ==============================================================================
+# PLAIN ENGLISH
+#
+# The operating system ships a shopping list of apps
+# (/usr/share/flatpak/preinstall.d/). Somebody has to actually go and get them.
+# On AquariusOS that somebody is this service.
+#
+# ------------------------------------------------------------------------------
+# WHY WE SHIP THIS AT ALL — Fedora does not
+# ------------------------------------------------------------------------------
+# This was checked rather than assumed, and the answer surprised us.
+#
+# `flatpak preinstall` is Flatpak's own built-in command for exactly this job,
+# and `/usr/share/flatpak/preinstall.d/` is Flatpak's own folder. Both are real,
+# both are documented (`man flatpak-preinstall`), and Fedora 44's flatpak
+# package (1.18.2) creates that folder for us.
+#
+# But Fedora's flatpak package ships NO SERVICE THAT EVER RUNS THE COMMAND.
+# Read its spec file: it installs flatpak-system-helper.service,
+# flatpak-portal.service, flatpak-add-fedora-repos.service — and nothing that
+# runs `flatpak preinstall`. On Fedora Workstation the app store does it. This
+# image has two sessions, one of which is our own desktop with no app store
+# running in the background, so waiting for somebody else to do it would mean a
+# machine that never installs the apps it advertises.
+#
+# So AquariusOS supplies the one missing piece: the trigger. Everything else —
+# the file format, the reading of it, the installing, and the rule that a
+# removed app stays removed — is Flatpak's, not ours. We did not invent a
+# mechanism; we started the one that was already there.
+#
+# It is a "oneshot": it runs, it finishes, it stays finished. It is not a
+# background process eating memory forever.
+# ==============================================================================
+
+[Unit]
+Description=Install the AquariusOS creator apps (Flatpaks)
+Documentation=man:flatpak-preinstall(1)
+Documentation=https://github.com/stoneharborent/aquarius-os/blob/main/docs/restart/creator-apps.md
+
+# Downloading apps needs the internet, so wait for it. On a machine that is
+# never connected this service simply keeps deferring — it never breaks a boot
+# and it never blocks a login.
+Wants=network-online.target
+After=network-online.target
+
+# The flatpak system helper is what actually performs a system-wide install.
+After=flatpak-system-helper.service
+
+# Nothing to do on a system without Flatpak.
+ConditionPathExists=/usr/bin/flatpak
+
+# If it fails — which almost always means "no internet yet" — keep trying
+# rather than giving up after five goes, which is systemd's default and is
+# exactly wrong for "wait until this laptop meets some Wi-Fi".
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/aquarius-flatpak-preinstall
+Restart=on-failure
+RestartSec=120
+
+# Downloading several gigabytes over a slow connection must never be killed
+# half way by a stopwatch.
+TimeoutStartSec=infinity
+
+# Be a good neighbour. This runs while somebody is trying to use their new
+# computer, so it takes the processor and the disk only when nothing else
+# wants them.
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,6 @@
+# Ardour — extra permissions granted by AquariusOS
+#
+# Sessions and sample libraries are routinely kept on a second drive, and
+# multitrack recordings come off field recorders on SD cards.
+[Context]
+filesystems=xdg-music;xdg-videos;/run/media;/media;/mnt;
