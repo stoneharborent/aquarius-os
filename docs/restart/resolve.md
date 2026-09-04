@@ -566,11 +566,16 @@ paints nothing itself is an AquariusOS-coloured window in both themes for free.
 `branding/tokens.md` stays the law for anything that ever does need a literal
 colour.
 
-**Packages.** `python3-gobject` is added by `build_files/62-resolve-runtime.sh`
-— a megabyte or two with `python3-cairo`, and the only one of the three that
-GNOME does not already bring in. `gtk4` and `libadwaita` arrive with GNOME at
-step 40 and are named there anyway, so that dropping GNOME from an image variant
-fails in the step whose name says why they matter.
+**Packages.** `build_files/62-resolve-runtime.sh` asks for `gtk4`, `libadwaita`
+and `python3-gobject` by name. All three are already in the image and the size
+this adds is **zero** — the first two come in with GNOME at step 40, and
+`python3-gobject` arrives as a dependency of GDM's transaction at step 30.
+
+That is the point of asking. Nothing wanted any of them on purpose, so the
+flagship feature of this operating system rests on three packages that are here
+by accident, and an accident can be undone by a change to a completely different
+step. Named here, that change fails in this step instead of shipping an icon
+that does nothing when clicked.
 
 ### Why Rocky 9 and not Rocky 10
 

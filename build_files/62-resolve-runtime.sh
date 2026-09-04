@@ -177,17 +177,17 @@ fi
 #                automatic light/dark behaviour comes from, which is why the
 #                window needs no colours of its own.
 #   python3-gobject
-#                the bridge between Python and the two above. THIS IS THE ONE
-#                THAT IS NOT ALREADY HERE. gtk4 and libadwaita arrive with
-#                GNOME at step 40; python3-gobject does not, because the only
-#                thing that pulled anything like it in was nautilus-python,
-#                which needs the smaller python3-gobject-base and stops there.
-#                It is a small package — a megabyte or two with python3-cairo —
-#                and it is the price of the feature not looking like a terminal.
+#                the bridge between Python and the two above.
 #
-# Naming all three rather than only the missing one is deliberate: if a future
-# change ever drops GNOME from an image variant, this fails HERE, in the step
-# whose name says why they matter, instead of on somebody's desk.
+# ⚠️ ALL THREE ARE ALREADY IN THIS IMAGE — AND THAT IS EXACTLY WHY THEY ARE
+# NAMED HERE. Nothing asked for any of them on purpose. gtk4 and libadwaita
+# come in with GNOME at step 40, and python3-gobject arrives as a dependency of
+# GDM's own transaction at step 30. So the size this line adds today is zero,
+# and what it buys instead is a DECLARATION: the flagship feature of this
+# operating system currently rests on three packages that are here by accident,
+# and an accident can be undone by a change to a completely different step. Ask
+# for them by name and that change fails here, in the step whose name says why
+# they matter, instead of on somebody's desk.
 say "DaVinci Resolve — what the installer window is built out of"
 aq_dnf install python3-gobject gtk4 libadwaita
 aq_installed python3-gobject gtk4 libadwaita
