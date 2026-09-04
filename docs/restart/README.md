@@ -150,6 +150,7 @@ after it.
 | `75-aquarius-keys.sh` | Mac-style keyboard shortcuts, on by default — Copy is Command-C. Installs what the step above built, and checks the whole feature. Plain-language guide: [`aquarius-keys.md`](aquarius-keys.md). |
 | `62-virtual-camera.sh` | The fake webcam behind OBS Studio's "Start Virtual Camera" button. Takes a ready-made, already-signed kernel module from Universal Blue. ⚠️ Must run after `60-nvidia.sh`, which sometimes replaces this image's kernel. If the module and our kernel do not match it leaves the feature out and writes down why, rather than shipping something that cannot work. |
 | `64-creator-apps.sh` | **The creator layer.** Bakes Aquarius Editor and Aquarius Writer into the image, checks the list of creator Flatpaks against Flathub, validates the extra permissions those apps need, switches the permissions service on (and deliberately leaves the bulk app installer OFF, because the chooser at first login asks the person which apps they want), and promotes the ingest helper. The biggest and slowest step. See [`creator-apps.md`](creator-apps.md). |
+| `66-creator-apps-chooser.sh` | **The window that offers those apps to a person** — "Your creator apps" at the first login, "Aquarius Apps" in the app grid afterwards. Installs what a GTK window needs to run from Python, checks both menu entries, checks that nothing installs itself any more, and — the check that matters — reads the real list in the finished image with the window's own parser. See [`creator-apps.md`](creator-apps.md). |
 | `80-boot-branding.sh` | Everything you see BEFORE the login screen: the Aquarius boot splash, the name in the boot menu, the text login banners — and a rebuild of the boot ramdisk, without which none of it takes effect. ⚠️ Must run after `60-nvidia.sh`; see [`boot-branding.md`](boot-branding.md). |
 | `90-cleanup.sh` | Sweeps up, and refuses to ship an image with two kernels in it. |
 
@@ -181,13 +182,16 @@ which are GNOME's factory settings replaced with ours. Each one has a long
 plain-English header explaining what it does and, more usefully, what it
 deliberately does *not* do.
 
-Three more worth knowing about, all added in R3b:
+A few more worth knowing about, all added in R3b:
 
 | Path | What it is |
 | --- | --- |
 | `usr/share/flatpak/preinstall.d/aquarius-creator-apps.preinstall` | The shopping list of creator apps. Adding or removing an app is a one-block edit here. |
 | `usr/share/aquarius/flatpak-overrides/` | The extra permissions those apps need — a camera for OBS, an external drive for Kdenlive. Its `README.md` explains why they cannot simply be shipped where Flatpak reads them. |
 | `etc/skel/.config/aquarius-shell/dock.json` | What a brand-new account finds pinned to the Aquarius Desktop's dock. |
+| `usr/libexec/aquarius-creator-apps` | **The app chooser window.** Opens itself once at the first login, and lives in the app grid as "Aquarius Apps". Knows no app names of its own — it reads them from the two files above. |
+| `usr/libexec/aquarius-creator-apps-install` | The part that actually installs, one app at a time, as an administrator. The window starts it through `pkexec`, which is where the single password prompt comes from. |
+| `etc/xdg/autostart/aquarius-creator-apps-firstrun.desktop` | What opens the chooser at a first GNOME login. ⚠️ The Aquarius session needs the same thing said again, at the end of `usr/share/aquarius/labwc/autostart`, because labwc does not read this folder at all. |
 
 ---
 
