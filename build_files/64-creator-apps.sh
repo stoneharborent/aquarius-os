@@ -779,16 +779,38 @@ PYEOF
     fi
 done
 
-# ⚠️ LEAVE NO FLATPAK STATE IN /var. Step 3 checks for exactly this, because a
-#    remote or an override written into /var during a build is silently
-#    discarded on first boot and would make somebody think it had worked.
-# Only our own scratch folder is removed, and only if it is empty. /var/lib/
-# flatpak itself belongs to the flatpak package and is left exactly as it was.
-rmdir "${AQ_SCRATCH}" 2> /dev/null || true
-if [ -e /var/lib/flatpak/repo/config ]; then
-    bad "Flatpak state was left behind in /var — it is discarded on first boot"
+# ------------------------------------------------------------------------------
+# ⚠️ PUT /var BACK EXACTLY AS WE FOUND IT
+# ------------------------------------------------------------------------------
+# THIS BLOCK IS NOT HOUSEKEEPING. It is the price of the check above, and the
+# first build of this step failed on it, which is the check doing its job.
+#
+# Asking Flatpak to really interpret a permission file makes Flatpak set itself
+# up first, and setting itself up means creating its system repository at
+# /var/lib/flatpak/repo. That is state, in /var, made during a build.
+#
+# On this operating system /var belongs to the MACHINE, not to the image.
+# Anything left there is shipped once, written to disk on the first boot, and
+# then becomes a fossil that no future image can ever remove — so both
+# 30-session.sh and 90-cleanup.sh refuse to ship an image with Flatpak state in
+# it, and they are right to.
+#
+# So the folder is emptied back to what the flatpak package ships: an empty
+# /var/lib/flatpak. Emptied rather than deleted, because the directory itself
+# belongs to that package.
+say "Putting /var back as we found it"
+if [ -d /var/lib/flatpak ]; then
+    echo "What the permission check left behind:"
+    find /var/lib/flatpak -mindepth 1 -maxdepth 1 -printf '  %f\n' 2> /dev/null || true
+    find /var/lib/flatpak -mindepth 1 -delete 2> /dev/null || true
+fi
+
+AQ_VAR_LEFTOVERS="$(find /var/lib/flatpak -mindepth 1 2> /dev/null | head -5 || true)"
+if [ -z "${AQ_VAR_LEFTOVERS}" ]; then
+    ok "no Flatpak state left in /var (correct — an image must ship none)"
 else
-    ok "no Flatpak state left in /var (correct)"
+    bad "Flatpak state is still in /var, and it would be shipped and then be unremovable:"
+    printf '%s\n' "${AQ_VAR_LEFTOVERS}" | sed 's/^/       /'
 fi
 
 # ==============================================================================
@@ -952,5 +974,25 @@ install -d -m 0755 /usr/share/aquarius
 } > /usr/share/aquarius/creator-apps.txt
 chmod 0644 /usr/share/aquarius/creator-apps.txt
 cat /usr/share/aquarius/creator-apps.txt | sed 's/^/       /'
+
+# ------------------------------------------------------------------------------
+# One last sweep of /var, on the way out
+# ------------------------------------------------------------------------------
+# The clean-up after the permission check is not enough on its own, because any
+# `flatpak` command AFTER it could set the repository up again. Rather than
+# reason about which flatpak commands do that, the last thing this step does is
+# look, and empty it if there is anything there. Cheap, and it cannot be got
+# wrong by somebody adding a line later.
+if [ -n "$(find /var/lib/flatpak -mindepth 1 2> /dev/null | head -1 || true)" ]; then
+    echo "A later command put Flatpak state back into /var. Emptying it again:"
+    find /var/lib/flatpak -mindepth 1 -maxdepth 1 -printf '  %f\n' 2> /dev/null || true
+    find /var/lib/flatpak -mindepth 1 -delete 2> /dev/null || true
+fi
+if [ -z "$(find /var/lib/flatpak -mindepth 1 2> /dev/null | head -1 || true)" ]; then
+    ok "this step ships no Flatpak state in /var"
+else
+    bad "Flatpak state remains in /var and would be shipped into the image"
+    find /var/lib/flatpak -mindepth 1 2> /dev/null | head -10 | sed 's/^/       /'
+fi
 
 aq_finish "The creator layer"
