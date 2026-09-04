@@ -2,10 +2,9 @@
 # ==============================================================================
 # Aquarius Editor — launcher
 # ==============================================================================
-# Plain English: the real program lives in /usr/lib/aquarius/aquarius-editor/,
-# which is a folder full of files nobody should have to know about. This is the
-# friendly front door: typing `aquarius-editor` in a terminal, or clicking the
-# icon in the app grid, both end up here.
+# Plain English: the real program lives in a folder full of files nobody should
+# have to know about. This is the friendly front door: typing `aquarius-editor`
+# in a terminal, or clicking the icon in the app grid, both end up here.
 #
 # The generic work — checking the app is really runnable, keeping a log, and
 # putting a real error on screen if it fails — is shared with Aquarius Writer
@@ -15,12 +14,65 @@
 # What is left HERE is the part that is true of this app and no other: Aquarius
 # Editor is an Electron app, and Electron has one specific way of refusing to
 # start that produces no window and no message.
+#
+# ------------------------------------------------------------------------------
+# ⚠️ WHERE THE APP LIVES — CHANGED 2026-09-04
+# ------------------------------------------------------------------------------
+# It used to be baked into the image at /usr/lib/aquarius/aquarius-editor. It is
+# not any more. Aquarius Editor is four gigabytes, and baking it in made every
+# download of AquariusOS four gigabytes bigger for everybody, including the
+# people who will never open it. It is now the first card in the app chooser —
+# ticked when the window opens — and it installs into the person's own home
+# folder, which needs no password.
+#
+# So this launcher looks in ~/.local/lib/aquarius/aquarius-editor instead of in
+# /usr/lib/aquarius/aquarius-editor. That folder is deliberately shaped exactly
+# like the old one, which is why everything below this line — the update
+# overlay, the sandbox handling, the shared launcher — is unchanged.
+#
+# Aquarius Writer is still baked in. It is about 260 MB, which is not worth
+# asking anybody a question about.
 # ==============================================================================
 
 set -u
 
 APP_ID="aquarius-editor"
-APPDIR="/usr/lib/aquarius/${APP_ID}"
+
+# The folder the app is installed into, which is the person's own, not the
+# system's. It mirrors /usr/lib/aquarius exactly — see the long note at the top
+# of /usr/libexec/aquarius-appimage-install for why that shape was chosen.
+APP_PARENT="${HOME:-}/.local/lib/aquarius"
+APPDIR="${APP_PARENT}/${APP_ID}"
+
+# ------------------------------------------------------------------------------
+# IS IT INSTALLED AT ALL?
+# ------------------------------------------------------------------------------
+# The menu entry lives in the person's own applications folder and arrives with
+# the app, so in normal life a missing app means a missing icon and this branch
+# is never reached. It is reached in exactly two situations, and both deserve a
+# sentence rather than a shrug:
+#
+#   * somebody types `aquarius-editor` in a terminal without having installed it
+#   * the app is pinned to the dock — which it is, in both desktops, on purpose,
+#     so that the icon appears the moment it is installed — and the desktop lets
+#     a pinned entry be clicked before its files are there.
+#
+# Both get told the same thing, in the same words, in the place they are looking:
+# a terminal gets the sentence on the terminal, a click gets a notification.
+if [ ! -d "${APPDIR}" ] || [ ! -e "${APPDIR}/AppRun" ]; then
+    MSG="Aquarius Editor is not installed on this account yet. Open Aquarius Apps, tick Aquarius Editor and press Install. It is about a four gigabyte download."
+    echo "aquarius-editor: ${MSG}" >&2
+    echo "aquarius-editor: or, in a terminal:  aq apps install os.aquarius.editor" >&2
+    if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v notify-send > /dev/null 2>&1; then
+        notify-send --app-name="Aquarius Editor" --icon=aquarius-logo \
+            "Aquarius Editor is not installed yet" "${MSG}" > /dev/null 2>&1 || true
+        # And open the window they are being sent to, rather than only naming it.
+        if [ -x /usr/libexec/aquarius-creator-apps ]; then
+            setsid /usr/libexec/aquarius-creator-apps > /dev/null 2>&1 &
+        fi
+    fi
+    exit 1
+fi
 
 # ------------------------------------------------------------------------------
 # IS THERE A NEWER COPY IN YOUR HOME FOLDER?
@@ -49,12 +101,21 @@ APPDIR="/usr/lib/aquarius/${APP_ID}"
 #
 # If the file is missing for any reason we simply carry on with the built-in
 # copy: no updates, but the app still starts, which is the important half.
+#
+# ⚠️ THE SECOND ARGUMENT IS THE 2026-09-04 CHANGE, AND IT IS THE WHOLE OF IT.
+# That library was written to compare a copy in a home folder against a copy
+# baked into the image, and it takes "the folder the installed apps live in" as
+# an argument precisely so its own tests can point it elsewhere. Aquarius Editor
+# is no longer in the image, so it is handed the folder the app chooser installs
+# into instead. Nothing else about the arrangement changes: the version
+# comparison, the "is a downloaded update genuinely newer" rule and the clean-up
+# of superseded copies all behave exactly as they did.
 AQ_INSTALL_ROOT="$APPDIR"
 AQ_LAUNCH_NOTES=""
 if [ -r /usr/libexec/aquarius-app-overlay ]; then
     # shellcheck source=../libexec/aquarius-app-overlay
     . /usr/libexec/aquarius-app-overlay
-    aq_overlay_prepare "$APP_ID"
+    aq_overlay_prepare "$APP_ID" "$APP_PARENT"
     APPDIR="$AQ_INSTALL_ROOT"
 else
     AQ_LAUNCH_NOTES="update overlay: /usr/libexec/aquarius-app-overlay is missing from this system, so no check for a downloaded update was made. Starting the copy built into AquariusOS."
@@ -84,25 +145,21 @@ fi
 # and exits. Clicked from the app grid there is no terminal for that sentence to
 # appear in, so what a person sees is: nothing.
 #
-# The image build sets that file to root:root 4755, the build checks it, and the
-# finished image is checked again after packaging (the "Verify creator apps" step
-# in .github/workflows/build-next.yml). The published image of 2026-08-28 was
-# taken apart to confirm the bit really does survive packaging: it reads
-# -rwsr-xr-x root root, so all of that machinery is working.
+# ⚠️ SINCE 2026-09-04 THIS BLOCK FIRES EVERY SINGLE TIME, AND THAT IS EXPECTED.
+# The app is no longer baked into the image by a build running as root; it is
+# unpacked into your own home folder, by you, and ONLY ROOT CAN MAKE A FILE
+# SETUID. So its chrome-sandbox is always an ordinary file, and without these
+# lines Aquarius Editor would be a dead icon on every machine.
 #
-# This check is therefore not expected to fire ON THE BUILT-IN COPY. It is here
-# because this is a LAUNCHER: its job is that the app starts on the machine in
-# front of it, not that everything went well somewhere else three weeks ago —
-# and because the failure it guards against is the silent kind, which is the kind
-# worth spending four lines on.
+# That costs nothing real. Chromium has preferred the newer user-namespace
+# sandbox since 2015 and only consults the setuid helper when user namespaces
+# are unavailable, which on this image they are not — an ordinary Fedora kernel
+# with unprivileged user namespaces switched on. The app is sandboxed either
+# way; only the mechanism differs.
 #
-# ⚠️ ON A DOWNLOADED UPDATE IT IS EXPECTED TO FIRE, EVERY TIME. That copy is
-# unpacked in your home folder by the app itself, running as you, and only root
-# can make a file setuid — so its chrome-sandbox is always an ordinary file. This
-# block is what stops that from being a dead icon: it notices, skips the old
-# mechanism, and the app runs on the modern user-namespace sandbox exactly as the
-# built-in copy does. That is why the folder was worked out further up, before
-# this line.
+# Until this change the same block existed for the copy the app downloads for
+# ITSELF into your home folder, which has always had the same limitation. It is
+# now simply the normal path rather than the unusual one.
 #
 # If the helper is not set up correctly we do NOT reach for --no-sandbox, which
 # would turn the sandbox off altogether. We pass --disable-setuid-sandbox, which

@@ -10,18 +10,45 @@ rather than a nicely branded Fedora.
 
 ## The one idea to hold on to
 
-There are **two ways** an app gets onto this machine, and which one an app gets
-is a real decision.
+There are **three ways** an app gets onto this machine, and which one an app
+gets is a real decision.
 
 | | Which apps | Why |
 | --- | --- | --- |
-| **Baked in** | Aquarius Editor, Aquarius Writer | They are ours. They are on no app store. They are part of the operating system the way the file manager is, and they work on a computer that has never been online. |
-| **Offered** | OBS Studio, Kdenlive, Krita, GIMP, Inkscape, Blender, Ardour, Audacity, Obsidian, LocalSend, Google Chrome, and five OBS plug-ins | They come from Flathub, the Linux app store. AquariusOS suggests them; **you choose which ones you actually want**, in a window at your first login. |
+| **Baked in** | Aquarius Writer | It is ours, it is on no app store, and it is about 260 MB — small enough not to be worth asking about. It is part of the operating system the way the file manager is, and it works on a computer that has never been online. |
+| **Offered, and it is ours** | Aquarius Editor | Also ours, also on no app store — but **about four gigabytes**, because it carries its speech-recognition and footage-analysis models inside it so it can transcribe with no internet. It is a card in the app chooser, **ticked when the window opens**, and it installs into **your own home folder** — so it asks for no password at all. |
+| **Offered, from Flathub** | OBS Studio, Kdenlive, Krita, GIMP, Inkscape, Blender, Ardour, Audacity, Obsidian, LocalSend, Google Chrome, and five OBS plug-ins | They come from Flathub, the Linux app store. AquariusOS suggests them; **you choose which ones you actually want**, in the same window. These are installed for the whole computer, so they ask for your password once. |
 
-Firefox is neither: it is an ordinary system package, so it is *inside* the
-image and works from the very first second, with nothing to download.
+Firefox is none of the three: it is an ordinary system package, so it is
+*inside* the image and works from the very first second, with nothing to
+download.
 
 Nobody has to open a terminal for any of it.
+
+### ⚠️ Aquarius Editor changed on 2026-09-04, and this is why
+
+It used to be baked in. It is 4.1 GB unpacked, and baking it in meant that
+**every** download of AquariusOS was four gigabytes bigger — for everybody,
+including the people who will never open it. The base image was 11.1 GB and the
+NVIDIA one 14.2 GB, and roughly four of those gigabytes were one app.
+
+Royce's call: it becomes a download. It is still the flagship, so it is the
+first card on the Video shelf and it is **ticked when the chooser opens** — but
+it is a tick, and it can be unticked.
+
+What that buys: the base image drops to roughly **7 GB** and the NVIDIA one to
+roughly **10 GB**, and the installer ISO with it.
+
+What it costs, said honestly:
+
+- Somebody who wants the Editor waits for a four-gigabyte download the first
+  time, instead of having it already.
+- Each person on a shared computer gets their own copy, because it lives in
+  their own home folder rather than in the system.
+- The version is pinned by the operating system — see
+  [Which version of Aquarius Editor](#which-version-of-aquarius-editor) — so a
+  new Editor arrives with a system update rather than the moment it is
+  published.
 
 ---
 
@@ -38,23 +65,44 @@ source of truth, and one command that reads it:
 ```
 
 It needs no special powers, changes nothing, and prints **one line per app**,
-fields separated by a **single tab character**, always **eight fields**, always
-in this order:
+fields separated by a **single tab character**, the first **nine** always
+present, always in this order:
 
 | # | Field | Example |
 | --- | --- | --- |
 | 1 | id | `com.obsproject.Studio` |
 | 2 | name | `OBS Studio` |
 | 3 | description | one sentence, never contains a tab |
-| 4 | category | one of `Video` `Audio` `Design` `Streaming` `Utilities` |
+| 4 | category | one of `Video` `Audio` `Design` `Streaming` `Utilities` `Gaming` |
 | 5 | recommended | `recommended:yes` or `recommended:no` |
 | 6 | runtime | `runtime:yes` or `runtime:no` |
 | 7 | requires | `requires:com.obsproject.Studio`, or `requires:-` |
 | 8 | branch | `branch:stable` |
+| 9 | type | `type:flatpak` or `type:appimage` |
 
-Fields 5–8 carry their own name as a prefix, so a reader can assert it is
-reading the field it thinks it is, and so that a ninth field added one day
-cannot be mistaken for one of these.
+Field 9 was added on 2026-09-04. **Fields 1–8 did not move**, which is the
+point: a program written against the old contract keeps working, reads eight
+fields, ignores the rest, and treats everything as a Flatpak — which is what
+every entry was until that day.
+
+A `type:appimage` line — one of our own apps — carries **four more fields**:
+
+| # | Field | Example |
+| --- | --- | --- |
+| 10 | source | `source:stoneharborent/aquarius-editor` — the GitHub repository |
+| 11 | pin | `pin:v0.7.2` — the exact release this OS offers |
+| 12 | asset | `asset:*.AppImage` — which file in that release is the app |
+| 13 | sha256sums | `sha256sums:SHA256SUMS.txt` — the fingerprints published beside it |
+
+Every field from the fifth on carries its own name as a prefix, so a reader can
+assert it is reading the field it thinks it is, and so that a field added one
+day cannot be mistaken for one of these. **Read them by name, never by
+position.**
+
+**The catalog is the union of two files.** The Flatpak shopping list holds only
+Flatpaks; Aquarius Editor is not one, so it has no block there at all and its
+whole description lives in `catalog.ini` marked `Type=appimage`. `--catalog`
+prints both. `--list` prints the Flatpaks alone; `--list-appimage` prints ours.
 
 **Four rules for whoever draws the window:**
 
@@ -217,20 +265,39 @@ it. *(Both fixed on 2026-09-04 after Royce's bench test: this page used to be
 blank at the top — it was built from a widget that cannot show the logo — and
 its main button offered whichever app happened to install first.)*
 
-### One password prompt, at the moment you press Install
+### One password prompt at most, at the moment you press Install
 
 The window has no special powers of its own. When you press Install it runs
-`/usr/libexec/aquarius-creator-apps-install` through `pkexec`, which is the
-standard Linux "may I?", and you are asked for your password **once**, for the
-whole run. That script does the installing, one app at a time, and reports back
-on two channels: the human words go into **Details** unchanged, and short
-structured lines (`STEP`, `PERCENT`, `OK`, `FAILED`, `DONE`) move the ticks and
-the bar.
+**one or two** installers, one after the other, depending on what you ticked:
 
-The apps are installed **for the whole computer**, not just your account. That
-is why permission is needed at all, and it is the right way round: the extra
-permissions creator apps need are shipped as system-wide overrides, and
-`aq apps status` reports on the system installation. One place, one answer.
+| What you ticked | What runs | Password? |
+| --- | --- | --- |
+| Only Flathub apps | `/usr/libexec/aquarius-creator-apps-install` through `pkexec` | **once**, for the whole run |
+| Only Aquarius Editor | `/usr/libexec/aquarius-appimage-install`, as you | **none at all** |
+| Both | the Flathub one first, then ours | **once**, at the start |
+
+The Flathub apps are installed **for the whole computer**, not just your
+account. That is why permission is needed at all, and it is the right way
+round: the extra permissions creator apps need are shipped as system-wide
+overrides, and `aq apps status` reports on the system installation. One place,
+one answer.
+
+Aquarius Editor goes into **your own home folder** and touches nothing outside
+your account, so asking for an administrator password would be theatre. It is
+also the safer route: a password prompt needs something on screen able to draw
+it, and that is the one part of this feature that has actually failed on the
+bench (see the box below).
+
+Both installers report on the same two channels: the human words go into
+**Details** unchanged, and short structured lines (`STEP`, `PERCENT`, `OK`,
+`FAILED`, `DONE`) move the ticks and the bar.
+
+> **Why the bar does not jump backwards when two installers run.** Each is told
+> `--step-offset` and `--step-total` — "your apps are steps 1 and 2 of 3" — so
+> the numbering and the bar run straight through the whole job instead of
+> starting again at one half way. The Flathub half goes first on purpose: the
+> password moment then arrives while you are still looking at the screen, not
+> twenty minutes into a download.
 
 > **⚠️ This is what failed on the bench on 2026-09-04, and it is now fixed.** A
 > password prompt needs something to draw it — a "permission agent". GNOME has
@@ -365,28 +432,107 @@ abilities to OBS.
 
 ## The two Aquarius apps
 
-**Aquarius Editor v0.7.2** and **Aquarius Writer v0.5.5** are downloaded during
-the *build*, checked against the fingerprints GitHub published with them,
-unpacked, and put inside the image. By the time you install AquariusOS they are
-already there.
+### Aquarius Writer v0.5.5 — baked in
 
-Three details worth knowing:
+Downloaded during the *build*, checked against the fingerprints GitHub
+published with it, unpacked, and put inside the image. By the time you install
+AquariusOS it is already there, and it works on a computer that has never been
+online.
 
-- **They are unpacked, not left as AppImages.** An AppImage normally mounts
+- **It is unpacked, not left as an AppImage.** An AppImage normally mounts
   itself every time it runs, using a system component called FUSE, and when
   FUSE is missing the app dies with a message nobody can act on. Unpacked,
   there is nothing to go missing.
-- **They can update themselves.** `/usr` is read-only on this operating system,
-  so the built-in copy can never change in place. Instead each app may download
-  a newer copy of itself into your home folder, and at every launch the
-  operating system decides which of the two is newer and starts that one. If
-  the downloaded one is broken, it quietly falls back to the built-in one — a
-  bad download must never leave you with a dead icon.
-- **Aquarius Editor draws sharply on a 4K screen.** Electron apps normally go
-  through a compatibility layer that cannot scale by a fraction, so at 125% or
-  150% they look faintly out of focus. AquariusOS sets
-  `ELECTRON_OZONE_PLATFORM_HINT=auto`, which fixes it, and falls back safely on
-  a machine that is not running Wayland.
+- **It can update itself.** `/usr` is read-only on this operating system, so the
+  built-in copy can never change in place. Instead the app may download a newer
+  copy of itself into your home folder, and at every launch the operating
+  system decides which of the two is newer and starts that one. If the
+  downloaded one is broken, it quietly falls back to the built-in one — a bad
+  download must never leave you with a dead icon.
+
+### Aquarius Editor v0.7.2 — a download, since 2026-09-04
+
+Not in the image. It is a card in the app chooser, ticked when the window
+opens, and this is what happens when you install it.
+
+**Where it goes**
+
+```
+~/.local/lib/aquarius/
+├── versions/aquarius-editor/0.7.2/    the app itself
+└── aquarius-editor -> versions/aquarius-editor/0.7.2
+
+~/.local/share/applications/aquarius-editor.desktop    the menu entry
+~/.local/share/icons/hicolor/…/aquarius-editor.png     the icon
+```
+
+That folder is a deliberate mirror of `/usr/lib/aquarius`, where the baked-in
+apps live. It is what lets `/usr/bin/aquarius-editor` — which is still in the
+image, and is still what the menu entry and the docks point at — keep using the
+operating system's existing update machinery without a single change to it.
+
+The version is in the path with a link on top for one reason: **an update must
+never leave a half-written app where a working one used to be.** The new
+version is unpacked beside the old one under its own name, and only then does
+the link move, which is instantaneous. If a download dies half way through, the
+link never moves and the app you have keeps working.
+
+**What the install actually does**, in order: fetch the fingerprints (a few
+hundred bytes, so a release that does not exist is found in one second rather
+than after four gigabytes) → download the app, with the percentage on screen →
+**check it against its fingerprint before unpacking a single byte** → unpack →
+fix the permissions → write the version stamp → move it into place → move the
+link → write the menu entry and icon → **read back the version it just claims
+to have installed**. Nothing is ever called finished because a command exited
+zero.
+
+**About the Electron sandbox.** Aquarius Editor is an Electron app, and Electron
+can sandbox itself two ways: a modern one that needs nothing special, and an old
+one that needs a file marked "setuid", which only an administrator can do.
+Installed into your home folder, by you, the old one is impossible — so the
+launcher notices, tells Electron not to consider it, and the app runs on the
+modern sandbox. **The app is sandboxed either way**; only the mechanism is
+different. (This matters because when the old helper is present and wrong,
+Electron does not shrug — it aborts, silently, with no window at all.)
+
+**It draws sharply on a 4K screen.** Electron apps normally go through a
+compatibility layer that cannot scale by a fraction, so at 125% or 150% they
+look faintly out of focus. AquariusOS sets `ELECTRON_OZONE_PLATFORM_HINT=auto`,
+which fixes it, and falls back safely on a machine that is not running Wayland.
+
+**Removing it** frees about four gigabytes and leaves your projects and settings
+alone:
+
+```
+aq apps remove os.aquarius.editor
+```
+
+...or press **Remove** on its card in Aquarius Apps. Either way there is no
+password prompt.
+
+### Which version of Aquarius Editor
+
+AquariusOS offers **one chosen version at a time** — the `Pin=` line of the
+`[os.aquarius.editor]` block in
+`/usr/share/aquarius/apps/catalog.ini`. A newer Editor therefore reaches you
+with a **system update**, not the moment it is published on GitHub.
+
+That is deliberate. It means everybody running one image is running one build,
+and a release with a bad bug in it cannot reach anybody before it has been
+looked at. The build checks that the pinned release really exists and really
+publishes a fingerprint file, so a wrong pin fails the build rather than
+failing on your machine.
+
+```
+aq apps update            # do I have the version this OS offers?
+```
+
+If GitHub has something newer than the pin, that command says so as a note,
+and explains that it will arrive with a system update.
+
+**Changing the pin** is one line in `catalog.ini` and a build. It is meant to be
+a deliberate act, exactly like the pinned commits at the top of the
+`Containerfile`.
 
 ---
 
@@ -429,6 +575,20 @@ and forever on a machine that is never online. They appear in the app grid the
 moment they finish installing, and you can drag any of them to the dock.
 
 The two docks are allowed to differ, and that is why.
+
+> **⚠️ Aquarius Editor is pinned to both docks and is not in the image, and
+> that is on purpose.** Since 2026-09-04 it installs into your own home folder,
+> so its menu entry lives in `~/.local/share/applications/` rather than in the
+> system's applications folder. Neither dock draws a name it cannot find — no
+> gap, no dead square, no error — so before you install it there is simply
+> nothing there, and **the moment you install it the icon appears in the seat
+> it has always had**, with no logging out and nothing to drag.
+>
+> The build normally fails if a pinned name is not a real file in the image,
+> because a typo there is otherwise completely silent. This one name is the
+> single, explicitly-listed exception —
+> `build_files/50-aquarius-desktop.sh` and the CI check both name it and both
+> say why — so a genuine typo in any other name still fails the build.
 
 ---
 
@@ -574,10 +734,13 @@ The chooser at first login is the main way to pick. Afterwards, this is the
 same job typed out:
 
 ```
-aq apps list                     what is suggested, and what you have
-aq apps status                   how many you have, and what to do if some are missing
-aq apps install org.kde.krita    add one you skipped
-aq apps install --all            everything on the list (a large download)
+aq apps list                          what is suggested, and what you have
+aq apps status                        how many you have, and what to do if some are missing
+aq apps install org.kde.krita         add one you skipped
+aq apps install os.aquarius.editor    add Aquarius Editor (about 4 GB, no password)
+aq apps install --all                 every Flathub app on the list (a large download)
+aq apps update                        is my Aquarius Editor the one this OS offers?
+aq apps remove os.aquarius.editor     take it away again, and free the four gigabytes
 ```
 
 `aq apps list` prints the app's ID on the left — that is what `install` wants.
@@ -585,10 +748,17 @@ The five OBS plug-ins are not listed, because they are not choices: they arrive
 with OBS Studio and asking for one by name is refused, with a note saying which
 app it belongs to.
 
-You will be asked for your password once, by the desktop's own prompt. That is
-the system asking, not us: the apps are installed **for the whole computer** for
-the reason given under *One thing worth knowing about how this works*, and
-nothing here ever runs `sudo` on your behalf.
+**A Flathub app** asks for your password once, by the desktop's own prompt. That
+is the system asking, not us: those apps are installed **for the whole
+computer** for the reason given under *One thing worth knowing about how this
+works*.
+
+**Aquarius Editor** asks for nothing. It goes into your own home folder, and its
+installer *refuses* to run under `sudo` — run as an administrator it would
+install into the administrator's home folder, where you would never find it,
+and the failure would look like success.
+
+Nothing here ever runs `sudo` on your behalf.
 
 ---
 
@@ -653,14 +823,30 @@ Three things changed, and only the first is the bug:
 Every one of these runs against the **finished** image, not against the build
 scripts:
 
-- Both Aquarius apps unpack, carry a version stamp that agrees with what the
+- Aquarius Writer unpacks, carries a version stamp that agrees with what the
   build recorded, and — asked the way an ordinary account experiences it, not
   the way root does — can actually be read, entered and run by somebody who is
   not root. *(This is the bug of 2026-08-28, where both apps shipped, both
   appeared in the app grid, and clicking either did nothing at all.)*
-- Aquarius Editor's sandbox helper survived packaging as `root:root 4755`.
-  Electron aborts instantly and silently when it has not.
-- Both app-grid entries pass the freedesktop project's own validator.
+- **Aquarius Editor is NOT in the image.** No `/usr/lib/aquarius/aquarius-editor`
+  and no system-wide `aquarius-editor.desktop`. *(This is the check the whole
+  2026-09-04 change rests on: four gigabytes coming back would produce no error
+  and no red text — just a slow build and an image twice the size it needs to
+  be.)*
+- **The image is under a size ceiling** — 9 GB for the base image, 12 GB for the
+  NVIDIA one — and the build prints what it is now beside what it was before the
+  change, and how much was saved.
+- The pieces that fetch the Editor *are* here: the home-folder installer, the
+  menu-entry template (which passes the freedesktop validator), and
+  `/usr/bin/aquarius-editor`, which looks in `~/.local/lib/aquarius`.
+- **The installer walks a whole install on the finished image**, with the two
+  downloads stood in for and everything else done for real into a throwaway
+  folder — including reading back the version it claims to have installed.
+- The pinned Aquarius Editor release really exists on GitHub and really
+  publishes its fingerprint file. A wrong `Pin=` fails the build instead of
+  failing on somebody's machine.
+- Aquarius Writer's app-grid entry passes the freedesktop project's own
+  validator.
 - Flatpak is new enough to have the preinstall mechanism, and has it.
 - Every app Royce chose is still on the list, every entry names a branch, and
   every plug-in is marked as a plug-in.
@@ -705,6 +891,20 @@ And, for the chooser window specifically:
   an image ship on 2026-09-04 that could not read its own shopping list.)*
 - The installer's rehearsal emits `STEP`, `PERCENT` and `DONE` in order, and run
   without permission it explains itself in words rather than failing obscurely.
+- **The password split.** Choosing only Aquarius Editor produces **no password
+  prompt at all**; choosing one Flathub app and the Editor produces **two
+  installers, one prompt, and steps numbered 1 and 2 of 2** across both — not
+  two runs each counting from one, which would make the progress bar jump
+  backwards. Read with the window's own parser on the finished image, because
+  "does it ask for a password" is not a question a screenshot answers.
+- The chooser no longer lists Aquarius Editor under *Included with AquariusOS*
+  — saying "Included" about an app that is not there would be the worst of both
+  arrangements — and still lists Aquarius Writer, which really is.
+- The home-folder installer is **never** sent through `pkexec`, and both
+  installers understand `--step-offset` and `--step-total`.
+- `aq apps list` offers Aquarius Editor and says it is **not installed**, which
+  is the truth on a fresh image; `aq apps update` and `aq apps remove` are in
+  the help and run.
 
 ---
 
@@ -713,13 +913,38 @@ And, for the chooser window specifically:
 After rebasing the 4090 to an image built from this branch:
 
 1. **Log in and wait about ten seconds.** The **"Your creator apps"** window
-   should appear on its own, showing Aquarius Editor and Aquarius Writer as
-   *Included*, then eleven apps as cards on five shelves, with six of them
-   already ticked. Nothing has downloaded yet.
+   should appear on its own, showing Aquarius Writer and Steam as *Included*,
+   then the apps as cards on six shelves — with **Aquarius Editor first on the
+   Video shelf, tagged Recommended and already ticked**, and a line under it
+   reading **"About 4 GB to download"** (or "Large download" if the machine
+   cannot reach GitHub). Nothing has downloaded yet.
 2. **Pick and install.** Untick anything you do not want, press **Install**, and
-   enter your password when asked — **once**. Watch the lines tick over one at a
-   time and open **Details** to see the log. Then press **Open OBS Studio** on
-   the last page.
+   enter your password when asked — **once**, and only because Flathub apps
+   were ticked too. Watch the lines tick over one at a time; the bar should run
+   **straight through** from the first app to the last without jumping back to
+   the start when it reaches the Editor. Open **Details** to see the log, which
+   should show the Editor's download percentage climbing. Then press **Open
+   apps** on the last page.
+
+   *Then the Editor specifically.* It should be on the dock and in the app grid
+   — **in the seat it was already occupying**, with no logging out. Open it: it
+   should come up **crisp at 125%** on the 4K Ark, not faintly soft. Then:
+
+   ```
+   aq apps update
+   ```
+
+   ...should say **Aquarius Editor 0.7.2 — up to date**.
+
+   *And the no-password path.* In Aquarius Apps press **Remove** on the Editor's
+   card, confirm, and watch it go with **no password prompt**. Then tick it
+   again on its own and press Install — again **no password prompt at all**,
+   which is the point of the change. `aq apps remove os.aquarius.editor` and
+   `aq apps install os.aquarius.editor` do the same two things from a terminal.
+
+   *And the size.* `bootc status` / the download you rebased from should be
+   roughly **7 GB** for the base image or **10 GB** for the NVIDIA one, against
+   11.1 and 14.2 before.
 
    *Then check the three claims this window makes.* `aq apps status` should agree
    with what you see on screen. Close the window, log out and back in — it must

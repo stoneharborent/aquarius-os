@@ -1062,45 +1062,75 @@ ingest() {
 # =============================================================================
 # WHAT THIS IS FOR
 #
-# AquariusOS suggests sixteen things from Flathub: eleven apps and five OBS
-# plug-ins that come with OBS Studio. The chooser window at the first login is
-# how most people will pick from them. This is the same job in a terminal, for
-# afterwards: what did I end up with, and give me the one I skipped.
+# AquariusOS offers seventeen things: sixteen from Flathub (eleven apps and five
+# OBS plug-ins that come with OBS Studio) and one of ours, Aquarius Editor. The
+# chooser window at the first login is how most people will pick from them. This
+# is the same job in a terminal, for afterwards: what did I end up with, and
+# give me the one I skipped.
 #
 # IT DOES NOT KEEP ITS OWN LIST. Every answer here comes from asking
 # /usr/libexec/aquarius-flatpak-preinstall --catalog, which reads the one list
 # the operating system ships. There is no second copy to fall out of step.
 #
-# WHY IT NEVER SAYS sudo. Installing for the whole computer is a thing Flatpak
-# already knows how to ask permission for: it hands the job to a small system
-# service, and the desktop asks you for your password the same way the app
-# store does. So `aq apps install` is an ordinary command run as an ordinary
-# person. Whole-computer rather than just-for-me matters, and it is not a
-# detail: the permissions that let OBS reach your camera and capture card only
-# apply to whole-computer installs.
+# ------------------------------------------------------------------------------
+# THE TWO KINDS, AND THE ONE PLACE THE DIFFERENCE SHOWS
+# ------------------------------------------------------------------------------
+#   FROM FLATHUB   installed for the WHOLE COMPUTER. Flatpak already knows how
+#                  to ask permission for that: it hands the job to a small
+#                  system service and the desktop asks for your password the
+#                  same way the app store does. Whole-computer rather than
+#                  just-for-me is not a detail — the permissions that let OBS
+#                  reach your camera and capture card only apply to those.
+#
+#   OURS           Aquarius Editor. Not on any app store, so it comes from its
+#                  GitHub release, and it goes into YOUR OWN HOME FOLDER. No
+#                  password, nothing outside your account touched, and it can
+#                  be removed again just as easily. It became a download rather
+#                  than part of the image on 2026-09-04, because it is four
+#                  gigabytes and baking it in made every AquariusOS download
+#                  four gigabytes bigger for everybody.
+#
+# Neither one ever needs `sudo` typed at it.
 # =============================================================================
 
 AQ_APPS_HELPER="/usr/libexec/aquarius-flatpak-preinstall"
+AQ_APPS_APPIMAGE="/usr/libexec/aquarius-appimage-install"
 AQ_APPS_SERVICE="aquarius-flatpak-preinstall.service"
 AQ_APPS_STAMP="/etc/aquarius/flatpak-preinstall-done"
 
 apps_usage() {
     cat << 'EOF'
-aq apps — the creator apps that come from Flathub
+aq apps — the creator apps AquariusOS offers
 
     aq apps list        Every app AquariusOS suggests, and whether you have it.
     aq apps status      How many you have, and what to do if some are missing.
     aq apps install ID [ID...]
                         Install one or more of them. Use the ID from the left
                         of 'aq apps list'. Any plug-ins an app needs come with
-                        it. You will be asked for your password once.
+                        it. An app from Flathub asks for your password once;
+                        one of ours does not ask at all.
     aq apps install --all
-                        Install everything on the list. This is the big one —
-                        roughly ten gigabytes.
+                        Install every Flathub app on the list. This is the big
+                        one — roughly ten gigabytes.
+    aq apps update [ID] Check whether one of OUR apps has a newer version to
+                        install, and install it. With no ID, checks them all.
+    aq apps remove ID   Take one away again.
 
     Nothing here is compulsory. An app you never install costs you nothing, and
     an app you uninstall stays uninstalled — AquariusOS will not put it back.
 EOF
+}
+
+# The ids of the apps that are ours rather than Flathub's. Asked of the
+# catalogue rather than written down, so that adding a second one of ours is a
+# block of text in catalog.ini and no change here.
+apps_ours() {
+    [ -x "${AQ_APPS_HELPER}" ] || return 0
+    "${AQ_APPS_HELPER}" --list-appimage 2> /dev/null
+}
+
+apps_is_ours() {                # apps_is_ours <id>
+    apps_ours | grep -qx "$1"
 }
 
 # The one source of truth, asked once per command.
@@ -1113,8 +1143,23 @@ apps_catalog() {
     "${AQ_APPS_HELPER}" --catalog
 }
 
-# What is on this computer right now. Asked of Flatpak, never remembered.
-apps_have() { flatpak list --system --columns=application 2> /dev/null || true; }
+# What is on this computer right now. Asked of the system, never remembered —
+# and asked of BOTH places, because our own apps are not Flatpaks and Flatpak
+# has never heard of them.
+apps_have() {
+    flatpak list --system --columns=application 2> /dev/null || true
+    if [ -x "${AQ_APPS_APPIMAGE}" ]; then
+        local ours
+        ours="$(apps_ours)"
+        if [ -n "${ours}" ]; then
+            # shellcheck disable=SC2086  # ids never contain spaces
+            "${AQ_APPS_APPIMAGE}" --status ${ours} 2> /dev/null | awk '
+                /^id=/        { id = substr($0, 4) }
+                /^installed=/ { if (length($0) > 10 && id != "") print id }
+            '
+        fi
+    fi
+}
 
 apps_list() {
     local cat have
@@ -1171,7 +1216,7 @@ apps_status() {
 }
 
 apps_install() {
-    local cat have refs=() id line want ok_id
+    local cat have refs=() ours=() id line want ok_id
     [ "$#" -gt 0 ] || { apps_usage; return 1; }
 
     if [ "$1" = "--all" ]; then
@@ -1186,8 +1231,16 @@ apps_install() {
 
     for want in "$@"; do
         ok_id=0
-        while IFS=$'\t' read -r id _ _ _ _ rt req branch; do
+        while IFS=$'\t' read -r id _ _ _ _ rt req branch kind _; do
             [ -n "${id}" ] || continue
+            # One of ours: a different installer, no password, and no plug-ins
+            # to gather up — so it is settled here and the Flatpak reading below
+            # never sees it.
+            if [ "${id}" = "${want}" ] && [ "${kind}" = "type:appimage" ]; then
+                ours+=("${id}")
+                ok_id=1
+                continue
+            fi
             # The app itself, named exactly.
             if [ "${id}" = "${want}" ]; then
                 if [ "${rt}" = "runtime:yes" ]; then
@@ -1213,6 +1266,23 @@ apps_install() {
         fi
     done
 
+    # --- our own apps, first and separately ----------------------------------
+    # No password, nothing outside this account touched, and its own installer
+    # already knows how to say "you have that version already".
+    local rc=0
+    if [ "${#ours[@]}" -gt 0 ]; then
+        if [ ! -x "${AQ_APPS_APPIMAGE}" ]; then
+            echo "aq: ${AQ_APPS_APPIMAGE} is missing from this copy of AquariusOS." >&2
+            return 1
+        fi
+        "${AQ_APPS_APPIMAGE}" install "${ours[@]}" || rc=1
+    fi
+
+    if [ "${#refs[@]}" -eq 0 ]; then
+        return "${rc}"
+    fi
+
+    # --- and the Flatpaks ----------------------------------------------------
     # Already here? Leave it alone and say so, rather than making Flatpak say it.
     have="$(apps_have)"
     line=()
@@ -1225,12 +1295,71 @@ apps_install() {
     done
     if [ "${#line[@]}" -eq 0 ]; then
         echo "Nothing to do — everything you asked for is already here."
-        return 0
+        return "${rc}"
     fi
 
     echo "Installing: ${line[*]}"
     echo "You will be asked for your password once, by the desktop itself."
-    flatpak install -y --system flathub "${line[@]}"
+    flatpak install -y --system flathub "${line[@]}" || rc=1
+    return "${rc}"
+}
+
+# -----------------------------------------------------------------------------
+# aq apps update — is there a newer Aquarius Editor?
+# -----------------------------------------------------------------------------
+# ⚠️ THIS ONLY EVER CONCERNS OUR OWN APPS. Everything from Flathub updates
+# itself through Flatpak, in the background, like the app store on a phone;
+# there is nothing for this command to add and it would be a second, worse way
+# of doing it.
+#
+# WHAT "NEWER" MEANS HERE, said plainly because it surprises people: AquariusOS
+# offers ONE CHOSEN VERSION of Aquarius Editor at a time — the one written down
+# in the app catalogue, which arrives with a system update. So this command
+# compares what you have against what this copy of AquariusOS offers, not
+# against whatever was published on GitHub this morning. That is deliberate: it
+# means everybody running this image is running the same build, and a release
+# with a bad bug in it cannot reach anybody before we have looked at it. If
+# GitHub does have something newer, the command says so as a note.
+apps_update() {
+    local ids
+    if [ "$#" -gt 0 ]; then
+        ids="$*"
+    else
+        ids="$(apps_ours)"
+    fi
+    if [ -z "${ids}" ]; then
+        echo "There are no apps of ours on this computer to update."
+        return 0
+    fi
+    if [ ! -x "${AQ_APPS_APPIMAGE}" ]; then
+        echo "aq: ${AQ_APPS_APPIMAGE} is missing from this copy of AquariusOS." >&2
+        return 1
+    fi
+    # shellcheck disable=SC2086  # ids never contain spaces
+    "${AQ_APPS_APPIMAGE}" --check-update ${ids}
+}
+
+apps_remove() {
+    local want kind
+    [ "$#" -gt 0 ] || {
+        echo "aq: say which app to remove. 'aq apps list' shows them." >&2
+        return 1
+    }
+    for want in "$@"; do
+        if apps_is_ours "${want}"; then
+            "${AQ_APPS_APPIMAGE}" remove "${want}" || return 1
+            continue
+        fi
+        kind="$(apps_catalog | awk -F'\t' -v w="${want}" '$1 == w {print "found"}')"
+        if [ -z "${kind}" ]; then
+            echo "aq: '${want}' is not one of the apps AquariusOS offers." >&2
+            echo "    'aq apps list' shows the ones it does." >&2
+            return 1
+        fi
+        echo "Removing ${want}. You will be asked for your password once."
+        echo "Your own files and its settings are left alone."
+        flatpak uninstall -y --system "${want}" || return 1
+    done
 }
 
 # -----------------------------------------------------------------------------
@@ -1429,6 +1558,14 @@ apps() {
         list) apps_list ;;
         status) apps_status ;;
         catalog) apps_catalog ;;
+        update)
+            shift
+            apps_update "$@"
+            ;;
+        remove | uninstall)
+            shift
+            apps_remove "$@"
+            ;;
         install)
             shift
             apps_install "$@"

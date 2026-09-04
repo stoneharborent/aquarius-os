@@ -46,22 +46,55 @@
 #
 # ...which reads both, checks they agree, and prints one line per app with TAB
 # between the fields. That command is the contract, and it is written down at
-# the top of that script and in docs/restart/creator-apps.md. Eight fields, in
-# this order:
+# the top of that script and in docs/restart/creator-apps.md. Eight fields
+# always, in this order:
 #
 #     1 id            com.obsproject.Studio
 #     2 name          OBS Studio
 #     3 description   one sentence
-#     4 category      Video | Audio | Design | Streaming | Utilities
+#     4 category      Video | Audio | Design | Streaming | Utilities | Gaming
 #     5 recommended:yes | recommended:no
 #     6 runtime:yes | runtime:no
 #     7 requires:<app id>  or  requires:-
 #     8 branch:stable
 #
-# Fields five to eight carry their own name as a prefix, so this window can
-# check it is reading what it thinks it is reading, and an extra ninth field
-# added one day cannot be mistaken for one of these. Anything it cannot make
-# sense of is skipped and counted, never guessed at.
+# Fields five onward carry their own name as a prefix, so this window can
+# check it is reading what it thinks it is reading, and a field added one day
+# cannot be mistaken for one of these. Anything it cannot make sense of is
+# skipped and counted, never guessed at.
+#
+# =============================================================================
+# THE TWO KINDS OF APP — changed 2026-09-04
+# =============================================================================
+# Every line now also carries a ninth field, `type:`, and it is one of two:
+#
+#     type:flatpak    everything from Flathub. Installed for the WHOLE COMPUTER
+#                     by a root helper, behind one password prompt.
+#     type:appimage   one of ours, published on GitHub. Installed into THIS
+#                     PERSON'S OWN HOME FOLDER, with no password at all. Such a
+#                     line carries four more fields after the ninth —
+#                     source:, pin:, asset:, sha256sums: — which this window
+#                     never has to understand; it hands the id to
+#                     /usr/libexec/aquarius-appimage-install and that reads them.
+#
+# ⚠️ WHY AQUARIUS EDITOR IS A CARD NOW AND NOT IN "INCLUDED WITH AQUARIUSOS".
+#    It used to be baked into the image, and it is four gigabytes, so every
+#    download of AquariusOS was four gigabytes bigger for everybody — including
+#    the people who will never open it. It is now the first card on the Video
+#    shelf, ticked when this window opens, because it is the flagship and most
+#    people will want it. But it is a tick, and it can be unticked. Aquarius
+#    Writer stayed baked in: it is about 260 MB.
+#
+# ⚠️ AND SO INSTALLING CAN NOW MEAN RUNNING TWO PROGRAMS, ONE AFTER THE OTHER.
+#    Tick OBS, Kdenlive and Aquarius Editor and this window runs the Flatpak
+#    installer through pkexec for the first two, and then the AppImage installer
+#    AS YOU, with no prompt, for the third. They share ONE progress bar and ONE
+#    list of steps, because --step-offset and --step-total tell each of them
+#    which part of the whole job it is. See _start_next_job below.
+#
+#    The password comes first on purpose: whatever needs a password happens at
+#    the moment you press Install, while you are still looking at the screen —
+#    not twenty minutes later, half way through a download.
 #
 # THE POINT OF DOING IT THIS WAY: adding an app to AquariusOS is two blocks of
 # text in two files. Nobody edits this window, nobody writes any Python, and the
@@ -145,6 +178,8 @@ import time
 APP_ID = "org.aquariusos.CreatorApps"
 CATALOG_CLI = "/usr/libexec/aquarius-flatpak-preinstall"
 INSTALLER = "/usr/libexec/aquarius-creator-apps-install"
+# The other installer: our own apps, into this person's home folder, no password.
+APPIMAGE_INSTALLER = "/usr/libexec/aquarius-appimage-install"
 APPLICATIONS = "/usr/share/applications"
 # The path to the Aquarius mark is deliberately NOT written down here. Every
 # page gets it from aquarius_ui.mark_image(), which is the one place that knows
@@ -175,8 +210,13 @@ FALLBACK_ICON = "application-x-executable-symbolic"
 # program on AquariusOS, not a Flatpak — see the note at the top of the Gaming
 # section in the .preinstall file. An entry whose file is missing is skipped
 # silently, so this list never breaks the window.
+#
+# ⚠️ AQUARIUS EDITOR WAS ON THIS LIST UNTIL 2026-09-04 AND MUST NOT GO BACK ON
+#    IT. It is no longer inside the image — it is a four-gigabyte download and
+#    it now has a card of its own on the Video shelf, ticked by default. Putting
+#    it back here would tell people it is already installed when it is not,
+#    which is the worst of both arrangements.
 INCLUDED_DESKTOP = [
-    "aquarius-editor.desktop",
     "aquarius-writer.desktop",
     "steam.desktop",
 ]
@@ -197,9 +237,25 @@ class Entry:
         "runtime",
         "requires",
         "branch",
+        "install_type",
+        "source",
+        "pin",
     )
 
-    def __init__(self, app_id, name, description, category, recommended, runtime, requires, branch):
+    def __init__(
+        self,
+        app_id,
+        name,
+        description,
+        category,
+        recommended,
+        runtime,
+        requires,
+        branch,
+        install_type="flatpak",
+        source="",
+        pin="",
+    ):
         self.app_id = app_id
         self.name = name
         self.description = description
@@ -208,10 +264,30 @@ class Entry:
         self.runtime = runtime
         self.requires = requires
         self.branch = branch
+        # "flatpak" or "appimage". A line with no type: field at all is a
+        # flatpak, because that is what every line was before the field existed.
+        self.install_type = install_type
+        # For an appimage entry: the GitHub repository, and the pinned release.
+        # Read only to say how big the download is on the card. Nothing here
+        # ever installs anything — the id goes to the installer and the
+        # installer reads the catalogue for itself.
+        self.source = source
+        self.pin = pin
+
+    @property
+    def is_appimage(self):
+        return self.install_type == "appimage"
 
     @property
     def ref(self):
-        """What Flatpak is asked for: the id and the version line, together."""
+        """What the installer is asked for.
+
+        For a Flatpak that is the id and the version line together, which is
+        what `flatpak install` wants. For one of ours it is just the id: the
+        version is pinned in the catalogue, not chosen here.
+        """
+        if self.is_appimage:
+            return self.app_id
         return "%s//%s" % (self.app_id, self.branch)
 
 
@@ -233,9 +309,14 @@ def parse_catalog(text):
             skipped.append(line)
             continue
         app_id, name, description, category = fields[0], fields[1], fields[2], fields[3]
+        # ⚠️ EVERY FIELD FROM THE FIFTH ON IS READ BY ITS OWN NAME, NOT BY ITS
+        # POSITION. That is what lets the contract grow — type:, and the four
+        # that follow it on one of our own apps — without this window having to
+        # be changed in step with it, and it is why the first eight fields could
+        # be left exactly where they were on 2026-09-04.
         tagged = {}
         ok = True
-        for field in fields[4:8]:
+        for field in fields[4:]:
             key, sep, value = field.partition(":")
             if not sep:
                 ok = False
@@ -248,6 +329,13 @@ def parse_catalog(text):
             skipped.append(line)
             continue
         requires = tagged["requires"]
+        install_type = tagged.get("type", "flatpak")
+        if install_type not in ("flatpak", "appimage"):
+            # A kind of app this window does not know how to install. Skipping
+            # it is the only honest answer: offering it would end in a card
+            # that cannot do anything when it is pressed.
+            skipped.append(line)
+            continue
         entries.append(
             Entry(
                 app_id=app_id,
@@ -258,6 +346,9 @@ def parse_catalog(text):
                 runtime=tagged["runtime"] == "yes",
                 requires=None if requires in ("", "-") else requires,
                 branch=tagged["branch"] or "stable",
+                install_type=install_type,
+                source=tagged.get("source", ""),
+                pin=tagged.get("pin", ""),
             )
         )
     return entries, skipped
@@ -321,9 +412,16 @@ def resolve_install_set(entries, chosen_ids):
     for entry in entries:
         if entry.runtime and entry.requires in chosen:
             wanted.append(entry)
-    # Apps first, then their plug-ins, so that a plug-in can never be installed
-    # before the thing it plugs into.
-    wanted.sort(key=lambda e: (e.runtime, e.app_id))
+    # Three rules in one line, in the order they matter:
+    #
+    #   1. EVERY FLATPAK BEFORE ANY APP OF OURS. The Flatpaks are what need a
+    #      password, so putting them first means the one prompt arrives at the
+    #      moment Install is pressed, while the person is still watching —
+    #      rather than twenty minutes later, in the middle of a download.
+    #   2. Apps before their plug-ins, so a plug-in is never installed before
+    #      the thing it plugs into.
+    #   3. Otherwise by name, so the order is the same every time.
+    wanted.sort(key=lambda e: (e.is_appimage, e.runtime, e.app_id))
     return wanted
 
 
@@ -335,12 +433,13 @@ def dependents(entries, app_id):
 # -----------------------------------------------------------------------------
 # Asking the system what is already here
 # -----------------------------------------------------------------------------
-def installed_ids():
-    """Every Flatpak on this computer, apps and plug-ins, both installations.
+def installed_ids(entries=()):
+    """Everything on this computer that this window offers, whatever kind it is.
 
-    Asked of Flatpak every time rather than remembered, because somebody may
+    Asked of the system every time rather than remembered, because somebody may
     have removed one in Software while this window was open.
     """
+    here = set()
     try:
         done = subprocess.run(
             ["flatpak", "list", "--columns=application"],
@@ -349,11 +448,55 @@ def installed_ids():
             timeout=25,
             errors="replace",
         )
+        if done.returncode == 0:
+            here |= {line.strip() for line in done.stdout.splitlines() if line.strip()}
     except (OSError, subprocess.SubprocessError):
-        return set()
+        pass
+
+    # And our own apps, which Flatpak has never heard of. Asked of the installer
+    # rather than by looking at a folder, so that where it puts things stays its
+    # own business and this window cannot disagree with it.
+    ours = [e.app_id for e in entries if e.is_appimage]
+    if ours and os.access(APPIMAGE_INSTALLER, os.X_OK):
+        for app_id, version in appimage_status(ours).items():
+            if version:
+                here.add(app_id)
+    return here
+
+
+def appimage_status(app_ids):
+    """{id: installed version or ""} for our own apps, from the installer.
+
+    `--status` prints plain key=value lines, one block per app, starting with
+    id=. Anything unreadable comes back as not installed, which is the safe
+    answer: a card that offers to install something already there costs one
+    wasted click, and one that says "Installed" about an app that is not there
+    is a dead icon.
+    """
+    found = {}
+    try:
+        done = subprocess.run(
+            [APPIMAGE_INSTALLER, "--status"] + list(app_ids),
+            capture_output=True,
+            text=True,
+            timeout=20,
+            errors="replace",
+        )
+    except (OSError, subprocess.SubprocessError):
+        return found
     if done.returncode != 0:
-        return set()
-    return {line.strip() for line in done.stdout.splitlines() if line.strip()}
+        return found
+    current = None
+    for line in done.stdout.splitlines():
+        key, sep, value = line.partition("=")
+        if not sep:
+            continue
+        if key == "id":
+            current = value.strip()
+            found.setdefault(current, "")
+        elif key == "installed" and current:
+            found[current] = value.strip()
+    return found
 
 
 def human_size(total):
@@ -376,6 +519,60 @@ def parse_size(text):
     except ValueError:
         return 0
     return int(number * units.get(parts[1].lower(), 0))
+
+
+def appimage_desktop_id(entry):
+    """The menu entry one of our own apps installs — os.aquarius.editor ->
+    aquarius-editor.desktop.
+
+    Derived rather than written down, and derived the same way the installer
+    derives the folder name, so the two cannot drift apart. That name is also
+    what both docks pin, which is why it matters that there is one rule for it.
+    """
+    if entry.app_id.startswith("os.aquarius."):
+        return "aquarius-%s.desktop" % entry.app_id.rsplit(".", 1)[-1]
+    return "%s.desktop" % entry.app_id.replace(".", "-")
+
+
+def github_asset_size(entry):
+    """How big one of OUR apps is to download, asked of GitHub.
+
+    ⚠️ THIS IS THE NUMBER THAT MAKES THE DECISION HONEST. Aquarius Editor is
+    roughly four gigabytes, and a card that offers a four-gigabyte download
+    without saying so is a card that lies by omission — especially to somebody
+    on a phone connection or a metered one. So the card says "about 4 GB", and
+    the number comes from the release itself rather than from anything written
+    down here, which cannot go stale.
+    """
+    import urllib.request
+
+    if not entry.pin:
+        return 0
+    tag = entry.pin
+    source = entry.source
+    if not source:
+        return 0
+    url = "https://api.github.com/repos/%s/releases/tags/%s" % (source, tag)
+    try:
+        request = urllib.request.Request(
+            url, headers={"Accept": "application/vnd.github+json"}
+        )
+        with urllib.request.urlopen(request, timeout=8) as response:
+            data = json.loads(response.read().decode("utf-8", "replace"))
+    except Exception:
+        return 0
+    if not isinstance(data, dict):
+        return 0
+    biggest = 0
+    for asset in data.get("assets") or []:
+        if not isinstance(asset, dict):
+            continue
+        if not str(asset.get("name", "")).endswith(".AppImage"):
+            continue
+        size = asset.get("size")
+        if isinstance(size, int) and size > biggest:
+            biggest = size
+    return biggest
 
 
 def download_size(ref):
@@ -427,6 +624,10 @@ def rehearse(catalog_from, selection):
     print("catalog entries: %d" % len(entries))
     print("apps offered: %d" % len(apps))
     print("plug-ins hidden: %d" % len(plugins))
+    # The two kinds, counted out loud. The build reads these: an image that
+    # stopped offering Aquarius Editor at all would otherwise look healthy.
+    print("flatpak entries: %d" % len([e for e in entries if not e.is_appimage]))
+    print("appimage entries: %d" % len([e for e in entries if e.is_appimage]))
     print("unreadable lines: %d" % len(skipped))
     for line in skipped:
         print("  skipped: %s" % line, file=sys.stderr)
@@ -450,6 +651,27 @@ def rehearse(catalog_from, selection):
     print("would install: %d" % len(plan))
     for entry in plan:
         print("  %s" % entry.ref)
+
+    # WHICH INSTALLER RUNS, AND IN WHICH ORDER. The Flatpaks go first, behind
+    # one password prompt; our own apps follow, as the person, with no prompt at
+    # all. Printed as a plan the build can read, because "did the split happen"
+    # is not a question a screenshot could answer.
+    flatpaks = [e for e in plan if not e.is_appimage]
+    ours = [e for e in plan if e.is_appimage]
+    jobs = []
+    if flatpaks:
+        jobs.append(("flatpak", "pkexec " + INSTALLER, len(flatpaks)))
+    if ours:
+        jobs.append(("appimage", APPIMAGE_INSTALLER, len(ours)))
+    print("installer runs: %d" % len(jobs))
+    offset = 0
+    for kind, command, count in jobs:
+        print(
+            "  %s: %d app(s), steps %d-%d of %d, via %s"
+            % (kind, count, offset + 1, offset + count, len(plan), command)
+        )
+        offset += count
+    print("password prompts: %d" % len([j for j in jobs if j[0] == "flatpak"]))
 
     # Said plainly because it is the thing most likely to break silently one
     # day: a plug-in whose requires= no longer names an app anybody can pick.
@@ -679,6 +901,27 @@ def run_window(first_run):
             body.set_valign(Gtk.Align.START)
             inner.append(body)
 
+            # ⚠️ THE SIZE LINE, AND WHY ONLY SOME CARDS HAVE ONE. Everything
+            # from Flathub is somewhere between fifty megabytes and a few
+            # hundred, and saying so on eleven cards would be noise. Aquarius
+            # Editor is four gigabytes, which is a different kind of fact — the
+            # kind somebody on a metered connection needs before they tick a box
+            # and not after. So the size is shown on our own apps, and it is
+            # asked of GitHub rather than written down here, where it could go
+            # stale. Until the answer arrives, and for ever if the machine is
+            # offline, the card says so honestly rather than showing nothing.
+            self.size_label = None
+            if entry.is_appimage:
+                self.size_label = Gtk.Label(label="Large download", xalign=0.0)
+                self.size_label.add_css_class("caption")
+                self.size_label.add_css_class("dim-label")
+                self.size_label.set_tooltip_text(
+                    "Aquarius Editor carries its speech-recognition and "
+                    "footage-analysis models inside it, so it works with no "
+                    "internet at all. That is what makes it big."
+                )
+                inner.append(self.size_label)
+
             # The plug-in sentence. One line, no cards, no explanation of what a
             # Vulkan layer is — because nobody choosing "record my screen" asked.
             if plugins:
@@ -710,6 +953,11 @@ def run_window(first_run):
             click.connect("released", self._on_card_clicked)
             self.add_controller(click)
 
+        def set_download_size(self, size):
+            """Fill in the real number once GitHub has answered."""
+            if self.size_label is not None and size:
+                self.size_label.set_label("About %s to download" % human_size(size))
+
         def _on_card_clicked(self, _gesture, _n, x, y):
             """Clicking anywhere on the card ticks it — except on a control.
 
@@ -728,6 +976,19 @@ def run_window(first_run):
             self.check.set_active(not self.check.get_active())
 
         def _on_open(self, _button):
+            # Two kinds of app, two ways to start one. For our own apps the
+            # menu entry is the right route rather than a path written down
+            # here: the launcher in /usr/bin does real work (the update
+            # overlay, the Electron sandbox, the log file) and going round it
+            # would be a second, worse way to start the same program.
+            if self.entry.is_appimage:
+                info = Gio.DesktopAppInfo.new(appimage_desktop_id(self.entry))
+                if info is not None:
+                    try:
+                        info.launch([], None)
+                    except GLib.Error:
+                        pass
+                return
             try:
                 subprocess.Popen(
                     ["flatpak", "run", self.entry.app_id], start_new_session=True
@@ -745,26 +1006,34 @@ def run_window(first_run):
             we do not tell it otherwise.
             """
             window = self.get_root()
-            body = (
-                "It will be removed from this computer. Your own files and its "
-                "settings are left alone, and you can install it again from "
-                "this window at any time."
-            )
+            if self.entry.is_appimage:
+                body = (
+                    "About four gigabytes will be freed. Your projects and its "
+                    "settings are left alone, and you can install it again "
+                    "from this window at any time."
+                )
+                # No password: it was installed into this person's own home
+                # folder, so taking it away again needs nothing special either.
+                argv = [APPIMAGE_INSTALLER, "remove", self.entry.app_id]
+            else:
+                body = (
+                    "It will be removed from this computer. Your own files and "
+                    "its settings are left alone, and you can install it again "
+                    "from this window at any time."
+                )
+                argv = [
+                    "pkexec",
+                    "flatpak",
+                    "uninstall",
+                    "--system",
+                    "-y",
+                    "--noninteractive",
+                    self.entry.app_id,
+                ]
 
             def do_remove():
                 def work():
-                    subprocess.run(
-                        [
-                            "pkexec",
-                            "flatpak",
-                            "uninstall",
-                            "--system",
-                            "-y",
-                            "--noninteractive",
-                            self.entry.app_id,
-                        ],
-                        capture_output=True,
-                    )
+                    subprocess.run(argv, capture_output=True)
                     GLib.idle_add(window.refresh_installed)
 
                 threading.Thread(target=work, daemon=True).start()
@@ -818,6 +1087,11 @@ def run_window(first_run):
             self.cards = {}
             self.step_rows = {}
             self.proc = None
+            # The installers still to run, in order, and the one running now.
+            # There is more than one whenever the person has ticked both
+            # Flatpaks and an app of ours — see _start_process.
+            self.jobs = []
+            self.current_job = None
             self.plan = []
             self.failures = {}
             self.sizes = {}
@@ -1059,14 +1333,23 @@ def run_window(first_run):
 
             def work():
                 for entry in self.entries:
-                    size = download_size(entry.ref)
+                    # Two kinds of app, two places to ask. Flatpak knows what a
+                    # Flatpak will really cost on THIS machine; GitHub is the
+                    # only thing that knows how big one of ours is.
+                    if entry.is_appimage:
+                        size = github_asset_size(entry)
+                    else:
+                        size = download_size(entry.ref)
                     if size:
-                        GLib.idle_add(self._record_size, entry.ref, size)
+                        GLib.idle_add(self._record_size, entry.app_id, entry.ref, size)
 
             threading.Thread(target=work, daemon=True).start()
 
-        def _record_size(self, ref, size):
+        def _record_size(self, app_id, ref, size):
             self.sizes[ref] = size
+            card = self.cards.get(app_id)
+            if card is not None:
+                card.set_download_size(size)
             self.update_footer()
             return GLib.SOURCE_REMOVE
 
@@ -1088,7 +1371,7 @@ def run_window(first_run):
 
         def refresh_installed(self):
             def work():
-                here = installed_ids()
+                here = installed_ids(self.entries)
                 GLib.idle_add(self._apply_installed, here)
 
             threading.Thread(target=work, daemon=True).start()
@@ -1267,6 +1550,8 @@ def run_window(first_run):
             self.plan = plan
             self.failures = {}
             self.cancelled = False
+            self.jobs = []
+            self.current_job = None
             self.log.clear()
             self.bar.set_fraction(0.0)
             self.details.set_expanded(False)
@@ -1299,6 +1584,33 @@ def run_window(first_run):
             self.stack.set_visible_child_name("working")
             self._start_process(plan)
 
+        # ------------------------------------------------------------------
+        # RUNNING THE INSTALLERS — one bar, one list of steps, two programs
+        # ------------------------------------------------------------------
+        # ⚠️ THIS USED TO BE ONE `pkexec` AND ONE SCRIPT, AND THE CHANGE OF
+        #    2026-09-04 IS THE ONLY REASON IT IS NOT ANY MORE. Aquarius Editor
+        #    is no longer inside the image; it is a download that goes into the
+        #    person's OWN home folder, and nothing about that needs an
+        #    administrator. Sending it through the root installer anyway would
+        #    mean asking for a password to write inside somebody's home folder,
+        #    which is theatre — and worse than theatre, because the password
+        #    prompt is the one part of this feature that has actually failed on
+        #    the bench.
+        #
+        #    So the plan is split into at most two jobs, in this order:
+        #
+        #      1. the Flatpaks   through pkexec, as root, for the whole
+        #                        computer. ONE password prompt, at the moment
+        #                        Install is pressed.
+        #      2. our own apps   as you, no prompt of any kind.
+        #
+        #    They run one after the other and write to the SAME progress
+        #    channel. Each is told --step-offset and --step-total, so the step
+        #    numbers and the bar run 1, 2, 3 … across the whole job instead of
+        #    restarting at one half way through. A person sees one install.
+        #
+        #    Tick only Flatpaks and there is one job, exactly as before. Tick
+        #    only Aquarius Editor and there is one job and no password at all.
         def _start_process(self, plan):
             runtime_dir = GLib.get_user_runtime_dir() or GLib.get_tmp_dir()
             self.cancel_file = os.path.join(runtime_dir, "aquarius-creator-apps.cancel")
@@ -1308,20 +1620,60 @@ def run_window(first_run):
             except OSError:
                 pass
 
-            argv = []
-            if not DRY_RUN:
-                # pkexec is the one and only place this feature asks for a
-                # password, and it asks once for the whole run.
-                argv.append("pkexec")
-            argv += [INSTALLER, "--progress-fd", "2", "--cancel-file", self.cancel_file]
-            if DRY_RUN:
-                argv.append("--dry-run")
-            argv += [entry.ref for entry in plan]
+            flatpaks = [e for e in plan if not e.is_appimage]
+            ours = [e for e in plan if e.is_appimage]
+            total = len(plan)
 
-            self._append_log("$ %s\n" % " ".join(argv))
+            self.jobs = []
+            offset = 0
+            if flatpaks:
+                argv = []
+                if not DRY_RUN:
+                    # pkexec is the one and only place this feature asks for a
+                    # password, and it asks once for the whole run.
+                    argv.append("pkexec")
+                argv += [
+                    INSTALLER,
+                    "--progress-fd", "2",
+                    "--cancel-file", self.cancel_file,
+                    "--step-offset", str(offset),
+                    "--step-total", str(total),
+                ]
+                if DRY_RUN:
+                    argv.append("--dry-run")
+                argv += [e.ref for e in flatpaks]
+                # needs_password is what tells _job_exited whether pkexec's own
+                # exit codes are worth interpreting. They mean nothing at all
+                # for a job that never went near pkexec.
+                self.jobs.append({"argv": argv, "needs_password": not DRY_RUN})
+                offset += len(flatpaks)
+            if ours:
+                argv = [
+                    APPIMAGE_INSTALLER,
+                    "--progress-fd", "2",
+                    "--cancel-file", self.cancel_file,
+                    "--step-offset", str(offset),
+                    "--step-total", str(total),
+                ]
+                if DRY_RUN:
+                    argv.append("--dry-run")
+                argv += ["install"] + [e.ref for e in ours]
+                self.jobs.append({"argv": argv, "needs_password": False})
+
+            self._start_next_job()
+
+        def _start_next_job(self):
+            """Start the next installer, or finish if there are none left."""
+            if not self.jobs:
+                self._all_jobs_finished()
+                return
+            job = self.jobs.pop(0)
+            self.current_job = job
+
+            self._append_log("$ %s\n" % " ".join(job["argv"]))
             try:
                 self.proc = subprocess.Popen(
-                    argv,
+                    job["argv"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     start_new_session=True,
@@ -1423,13 +1775,20 @@ def run_window(first_run):
 
         def _process_exited(self, code):
             self.proc = None
-            self.cancel_button.set_visible(False)
             self.refresh_installed()
+
+            job = self.current_job or {}
+            self.current_job = None
 
             # pkexec's own codes, which are not the installer's. 126 is "you
             # said no, or nothing asked you"; 127 is "the asking itself failed".
             # Both need a different sentence from "an app would not install".
-            if code in (126, 127) and not self.failures:
+            #
+            # ⚠️ ONLY FOR A JOB THAT ACTUALLY WENT THROUGH pkexec. Our own
+            # installer runs as you and never sees pkexec, so 126 and 127 from
+            # it are ordinary exit codes and reading them as "you refused the
+            # password" would be a confident lie.
+            if job.get("needs_password") and code in (126, 127) and not self.failures:
                 # ⚠️ TELLING THE TWO APART MATTERS, AND THIS IS THE 2026-09-04
                 # BENCH FAULT. "You said no" and "nothing was able to ask you"
                 # look identical from here, and the second one is not something
@@ -1461,12 +1820,17 @@ def run_window(first_run):
                 )
                 return GLib.SOURCE_REMOVE
 
+            # One job down. If Cancel was pressed there is nothing more to
+            # start; otherwise the next installer takes over the same bar and
+            # the same list of steps, and only the last one lands on "All set."
             if self.cancelled:
-                self._show_done(cancelled=True)
-                return GLib.SOURCE_REMOVE
-
-            self._show_done(cancelled=False)
+                self.jobs = []
+            self._start_next_job()
             return GLib.SOURCE_REMOVE
+
+        def _all_jobs_finished(self):
+            self.cancel_button.set_visible(False)
+            self._show_done(cancelled=self.cancelled)
 
         def _show_done(self, cancelled):
             arrived = [e for e in self.plan if e.app_id not in self.failures]
@@ -1513,6 +1877,11 @@ def run_window(first_run):
             self.stack.set_visible_child_name("done")
 
         def _show_failure(self, message):
+            # Whatever was going to run next does not run: the person is being
+            # shown an error and a Try again button, and quietly starting a
+            # second installer behind that page would be indefensible.
+            self.jobs = []
+            self.current_job = None
             self.working_title.set_label("That did not work")
             self.working_blurb.set_label(message)
             self.bar.set_fraction(0.0)

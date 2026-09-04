@@ -1,0 +1,908 @@
+#!/usr/bin/bash
+# ==============================================================================
+# aquarius-appimage-install — install one of OUR apps into your own home folder
+# ==============================================================================
+# PLAIN ENGLISH
+#
+# Aquarius Editor is ours. It is on no app store, so there is no Flathub to
+# fetch it from — it is published as a single file on GitHub, beside a list of
+# fingerprints. This script downloads that file, checks the fingerprint, unpacks
+# it into your home folder, and gives you a menu entry and an icon so it behaves
+# like any other app on the machine.
+#
+# It also removes it again, and it can tell you whether a newer one has been
+# published.
+#
+# ------------------------------------------------------------------------------
+# ⚠️ WHY THIS EXISTS AT ALL — the decision of 2026-09-04 (Royce's call)
+# ------------------------------------------------------------------------------
+# Aquarius Editor used to be BAKED INTO THE OPERATING SYSTEM. The build
+# downloaded it, unpacked it into /usr, and every single AquariusOS image was
+# four gigabytes larger as a result — for everybody, including the people who
+# will never open it. The base image was 11.1 GB and the NVIDIA one 14.2 GB, and
+# roughly four of those gigabytes were one app.
+#
+# So it moved. It is now the first card in the app chooser, ticked when the
+# window opens, and installed HERE, on the machine, by the person who wants it.
+# Aquarius Writer stayed baked in: it is about 260 MB, which is not worth
+# asking anybody a question about.
+#
+# ------------------------------------------------------------------------------
+# ⚠️ NO PASSWORD, AND THAT IS THE DESIGN — not a corner cut
+# ------------------------------------------------------------------------------
+# Its Flatpak sibling, /usr/libexec/aquarius-creator-apps-install, needs an
+# administrator password: it installs apps for the WHOLE COMPUTER, and it has to,
+# because the extra permissions creator apps need are system-wide.
+#
+# This script installs into ONE PERSON'S HOME FOLDER and touches nothing else.
+# Asking for an administrator password to write inside your own home folder
+# would be theatre — and worse than theatre, because on the Aquarius Desktop
+# that prompt is the one part of this feature that has actually failed on the
+# bench. So this runs as you, with no pkexec, no sudo, and nothing privileged.
+#
+# It REFUSES to run as root, and that is deliberate too: run under sudo it would
+# install the app into root's home folder, where the person who asked for it can
+# never see it, and the failure would look like success.
+#
+# ------------------------------------------------------------------------------
+# WHERE THINGS GO, AND WHY IT IS SHAPED LIKE THAT
+# ------------------------------------------------------------------------------
+#     ~/.local/lib/aquarius/
+#     ├── versions/aquarius-editor/0.7.2/    the app, unpacked, AppRun on top
+#     └── aquarius-editor -> versions/aquarius-editor/0.7.2
+#
+#     ~/.local/share/applications/aquarius-editor.desktop    the menu entry
+#     ~/.local/share/icons/hicolor/…/aquarius-editor.png     the icon
+#
+# ⚠️ THE SHAPE OF ~/.local/lib/aquarius IS A DELIBERATE MIRROR OF
+#    /usr/lib/aquarius, WHICH IS WHERE THE BAKED-IN APPS LIVE. That is what lets
+#    /usr/bin/aquarius-editor keep using the operating system's existing update
+#    machinery (/usr/libexec/aquarius-app-overlay) without a single change to it:
+#    the launcher hands that machinery ~/.local/lib/aquarius as "the folder the
+#    installed apps live in" and everything downstream — the version comparison,
+#    the "is a downloaded update newer" rule, the clean-up of stale copies —
+#    works exactly as it did when the app was in /usr.
+#
+# ⚠️ AND THE VERSION IS IN THE PATH, WITH A LINK ON TOP, FOR ONE REASON: an
+#    update must never leave a half-written app where a working one used to be.
+#    The new version is unpacked beside the old one under its own name and only
+#    then does the link move, which is instantaneous. If the download dies half
+#    way through, the link never moves and the app you have keeps working.
+#
+# ------------------------------------------------------------------------------
+# HOW IT SAYS WHAT IS HAPPENING — the same progress channel as everything else
+# ------------------------------------------------------------------------------
+# Everything a person would read goes to normal output, and the chooser window
+# puts it behind "Details". Given --progress-fd <n> it ALSO writes short
+# structured lines there, in exactly the vocabulary the Flatpak installer and
+# the DaVinci Resolve installer use:
+#
+#   STEP <n>/<total> <text>   step n of total has begun
+#   PERCENT <0-100>           how far through the WHOLE run — see below
+#   OK <id>                   that app is installed, and we checked
+#   FAILED <id> <text>        that app is not installed, and <text> says why
+#   DONE                      the run finished
+#   FAIL <text>               the run could not happen at all
+#   CANCELLED                 you pressed Cancel
+#
+# ⚠️ --step-offset AND --step-total ARE WHAT MAKE ONE PROGRESS BAR OUT OF TWO
+#    PROGRAMS. When somebody ticks OBS, Kdenlive and Aquarius Editor, the
+#    chooser runs the Flatpak installer for the first two and then this script
+#    for the third. Without those two options each program would count from one
+#    and the bar would go back to the beginning half way through. With them,
+#    this script is told "you are step 3 of 3" and reports accordingly.
+#
+# ------------------------------------------------------------------------------
+# THE RULE THIS SCRIPT FOLLOWS ABOVE ALL OTHERS
+# ------------------------------------------------------------------------------
+# NEVER SAY AN APP IS INSTALLED BECAUSE A COMMAND EXITED ZERO. At the end it
+# looks for the app it just claims to have installed and reads the version out
+# of it. Same rule as the rest of AquariusOS: trust content, never appearances.
+# ==============================================================================
+
+set -uo pipefail
+
+CATALOG_CLI="/usr/libexec/aquarius-flatpak-preinstall"
+DESKTOP_TEMPLATE_DIR="/usr/share/aquarius/apps"
+GITHUB="https://github.com"
+GITHUB_API="https://api.github.com"
+
+PROGRESS_FD=""
+CANCEL_FILE=""
+DRY_RUN=0
+STEP_OFFSET=0
+STEP_TOTAL=0
+ACTION="install"
+IDS=()
+
+say() { printf '%s\n' "$*"; }
+
+# See the long note in aquarius-creator-apps-install about why there is no
+# 2>/dev/null here: the channel the window gives us often IS descriptor 2.
+progress() {
+    [ -n "${PROGRESS_FD}" ] || return 0
+    printf '%s\n' "$*" >&"${PROGRESS_FD}" || true
+}
+
+usage() {
+    cat << 'USAGE'
+aquarius-appimage-install — install one of our own apps into your home folder
+
+    aquarius-appimage-install [install] <id> [<id>...]
+    aquarius-appimage-install remove <id>
+    aquarius-appimage-install update <id>            install it if it is newer
+    aquarius-appimage-install --status <id>          say what is installed
+    aquarius-appimage-install --check-update <id>    say if a newer one exists
+
+    --progress-fd N   also write short progress lines to file descriptor N
+    --step-offset N   this run's first step is really step N+1 of a bigger job
+    --step-total N    ...out of N steps in total
+    --cancel-file F   stop cleanly, between apps, as soon as file F appears
+    --dry-run         walk every step and touch nothing. No network is used.
+
+The IDs are the ones `aq apps list` prints. Runs as you: no password, and
+nothing outside your own home folder is touched. Refuses to run as root.
+USAGE
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --progress-fd) PROGRESS_FD="${2:-}"; shift 2 || true ;;
+        --progress-fd=*) PROGRESS_FD="${1#*=}"; shift ;;
+        --step-offset) STEP_OFFSET="${2:-0}"; shift 2 || true ;;
+        --step-offset=*) STEP_OFFSET="${1#*=}"; shift ;;
+        --step-total) STEP_TOTAL="${2:-0}"; shift 2 || true ;;
+        --step-total=*) STEP_TOTAL="${1#*=}"; shift ;;
+        --cancel-file) CANCEL_FILE="${2:-}"; shift 2 || true ;;
+        --cancel-file=*) CANCEL_FILE="${1#*=}"; shift ;;
+        --dry-run) DRY_RUN=1; shift ;;
+        --status) ACTION="status"; shift ;;
+        --check-update) ACTION="check-update"; shift ;;
+        install | remove | update | status) ACTION="$1"; shift ;;
+        -h | --help) usage; exit 0 ;;
+        -*)
+            say "aquarius-appimage-install: I do not understand '$1'."
+            usage
+            exit 2
+            ;;
+        *) IDS+=("$1"); shift ;;
+    esac
+done
+
+# ==============================================================================
+# The two things that are true before anything else can be
+# ==============================================================================
+# ⚠️ REFUSING ROOT IS NOT FUSSINESS. Under sudo, $HOME is root's home folder, so
+# every path below would point somewhere the person who asked can never see, and
+# the install would "succeed" into a folder nobody will ever open.
+if [ "$(id -u)" -eq 0 ] && [ "${DRY_RUN}" -eq 0 ]; then
+    say "Do not run this with sudo."
+    say ""
+    say "This installs an app into YOUR OWN home folder and needs no special"
+    say "permission at all. Run as an administrator it would install into the"
+    say "administrator's home folder instead, where you would never find it."
+    say ""
+    say "Run it without sudo, or use the Aquarius Apps window."
+    progress "FAIL This has to run as you, not as an administrator."
+    exit 1
+fi
+
+if [ -z "${HOME:-}" ] || [ ! -d "${HOME}" ]; then
+    say "ERROR — this session has no home folder, so there is nowhere to install to."
+    progress "FAIL There is no home folder to install into."
+    exit 1
+fi
+
+APP_ROOT="${HOME}/.local/lib/aquarius"
+VERSIONS_ROOT="${APP_ROOT}/versions"
+DESKTOP_DIR="${HOME}/.local/share/applications"
+ICON_ROOT="${HOME}/.local/share/icons/hicolor"
+
+# ------------------------------------------------------------------------------
+# ⚠️ A REHEARSAL WRITES TO A THROWAWAY HOME FOLDER, NOT TO NOWHERE
+# ------------------------------------------------------------------------------
+# --dry-run could have been a series of `echo`s. It is not, on purpose: a
+# rehearsal that only prints what it WOULD do proves nothing about the code that
+# does it, and the fault this whole feature exists to avoid — a build that never
+# ran its own reader against its own file — was exactly that shape.
+#
+# So the rehearsal runs every real step: it writes a stand-in file, verifies a
+# checksum against it, unpacks it, fixes permissions, writes the version stamp,
+# moves the folder into place, re-points the link, writes the menu entry, and
+# then READS BACK the version it claims to have installed. Only the network is
+# stood in for. The four folders above are moved into a temporary one first, so
+# none of that reaches the person's own home folder — and it is all deleted on
+# the way out.
+if [ "${DRY_RUN}" -eq 1 ]; then
+    AQ_REHEARSAL_HOME="$(mktemp -d "${TMPDIR:-/tmp}/aquarius-rehearsal-XXXXXX")"
+    trap 'rm -rf -- "${AQ_REHEARSAL_HOME}"' EXIT
+    APP_ROOT="${AQ_REHEARSAL_HOME}/.local/lib/aquarius"
+    VERSIONS_ROOT="${APP_ROOT}/versions"
+    DESKTOP_DIR="${AQ_REHEARSAL_HOME}/.local/share/applications"
+    ICON_ROOT="${AQ_REHEARSAL_HOME}/.local/share/icons/hicolor"
+    say "REHEARSAL — nothing on this computer is changed."
+    say "Everything below really happens, inside ${AQ_REHEARSAL_HOME}, which is"
+    say "deleted at the end. Only the downloading is stood in for."
+    say ""
+fi
+
+# ==============================================================================
+# Reading the catalogue — the one place that says what an app IS
+# ==============================================================================
+# Nothing about Aquarius Editor is written down in this file. Its repository,
+# its pinned version, which file in the release is the app, and which file holds
+# the fingerprints all come from /usr/share/aquarius/apps/catalog.ini, read
+# through the same --catalog command the chooser window uses. One list, one
+# answer, and adding a second app of ours one day means a block of text in that
+# file and no change here.
+CAT_ID=""; CAT_NAME=""
+CAT_SOURCE=""; CAT_PIN=""; CAT_ASSET=""; CAT_SUMS=""
+
+read_catalog_entry() {          # read_catalog_entry <id>
+    local want="$1" line field key value
+    [ -x "${CATALOG_CLI}" ] || {
+        say "ERROR — ${CATALOG_CLI} is missing from this copy of AquariusOS."
+        return 1
+    }
+    while IFS= read -r line; do
+        [ -n "${line}" ] || continue
+        IFS=$'\t' read -r -a field <<< "${line}"
+        [ "${field[0]:-}" = "${want}" ] || continue
+
+        CAT_ID="${field[0]}"
+        CAT_NAME="${field[1]:-${want}}"
+        CAT_SOURCE=""; CAT_PIN=""; CAT_ASSET=""; CAT_SUMS=""
+        local i
+        for ((i = 4; i < ${#field[@]}; i++)); do
+            key="${field[$i]%%:*}"
+            value="${field[$i]#*:}"
+            case "${key}" in
+                source) CAT_SOURCE="${value}" ;;
+                pin) CAT_PIN="${value}" ;;
+                asset) CAT_ASSET="${value}" ;;
+                sha256sums) CAT_SUMS="${value}" ;;
+                type)
+                    if [ "${value}" != "appimage" ]; then
+                        say "ERROR — ${want} is a ${value}, not one of our own downloads."
+                        say "        Install it with:  aq apps install ${want}"
+                        return 1
+                    fi
+                    ;;
+            esac
+        done
+
+        if [ -z "${CAT_SOURCE}" ] || [ -z "${CAT_PIN}" ] \
+            || [ -z "${CAT_ASSET}" ] || [ -z "${CAT_SUMS}" ]; then
+            say "ERROR — the entry for ${want} in the app catalogue is incomplete."
+            say "        That is a fault in AquariusOS, not something you did."
+            return 1
+        fi
+        return 0
+    done < <("${CATALOG_CLI}" --catalog 2> /dev/null)
+
+    say "ERROR — '${want}' is not one of the apps AquariusOS offers."
+    say "        'aq apps list' shows the ones it does."
+    return 1
+}
+
+# The short name used for folders, the menu entry and the launcher. Derived from
+# the app id rather than written down twice: os.aquarius.editor -> aquarius-editor.
+short_name() {                  # short_name <id>
+    case "$1" in
+        os.aquarius.*) printf 'aquarius-%s\n' "${1##*.}" ;;
+        *) printf '%s\n' "${1//./-}" ;;
+    esac
+}
+
+installed_version() {           # installed_version <short-name>
+    local dir="${APP_ROOT}/$1"
+    [ -d "${dir}" ] || return 1
+    [ -r "${dir}/VERSION" ] || return 1
+    local v
+    v="$(head -c 64 -- "${dir}/VERSION" 2> /dev/null | head -n 1 | tr -d ' \t\r\n')"
+    [ -n "${v}" ] || return 1
+    printf '%s\n' "${v}"
+}
+
+cancelled() { [ -n "${CANCEL_FILE}" ] && [ -e "${CANCEL_FILE}" ]; }
+
+# ------------------------------------------------------------------------------
+# report_percent — where we are in the WHOLE job, not just in this app
+# ------------------------------------------------------------------------------
+# <finished> is how many steps of this run are behind us, and <fraction> is how
+# far through the step in progress, 0 to 100. --step-offset and --step-total put
+# that on the scale of the bigger job the chooser is running.
+report_percent() {              # report_percent <finished> <fraction>
+    local finished="$1" fraction="${2:-0}" total="${STEP_TOTAL}" done_units
+    [ "${total}" -gt 0 ] 2> /dev/null || total="${#IDS[@]}"
+    [ "${total}" -gt 0 ] || return 0
+    done_units=$(((STEP_OFFSET + finished) * 100 + fraction))
+    progress "PERCENT $((done_units / total))"
+}
+
+# ==============================================================================
+# THE STEPS OF AN INSTALL, in the order a person would describe them
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# fetch_sums — the fingerprints, fetched FIRST
+# ------------------------------------------------------------------------------
+# Deliberately before the app, exactly as the image build does it: this file is
+# a few hundred bytes, so a release that does not exist is discovered in one
+# second instead of after a four-gigabyte download.
+fetch_sums() {                  # fetch_sums <url> <into>
+    curl --retry 3 --retry-delay 5 --max-time 120 -fsSL -o "$2" "$1"
+}
+
+# ------------------------------------------------------------------------------
+# download_app — the big one, with a progress bar and a dead-man's handle
+# ------------------------------------------------------------------------------
+# ⚠️ --speed-limit / --speed-time ARE NOT DECORATION, and this is the same note
+#    that stands in the image build. `--retry` only fires on a connection that
+#    FAILS. A connection that goes QUIET never fails, so curl would sit and wait
+#    for ever on a four-gigabyte download, and the window would show a bar that
+#    never moves and never errors. These two words say "if less than a kilobyte
+#    has moved in the last minute, give up on this attempt", which turns a
+#    silent hang into an ordinary error that --retry then retries.
+#
+# The percentage comes from curl's own progress meter, read line by line. Its
+# `-#` output is a bar rather than numbers, so we ask for the machine-readable
+# form: --write-out is no use mid-transfer, so we read stderr from
+# `--progress-bar`-less curl, which prints a table whose fourth column is the
+# percentage of the transfer completed.
+download_app() {                # download_app <url> <into> <finished-steps>
+    local url="$1" into="$2" finished="$3" line pct last=-1
+
+    # curl's default progress meter writes a table to stderr and rewrites the
+    # last line with carriage returns. `tr '\r' '\n'` turns those rewrites into
+    # ordinary lines so a `while read` can see each one.
+    curl --retry 3 --retry-delay 5 \
+        --speed-limit 1024 --speed-time 60 \
+        -fL -o "${into}" "${url}" 2>&1 \
+        | tr '\r' '\n' \
+        | while IFS= read -r line; do
+            # A progress line begins with the percentage of the whole transfer.
+            pct="$(printf '%s' "${line}" | awk '{print $1}' | grep -E '^[0-9]{1,3}$' || true)"
+            if [ -n "${pct}" ] && [ "${pct}" != "${last}" ]; then
+                last="${pct}"
+                # The download is most of the work but not all of it: unpacking
+                # four gigabytes takes a minute of its own. So the download
+                # occupies the first 80% of this app's share of the bar.
+                report_percent "${finished}" $((pct * 80 / 100))
+            fi
+        done
+
+    # ⚠️ THE EXIT CODE OF A PIPELINE IS THE LAST COMMAND'S, WHICH HERE IS THE
+    #    while loop, and it always succeeds. PIPESTATUS is how we get curl's.
+    return "${PIPESTATUS[0]}"
+}
+
+# ------------------------------------------------------------------------------
+# install_icon — put the app's icon where the desktop will look for it
+# ------------------------------------------------------------------------------
+# The AppImage carries a proper icon theme inside it (usr/share/icons/hicolor),
+# with each size in the folder named for that size. Copying that tree across is
+# better than picking one file and guessing at its size: the desktop then has a
+# small icon for the dock and a large one for the app grid, exactly as upstream
+# intended.
+#
+# If that tree is not there we fall back to a loose PNG and read its true width
+# out of the file itself — bytes 17 to 20 of any PNG are the width, big-endian —
+# rather than assuming, because an icon filed under the wrong size is drawn
+# blurry and nobody can see why.
+install_icon() {                # install_icon <unpacked-dir> <short-name>
+    local src="$1" name="$2" tree png width dir
+
+    tree="${src}/usr/share/icons/hicolor"
+    if [ -d "${tree}" ]; then
+        mkdir -p "${ICON_ROOT}"
+        # Copy only PNG and SVG files, renamed to our menu entry's Icon= name,
+        # keeping upstream's own size folders.
+        while IFS= read -r png; do
+            dir="$(dirname "${png#"${tree}/"}")"
+            mkdir -p "${ICON_ROOT}/${dir}"
+            cp -f "${png}" "${ICON_ROOT}/${dir}/${name}.${png##*.}" 2> /dev/null || true
+        done < <(find "${tree}" -type f \( -name '*.png' -o -name '*.svg' \))
+        say "  icon installed from the app's own icon theme"
+        return 0
+    fi
+
+    png="$(find "${src}" -maxdepth 1 -type f -name '*.png' \
+        -printf '%s %p\n' 2> /dev/null | sort -rn | head -1 | cut -d' ' -f2- || true)"
+    if [ -z "${png}" ] && [ -f "${src}/.DirIcon" ]; then
+        png="${src}/.DirIcon"
+    fi
+    if [ -z "${png}" ]; then
+        say "  NOTE: no icon found inside the app; the menu entry will show a placeholder."
+        return 0
+    fi
+
+    # Bytes 17-20 of a PNG are its width. od reads them as one big-endian
+    # 32-bit number, which is exactly what the format says they are.
+    width="$(od -An -j16 -N4 -tu4 --endian=big "${png}" 2> /dev/null | tr -d ' ')"
+    case "${width}" in
+        '' | *[!0-9]*) width=256 ;;
+        *) [ "${width}" -ge 16 ] && [ "${width}" -le 1024 ] || width=256 ;;
+    esac
+    mkdir -p "${ICON_ROOT}/${width}x${width}/apps"
+    cp -f "${png}" "${ICON_ROOT}/${width}x${width}/apps/${name}.png"
+    say "  icon installed at ${width}×${width}"
+}
+
+# ------------------------------------------------------------------------------
+# install_desktop — the menu entry
+# ------------------------------------------------------------------------------
+# The wording, the categories and the keywords ship in the image, at
+# /usr/share/aquarius/apps/<name>.desktop.in, so that the app grid entry for a
+# downloaded app reads exactly as it did when the app was baked in. All this
+# does is copy it into the person's own applications folder.
+#
+# ⚠️ THE FILE NAME MATTERS MORE THAN THE CONTENTS. It has to be
+# aquarius-editor.desktop, because the GNOME dock and the Aquarius dock both
+# pin that exact name — see the note in the gschema override. Written here, in
+# the person's own folder, that name resolves the moment the app is installed
+# and the pinned icon appears with no logging out.
+install_desktop() {             # install_desktop <unpacked-dir> <short-name>
+    # ⚠️ THREE `local`s AND NOT ONE. Inside a single `local a=… b=…` the later
+    # assignments cannot see the earlier ones, so a template path built from
+    # ${name} on the same line would come out as ".desktop.in" and the menu
+    # entry would silently never be written. (shellcheck SC2318.)
+    local src="$1"
+    local name="$2"
+    local template="${DESKTOP_TEMPLATE_DIR}/${name}.desktop.in"
+    local upstream wmclass
+    if [ ! -r "${template}" ]; then
+        say "  NOTE: ${template} is missing, so no menu entry was written."
+        return 1
+    fi
+    mkdir -p "${DESKTOP_DIR}"
+    install -m 0644 "${template}" "${DESKTOP_DIR}/${name}.desktop"
+
+    # ⚠️ WINDOW MATCHING, READ OUT OF THE APP RATHER THAN GUESSED AT. Every
+    # window tells the desktop an internal "class" name. If the menu entry does
+    # not know that name, the dock shows a running Aquarius Editor as a SECOND,
+    # nameless icon beside the one you clicked. The image build used to do this
+    # by reading the .desktop file the app ships INSIDE itself, and so do we —
+    # writing a guess into the template instead would be the same bug with more
+    # confidence behind it.
+    upstream="$(find "${src}" -maxdepth 4 -type f -name '*.desktop' | head -1 || true)"
+    if [ -n "${upstream}" ]; then
+        wmclass="$(grep -m1 '^StartupWMClass=' "${upstream}" | cut -d= -f2- || true)"
+        if [ -n "${wmclass}" ]; then
+            printf 'StartupWMClass=%s\n' "${wmclass}" >> "${DESKTOP_DIR}/${name}.desktop"
+            say "  window class: ${wmclass}"
+        fi
+    fi
+
+    if command -v update-desktop-database > /dev/null 2>&1; then
+        update-desktop-database "${DESKTOP_DIR}" > /dev/null 2>&1 || true
+    fi
+    say "  menu entry written to ${DESKTOP_DIR}/${name}.desktop"
+}
+
+# ==============================================================================
+# install_one — the whole thing, for one app
+# ==============================================================================
+install_one() {                 # install_one <id> <step-number> <steps-in-run>
+    local id="$1" n="$2" run_total="$3"
+    local name work base version matches count file url_file expected actual
+    local unpacked target finished=$((n - 1))
+
+    read_catalog_entry "${id}" || {
+        progress "FAILED ${id} AquariusOS could not read this app's details."
+        return 1
+    }
+    name="$(short_name "${id}")"
+    version="${CAT_PIN#v}"
+    base="${GITHUB}/${CAT_SOURCE}/releases/download/${CAT_PIN}"
+
+    progress "STEP $((STEP_OFFSET + n))/$([ "${STEP_TOTAL}" -gt 0 ] && echo "${STEP_TOTAL}" || echo "${run_total}") ${CAT_NAME}"
+    say "──────────────────────────────────────────────────────────────────────"
+    say "[${n}/${run_total}] ${CAT_NAME} ${CAT_PIN}"
+    say "──────────────────────────────────────────────────────────────────────"
+
+    # Already here, and the same version? Say so and stop. This is what makes
+    # the window safe to press twice.
+    if actual="$(installed_version "${name}")" && [ "${actual}" = "${version}" ]; then
+        say "Already installed, version ${actual}. Nothing to do."
+        progress "OK ${id}"
+        report_percent "${n}" 0
+        return 0
+    fi
+
+    work="$(mktemp -d "${TMPDIR:-/tmp}/aquarius-appimage-XXXXXX")" || {
+        say "ERROR — could not make a temporary folder to work in."
+        progress "FAILED ${id} There was nowhere to download to."
+        return 1
+    }
+    # ⚠️ THE TEMPORARY FOLDER HOLDS FOUR GIGABYTES AND MUST GO WHATEVER HAPPENS —
+    #    including when this function returns early on an error, which it does in
+    #    eight places below. A trap is the only way to be sure of that.
+    trap 'rm -rf -- "${work}"' RETURN
+
+    # --- 1. the fingerprints -------------------------------------------------
+    say "Checking the release exists…"
+    if [ "${DRY_RUN}" -eq 1 ]; then
+        say "(rehearsal: would fetch ${base}/${CAT_SUMS})"
+        printf '%s  ./%s-%s-x86_64.AppImage\n' \
+            "$(printf 'rehearsal' | sha256sum | cut -d' ' -f1)" "${name}" "${version}" \
+            > "${work}/${CAT_SUMS}"
+    elif ! fetch_sums "${base}/${CAT_SUMS}" "${work}/${CAT_SUMS}"; then
+        say "ERROR — could not download the fingerprint file for ${CAT_NAME}."
+        say "        Tried: ${base}/${CAT_SUMS}"
+        say ""
+        say "The usual cause is simply not being online yet. It can also mean the"
+        say "release this copy of AquariusOS was told to offer has been removed."
+        progress "FAILED ${id} Could not reach GitHub. Check the internet connection and try again."
+        return 1
+    fi
+    report_percent "${finished}" 2
+
+    # --- 2. which file in the release is the app? ----------------------------
+    # Exactly the reading the image build does. The name may contain spaces, so
+    # the file name is "everything after the fingerprint" and never "the second
+    # word". The optional "*" is sha256sum's marker for a binary file.
+    matches="$(grep -E "$(printf '%s' "${CAT_ASSET}" | sed 's/[.[\*^$]/\\&/g; s/\\\*/.*/g')[[:space:]]*\$" \
+        "${work}/${CAT_SUMS}" || true)"
+    count="$(printf '%s' "${matches}" | grep -c . || true)"
+    if [ "${count}" -ne 1 ]; then
+        say "ERROR — expected exactly one ${CAT_ASSET} in ${CAT_SOURCE} ${CAT_PIN}, found ${count}."
+        say "        That is a fault in AquariusOS, not something you did."
+        progress "FAILED ${id} That release does not look the way AquariusOS expects."
+        return 1
+    fi
+    expected="$(printf '%s' "${matches}" | awk '{print $1}')"
+    file="$(printf '%s' "${matches}" | sed -E 's/^[0-9a-fA-F]+[[:space:]]+\*?//')"
+    file="${file##*/}"
+    url_file="${file// /%20}"
+    say "  file:     ${file}"
+    say "  expected: ${expected}"
+
+    # --- 3. the download -----------------------------------------------------
+    say "Downloading ${CAT_NAME}. This is a large file — several minutes on a"
+    say "normal connection. You can carry on using the computer."
+    if [ "${DRY_RUN}" -eq 1 ]; then
+        say "(rehearsal: would download ${base}/${url_file})"
+        printf 'rehearsal' > "${work}/app.AppImage"
+        report_percent "${finished}" 80
+    elif ! download_app "${base}/${url_file}" "${work}/app.AppImage" "${finished}"; then
+        say "ERROR — the download did not finish."
+        say ""
+        say "The two likeliest reasons are a connection that dropped or went very"
+        say "quiet, and a disk with no room left on it. Nothing has been changed —"
+        say "press Try again when you are ready."
+        progress "FAILED ${id} The download did not finish. Check the connection and try again."
+        return 1
+    fi
+
+    # --- 4. verify BEFORE trusting it ----------------------------------------
+    say "Checking the download is really what GitHub published…"
+    actual="$(sha256sum "${work}/app.AppImage" | awk '{print $1}')"
+    if [ "${DRY_RUN}" -eq 1 ]; then
+        say "(rehearsal: would compare ${actual} against ${expected})"
+    elif [ "${actual}" != "${expected}" ]; then
+        say "ERROR — the downloaded file is not what the release says it should be."
+        say "          expected ${expected}"
+        say "          actual   ${actual}"
+        say ""
+        say "Nothing has been installed. This means the file arrived damaged, or"
+        say "was interfered with on the way. Try again; if it happens twice, stop"
+        say "and say so."
+        progress "FAILED ${id} The download did not match its fingerprint, so it was thrown away."
+        return 1
+    else
+        say "  checksum OK"
+    fi
+    report_percent "${finished}" 84
+
+    if cancelled; then
+        say "Stopped, because you asked it to. Nothing has been installed."
+        progress "CANCELLED"
+        return 1
+    fi
+
+    # --- 5. unpack -----------------------------------------------------------
+    # --appimage-extract is the AppImage's own built-in unpack mode. It needs no
+    # FUSE (that is only the self-mounting mode), so it works anywhere. The chmod
+    # is not decoration: a GitHub release attachment always arrives WITHOUT its
+    # "you may run this" flag.
+    say "Unpacking…"
+    if [ "${DRY_RUN}" -eq 1 ]; then
+        say "(rehearsal: would run ./app.AppImage --appimage-extract)"
+        mkdir -p "${work}/squashfs-root"
+        : > "${work}/squashfs-root/AppRun"
+        chmod +x "${work}/squashfs-root/AppRun"
+    else
+        chmod +x "${work}/app.AppImage"
+        if ! (cd "${work}" && ./app.AppImage --appimage-extract > /dev/null); then
+            say "ERROR — the downloaded app refused to unpack."
+            say "        Its fingerprint was correct, so the file is not damaged."
+            progress "FAILED ${id} The download unpacked into nothing. This is a fault in the release."
+            return 1
+        fi
+    fi
+    unpacked="${work}/squashfs-root"
+    if [ ! -x "${unpacked}/AppRun" ]; then
+        say "ERROR — there is no runnable program inside the download."
+        progress "FAILED ${id} There is no runnable program inside the download."
+        return 1
+    fi
+    report_percent "${finished}" 92
+
+    # --- 6. fix the permissions ----------------------------------------------
+    # ⚠️ THIS BLOCK IS THE WHOLE OF THE BUG OF 2026-08-28, when both Aquarius
+    #    apps shipped, both appeared in the app grid, and clicking either did
+    #    absolutely nothing. Aquarius Editor's own AppImage extractor made ALL
+    #    3,097 of its folders mode 0700 — and a folder you cannot enter makes
+    #    every file inside it read as missing.
+    #
+    #    It is the same extractor here, so it is the same fault, so the same fix
+    #    has to be here too. Extracting with `unsquashfs` on a developer machine
+    #    produces 0755 folders and hides this completely; only the app's own
+    #    extractor reproduces it.
+    #
+    #    In a home folder the numbers are the home folder's, not /usr's: the
+    #    owner may do everything, and nobody else needs anything.
+    find "${unpacked}" -type d -exec chmod u+rwx {} +
+    find "${unpacked}" -type f -perm -u+r ! -perm -u+x -exec chmod u+rw {} +
+    find "${unpacked}" -type f -perm -u+x -exec chmod u+rwx {} +
+    say "  permissions normalised"
+
+    # ⚠️ chrome-sandbox CANNOT BE SET UP HERE, AND IT DOES NOT NEED TO BE.
+    # Electron's OLD sandbox needs a helper file owned by root with the setuid
+    # bit — and only root can set that bit, which is exactly what this script
+    # refuses to be. That is fine: Chromium has preferred the newer
+    # USER-NAMESPACE sandbox since 2015 and AquariusOS has user namespaces
+    # switched on, like every ordinary Fedora. The app stays sandboxed.
+    #
+    # The one trap is that Electron does not shrug when the old helper is
+    # present but wrong: it ABORTS, silently, with no window. /usr/bin/aquarius-
+    # editor knows this and passes --disable-setuid-sandbox when it sees an
+    # ordinary chrome-sandbox, which is the whole reason that check exists in
+    # the launcher. Read the long note there.
+
+    # --- 7. write the version down -------------------------------------------
+    # The launcher reads this to decide whether a copy the app downloaded for
+    # itself is newer than the one installed here. Without it the app would
+    # simply stop taking its own updates.
+    printf '%s\n' "${version}" > "${unpacked}/VERSION"
+
+    # --- 8. move it into place, and only then move the link ------------------
+    mkdir -p "${VERSIONS_ROOT}/${name}"
+    target="${VERSIONS_ROOT}/${name}/${version}"
+    rm -rf -- "${target}.partial" "${target}"
+    if ! mv -- "${unpacked}" "${target}.partial"; then
+        say "ERROR — could not move the unpacked app into your home folder."
+        say "        The usual cause is a disk with no room left on it."
+        progress "FAILED ${id} There was not enough room in your home folder."
+        return 1
+    fi
+    mv -- "${target}.partial" "${target}"
+
+    # ⚠️ THE LINK MOVES LAST, AND IT IS THE ONLY MOMENT ANYTHING VISIBLE
+    #    CHANGES. Everything above wrote into folders nothing points at, so a
+    #    failure at any point up to here leaves the app you already had exactly
+    #    as it was. `ln -sfn` re-points an existing link instead of making a
+    #    link inside the folder it points at, which is what plain `ln -sf`
+    #    would do and is a classic way to end up with a nested mess.
+    ln -sfn "versions/${name}/${version}" "${APP_ROOT}/${name}"
+
+    install_icon "${target}" "${name}"
+    install_desktop "${target}" "${name}"
+
+    # --- 9. throw away versions nothing points at ----------------------------
+    # Each of these is four gigabytes. Only the one in use is kept.
+    local old
+    for old in "${VERSIONS_ROOT}/${name}"/*; do
+        [ -d "${old}" ] || continue
+        [ "${old}" = "${target}" ] && continue
+        rm -rf -- "${old}" 2> /dev/null \
+            && say "  removed the old copy, version $(basename "${old}")"
+    done
+
+    # --- 10. ASK, do not assume ----------------------------------------------
+    # ⚠️ ASKED IN A REHEARSAL TOO. The rehearsal has really written a folder and
+    # really moved the link, into a throwaway home folder, so this question has
+    # a real answer there — and asking it is the only thing that proves the nine
+    # steps above did what they said. A rehearsal that skipped its own check
+    # would be a rehearsal of the printing, not of the installing.
+    if actual="$(installed_version "${name}")" && [ "${actual}" = "${version}" ]; then
+        say ""
+        if [ "${DRY_RUN}" -eq 1 ]; then
+            say "(rehearsal) ${CAT_NAME} ${version} is installed, and read back."
+        else
+            say "${CAT_NAME} ${version} is installed."
+        fi
+    else
+        say ""
+        say "${CAT_NAME} did NOT install. The lines above say why."
+        progress "FAILED ${id} It unpacked but is not where it should be."
+        return 1
+    fi
+
+    say "  it lives in ${APP_ROOT}/${name}"
+    progress "OK ${id}"
+    report_percent "${n}" 0
+    return 0
+}
+
+# ==============================================================================
+# remove_one — take it away again
+# ==============================================================================
+# The app's own settings and projects are NOT touched. They live in the usual
+# places for an app's own data and they are the person's, not ours; somebody who
+# removes an app to free up space and reinstalls it next week should find their
+# work where they left it.
+remove_one() {                  # remove_one <id>
+    local id="$1" name
+    read_catalog_entry "${id}" || return 1
+    name="$(short_name "${id}")"
+
+    if [ ! -e "${APP_ROOT}/${name}" ]; then
+        say "${CAT_NAME} is not installed. Nothing to do."
+        return 0
+    fi
+    if [ "${DRY_RUN}" -eq 1 ]; then
+        say "(rehearsal: would remove ${APP_ROOT}/${name} and its copies)"
+        return 0
+    fi
+
+    rm -f -- "${APP_ROOT}/${name}"
+    rm -rf -- "${VERSIONS_ROOT:?}/${name}"
+    rm -f -- "${DESKTOP_DIR}/${name}.desktop"
+    find "${ICON_ROOT}" -name "${name}.png" -o -name "${name}.svg" 2> /dev/null \
+        | while IFS= read -r icon; do rm -f -- "${icon}"; done
+    if command -v update-desktop-database > /dev/null 2>&1; then
+        update-desktop-database "${DESKTOP_DIR}" > /dev/null 2>&1 || true
+    fi
+
+    say "${CAT_NAME} has been removed."
+    say ""
+    say "Your projects and settings are untouched — they are yours, not part of"
+    say "the app. Install it again from Aquarius Apps whenever you like."
+}
+
+# ==============================================================================
+# latest_release — what is the newest version published?
+# ==============================================================================
+# ⚠️ THIS IS NOT WHAT AN UPDATE INSTALLS. AquariusOS offers a PINNED version, so
+# that everybody on one image is running one build and a bad release cannot
+# reach anybody before we have seen it. This function is how `aq apps update`
+# can tell you the pin has moved on — the new pin arrives with the next system
+# update — and how it can tell you honestly that you are up to date.
+latest_release() {              # latest_release <owner/repo>
+    local json
+    json="$(curl -fsSL --max-time 20 \
+        -H 'Accept: application/vnd.github+json' \
+        "${GITHUB_API}/repos/$1/releases/latest" 2> /dev/null || true)"
+    [ -n "${json}" ] || return 1
+    printf '%s' "${json}" \
+        | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+        | head -1
+}
+
+# ==============================================================================
+# What was asked for
+# ==============================================================================
+if [ "${#IDS[@]}" -eq 0 ]; then
+    say "Nothing was named, so there is nothing to do."
+    progress "FAIL Nothing was chosen, so there is nothing to install."
+    exit 2
+fi
+
+case "${ACTION}" in
+    status)
+        for id in "${IDS[@]}"; do
+            read_catalog_entry "${id}" || exit 1
+            name="$(short_name "${id}")"
+            if v="$(installed_version "${name}")"; then
+                echo "id=${CAT_ID}"
+                echo "name=${CAT_NAME}"
+                echo "installed=${v}"
+                echo "offered=${CAT_PIN#v}"
+                echo "path=${APP_ROOT}/${name}"
+                echo "desktop=${name}.desktop"
+            else
+                echo "id=${CAT_ID}"
+                echo "name=${CAT_NAME}"
+                echo "installed="
+                echo "offered=${CAT_PIN#v}"
+                echo "desktop=${name}.desktop"
+            fi
+        done
+        exit 0
+        ;;
+
+    check-update)
+        for id in "${IDS[@]}"; do
+            read_catalog_entry "${id}" || exit 1
+            name="$(short_name "${id}")"
+            v="$(installed_version "${name}" || true)"
+            if [ -z "${v}" ]; then
+                say "${CAT_NAME} is not installed."
+                continue
+            fi
+            if [ "${v}" != "${CAT_PIN#v}" ]; then
+                say "${CAT_NAME}: you have ${v}; this copy of AquariusOS offers ${CAT_PIN#v}."
+                say "Run:  aq apps update ${id}"
+                continue
+            fi
+            say "${CAT_NAME} ${v} — up to date."
+            if newest="$(latest_release "${CAT_SOURCE}")" && [ -n "${newest}" ] \
+                && [ "${newest#v}" != "${v}" ]; then
+                say ""
+                say "  For what it is worth, ${newest} has been published since."
+                say "  AquariusOS offers one chosen version at a time, so it will"
+                say "  reach you with a system update rather than from here. That is"
+                say "  deliberate: it means everybody on this image is running the"
+                say "  same build."
+            fi
+        done
+        exit 0
+        ;;
+
+    remove)
+        rc=0
+        for id in "${IDS[@]}"; do
+            remove_one "${id}" || rc=1
+        done
+        exit "${rc}"
+        ;;
+
+    update)
+        # An update IS an install of the pinned version. install_one already
+        # stops early when that version is the one you have.
+        ACTION="install"
+        ;;
+esac
+
+# ==============================================================================
+# install
+# ==============================================================================
+TOTAL="${#IDS[@]}"
+[ "${STEP_TOTAL}" -gt 0 ] 2> /dev/null || STEP_TOTAL="${TOTAL}"
+
+say "Installing ${TOTAL} $([ "${TOTAL}" -eq 1 ] && echo app || echo apps) into your home folder."
+say "No password is needed: nothing outside your own account is touched."
+say ""
+
+FAILED_IDS=()
+DONE_COUNT=0
+CANCELLED=0
+
+for i in "${!IDS[@]}"; do
+    id="${IDS[$i]}"
+    n=$((i + 1))
+
+    if cancelled; then
+        say ""
+        say "Stopped, because you asked it to. Nothing is half-installed."
+        CANCELLED=1
+        progress "CANCELLED"
+        break
+    fi
+
+    if install_one "${id}" "${n}" "${TOTAL}"; then
+        DONE_COUNT=$((DONE_COUNT + 1))
+    else
+        FAILED_IDS+=("${id}")
+    fi
+done
+
+say ""
+say "══════════════════════════════════════════════════════════════════════"
+if [ "${CANCELLED}" -eq 1 ]; then
+    say "Stopped at your request. ${DONE_COUNT} of ${TOTAL} were installed."
+elif [ "${#FAILED_IDS[@]}" -eq 0 ]; then
+    say "All ${TOTAL} installed."
+else
+    say "${DONE_COUNT} of ${TOTAL} installed. These did not:"
+    for id in "${FAILED_IDS[@]}"; do say "    ${id}"; done
+    say ""
+    say "Nothing is broken. Try them again at any time from Aquarius Apps, or"
+    say "in a terminal with:  aq apps install <the id>"
+fi
+say "══════════════════════════════════════════════════════════════════════"
+
+progress "DONE"
+[ "${#FAILED_IDS[@]}" -eq 0 ]

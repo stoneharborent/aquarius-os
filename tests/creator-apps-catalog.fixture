@@ -1,10 +1,11 @@
-com.obsproject.Studio	OBS Studio	Record your screen or go live.	Streaming	recommended:yes	runtime:no	requires:-	branch:stable
-com.obsproject.Studio.Plugin.OBSVkCapture	OBS game capture	Records a game's own picture.	Streaming	recommended:yes	runtime:yes	requires:com.obsproject.Studio	branch:stable
-org.freedesktop.Platform.VulkanLayer.OBSVkCapture	OBS game capture (the part inside the game)	The other half of game capture.	Streaming	recommended:yes	runtime:yes	requires:com.obsproject.Studio	branch:25.08
-org.kde.kdenlive	Kdenlive	A video editor that opens camera files directly.	Video	recommended:yes	runtime:no	requires:-	branch:stable
-org.blender.Blender	Blender	3D animation and motion graphics.	Video	recommended:no	runtime:no	requires:-	branch:stable
-org.audacityteam.Audacity	Audacity	Record a voiceover and trim a clip.	Audio	recommended:yes	runtime:no	requires:-	branch:stable
-org.ardour.Ardour	Ardour	A full recording studio.	Audio	recommended:no	runtime:no	requires:-	branch:stable
-org.gimp.GIMP	GIMP	Photo and image editing.	Design	recommended:yes	runtime:no	requires:-	branch:stable
-org.localsend.localsend_app	LocalSend	Send a file between your phone and this computer.	Utilities	recommended:yes	runtime:no	requires:-	branch:stable
+com.obsproject.Studio	OBS Studio	Record your screen or go live.	Streaming	recommended:yes	runtime:no	requires:-	branch:stable	type:flatpak
+com.obsproject.Studio.Plugin.OBSVkCapture	OBS game capture	Records a game's own picture.	Streaming	recommended:yes	runtime:yes	requires:com.obsproject.Studio	branch:stable	type:flatpak
+org.freedesktop.Platform.VulkanLayer.OBSVkCapture	OBS game capture (the part inside the game)	The other half of game capture.	Streaming	recommended:yes	runtime:yes	requires:com.obsproject.Studio	branch:25.08	type:flatpak
+os.example.testapp	Test App	One of ours, downloaded rather than from Flathub.	Video	recommended:yes	runtime:no	requires:-	branch:-	type:appimage	source:example/test-app	pin:v1.2.3	asset:*.AppImage	sha256sums:SHA256SUMS.txt
+org.kde.kdenlive	Kdenlive	A video editor that opens camera files directly.	Video	recommended:yes	runtime:no	requires:-	branch:stable	type:flatpak
+org.blender.Blender	Blender	3D animation and motion graphics.	Video	recommended:no	runtime:no	requires:-	branch:stable	type:flatpak
+org.audacityteam.Audacity	Audacity	Record a voiceover and trim a clip.	Audio	recommended:yes	runtime:no	requires:-	branch:stable	type:flatpak
+org.ardour.Ardour	Ardour	A full recording studio.	Audio	recommended:no	runtime:no	requires:-	branch:stable	type:flatpak
+org.gimp.GIMP	GIMP	Photo and image editing.	Design	recommended:yes	runtime:no	requires:-	branch:stable	type:flatpak
+org.localsend.localsend_app	LocalSend	Send a file between your phone and this computer.	Utilities	recommended:yes	runtime:no	requires:-	branch:stable	type:flatpak
 org.example.Broken	Broken	This line is missing its tagged fields on purpose.	Video
