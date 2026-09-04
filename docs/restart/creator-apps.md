@@ -206,9 +206,16 @@ stops it, between apps: the app that is downloading right now finishes first,
 because stopping in the middle is how you get a broken one, and the window says
 so as soon as you press it.
 
-**3. Done.** *"All set."*, with **Open <the first app>** and **Close**. If
-anything failed it says which, by name, and offers to try those again. Nothing
-is ever left half-installed.
+**3. Done.** The Aquarius mark again, then *"All set."*, with **Open apps** and
+**Close**. If anything failed it says which, by name, and offers to try those
+again. Nothing is ever left half-installed. **Open apps** shows you the apps you
+just installed rather than starting one of them for you: in the Aquarius Desktop
+it opens the search palette (the same thing Super+Space opens), in GNOME it opens
+the Activities app grid, and if neither answers it takes you back to this
+window's own first page, where every installed app has an **Open** button beside
+it. *(Both fixed on 2026-09-04 after Royce's bench test: this page used to be
+blank at the top — it was built from a widget that cannot show the logo — and
+its main button offered whichever app happened to install first.)*
 
 ### One password prompt, at the moment you press Install
 

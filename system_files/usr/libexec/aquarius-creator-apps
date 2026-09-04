@@ -145,8 +145,10 @@ import time
 APP_ID = "org.aquariusos.CreatorApps"
 CATALOG_CLI = "/usr/libexec/aquarius-flatpak-preinstall"
 INSTALLER = "/usr/libexec/aquarius-creator-apps-install"
-MARK = "/usr/share/icons/hicolor/scalable/apps/aquarius-logo.svg"
 APPLICATIONS = "/usr/share/applications"
+# The path to the Aquarius mark is deliberately NOT written down here. Every
+# page gets it from aquarius_ui.mark_image(), which is the one place that knows
+# where the logo lives and what to draw if it is missing.
 
 # The order the shelves appear in. An app whose category is not one of these
 # still appears — at the end, under its own heading — rather than vanishing,
@@ -519,6 +521,25 @@ def run_window(first_run):
             found.append((name, title, comment, icon))
         return found
 
+    def hero(title_text, blurb_text=""):
+        """The top of a page: the Aquarius mark, a heading, and a line under it.
+
+        ⚠️ EVERY PAGE IN THIS WINDOW USES THIS, AND THAT IS THE 2026-09-04 BENCH
+        FAULT. The first page drew the mark by hand and the last page was an
+        Adw.StatusPage, which draws a small system symbol and no logo at all —
+        so finishing an install landed you on a page that was empty where every
+        other page has the Aquarius mark. It read as a page that had failed to
+        load. One helper, three pages, and that cannot drift again.
+
+        It returns the three widgets rather than a box, because each page puts
+        different things between them.
+        """
+        return (
+            aquarius_ui.mark_image(56),
+            aquarius_ui.title_label(title_text),
+            aquarius_ui.body_label(blurb_text),
+        )
+
     def load_icon_into(image, entry):
         """Put the best icon we can find on this card, without ever waiting.
 
@@ -802,7 +823,6 @@ def run_window(first_run):
             self.sizes = {}
             self.cancel_file = None
             self.cancelled = False
-            self.first_app = None
 
             self.set_title("Your creator apps")
             self.set_default_size(940, 780)
@@ -837,28 +857,12 @@ def run_window(first_run):
 
         # -- page 1: choose ------------------------------------------------
         def _build_choose_page(self, warning):
-            mark = Gtk.Image()
-            if os.path.exists(MARK):
-                mark.set_from_file(MARK)
-            else:
-                mark.set_from_icon_name("applications-multimedia")
-            mark.set_pixel_size(56)
-
-            title = Gtk.Label(label="Your creator apps")
-            title.add_css_class("title-1")
-            title.set_wrap(True)
-            title.set_justify(Gtk.Justification.CENTER)
-
-            blurb = Gtk.Label(
-                label=(
-                    "AquariusOS comes with a studio's worth of apps. Pick the "
-                    "ones you want — you can change this any time from Aquarius "
-                    "Apps."
-                )
+            mark, title, blurb = hero(
+                "Your creator apps",
+                "AquariusOS comes with a studio's worth of apps. Pick the "
+                "ones you want — you can change this any time from Aquarius "
+                "Apps.",
             )
-            blurb.set_wrap(True)
-            blurb.set_justify(Gtk.Justification.CENTER)
-            blurb.add_css_class("dim-label")
 
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
             box.set_margin_top(28)
@@ -908,6 +912,9 @@ def run_window(first_run):
             clamp.set_child(box)
             scroller = Gtk.ScrolledWindow(vexpand=True)
             scroller.set_child(clamp)
+            # Kept, so that coming BACK to this page from the last one starts at
+            # the top rather than wherever the list was left.
+            self.choose_scroller = scroller
             return scroller
 
         def _build_included_group(self, included):
@@ -1172,45 +1179,74 @@ def run_window(first_run):
 
         # -- page 3: done --------------------------------------------------
         def _build_done_page(self):
-            self.done_page = Adw.StatusPage()
-            self.done_page.set_icon_name("emblem-ok-symbolic")
-            self.done_page.set_title("All set.")
-            self.done_page.set_description("")
+            """The last page: what happened, and the two things to do next.
 
-            self.done_open = Gtk.Button(label="Open")
-            self.done_open.add_css_class("suggested-action")
-            self.done_open.add_css_class("pill")
-            self.done_open.connect("clicked", self._on_open_first)
+            ⚠️ THIS WAS AN Adw.StatusPage UNTIL 2026-09-04 AND MUST NOT GO BACK
+            TO BEING ONE. A StatusPage draws a small system symbol, its own
+            heading and its own description, and there is no way to give it the
+            Aquarius mark — so the page Royce landed on after installing was
+            blank at the top while both pages before it carry the logo. It is
+            now an ordinary column built from the same `hero` helper as page 1,
+            which is why the mark is there and why it cannot go missing again.
 
-            close_button = Gtk.Button(label="Close")
-            close_button.add_css_class("pill")
+            The tick or the warning triangle still has a job — it says at a
+            glance whether everything arrived — so it sits on the same line as
+            the heading rather than being a second big picture under the mark.
+            """
+            mark, self.done_title, self.done_blurb = hero("All set.")
+
+            self.done_status = Gtk.Image()
+            self.done_status.set_pixel_size(26)
+            self.done_status.set_valign(Gtk.Align.CENTER)
+            self._set_done_status(ok=True)
+
+            heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            heading.set_halign(Gtk.Align.CENTER)
+            heading.append(self.done_status)
+            heading.append(self.done_title)
+
+            # "Open apps" is the suggested action rather than "Open <the first
+            # app we happened to install>", which is what this button used to
+            # be. Somebody who has just ticked six apps has not asked to be
+            # given one of them; they have asked to see their apps. What it
+            # actually does depends on the desktop — see _on_open_apps.
+            self.done_open = aquarius_ui.pill_button("Open apps", suggested=True)
+            self.done_open.set_tooltip_text(
+                "Show your apps, so you can start the ones you just installed"
+            )
+            self.done_open.connect("clicked", self._on_open_apps)
+
+            close_button = aquarius_ui.pill_button("Close")
             close_button.connect("clicked", lambda _b: self.close())
 
-            self.done_retry = Gtk.Button(label="Try the ones that failed again")
-            self.done_retry.add_css_class("pill")
+            self.done_retry = aquarius_ui.pill_button("Try the ones that failed again")
             self.done_retry.connect("clicked", self._on_retry_failed)
             self.done_retry.set_visible(False)
 
-            buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-            buttons.set_halign(Gtk.Align.CENTER)
-            buttons.append(self.done_open)
-            buttons.append(self.done_retry)
-            buttons.append(close_button)
+            buttons = aquarius_ui.button_row(
+                [self.done_open, self.done_retry, close_button]
+            )
 
-            self.done_detail = Gtk.Label(label="")
-            self.done_detail.set_wrap(True)
-            self.done_detail.set_justify(Gtk.Justification.CENTER)
-            self.done_detail.add_css_class("dim-label")
+            self.done_detail = aquarius_ui.body_label("")
             self.done_detail.set_margin_top(8)
             self.done_detail.set_visible(False)
 
-            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-            box.append(buttons)
-            box.append(self.done_detail)
-            clamp = Adw.Clamp(maximum_size=560)
-            clamp.set_child(box)
-            self.done_page.set_child(clamp)
-            return self.done_page
+            return aquarius_ui.page(
+                [mark, heading, self.done_blurb, buttons, self.done_detail],
+                maximum_size=560,
+                spacing=12,
+            )
+
+        def _set_done_status(self, ok):
+            """The small glyph beside the heading: a tick, or a warning."""
+            if ok:
+                self.done_status.set_from_icon_name("emblem-ok-symbolic")
+                self.done_status.remove_css_class("warning")
+                self.done_status.add_css_class("success")
+            else:
+                self.done_status.set_from_icon_name("dialog-warning-symbolic")
+                self.done_status.remove_css_class("success")
+                self.done_status.add_css_class("warning")
 
         # -- running the installer -----------------------------------------
         def _on_install_clicked(self, _button):
@@ -1440,11 +1476,11 @@ def run_window(first_run):
                 names = [
                     e.name for e in self.plan if e.app_id in self.failures
                 ]
-                self.done_page.set_icon_name("dialog-warning-symbolic")
-                self.done_page.set_title(
+                self._set_done_status(ok=False)
+                self.done_title.set_label(
                     "%d of %d installed." % (len(arrived), len(self.plan))
                 )
-                self.done_page.set_description(
+                self.done_blurb.set_label(
                     "These did not: " + ", ".join(names) + "."
                 )
                 self.done_detail.set_label(
@@ -1454,9 +1490,9 @@ def run_window(first_run):
                 self.done_detail.set_visible(True)
                 self.done_retry.set_visible(True)
             elif cancelled:
-                self.done_page.set_icon_name("emblem-ok-symbolic")
-                self.done_page.set_title("Stopped, as you asked.")
-                self.done_page.set_description(
+                self._set_done_status(ok=True)
+                self.done_title.set_label("Stopped, as you asked.")
+                self.done_blurb.set_label(
                     "%d of %d were installed before it stopped. The rest are "
                     "waiting for you in Aquarius Apps."
                     % (len(arrived), len(self.plan))
@@ -1464,22 +1500,14 @@ def run_window(first_run):
                 self.done_detail.set_visible(False)
                 self.done_retry.set_visible(False)
             else:
-                self.done_page.set_icon_name("emblem-ok-symbolic")
-                self.done_page.set_title("All set.")
-                self.done_page.set_description(
+                self._set_done_status(ok=True)
+                self.done_title.set_label("All set.")
+                self.done_blurb.set_label(
                     "%d app%s installed and waiting in your apps."
                     % (len(apps_arrived), "" if len(apps_arrived) == 1 else "s")
                 )
                 self.done_detail.set_visible(False)
                 self.done_retry.set_visible(False)
-
-            if apps_arrived:
-                self.first_app = apps_arrived[0]
-                self.done_open.set_label("Open %s" % self.first_app.name)
-                self.done_open.set_visible(True)
-            else:
-                self.first_app = None
-                self.done_open.set_visible(False)
 
             self.header_title.set_subtitle("")
             self.stack.set_visible_child_name("done")
@@ -1496,16 +1524,95 @@ def run_window(first_run):
             self.stack.set_visible_child_name("working")
             self.header_title.set_subtitle("")
 
-        def _on_open_first(self, _button):
-            if self.first_app is None:
+        # -- "Open apps" ---------------------------------------------------
+        # WHAT THIS BUTTON IS FOR, in one sentence: somebody has just installed
+        # six apps and the very next thing they want is to see them.
+        #
+        # It does NOT start an app. It asks the desktop that is already running
+        # to show its list of apps, which is a different thing on each of the
+        # two desktops AquariusOS ships:
+        #
+        #   the Aquarius Desktop   the search palette (the thing Super+Space
+        #                          opens) — `qs ipc call search toggle`
+        #   GNOME                  the Activities app grid, asked for over
+        #                          D-Bus with org.gnome.Shell.ShowApplications
+        #
+        # ⚠️ NOT org.gnome.Shell.Eval. Eval is the answer the internet gives and
+        #    it is the wrong one: modern GNOME refuses it unless the session is
+        #    in "unsafe mode", which ours is not and must not be. The
+        #    ShowApplications method is part of the same interface, is meant to
+        #    be called, and is not gated.
+        #
+        # AND IF NEITHER WORKS — a desktop we have not met, a shell that is not
+        # answering — nothing is thrown away: the window goes back to its own
+        # first page, which lists every app with an Open button beside the ones
+        # that are installed. That is a worse route, not a dead end, and it is
+        # why this button never has to be greyed out.
+        def _on_open_apps(self, _button):
+            desktop = os.environ.get("XDG_CURRENT_DESKTOP", "")
+
+            if "Aquarius" in desktop and self._show_aquarius_palette():
+                self.close()
                 return
+            if "GNOME" in desktop and self._show_gnome_app_grid():
+                self.close()
+                return
+
+            self._back_to_the_list()
+
+        def _show_aquarius_palette(self):
+            """Ask the running Aquarius Shell to open its search palette.
+
+            `qs ipc` reaches whichever shell is running the configuration named
+            by QS_CONFIG_PATH, which this window inherited from the session —
+            the same route the Super+Space key binding takes. It takes no
+            configuration name; the target is "search" and the function is
+            "toggle" (declared by the shell's own IpcHandler).
+            """
             try:
-                subprocess.Popen(
-                    ["flatpak", "run", self.first_app.app_id], start_new_session=True
+                result = subprocess.run(
+                    ["qs", "ipc", "call", "search", "toggle"],
+                    capture_output=True,
+                    timeout=5,
                 )
-            except OSError:
-                return
-            self.close()
+            except (OSError, subprocess.SubprocessError):
+                return False
+            return result.returncode == 0
+
+        def _show_gnome_app_grid(self):
+            """Ask GNOME Shell for the app grid, over the session bus."""
+            try:
+                bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+                bus.call_sync(
+                    "org.gnome.Shell",
+                    "/org/gnome/Shell",
+                    "org.gnome.Shell",
+                    "ShowApplications",
+                    None,
+                    None,
+                    Gio.DBusCallFlags.NONE,
+                    2000,
+                    None,
+                )
+            except GLib.Error:
+                return False
+            return True
+
+        def _back_to_the_list(self):
+            """The fallback: this window's own first page, which is an app list.
+
+            The footer was hidden when the install started, so it has to be put
+            back — without it there would be no Install button and no way out
+            but the title bar.
+            """
+            self.refresh_installed()
+            self.footer.set_visible(True)
+            self.update_footer()
+            adjustment = self.choose_scroller.get_vadjustment()
+            if adjustment is not None:
+                adjustment.set_value(0)
+            self.header_title.set_subtitle("")
+            self.stack.set_visible_child_name("choose")
 
         def _on_cancel_clicked(self, _button):
             # Cancel is a note, not a knife — see the long comment in
