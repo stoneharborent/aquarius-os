@@ -85,7 +85,23 @@ say() { printf '%s\n' "$*"; }
 # that is still running.
 progress() {
     [ -n "${PROGRESS_FD}" ] || return 0
-    printf '%s\n' "$*" >&"${PROGRESS_FD}" 2> /dev/null || true
+    # ⚠️ THERE IS DELIBERATELY NO `2> /dev/null` HERE, AND BOTH OBVIOUS WAYS OF
+    #    ADDING ONE ARE WRONG. The channel the window gives us IS file
+    #    descriptor 2 — see the note above — so:
+    #
+    #      printf ... >&"${FD}" 2> /dev/null    two redirections competing for
+    #                                           the same descriptor (SC2261)
+    #      { printf ... >&"${FD}"; } 2>/dev/null
+    #                                           worse: the group's redirection
+    #                                           happens FIRST, so by the time
+    #                                           printf duplicates descriptor 2
+    #                                           it is already /dev/null, and
+    #                                           every progress line silently
+    #                                           goes nowhere
+    #
+    #    So: no suppression. `|| true` is what keeps a failed write from
+    #    stopping an install, which is the only part that ever mattered.
+    printf '%s\n' "$*" >&"${PROGRESS_FD}" || true
 }
 
 usage() {
