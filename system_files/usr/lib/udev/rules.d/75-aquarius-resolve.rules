@@ -1,0 +1,68 @@
+# ==============================================================================
+# DaVinci Resolve hardware — licence dongles and control panels
+# ==============================================================================
+# PLAIN ENGLISH
+#
+# Some people unlock DaVinci Resolve Studio with a small USB stick (a "dongle")
+# rather than a licence key, and some people drive it with a physical control
+# panel — the desk of coloured trackballs colourists use. Linux does not let an
+# ordinary program talk to arbitrary USB hardware unless a rule like this one
+# says it may.
+#
+# Blackmagic's own installer writes exactly these two rules. It cannot help us,
+# for two reasons:
+#
+#   1. On AquariusOS, Resolve is installed INSIDE a container. Rules written in
+#      there apply to nothing — the real USB devices belong to the computer, not
+#      to the container.
+#   2. AquariusOS's system folder is read-only. An installer cannot add files to
+#      it after the fact. Anything of this kind has to travel inside the image,
+#      which is what this file is.
+#
+# So the rules ship here, on the host, and they work whether or not Resolve is
+# ever installed. A rule for hardware nobody has plugged in does nothing at all.
+#
+# ------------------------------------------------------------------------------
+# THE TWO VENDOR NUMBERS, AND A NAMING MUDDLE WORTH KNOWING ABOUT
+# ------------------------------------------------------------------------------
+# Every USB device announces who made it as a four-character number.
+#
+#   1edb   Blackmagic Design — their control panels, and their capture cards
+#   096e   Feitian Technologies — who make the USB licence dongles Blackmagic
+#          ships with Resolve Studio
+#
+# Blackmagic's installer writes one number into a file called
+# 75-davincipanel.rules and the other into 75-sdx.rules, and different copies of
+# their installer disagree about which goes where — published copies of those
+# two files can be found with the numbers the other way round.
+#
+# It makes no practical difference: both rules do the same thing, so having both
+# numbers is what matters and which file they live in does not. We ship one file
+# with both, labelled by what the number actually is, so nobody has to work this
+# out again.
+#
+# ------------------------------------------------------------------------------
+# WHY MODE 0666
+# ------------------------------------------------------------------------------
+# 0666 means "any program run by any user on this computer may talk to this
+# device". That is broader than we would normally choose, and it is what
+# Blackmagic's own installer sets. We match them deliberately: this is hardware
+# nobody on the team owns, so a rule that is known to work is worth more than a
+# tighter rule that has never been tested against a real dongle. It applies only
+# to devices from these two manufacturers — plugging in anything else is
+# unaffected.
+#
+# uaccess is added alongside it. That is the modern way: it hands the device to
+# whoever is physically logged in at the screen. Belt and braces, so that if a
+# future AquariusOS tightens the 0666 line, the dongle keeps working.
+#
+# If you own a panel or a dongle and it is not seen, the first thing to check is
+# whether it is one of these two vendors:
+#     lsusb
+# ==============================================================================
+
+# Blackmagic Design's own hardware — DaVinci control panels, capture cards.
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTRS{idVendor}=="1edb", MODE="0666", TAG+="uaccess"
+
+# Feitian — the USB licence dongle that unlocks DaVinci Resolve Studio.
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTRS{idVendor}=="096e", MODE="0666", TAG+="uaccess"

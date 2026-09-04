@@ -18,6 +18,13 @@
 #     aq display auto         forget both, work it out automatically again
 #     aq display status       what the screens are set to right now
 #
+#     aq resolve install      set up DaVinci Resolve
+#     aq resolve status       is it installed, and can it see the graphics card
+#     aq resolve run          start it
+#     aq resolve shell        a terminal inside its container
+#     aq resolve update       install a newer Resolve over the top
+#     aq resolve remove       delete the container
+#
 # It is deliberately small. FEATURES 005 in the AquariusOS plan describes a
 # fuller `aq` — `aq status`, `aq snapshot` — and that is a later job. This is
 # the first subcommand of it, built because Aquarius Keys needed a switch and a
@@ -71,6 +78,12 @@ USAGE
 
     aq display status   What each screen is, what size it is set to, and where
                         that answer came from.
+
+    aq resolve …        DaVinci Resolve: set it up, start it, check on it.
+                        Run 'aq resolve --help' for the whole list. Resolve runs
+                        inside a small Rocky Linux on this computer, because
+                        that is the only way it works reliably on Linux — the
+                        help text explains why in plain English.
 
     aq --help           This message.
     aq --version        Which AquariusOS this is.
@@ -462,6 +475,314 @@ display() {
     esac
 }
 
+# =============================================================================
+# aq resolve — DaVinci Resolve
+# =============================================================================
+# WHY THERE IS A WHOLE SUBCOMMAND FOR ONE APPLICATION
+#
+# Because Resolve is the reason AquariusOS exists, and because it is the one
+# application on this computer that does not simply install.
+#
+# Blackmagic's licence does not let anybody else hand out their installer, so it
+# cannot be in the image. And Resolve carries its own copy of a library called
+# GLib from 2021 which clashes with any modern Linux's own — the crash that
+# makes people give up on Resolve on Linux. AquariusOS answers both at once: it
+# runs Resolve inside a small Rocky Linux, the same family Blackmagic build
+# against, where the clash cannot happen, and installs the user's own download
+# into it.
+#
+# These commands are the front door to that. The work itself is done by two
+# scripts in /usr/libexec, which have the long explanations in their headers:
+#
+#   aquarius-resolve-install   builds the container, installs Resolve
+#   aquarius-resolve-launch    starts it, with the desktop's settings carried in
+#
+# The plain-language guide is docs/restart/resolve.md.
+# =============================================================================
+
+AQ_RESOLVE_ENV=/usr/share/aquarius/resolve/runtime.env
+AQ_RESOLVE_INSTALLER=/usr/libexec/aquarius-resolve-install
+AQ_RESOLVE_LAUNCHER=/usr/libexec/aquarius-resolve-launch
+
+resolve_usage() {
+    cat << 'EOF'
+aq resolve — DaVinci Resolve on AquariusOS
+
+    aq resolve install [file]
+                    Set Resolve up. Give it Blackmagic's download if you have
+                    it; leave the file off and it will look in Downloads, and
+                    open Blackmagic's page and wait if there is nothing there.
+
+    aq resolve run  Start Resolve. (You can also just click it in your apps.)
+
+    aq resolve status
+                    Is it installed, which Rocky Linux is it running in, and
+                    can it see the graphics card. Start here when something
+                    is wrong.
+
+    aq resolve update [file]
+                    Install a newer Resolve over the top of the old one, from a
+                    new download. Your projects and settings are untouched.
+
+    aq resolve shell
+                    A terminal INSIDE the container Resolve lives in. For
+                    poking about; you do not need this in normal use.
+
+    aq resolve remove
+                    Delete the container. Removes Resolve and the Rocky Linux
+                    around it. YOUR PROJECTS AND MEDIA ARE NOT IN THERE — they
+                    are in your ordinary folders, which the container only
+                    borrows — so this is safe and it is the right first move
+                    when a setup has gone wrong.
+
+WHY A CONTAINER
+    Resolve ships its own copy of a library from 2021 that clashes with any
+    modern Linux's own, and dies before its window opens. Enterprise Linux —
+    Rocky — still carries the matching version, so in there it cannot happen.
+    That is also the userland Blackmagic themselves build against and the film
+    industry standardised on.
+
+    You will not notice it. Resolve appears in your apps like any other program
+    and reads and writes your ordinary folders.
+
+TWO THINGS ABOUT RESOLVE ON LINUX THAT NO OPERATING SYSTEM CAN FIX
+    The FREE version cannot open phone or camera MP4 files at all on Linux.
+    Even STUDIO opens them with silent audio.
+    Both are Blackmagic's licensing, inside their app.
+
+    AquariusOS fixes both from the OUTSIDE: right-click your footage and choose
+    "Make Editor-Ready", or run `aq-ingest --help`. Nothing else does this.
+EOF
+}
+
+# Read the container's name out of the one file that names it.
+resolve_container() {
+    local name="aquarius-resolve"
+    if [ -r "${AQ_RESOLVE_ENV}" ]; then
+        # shellcheck source=/dev/null
+        . "${AQ_RESOLVE_ENV}"
+        name="${AQ_RESOLVE_CONTAINER:-aquarius-resolve}"
+    fi
+    printf '%s' "${name}"
+}
+
+resolve_installed() {
+    command -v podman > /dev/null 2>&1 \
+        && podman container exists "$(resolve_container)" 2> /dev/null
+}
+
+resolve_status() {
+    local container record
+    container="$(resolve_container)"
+    record="${XDG_DATA_HOME:-${HOME}/.local/share}/aquarius/resolve/installed.env"
+
+    echo "DaVinci Resolve"
+
+    if [ ! -r "${AQ_RESOLVE_ENV}" ]; then
+        echo "  This copy of AquariusOS has no Resolve support files. That is a"
+        echo "  fault in the operating system, not in anything you did."
+        return 1
+    fi
+    # shellcheck source=/dev/null
+    . "${AQ_RESOLVE_ENV}"
+
+    echo "  Runs in  : a Rocky Linux container called '${container}'"
+    echo "  Built from: ${AQ_RESOLVE_RUNTIME_IMAGE}:${AQ_RESOLVE_RUNTIME_TAG}"
+
+    if ! resolve_installed; then
+        echo "  Installed: NO — the container does not exist yet."
+        echo ""
+        echo "  To set it up, open your apps and click \"Install DaVinci Resolve\","
+        echo "  or run:   aq resolve install"
+        return 0
+    fi
+
+    echo "  Installed: yes"
+
+    if [ -r "${record}" ]; then
+        # shellcheck source=/dev/null
+        . "${record}"
+        echo "  Set up on: ${AQ_RESOLVE_INSTALLED_AT:-unknown}"
+        echo "  From     : ${AQ_RESOLVE_SOURCE:-unknown}"
+        echo "  Runtime  : ${AQ_RESOLVE_DIGEST:-unknown}"
+        echo "  Graphics : ${AQ_RESOLVE_GPU_METHOD:-unknown}"
+    fi
+
+    # --------------------------------------------------------------------------
+    # ⚠️ "INSTALLED" AND "WORKING" ARE DIFFERENT QUESTIONS.
+    # --------------------------------------------------------------------------
+    # This is the same lesson `aq keys status` learned on 2026-09-03: a thing can
+    # be present, and reported present, and do nothing. For Resolve the question
+    # that actually matters is whether the container can see the graphics card,
+    # because a container that cannot produces "GPU processing mode is
+    # unsupported" — a message that sounds like a broken graphics card and is
+    # not one.
+    echo ""
+    echo "  Can it see the graphics card?"
+
+    if [ -e /proc/driver/nvidia/version ]; then
+        local nvv
+        nvv="$(sed -n 's/^NVRM version: NVIDIA UNIX.* Kernel Module *\([0-9.]*\).*/\1/p' \
+            /proc/driver/nvidia/version 2> /dev/null | head -1)"
+        echo "    This computer : NVIDIA${nvv:+, driver ${nvv}}"
+        local spec=""
+        for f in /var/run/cdi/nvidia.yaml /run/cdi/nvidia.yaml /etc/cdi/nvidia.yaml; do
+            [ -r "${f}" ] && {
+                spec="${f}"
+                break
+            }
+        done
+        if [ -n "${spec}" ]; then
+            echo "    Description   : ${spec}"
+        else
+            echo "    Description   : none written on this machine."
+            echo "                    Resolve may say its GPU mode is unsupported. Fix:"
+            echo "                      sudo systemctl start nvidia-cdi-refresh.service"
+            echo "                    or, if there is no such service on this machine:"
+            echo "                      sudo systemctl start aquarius-resolve-cdi.service"
+            echo "                    then:  aq resolve remove  and set it up again."
+        fi
+    elif [ -e /dev/dri ]; then
+        echo "    This computer : AMD or Intel."
+        echo "                    Resolve on Linux needs NVIDIA for its GPU work."
+        echo "                    On AMD it needs ROCm, which is not set up in the"
+        echo "                    container yet; on Intel Blackmagic support it at all."
+        echo "                    Expect 'GPU processing mode is unsupported'."
+    else
+        echo "    This computer : no graphics card could be found at all."
+    fi
+
+    # The real answer: ask INSIDE the container. Anything else is a guess about
+    # what the container can see, made from outside it.
+    echo ""
+    echo "    Asking inside the container..."
+    if distrobox enter --name "${container}" -- \
+        bash -lc 'command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi --query-gpu=name,driver_version --format=csv,noheader 2>/dev/null || echo "(no nvidia-smi in there — normal on AMD/Intel)"' \
+        2> /dev/null | sed 's/^/      /'; then
+        :
+    else
+        echo "      Could not enter the container. Try:  aq resolve remove"
+        echo "      and set it up again."
+    fi
+
+    echo ""
+    echo "    If Resolve is running, the answer that counts is its own:"
+    echo "      Preferences → System → Memory and GPU → GPU processing mode"
+    echo "      It should say CUDA, with your card listed underneath."
+}
+
+resolve_shell() {
+    local container
+    container="$(resolve_container)"
+    if ! resolve_installed; then
+        echo "aq: DaVinci Resolve is not set up on this computer yet." >&2
+        echo "    Run:  aq resolve install" >&2
+        return 1
+    fi
+    echo "You are about to be inside the Rocky Linux container Resolve lives in."
+    echo "Your home folder is the same folder in there. 'exit' brings you back."
+    echo ""
+    exec distrobox enter --name "${container}"
+}
+
+resolve_remove() {
+    local container
+    container="$(resolve_container)"
+
+    if ! resolve_installed; then
+        echo "There is nothing to remove — the '${container}' container does not exist."
+        return 0
+    fi
+
+    echo "This deletes the container DaVinci Resolve lives in, and Resolve with it."
+    echo ""
+    echo "YOUR PROJECTS AND MEDIA ARE NOT IN THERE. They are in your ordinary"
+    echo "folders, which the container only borrows while it is running. Nothing"
+    echo "you have made is touched by this."
+    echo ""
+    read -r -p "Delete it? [y/N] " reply
+    case "${reply}" in
+        [yY]*) ;;
+        *)
+            echo "Nothing was changed."
+            return 0
+            ;;
+    esac
+
+    # The menu entries go first. An icon left behind that starts a container
+    # that no longer exists is worse than no icon.
+    local apps
+    apps="${XDG_DATA_HOME:-${HOME}/.local/share}/applications"
+    local removed=0
+    while IFS= read -r entry; do
+        [ -n "${entry}" ] || continue
+        # Only entries that point INTO our container. Somebody who also has
+        # Resolve installed some other way keeps their own launcher.
+        grep -q 'aquarius-resolve-launch\|aquarius-resolve-run' "${entry}" || continue
+        rm -f "${entry}" && removed=$((removed + 1))
+    done < <(find "${apps}" -maxdepth 1 -type f \
+        \( -iname '*resolve*.desktop' \
+        -o -iname '*davinci*.desktop' \
+        -o -iname '*blackmagic*.desktop' \) 2> /dev/null)
+    [ "${removed}" -gt 0 ] && echo "Removed ${removed} menu entries."
+    update-desktop-database "${apps}" > /dev/null 2>&1 || true
+
+    if distrobox rm --force "${container}"; then
+        rm -f "${XDG_DATA_HOME:-${HOME}/.local/share}/aquarius/resolve/installed.env"
+        echo "Done. The container is gone."
+        echo ""
+        echo "The downloaded Rocky Linux image is still on this computer, so"
+        echo "setting Resolve up again is quick. To reclaim that space too:"
+        echo "    podman image prune -a"
+    else
+        echo "The container could not be removed." >&2
+        return 1
+    fi
+}
+
+resolve() {
+    case "${1:-}" in
+        install)
+            shift
+            [ -x "${AQ_RESOLVE_INSTALLER}" ] || {
+                echo "aq: ${AQ_RESOLVE_INSTALLER} is missing from this system." >&2
+                return 1
+            }
+            "${AQ_RESOLVE_INSTALLER}" "$@"
+            ;;
+        update)
+            shift
+            [ -x "${AQ_RESOLVE_INSTALLER}" ] || {
+                echo "aq: ${AQ_RESOLVE_INSTALLER} is missing from this system." >&2
+                return 1
+            }
+            # Updating is installing again over the top: Blackmagic's installer
+            # replaces what is in /opt/resolve and leaves your settings and
+            # projects, which live in your home folder, alone. There is nothing
+            # for a separate update path to do that this does not.
+            "${AQ_RESOLVE_INSTALLER}" --update "$@"
+            ;;
+        run)
+            shift
+            [ -x "${AQ_RESOLVE_LAUNCHER}" ] || {
+                echo "aq: ${AQ_RESOLVE_LAUNCHER} is missing from this system." >&2
+                return 1
+            }
+            exec "${AQ_RESOLVE_LAUNCHER}" "$@"
+            ;;
+        status | "") resolve_status ;;
+        shell) resolve_shell ;;
+        remove | uninstall) resolve_remove ;;
+        -h | --help | help) resolve_usage ;;
+        *)
+            echo "aq: '${1}' is not something 'aq resolve' knows how to do." >&2
+            echo >&2
+            resolve_usage >&2
+            return 1
+            ;;
+    esac
+}
+
 # -----------------------------------------------------------------------------
 # Which subcommand?
 # -----------------------------------------------------------------------------
@@ -479,6 +800,10 @@ case "${1:-}" in
         ;;
     display)
         display "${2:-}" "${3:-}"
+        ;;
+    resolve)
+        shift
+        resolve "$@"
         ;;
     keys)
         case "${2:-}" in

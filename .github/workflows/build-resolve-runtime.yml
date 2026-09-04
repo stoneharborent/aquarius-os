@@ -1,0 +1,427 @@
+---
+# ==============================================================================
+# Build the DaVinci Resolve runtime (the Rocky Linux container)
+# ==============================================================================
+# PLAIN ENGLISH
+#
+# This builds a SECOND, SEPARATE image from the operating system. It is a small
+# Rocky Linux carrying everything DaVinci Resolve needs, and it is downloaded
+# onto a machine the first time somebody sets Resolve up — never before, which
+# is why it is not part of the OS download.
+#
+# ⚠️ THERE IS NO DAVINCI RESOLVE IN THE THING THIS BUILDS.
+# Blackmagic's licence does not allow anyone else to distribute their installer.
+# This image is our package list and two scripts of ours. The user downloads
+# Resolve from Blackmagic and AquariusOS installs it into a copy of this on
+# their own machine. Nothing licensed is ever published from here.
+#
+# WHEN IT RUNS
+#   * when anything under resolve-runtime/ changes
+#   * once a week, so Rocky's security updates reach the image without anybody
+#     having to remember — the whole point of an Enterprise Linux base is that
+#     a rebuild changes the patch level and nothing else
+#   * by hand, from the Actions tab
+#
+# ⚠️ WHAT GETS PUBLISHED, AND FROM WHERE — read this before changing the `if:`
+# lines at the bottom.
+#
+#   restart/fedora-bootc   the real line. Publishes `9`, `latest`, a dated tag
+#                          and a commit tag. These are what finished machines
+#                          pull.
+#   any other branch       publishes ONLY a `dev-<branch>` tag, so a
+#                          work-in-progress runtime can be tried on the bench
+#                          without ever touching the tags real machines use.
+#                          Use it with:
+#                              AQ_RESOLVE_RUNTIME_TAG=dev-<branch> aq resolve install
+#
+# This is a deliberate difference from build-next.yml, where a side branch
+# publishes nothing at all. The operating system on a side branch has no reason
+# to exist outside CI; the runtime does — it is the only way to test Resolve on
+# real hardware before merging, and the `dev-` prefix means it cannot collide
+# with anything.
+# ==============================================================================
+
+name: Build the Resolve runtime
+
+on:
+  push:
+    branches:
+      - restart/fedora-bootc
+      - restart/r3-resolve
+    paths:
+      - 'resolve-runtime/**'
+      - '.github/workflows/build-resolve-runtime.yml'
+  # Once a week, early on a Monday, so Rocky's security updates land in the
+  # image without anybody having to remember to ask for them.
+  schedule:
+    - cron: '17 5 * * 1'
+  workflow_dispatch:
+
+env:
+  IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"
+  IMAGE_NAME: aquarius-resolve-runtime
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and check (Rocky ${{ matrix.rocky }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # Only 9 is built. Rocky 10 carries a modern GLib, which is the exact
+        # thing this image exists to avoid, and there is an unexplained report
+        # of Resolve opening to a black window on Enterprise Linux 10. Somebody
+        # who wants to try it can add `10` here and read the warning the build
+        # prints. See docs/restart/resolve.md.
+        rocky: ['9']
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Work out the tags
+        run: |
+          set -euo pipefail
+          echo "IMAGE_REGISTRY=${IMAGE_REGISTRY,,}" >> "${GITHUB_ENV}"
+          echo "BUILD_TAG=build-${{ github.run_id }}" >> "${GITHUB_ENV}"
+          echo "DATE_TAG=$(date -u +%Y%m%d)" >> "${GITHUB_ENV}"
+          # A branch name can contain slashes, which a container tag cannot.
+          # `printf`, not `echo`: echo adds a newline, and the character
+          # translation below turns that newline into a dash, so the tag came
+          # out as `dev-restart-r3-resolve-` on 2026-09-04.
+          slug="$(printf '%s' "${{ github.ref_name }}" | tr '/' '-' | tr -c 'a-zA-Z0-9._-' '-')"
+          echo "BRANCH_SLUG=${slug}" >> "${GITHUB_ENV}"
+
+      # ------------------------------------------------------------------------
+      # The build
+      # ------------------------------------------------------------------------
+      # The build script inside stops the build itself if a required package is
+      # missing, if GLib is not the version this whole design rests on, or if
+      # either of our two scripts failed to arrive. So a green build here
+      # already means more than "podman did not error".
+      - name: Build the runtime
+        working-directory: resolve-runtime
+        run: |
+          set -euo pipefail
+          podman build \
+            --build-arg "ROCKY=${{ matrix.rocky }}" \
+            --tag "localhost/${IMAGE_NAME}:${BUILD_TAG}" \
+            .
+
+      - name: How big is it
+        run: podman images --format '{{.Repository}}:{{.Tag}}  {{.Size}}'
+
+      # ========================================================================
+      # THE CHECKS
+      # ========================================================================
+      # ⚠️ THE HONEST LIMIT OF THIS JOB, STATED UP FRONT:
+      #
+      # There is no DaVinci Resolve here and there cannot be — we may not
+      # distribute it — and there is no graphics card in a GitHub runner. So
+      # this job CANNOT prove that Resolve starts. Nothing in CI can.
+      #
+      # What it can do is prove that every library Resolve is known to look for
+      # is present and findable by name. That is a proxy, and it is a good one:
+      # every "Resolve will not start on Linux" report that is not the GLib
+      # clash is a missing library from this list. It catches a Rocky point
+      # release that moved a package, which is the failure this image is most
+      # likely to suffer.
+      #
+      # THE REAL PROOF IS THE BENCH: the 4090 machine, a real Resolve download,
+      # and a person looking at the window. docs/restart/resolve.md says so too,
+      # in those words, so that nobody reads a green tick here as more than it
+      # is.
+      # ========================================================================
+      - name: Check the container starts and knows what it is
+        run: |
+          set -euo pipefail
+          cat > /tmp/verify-identity.sh <<'SCRIPT'
+          set -u
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+
+          echo "== what this container thinks it is =="
+          cat /etc/os-release
+
+          if grep -Eq '^ID="?rocky"?$' /etc/os-release; then
+            ok "this is Rocky Linux"
+          else
+            bad "this is not Rocky Linux"
+          fi
+
+          got="$(sed -n 's/^VERSION_ID="\([0-9]*\).*/\1/p' /etc/os-release)"
+          if [ "${got}" = "${EXPECTED_ROCKY}" ]; then
+            ok "it is Rocky ${got}, which is what was asked for"
+          else
+            bad "it is Rocky ${got}, but the build asked for ${EXPECTED_ROCKY}"
+          fi
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::The runtime is not the Rocky Linux it was supposed to be."
+            exit 1
+          fi
+          SCRIPT
+          podman run --rm --pull=never -i \
+            -e EXPECTED_ROCKY="${{ matrix.rocky }}" \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${BUILD_TAG}" < /tmp/verify-identity.sh
+
+      - name: Check the two versions this whole design rests on
+        run: |
+          set -euo pipefail
+          cat > /tmp/verify-versions.sh <<'SCRIPT'
+          set -u
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+
+          # ----------------------------------------------------------------
+          # GLib. THE reason this image is built on Enterprise Linux.
+          # ----------------------------------------------------------------
+          # Resolve bundles GLib 2.68 in /opt/resolve/libs. On a distribution
+          # whose own pango is built against GLib 2.80+, pango asks the bundled
+          # 2.68 for a symbol that did not exist in 2021 and Resolve dies before
+          # its window opens. Enterprise Linux 9 is still on 2.68, so the two
+          # match and the crash is impossible.
+          #
+          # If this ever fails, the image has stopped being worth building and
+          # somebody has to look at it before it ships.
+          glib="$(rpm -q --queryformat '%{VERSION}' glib2)"
+          echo "== glib2 is ${glib} (Resolve bundles 2.68.x) =="
+          case "${glib}" in
+            2.68.*) ok "the system GLib matches the one Resolve carries" ;;
+            *)      bad "glib2 is ${glib}, not the 2.68 series — the reason for this image has gone" ;;
+          esac
+
+          # glibc — the VFX Reference Platform floor, and Unreal's.
+          glibc="$(rpm -q --queryformat '%{VERSION}' glibc)"
+          echo "== glibc is ${glibc} (VFX Reference Platform CY2027 floor is 2.34) =="
+          case "${glibc}" in
+            2.3[4-9]*|2.[4-9]*) ok "glibc ${glibc} is at or above the CY2027 floor" ;;
+            *)                  bad "glibc ${glibc} is below the VFX Reference Platform's CY2027 floor of 2.34" ;;
+          esac
+
+          if [ "$fails" -ne 0 ]; then exit 1; fi
+          SCRIPT
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${BUILD_TAG}" < /tmp/verify-versions.sh
+
+      - name: Check every library Resolve looks for can be found
+        run: |
+          set -euo pipefail
+          cat > /tmp/verify-libs.sh <<'SCRIPT'
+          set -u
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+
+          # ldconfig -p lists every shared library the system can find BY NAME,
+          # which is exactly the question a program asks when it starts. This is
+          # a stronger check than `rpm -q`: a package can be installed and its
+          # library still not be on the search path.
+          #
+          # ⚠️ NOT a pipe into grep. `grep -q` exits on its first match, ldconfig
+          # gets a broken pipe, and with `set -o pipefail` the whole thing reports
+          # failure — finding the library would report it missing. This trap cost
+          # the operating system's first restart build on 2026-09-03 and it is
+          # written up in build_files/aq-lib.sh.
+          ldconfig -p > /tmp/libs.txt 2>&1
+
+          echo "== the libraries every 'Resolve will not start' report is about =="
+          # Each of these is a real, named cause of Resolve failing to launch on
+          # Linux, collected from davincibox's dependency list and from the
+          # Enterprise Linux install guides.
+          for lib in \
+            libGLU.so.1 \
+            libGL.so.1 \
+            libEGL.so.1 \
+            libOpenGL.so.0 \
+            libapr-1.so.0 \
+            libaprutil-1.so.0 \
+            libOpenCL.so.1 \
+            libxcb.so.1 \
+            libxcb-image.so.0 \
+            libxcb-keysyms.so.1 \
+            libxcb-render-util.so.0 \
+            libxcb-icccm.so.4 \
+            libxkbcommon-x11.so.0 \
+            libXtst.so.6 \
+            libXrandr.so.2 \
+            libXi.so.6 \
+            libXcursor.so.1 \
+            libXinerama.so.1 \
+            libXxf86vm.so.1 \
+            libICE.so.6 \
+            libSM.so.6 \
+            libmtdev.so.1 \
+            libasound.so.2 \
+            libpulse.so.0 \
+            libglib-2.0.so.0 \
+            libgtk-3.so.0 \
+            libpango-1.0.so.0 \
+            libfontconfig.so.1 \
+            libfreetype.so.6 \
+            libnss3.so \
+            libcrypt.so.1 \
+            libz.so.1
+          do
+            if grep -q "	${lib} " /tmp/libs.txt || grep -q " ${lib} " /tmp/libs.txt; then
+              ok "${lib}"
+            else
+              bad "${lib} cannot be found — Resolve would fail to start with exactly this name in the error"
+            fi
+          done
+
+          echo ""
+          echo "== Unreal Engine 5's own floor =="
+          # Not a hard failure: the Vulkan loader is in the optional list
+          # because it is not always where Rocky last put it, and Resolve does
+          # not need it. Unreal does.
+          if grep -q 'libvulkan.so.1' /tmp/libs.txt; then
+            ok "libvulkan.so.1 — the Unreal Engine editor can run in here too"
+          else
+            echo "  NOTE libvulkan.so.1 is not present. Resolve is unaffected;"
+            echo "       the Unreal Engine editor would not run in this container."
+          fi
+
+          echo ""
+          echo "== our own two scripts =="
+          for f in /usr/bin/aquarius-resolve-setup /usr/bin/aquarius-resolve-run; do
+            if [ -x "$f" ]; then ok "$f is present and runnable"; else bad "$f is missing"; fi
+            if bash -n "$f"; then ok "$(basename "$f") is valid shell"; else bad "$f has a syntax error"; fi
+          done
+          if [ -s /usr/share/aquarius-resolve/README ]; then
+            ok "the README a person can read from inside is there"
+          else
+            bad "/usr/share/aquarius-resolve/README is missing"
+          fi
+
+          echo ""
+          echo "== and, to be certain: NO DaVinci Resolve is in this image =="
+          # We may not distribute it. If a build ever produced an image with
+          # Resolve inside — someone testing locally and committing by mistake —
+          # publishing it would be a licence breach. Better to make that
+          # impossible than to rely on remembering.
+          if [ -e /opt/resolve ]; then
+            bad "/opt/resolve exists in this image. We may not distribute Blackmagic's software. DO NOT PUBLISH."
+          else
+            ok "no /opt/resolve — this image carries nothing of Blackmagic's"
+          fi
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::The runtime is missing something Resolve needs, or contains something it must not."
+            exit 1
+          fi
+          echo "All library checks passed."
+          SCRIPT
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${BUILD_TAG}" < /tmp/verify-libs.sh
+
+      - name: Write down what was checked
+        run: |
+          {
+            echo "### DaVinci Resolve runtime — Rocky ${{ matrix.rocky }}"
+            echo ""
+            echo "Built and checked. What CI proved, and what it did not:"
+            echo ""
+            echo "| Checked here | Only the bench can check |"
+            echo "| --- | --- |"
+            echo "| It is really Rocky ${{ matrix.rocky }} | That Resolve starts |"
+            echo "| GLib is the 2.68 series Resolve bundles | That the graphics card is seen |"
+            echo "| glibc is at the VFX CY2027 floor | That a Studio dongle is read |"
+            echo "| Every library Resolve looks for is findable | That a 4K screen behaves |"
+            echo "| No Blackmagic software is in the image | Export, playback, colour |"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      # ========================================================================
+      # PUBLISHING
+      # ========================================================================
+      # See the header. The real line publishes the tags machines pull; every
+      # other branch publishes one `dev-` tag and nothing else.
+      - name: Sign in to GitHub's container registry
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish
+        id: push-image
+        run: |
+          set -euo pipefail
+          if [ "${{ github.ref_name }}" = "restart/fedora-bootc" ]; then
+            # The real tags. `9` is what /usr/share/aquarius/resolve/runtime.env
+            # names, so it is the one that matters; the others are for humans
+            # and for rolling back.
+            TAGS="${{ matrix.rocky }} latest ${DATE_TAG} ${{ matrix.rocky }}-${DATE_TAG} sha-${GITHUB_SHA::7}"
+          else
+            # A side branch. One tag, prefixed so it can never be mistaken for
+            # or collide with the real ones.
+            TAGS="dev-${BRANCH_SLUG}"
+            echo "This is a side branch, so only the dev tag is published."
+          fi
+          echo "Publishing as: ${TAGS}"
+
+          for tag in ${TAGS}; do
+            podman tag "localhost/${IMAGE_NAME}:${BUILD_TAG}" \
+              "${IMAGE_REGISTRY}/${IMAGE_NAME}:${tag}"
+            podman push --digestfile=/tmp/digestfile \
+              "${IMAGE_REGISTRY}/${IMAGE_NAME}:${tag}"
+          done
+          echo "digest=$(< /tmp/digestfile)" >> "${GITHUB_OUTPUT}"
+          echo "tags=${TAGS}" >> "${GITHUB_OUTPUT}"
+
+      - name: Install cosign
+        if: github.ref_name == 'restart/fedora-bootc'
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: 'v3.1.2'
+
+      # Signing is what lets a machine prove the runtime it downloaded really
+      # came from us and was not swapped on the way. Same key pair as the
+      # operating system image — the private half is the SIGNING_SECRET
+      # repository secret, the public half is cosign.pub in this repository.
+      #
+      # Only the real line is signed. A `dev-` tag is a thing one person pulls
+      # onto one bench machine on purpose; signing it would suggest a permanence
+      # it does not have.
+      - name: Sign the published runtime
+        if: github.ref_name == 'restart/fedora-bootc'
+        env:
+          COSIGN_EXPERIMENTAL: false
+          COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
+          DIGEST: ${{ steps.push-image.outputs.digest }}
+        run: |
+          cosign sign -y \
+            --new-bundle-format=false \
+            --use-signing-config=false \
+            --key env://COSIGN_PRIVATE_KEY \
+            "${IMAGE_REGISTRY}/${IMAGE_NAME}@${DIGEST}"
+
+      - name: What was published
+        env:
+          TAGS: ${{ steps.push-image.outputs.tags }}
+        run: |
+          {
+            echo ""
+            echo "Published to \`${IMAGE_REGISTRY}/${IMAGE_NAME}\` as: \`${TAGS}\`"
+            echo ""
+            if [ "${{ github.ref_name }}" != "restart/fedora-bootc" ]; then
+              echo "This is a side-branch build. To try it on the bench:"
+              echo ""
+              echo '```'
+              echo "AQ_RESOLVE_RUNTIME_TAG=dev-${BRANCH_SLUG} aq resolve install"
+              echo '```'
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"

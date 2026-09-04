@@ -1,0 +1,140 @@
+# ==============================================================================
+# What DaVinci Resolve cannot start without, on an Enterprise Linux userland
+# ==============================================================================
+# Every name in this file MUST end up installed. If one of them is missing after
+# the install, the build stops and refuses to publish the runtime image — an
+# image missing one of these produces a Resolve that opens to a black window and
+# a stack trace, which is far worse than a build that failed loudly.
+#
+# The list is derived from davincibox's `davinci-dependencies`
+# (https://github.com/zelikos/davincibox), translated to Enterprise Linux
+# package names. davincibox targets Fedora; Rocky calls a few things differently
+# and splits a few others, so this is not a copy.
+#
+# Blank lines and lines starting with # are ignored.
+# ==============================================================================
+
+# --- Sound -------------------------------------------------------------------
+alsa-lib
+pulseaudio-libs
+
+# --- The Apache Portable Runtime ---------------------------------------------
+# Resolve's own networking and threading layer is built on it. This is the
+# single most commonly missing package in "Resolve will not start" reports.
+apr
+apr-util
+
+# --- The X11 window system ---------------------------------------------------
+# Resolve is an X11 application on every Linux in 2026 — it runs under XWayland
+# on a Wayland desktop, and it has no Wayland backend at all. So the whole X
+# client stack has to be here even though the host runs Wayland.
+libX11
+libXext
+libXcursor
+libXfixes
+libXi
+libXinerama
+libXrandr
+libXtst
+libXxf86vm
+libICE
+libSM
+libxcb
+libxkbcommon
+libxkbcommon-x11
+
+# xcb-util-* are the small helper libraries Qt's X11 platform plugin loads by
+# name at run time. A missing one of these is the classic
+# "could not load the Qt platform plugin xcb" message.
+xcb-util
+xcb-util-image
+xcb-util-keysyms
+xcb-util-renderutil
+xcb-util-wm
+
+# --- Graphics ----------------------------------------------------------------
+# libglvnd is the dispatcher that lets one system carry both Mesa's OpenGL and
+# NVIDIA's. Inside this container Mesa is installed and NVIDIA's half arrives
+# from the host at run time, through the graphics-card passthrough.
+libglvnd
+libglvnd-egl
+libglvnd-glx
+libglvnd-opengl
+mesa-libGL
+mesa-libEGL
+mesa-libGLU
+
+# --- Compute (the part that does the actual grading) -------------------------
+# ocl-icd is the OpenCL loader. On an NVIDIA machine, NVIDIA's OpenCL and CUDA
+# libraries come in from the host; on AMD they would come from ROCm, which is
+# NOT set up here — see the README inside the image.
+ocl-icd
+
+# --- Fonts and text ----------------------------------------------------------
+fontconfig
+freetype
+
+# --- GLib, and why its version is the whole point of this image --------------
+# Resolve ships its own copy of GLib 2.68 inside /opt/resolve/libs. On a
+# fast-moving distribution the SYSTEM pango is built against GLib 2.80+, asks
+# for a symbol that 2.68 does not have, and Resolve dies before its window
+# opens. Enterprise Linux 9 is still on GLib 2.68 — the same series Resolve
+# bundles — so the mismatch is not fixed here, it is impossible here.
+# The build checks this version and fails if it ever drifts.
+glib2
+gtk3
+pango
+cairo
+gdk-pixbuf2
+librsvg2
+
+# --- Everything else Resolve links against -----------------------------------
+dbus-libs
+expat
+zlib
+libuuid
+mtdev
+nss
+libxcrypt-compat
+
+# --- Tools the install and launch steps use ----------------------------------
+python3
+tar
+unzip
+xdg-utils
+procps-ng
+which
+findutils
+
+# --- The distrobox floor -----------------------------------------------------
+# distrobox needs these inside the container to do its job: give you a shell
+# that is really you, share your home folder, and hand programs back to the
+# desktop. If they are absent, distrobox installs them itself on the first
+# `enter` — which works, but turns the first launch into a silent five-minute
+# download. Baking them in makes the first launch instant and makes the image
+# self-contained.
+# The list is distrobox's own documented requirement set, minus one name.
+#
+# ⚠️ NOT `curl`. The Rocky base image already ships `curl-minimal`, which
+# provides /usr/bin/curl and is all distrobox wants — and asking for the full
+# `curl` package makes dnf refuse the whole transaction, because the two cannot
+# both be installed. The build on 2026-09-04 failed on exactly this. The same
+# goes for `libcurl` versus `libcurl-minimal`.
+bash
+bc
+diffutils
+gnupg2
+less
+lsof
+ncurses
+ncurses-term
+passwd
+pinentry
+procps-ng
+shadow-utils
+sudo
+time
+util-linux
+wget
+whois
+vte-profile

@@ -300,6 +300,27 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     NVIDIA="${NVIDIA}" /ctx/build_files/60-nvidia.sh
 
+# 6b. DaVinci Resolve — everything except Resolve.
+#
+#     Resolve itself is NOT in this image and never will be: Blackmagic's
+#     licence does not allow anyone else to hand out their installer. What is
+#     here is everything around it — the setup that builds a Rocky Linux
+#     container on the user's own machine and installs the user's own download
+#     into it, the launcher, the `aq resolve` commands, the USB rules for
+#     licence dongles and control panels, and the graphics-card plumbing.
+#
+#     Resolve runs in a container because it carries its own copy of GLib from
+#     2021, which clashes with any modern Linux's own and kills it before its
+#     window opens. Enterprise Linux still carries the matching version, so in
+#     there the clash cannot happen. The container image is built separately by
+#     resolve-runtime/Containerfile and downloaded on first use — it is about a
+#     gigabyte and does not belong in an OS everybody downloads.
+#
+#     After step 6 because the NVIDIA checks read what step 6 installed.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache/libdnf5 \
+    NVIDIA="${NVIDIA}" /ctx/build_files/62-resolve-runtime.sh
+
 # 7. Identity. The OS learns to call itself AquariusOS.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     IMAGE_NAME="${IMAGE_NAME}" IMAGE_VENDOR="${IMAGE_VENDOR}" NVIDIA="${NVIDIA}" \

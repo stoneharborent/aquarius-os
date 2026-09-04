@@ -1,0 +1,150 @@
+#!/usr/bin/bash
+# ==============================================================================
+# aquarius-resolve-launch — the front door for DaVinci Resolve
+# ==============================================================================
+# PLAIN ENGLISH
+#
+# Resolve does not run on AquariusOS directly. It lives inside a Rocky Linux
+# container that `aq resolve install` builds, and it is started by stepping into
+# that container and running it there.
+#
+# This script sits in front of that and hands the container a few things it
+# cannot work out for itself.
+#
+# WHY IT EXISTS AT ALL — the mouse pointer
+# ------------------------------------------------------------------------------
+# Reported from the bench on the old line, 2026-08-28: "the mouse cursor inside
+# Resolve changes theme and becomes much smaller than the desktop cursor."
+#
+# That is not Resolve being odd. It is the whole story of what a container is.
+# Resolve is an X11 application, and an X11 application decides what to draw for
+# a pointer by reading two settings — XCURSOR_THEME and XCURSOR_SIZE — and then
+# looking for that theme ON ITS OWN DISK. Inside the container:
+#
+#   * neither setting is there, because the container never saw your desktop's
+#     settings; and
+#   * your cursor theme is not installed in there either, because it is a
+#     minimal Rocky Linux with Resolve's libraries and nothing else.
+#
+# So X falls back to its ancient built-in pointer at its ancient default size,
+# and you get a small black arrow in the middle of your own desktop. Every
+# containerised application has this problem and most people assume the
+# application is just ugly.
+#
+# THE FIX, IN THREE PARTS
+#   XCURSOR_THEME   read out of YOUR desktop settings, right now, at launch —
+#                   not baked in when Resolve was installed, so changing your
+#                   cursor theme just works with nothing to re-run.
+#   XCURSOR_SIZE    the same.
+#   XCURSOR_PATH    where to FIND that theme from inside the container.
+#                   distrobox mounts the whole host at /run/host, so the themes
+#                   on your real disk are visible there.
+#
+# USAGE
+#   aquarius-resolve-launch [program-inside-the-container] [arguments…]
+# With no arguments it starts Resolve. The app-menu entries are pointed at this
+# script by /usr/libexec/aquarius-resolve-install.
+# ==============================================================================
+
+set -uo pipefail
+
+RUNTIME_ENV=/usr/share/aquarius/resolve/runtime.env
+CONTAINER="aquarius-resolve"
+if [ -r "${RUNTIME_ENV}" ]; then
+    # shellcheck source=/dev/null
+    . "${RUNTIME_ENV}"
+    CONTAINER="${AQ_RESOLVE_CONTAINER:-aquarius-resolve}"
+fi
+
+# ------------------------------------------------------------------------------
+# Is it installed?
+# ------------------------------------------------------------------------------
+# A message, not a silent nothing. This script is reached by clicking an icon,
+# and an icon that does nothing when clicked is the worst outcome there is.
+if ! command -v distrobox > /dev/null 2>&1 \
+    || ! podman container exists "${CONTAINER}" 2> /dev/null; then
+    msg="DaVinci Resolve is not set up on this computer yet.
+
+Open your apps and click \"Install DaVinci Resolve\", or run
+    aq resolve install
+in a terminal."
+    if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v zenity > /dev/null 2>&1; then
+        zenity --error --title="DaVinci Resolve" --width=520 --text="${msg}" > /dev/null 2>&1
+    fi
+    printf '%s\n' "${msg}" >&2
+    exit 1
+fi
+
+# ------------------------------------------------------------------------------
+# What does this person's pointer look like?
+# ------------------------------------------------------------------------------
+# GNOME and the Aquarius Desktop both keep it in the same place — the GSettings
+# key org.gnome.desktop.interface — so one question answers it for both of the
+# sessions AquariusOS ships.
+#
+# An empty answer is not an error. On a brand-new account the key has never been
+# written and gsettings correctly returns the schema default, which is Adwaita
+# at 24 — exactly what we would fall back to anyway.
+read_setting() { # read_setting <key>
+    local v=""
+    if command -v gsettings > /dev/null 2>&1; then
+        v="$(gsettings get org.gnome.desktop.interface "$1" 2> /dev/null)"
+    fi
+    # gsettings quotes strings; strip the quotes and the uint32 prefix it puts
+    # on numbers.
+    v="${v#uint32 }"
+    v="${v#\'}"
+    v="${v%\'}"
+    printf '%s' "${v}"
+}
+
+CURSOR_THEME="${XCURSOR_THEME:-$(read_setting cursor-theme)}"
+CURSOR_SIZE="${XCURSOR_SIZE:-$(read_setting cursor-size)}"
+[ -n "${CURSOR_THEME}" ] || CURSOR_THEME="Adwaita"
+[ -n "${CURSOR_SIZE}" ] || CURSOR_SIZE="24"
+
+# Where a theme may be found, from inside the container. Its own folder first
+# (fastest, if it happens to have it), then yours through /run/host, then your
+# personal ones. Your home folder is the same path in both places — distrobox
+# shares it — so those two entries need no translation.
+CURSOR_PATH="/usr/share/icons:/run/host/usr/share/icons:/run/host/usr/local/share/icons:${HOME}/.local/share/icons:${HOME}/.icons"
+
+ENV_FLAGS=(
+    --env "XCURSOR_THEME=${CURSOR_THEME}"
+    --env "XCURSOR_SIZE=${CURSOR_SIZE}"
+    --env "XCURSOR_PATH=${CURSOR_PATH}"
+)
+
+# ------------------------------------------------------------------------------
+# The size of Resolve's own interface
+# ------------------------------------------------------------------------------
+# ⚠️ THE RIGHT PLACE TO CHANGE THIS IS INSIDE RESOLVE, NOT HERE.
+#     Preferences → User → UI Settings → Interface Scale.
+# Resolve has its own scaling and it is better than Qt's, because Resolve knows
+# which parts of its interface should scale and which should not. Forcing Qt's
+# scaling on top of it gives you blurry text.
+#
+# This override exists for one situation: a 4K screen where Resolve has opened a
+# window LARGER than the screen, so its edges — and its close button — are off
+# the display and you cannot reach Preferences to fix it. Start it once with:
+#
+#     AQUARIUS_RESOLVE_SCALE=1 /usr/libexec/aquarius-resolve-launch
+#
+# get a window you can see, set the Interface Scale properly, and never use this
+# again.
+if [ -n "${AQUARIUS_RESOLVE_SCALE:-}" ]; then
+    ENV_FLAGS+=(--env "QT_AUTO_SCREEN_SCALE_FACTOR=0")
+    ENV_FLAGS+=(--env "QT_SCALE_FACTOR=${AQUARIUS_RESOLVE_SCALE}")
+fi
+
+# `distrobox enter --additional-flags` takes ONE string, so the flags are joined
+# into one. None of these values can contain a space in practice — a cursor
+# theme name is a folder name — and joining is what distrobox's own documented
+# examples do.
+EXTRA=""
+for f in "${ENV_FLAGS[@]}"; do
+    EXTRA="${EXTRA}${EXTRA:+ }${f}"
+done
+
+exec distrobox enter --name "${CONTAINER}" --additional-flags "${EXTRA}" \
+    -- /usr/bin/aquarius-resolve-run "$@"

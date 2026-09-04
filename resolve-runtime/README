@@ -1,0 +1,91 @@
+==============================================================================
+ The AquariusOS DaVinci Resolve runtime
+==============================================================================
+
+WHAT THIS IS
+
+You are inside a Rocky Linux container. It is a complete, separate Linux
+userland sitting on top of AquariusOS, and its only job is to be the kind of
+Linux that DaVinci Resolve expects.
+
+There is no DaVinci Resolve in this image as it ships. Blackmagic's licence
+does not allow anyone else to hand out their installer, so you download it from
+them and AquariusOS installs it into a copy of this image on your own machine.
+
+
+WHY A CONTAINER AT ALL
+
+Resolve ships its own copy of a library called GLib, version 2.68, inside
+/opt/resolve/libs. On a modern Linux, the system's text-drawing library (pango)
+is built against GLib 2.80 or newer. Resolve loads the system pango but its own
+old GLib; pango asks for something that did not exist in 2021; Resolve dies
+before its window appears, with a message about an "undefined symbol".
+
+That is the most common "Resolve does not work on Linux" story, and it comes
+back every time a distribution moves GLib forward. Every distribution has a
+workaround. None of them are permanent.
+
+Enterprise Linux 9 — Rocky, RHEL, AlmaLinux — is still on GLib 2.68, the same
+series Resolve bundles. In here the mismatch is not worked around. It cannot
+happen.
+
+Blackmagic's only listed Linux for Resolve is Rocky Linux 8.6. This image is
+Rocky 9: one release newer, so that a modern graphics driver works, and still
+Enterprise Linux, so that Resolve is at home. It is also the VFX Reference
+Platform's CY2027 floor (glibc 2.34), which is what the film industry as a
+whole is moving to.
+
+
+WHY NOT ROCKY 10
+
+Rocky 10 carries a modern GLib, which is exactly the thing this image exists to
+avoid. There is also a December 2025 report of DaVinci Resolve opening to a
+black window on AlmaLinux 10 — the same Enterprise Linux 10 userland — which
+nobody has yet reproduced or explained.
+
+You can build this image on Rocky 10 by passing ROCKY=10, and the build will
+tell you plainly that the GLib version no longer matches. It is an experiment,
+not the default, and it stays that way until somebody tests it on real hardware.
+
+
+WHAT IS IN HERE
+
+  Everything Resolve links against on Enterprise Linux — the X11 client stack,
+  the Apache Portable Runtime, the OpenCL loader, GLib/GTK/pango, fonts.
+  The list, with a comment on each group, is in the repository at
+  resolve-runtime/packages-required.txt.
+
+  The Vulkan loader and drivers, so the same container can host the Unreal
+  Engine 5 editor, whose own floor is Rocky 8.
+
+  Two scripts of ours:
+      aquarius-resolve-setup   installs Resolve from your download
+      aquarius-resolve-run     starts it with the right settings
+
+WHAT IS NOT IN HERE
+
+  DaVinci Resolve itself (licensing — see above).
+
+  A graphics driver. The driver comes in from AquariusOS at run time. On an
+  NVIDIA machine that is the NVIDIA container toolkit's job and it is already
+  set up. On AMD, Resolve needs ROCm's OpenCL, which is a ~24 GB install and is
+  NOT configured here — an AMD machine will start Resolve and be told its GPU
+  processing mode is unsupported. That is honest, known, and on the roadmap.
+
+  Audio hardware access, beyond what the host passes through.
+
+
+THE COMMANDS, ON THE HOST
+
+  aq resolve install <file>   set this up from Blackmagic's download
+  aq resolve run              start Resolve
+  aq resolve status           what is installed, and can it see the GPU
+  aq resolve update <file>    install a newer Resolve over the top
+  aq resolve shell            a terminal inside this container
+  aq resolve remove           delete the container (your projects are not in it)
+
+  The full guide, written for someone who has never used Linux:
+      https://github.com/stoneharborent/aquarius-os
+      docs/restart/resolve.md
+
+==============================================================================

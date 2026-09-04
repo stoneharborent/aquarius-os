@@ -1,0 +1,68 @@
+# ==============================================================================
+# Describe the NVIDIA graphics card to containers, at every boot
+# ==============================================================================
+# PLAIN ENGLISH
+#
+# For DaVinci Resolve to use the graphics card from inside its container, the
+# computer needs a file describing that card and every driver library that goes
+# with it. NVIDIA's tool writes that file; this makes sure it gets written.
+#
+# ⚠️ THIS IS A SAFETY NET, NOT THE MAIN MECHANISM.
+#
+# NVIDIA's container toolkit ships its own service, `nvidia-cdi-refresh`, that
+# does exactly this and does it better — it also re-runs when the driver
+# changes, not only at boot. AquariusOS switches that on in build_files/60-nvidia.sh
+# and it is the intended path.
+#
+# But it is only present in newer driver builds, and 60-nvidia.sh deliberately
+# skips it without complaint on the ones that lack it. On such a machine there
+# would be no description of the graphics card at all and Resolve would say its
+# GPU processing mode is unsupported, for a reason nobody could reasonably
+# guess. So: this unit runs ONLY when NVIDIA's own is absent. The Condition
+# lines below are what make that true, and they are checked in CI.
+#
+# WHY THIS IS DONE AT BOOT AND NOT WHEN THE IMAGE IS BUILT
+#
+# This is the part that matters on an operating system like AquariusOS.
+#
+# The file names driver library files by their exact version. AquariusOS updates
+# by replacing the whole operating system, driver included — so a file written
+# when the image was built would name a driver that no longer exists the first
+# time the machine updated, and Resolve would stop seeing the graphics card
+# after an update that "worked fine". There is also no graphics card in the
+# machine that builds the image, so there would be nothing true to write.
+#
+# Written at boot, on the machine, by the driver that is actually installed, it
+# cannot be stale and it cannot be wrong.
+#
+# WHERE IT WRITES
+# /run/cdi is a folder that lives in memory and is emptied at every shutdown,
+# which is exactly right for a file that must never outlive the driver that
+# produced it. It is also NVIDIA's own default location.
+# ==============================================================================
+
+[Unit]
+Description=Describe the NVIDIA graphics card to containers (AquariusOS safety net)
+Documentation=https://github.com/stoneharborent/aquarius-os
+# Only when there is really an NVIDIA driver loaded.
+ConditionPathExists=/proc/driver/nvidia/version
+# Only when NVIDIA's own service is NOT in this image. If it is, it does the
+# job, and running both would be two programs writing one file.
+ConditionPathExists=!/usr/lib/systemd/system/nvidia-cdi-refresh.service
+After=local-fs.target
+Wants=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# /run is emptied at every boot, so the folder has to be made before the file
+# can be written into it.
+ExecStartPre=/usr/bin/mkdir -p /run/cdi
+ExecStart=/usr/bin/nvidia-ctk cdi generate --output=/run/cdi/nvidia.yaml
+# A machine with no NVIDIA hardware, or a driver that has not finished loading,
+# should not present a failed service on the login screen. The Conditions above
+# already cover the ordinary cases; this covers the odd one.
+SuccessExitStatus=0 1
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,586 @@
+#!/usr/bin/bash
+# ==============================================================================
+# aquarius-resolve-install — set up DaVinci Resolve on AquariusOS
+# ==============================================================================
+# PLAIN ENGLISH
+#
+# DaVinci Resolve is a professional video editor made by Blackmagic Design.
+# Their licence does not let anyone else hand out the installer, so AquariusOS
+# cannot include it. What AquariusOS CAN do is everything around it — and that
+# is a great deal more than it sounds, because Resolve on Linux is famously
+# awkward and this makes it not be.
+#
+# WHAT IT DOES, IN ORDER
+#   1. Explains itself.
+#   2. Works out how this computer's graphics card can be reached from inside a
+#      container, and says so plainly if it cannot be.
+#   3. Finds Blackmagic's download — or opens their page and WAITS for it.
+#   4. Downloads a Rocky Linux runtime (about a gigabyte, once) and makes a
+#      container from it.
+#   5. Runs Blackmagic's installer inside that container.
+#   6. Puts "DaVinci Resolve" in your apps.
+#
+# Nothing about the operating system is changed. Everything lives in one
+# container that `aq resolve remove` deletes without trace.
+#
+# THE TWO RULES OF THIS SCRIPT'S VOICE
+#   1. Say what is about to happen before it happens.
+#   2. Never end on an error without saying what to do next.
+#
+# The beginner-facing guide is docs/restart/resolve.md.
+# ==============================================================================
+
+set -uo pipefail
+
+RUNTIME_ENV=/usr/share/aquarius/resolve/runtime.env
+RECORD_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/aquarius/resolve"
+RECORD="${RECORD_DIR}/installed.env"
+
+# ------------------------------------------------------------------------------
+# Which runtime container, and what it is called on this machine
+# ------------------------------------------------------------------------------
+# The answer normally comes from one file in the image. It can be overridden by
+# setting the same names in the environment first, which exists for exactly one
+# purpose: TESTING A RUNTIME THAT HAS NOT BEEN RELEASED YET on the bench.
+#
+#     AQ_RESOLVE_RUNTIME_TAG=dev-restart-r3-resolve aq resolve install
+#
+# Side branches publish under a `dev-` tag so that a work-in-progress runtime
+# can be tried on real hardware without ever touching the `9` tag that finished
+# machines pull. Nobody needs this in normal use, and it is deliberately not
+# mentioned in the help text.
+OVERRIDE_IMAGE="${AQ_RESOLVE_RUNTIME_IMAGE:-}"
+OVERRIDE_TAG="${AQ_RESOLVE_RUNTIME_TAG:-}"
+
+if [ ! -r "${RUNTIME_ENV}" ]; then
+    echo "aquarius-resolve: ${RUNTIME_ENV} is missing from this system." >&2
+    echo "  That is a fault in AquariusOS, not in anything you typed." >&2
+    exit 1
+fi
+# shellcheck source=/dev/null
+. "${RUNTIME_ENV}"
+
+[ -n "${OVERRIDE_IMAGE}" ] && AQ_RESOLVE_RUNTIME_IMAGE="${OVERRIDE_IMAGE}"
+[ -n "${OVERRIDE_TAG}" ] && AQ_RESOLVE_RUNTIME_TAG="${OVERRIDE_TAG}"
+
+IMAGE="${AQ_RESOLVE_RUNTIME_IMAGE}:${AQ_RESOLVE_RUNTIME_TAG}"
+CONTAINER="${AQ_RESOLVE_CONTAINER}"
+
+if [ -n "${OVERRIDE_IMAGE}${OVERRIDE_TAG}" ]; then
+    echo "NOTE: using a runtime named in the environment, not the one this"
+    echo "      version of AquariusOS ships with:  ${IMAGE}"
+fi
+
+MODE="install"
+INPUT=""
+for arg in "$@"; do
+    case "${arg}" in
+        --update) MODE="update" ;;
+        -*)
+            echo "aquarius-resolve: I do not understand '${arg}'." >&2
+            exit 1
+            ;;
+        *) INPUT="${arg}" ;;
+    esac
+done
+
+# ==============================================================================
+# 0. What is about to happen
+# ==============================================================================
+echo ""
+echo "=================================================================="
+if [ "${MODE}" = "update" ]; then
+    echo " Updating DaVinci Resolve on AquariusOS"
+else
+    echo " Setting up DaVinci Resolve on AquariusOS"
+fi
+echo "=================================================================="
+echo ""
+echo "DaVinci Resolve is made by Blackmagic Design. Their licence does not"
+echo "allow anyone else to hand out the installer, so you download it from"
+echo "them and this does the rest."
+echo ""
+echo "Resolve does not run directly on AquariusOS, and that is on purpose."
+echo "It carries its own copy of a library called GLib from 2021, and on any"
+echo "modern Linux that clashes with the system's own and Resolve dies before"
+echo "its window opens. It is the single most common reason people give up on"
+echo "Resolve on Linux."
+echo ""
+echo "So AquariusOS runs it inside a small Rocky Linux — the same family of"
+echo "Linux Blackmagic themselves build against, and the one the film industry"
+echo "standardised on. In there the clash cannot happen. You will not notice"
+echo "the container: Resolve appears in your apps like any other program and"
+echo "reads and writes your ordinary folders."
+echo ""
+echo "This takes roughly fifteen minutes, nearly all of it downloading."
+echo "Stop at any time with Ctrl+C — nothing will be left broken."
+echo ""
+
+# ==============================================================================
+# 1. Is the machinery here?
+# ==============================================================================
+for tool in podman distrobox; do
+    if ! command -v "${tool}" > /dev/null 2>&1; then
+        echo "This needs '${tool}', which is missing from this system." >&2
+        echo "That should not be possible on AquariusOS — please report it." >&2
+        exit 1
+    fi
+done
+
+# ==============================================================================
+# 2. How does the graphics card get into the container?
+# ==============================================================================
+# THIS SECTION IS THE HEART OF THE FEATURE. Without a graphics card Resolve
+# starts and then says its GPU processing mode is unsupported, which is the
+# single most common complaint about Resolve on Linux.
+#
+# THERE ARE TWO WAYS OF DOING IT AND WE PREFER THE FIRST:
+#
+# (a) CDI — the "Container Device Interface". NVIDIA's own, supported mechanism.
+#     A file on this machine describes the graphics card and every driver
+#     library that goes with it, and podman reads it. AquariusOS already
+#     installs NVIDIA's container toolkit and switches on the service that
+#     WRITES that file — nvidia-cdi-refresh — which regenerates it at every
+#     boot and after every driver change.
+#
+#     That last part is why it is the right answer HERE specifically. AquariusOS
+#     updates by replacing the whole operating system, driver and all. Anything
+#     baked in at build time would name driver files by version and go stale the
+#     first time the OS updated. A file regenerated at boot cannot.
+#
+# (b) distrobox's own `--nvidia` switch, which copies the host's driver files
+#     into the container itself. It works, it needs no toolkit, and it is
+#     distrobox's own best guess rather than NVIDIA's description of the
+#     hardware. It is the fallback, used when (a) has produced no file.
+#
+# The device nodes themselves — /dev/dri, /dev/nvidia*, and any USB dongle —
+# need no special handling: distrobox already gives its containers the host's
+# devices. What (a) and (b) are for is the driver LIBRARIES, which are not
+# devices and do not come across on their own.
+# ==============================================================================
+echo "------------------------------------------------------------------"
+echo " Looking at your graphics card"
+echo "------------------------------------------------------------------"
+
+GPU_FLAGS=""       # goes into --additional-flags
+DISTROBOX_NVIDIA="" # the --nvidia switch, or empty
+GPU_METHOD="none"
+
+have_nvidia() {
+    [ -e /proc/driver/nvidia/version ] && return 0
+    [ -c /dev/nvidiactl ] && return 0
+    return 1
+}
+
+find_cdi_spec() {
+    local f
+    # /run/cdi and /var/run/cdi are the same folder on any modern Linux;
+    # both names are checked because both appear in NVIDIA's own documentation.
+    for f in /var/run/cdi/nvidia.yaml /run/cdi/nvidia.yaml \
+        /etc/cdi/nvidia.yaml /etc/cdi/nvidia.json; do
+        if [ -r "${f}" ]; then
+            printf '%s' "${f}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+if have_nvidia; then
+    NV_VERSION="$(sed -n 's/^NVRM version: NVIDIA UNIX.* Kernel Module *\([0-9.]*\).*/\1/p' /proc/driver/nvidia/version 2> /dev/null | head -1)"
+    echo "NVIDIA graphics card found${NV_VERSION:+, driver ${NV_VERSION}}."
+
+    if CDI_SPEC="$(find_cdi_spec)"; then
+        echo "  Using NVIDIA's own container description: ${CDI_SPEC}"
+        GPU_FLAGS="--device nvidia.com/gpu=all"
+        GPU_METHOD="cdi"
+    else
+        echo "  NVIDIA's container description has not been written on this machine."
+        echo "  Falling back to distrobox's own way of sharing the driver."
+        echo "  (If Resolve later says its GPU mode is unsupported, run:"
+        echo "     sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml"
+        echo "   then remove and re-install with:  aq resolve remove )"
+        DISTROBOX_NVIDIA="--nvidia"
+        GPU_METHOD="distrobox-nvidia"
+    fi
+
+    # Resolve 21 wants a 580-series driver or newer. Older ones start, and then
+    # behave oddly in ways that look like Resolve being broken.
+    if [ -n "${NV_VERSION}" ]; then
+        NV_MAJOR="${NV_VERSION%%.*}"
+        if [ "${NV_MAJOR}" -lt 580 ] 2> /dev/null; then
+            echo ""
+            echo "  ⚠️  Your driver is ${NV_VERSION}. DaVinci Resolve 21 expects 580 or"
+            echo "      newer. Setup will carry on, but if Resolve behaves strangely"
+            echo "      this is the first thing to suspect. AquariusOS updates the"
+            echo "      driver with the operating system:   sudo bootc upgrade"
+        fi
+    fi
+
+elif [ -e /dev/dri ]; then
+    echo "An AMD or Intel graphics card was found — no NVIDIA driver here."
+    echo ""
+    echo "  ⚠️  BE AWARE, AND THIS IS US BEING STRAIGHT WITH YOU:"
+    echo "      DaVinci Resolve on AMD needs AMD's ROCm compute libraries, which"
+    echo "      are a ~24 GB install and are NOT set up in this container yet."
+    echo "      Resolve will install and start, and will then most likely say"
+    echo "      'GPU processing mode is unsupported'."
+    echo ""
+    echo "      Intel graphics are not supported by Resolve on Linux at all."
+    echo ""
+    echo "      Blackmagic's only supported Linux graphics is NVIDIA, and that"
+    echo "      is Blackmagic's decision, not AquariusOS's. Getting AMD working"
+    echo "      properly is on the plan; it is not done."
+    echo ""
+    GPU_METHOD="none"
+else
+    echo "No graphics card could be found at all. That is very unusual."
+    echo "Setup can continue, but Resolve will not be able to do much."
+fi
+
+# The device nodes, named explicitly. distrobox already shares the host's
+# devices with its containers, so this is belt and braces — but it makes the
+# intention visible in the container's own settings, which is where somebody
+# debugging this in a year will look.
+if [ -e /dev/dri ]; then
+    GPU_FLAGS="${GPU_FLAGS}${GPU_FLAGS:+ }--device /dev/dri"
+fi
+
+echo ""
+
+# ==============================================================================
+# 3. Find Blackmagic's download
+# ==============================================================================
+# This section is longer than it looks like it should be, and every line is
+# there because of something that happened to a real person on 2026-08-28, on
+# the first AquariusOS line — the one that was restarted from scratch on
+# 2026-09-02 and is now frozen.
+#
+# (That old line's name is deliberately not written here. The image build
+# refuses to publish an image with the previous base distribution's name
+# anywhere in it, which is a rule worth keeping even when the mention is only a
+# comment in a script: it is the check that catches a leftover nobody meant to
+# ship. The history is in docs/base-distro-reassessment-2026-09.md.)
+#
+# What happened:
+#
+#   * The old flow opened Blackmagic's page and then said "installer not found"
+#     a second later. Of course it was not found — the page had only just
+#     opened. Anything that opens a download page must WAIT for the download.
+#   * Blackmagic hand out a .zip. He unzipped it, which made a FOLDER inside
+#     Downloads with the .run inside THAT. Looking only at the top of Downloads
+#     misses it.
+#   * Told there was no installer, he ran the .run himself on the real system,
+#     where it stopped on a missing 'zlib'. That is a dead end and it was our
+#     fault for leading him there. The warning is now printed before the
+#     download starts, and again while waiting.
+# ==============================================================================
+
+DOWNLOADS="${HOME}/Downloads"
+mkdir -p "${DOWNLOADS}" 2> /dev/null || true
+
+# Newest match wins — that is what "I just downloaded it" means. A .run is
+# preferred over a .zip because it is already unpacked.
+find_one() { # find_one <pattern>
+    {
+        find "${DOWNLOADS}" -maxdepth 2 -type f -iname "$1" 2> /dev/null
+        find "${HOME}" -maxdepth 1 -type f -iname "$1" 2> /dev/null
+    } | sort -u | while IFS= read -r f; do
+        printf '%s\t%s\n' "$(stat -c '%Y' "${f}" 2> /dev/null || echo 0)" "${f}"
+    done | sort -rn | head -1 | cut -f2-
+}
+
+find_installer() {
+    local found
+    found="$(find_one 'DaVinci_Resolve*_Linux.run')"
+    [ -n "${found}" ] && {
+        printf '%s' "${found}"
+        return 0
+    }
+    found="$(find_one 'DaVinci_Resolve*Linux*.zip')"
+    [ -n "${found}" ] && {
+        printf '%s' "${found}"
+        return 0
+    }
+    return 1
+}
+
+if [ -n "${INPUT}" ]; then
+    if [ ! -e "${INPUT}" ]; then
+        echo "There is no file at ${INPUT}." >&2
+        echo "Check the path, or run 'aq resolve install' with no file name and" >&2
+        echo "let it find the download for you." >&2
+        exit 1
+    fi
+    INSTALLER="${INPUT}"
+else
+    INSTALLER="$(find_installer || true)"
+fi
+
+if [ -z "${INSTALLER}" ]; then
+    echo "------------------------------------------------------------------"
+    echo " Now download DaVinci Resolve"
+    echo "------------------------------------------------------------------"
+    echo "Opening Blackmagic's download page in your browser."
+    echo ""
+    echo "  * Choose DaVinci Resolve for LINUX. The free version is fine; if"
+    echo "    you have bought Studio, that works here too and is the one worth"
+    echo "    having on Linux — see the notes at the end."
+    echo "  * They ask for a name and an email address."
+    echo "  * Save the file in your Downloads folder."
+    echo "  * Then LEAVE IT ALONE. Do not open it and do not run it."
+    echo ""
+    echo "  ⚠️  IF YOU RUN BLACKMAGIC'S INSTALLER YOURSELF it will stop with a"
+    echo "      complaint about missing packages such as 'zlib'. Nothing is"
+    echo "      broken when that happens — the installer simply has to be run"
+    echo "      inside the container this script builds, which is the whole"
+    echo "      point of this script."
+    echo ""
+    xdg-open "https://www.blackmagicdesign.com/products/davinciresolve" > /dev/null 2>&1 &
+
+    echo "Waiting for the download to appear in ${DOWNLOADS}..."
+    echo "(Ctrl+C to stop. Nothing will be left broken.)"
+    echo ""
+    ticks=0
+    while :; do
+        if INSTALLER="$(find_installer)"; then
+            break
+        fi
+        sleep 3
+        ticks=$((ticks + 1))
+        if [ $((ticks % 10)) -eq 0 ]; then
+            echo "  still waiting — nothing in ${DOWNLOADS} yet ($((ticks * 3 / 60)) min)"
+        fi
+    done
+fi
+
+echo ""
+echo "Found: ${INSTALLER}"
+
+# The container can only see files inside your home folder, because that is the
+# one folder it shares. A download parked on an external drive has to be copied
+# in first. Better to say so than to fail three minutes later with a path error.
+case "${INSTALLER}" in
+    "${HOME}"/*) ;;
+    *)
+        echo ""
+        echo "That file is outside your home folder, and the container can only"
+        echo "see files inside it. Copying it into ${DOWNLOADS} first..."
+        if cp -f "${INSTALLER}" "${DOWNLOADS}/"; then
+            INSTALLER="${DOWNLOADS}/$(basename "${INSTALLER}")"
+            echo "Copied to ${INSTALLER}"
+        else
+            echo "" >&2
+            echo "The copy failed. Move the download into your Downloads folder" >&2
+            echo "by hand and run this again." >&2
+            exit 1
+        fi
+        ;;
+esac
+
+# ==============================================================================
+# 4. Build the container
+# ==============================================================================
+echo ""
+echo "------------------------------------------------------------------"
+echo " Building the Rocky Linux that Resolve runs in"
+echo "------------------------------------------------------------------"
+
+if podman container exists "${CONTAINER}" 2> /dev/null; then
+    if [ "${MODE}" = "update" ]; then
+        echo "Reusing the existing '${CONTAINER}' container."
+    else
+        echo "A container called '${CONTAINER}' already exists — reusing it."
+        echo "(To start completely fresh:  aq resolve remove  then run this again.)"
+    fi
+else
+    echo "Downloading ${IMAGE}"
+    echo "This is about a gigabyte and happens once."
+    echo ""
+    if ! podman pull "${IMAGE}"; then
+        echo "" >&2
+        echo "The download failed." >&2
+        echo "" >&2
+        echo "The usual cause is no internet connection. Try again when you are" >&2
+        echo "back online:   aq resolve install" >&2
+        echo "" >&2
+        echo "If the message above says 'manifest unknown', it means this exact" >&2
+        echo "runtime has not been published yet. That happens when a machine is" >&2
+        echo "running a test build of AquariusOS from a branch. The fix is to name" >&2
+        echo "the branch's own runtime — see the note at the top of" >&2
+        echo "docs/restart/resolve.md — and it does not affect released versions." >&2
+        exit 1
+    fi
+
+    echo ""
+    echo "Creating the container..."
+    # --yes            do not ask; the questions were asked above
+    # --nvidia         only when NVIDIA's own description was not available
+    # --additional-flags  passed straight to podman
+    #
+    # NOT --init. That switch runs a service manager inside the container and,
+    # in distrobox's own words, disables host process integration. Resolve is
+    # one program, not a system; it needs no service manager, and losing the
+    # process integration would cost us the thing that makes the container
+    # invisible to the user.
+    #
+    # NOT --home either. Sharing your real home folder is the default and it is
+    # what we want: Resolve reads and writes your ordinary Videos and Projects
+    # folders, so nothing has to be moved in and out.
+    # shellcheck disable=SC2086  # DISTROBOX_NVIDIA is deliberately word-split
+    if ! distrobox create --yes \
+        --name "${CONTAINER}" \
+        --image "${IMAGE}" \
+        ${DISTROBOX_NVIDIA} \
+        ${GPU_FLAGS:+--additional-flags "${GPU_FLAGS}"}; then
+        echo "" >&2
+        echo "The container could not be created." >&2
+        echo "Nothing on your actual system was changed." >&2
+        exit 1
+    fi
+fi
+
+echo ""
+echo "Starting it for the first time (this takes a moment)..."
+if ! distrobox enter --name "${CONTAINER}" -- true; then
+    echo "" >&2
+    echo "The container was created but would not start." >&2
+    echo "Try:  aq resolve remove   and then run this again." >&2
+    exit 1
+fi
+
+# ==============================================================================
+# 5. Install Resolve inside it
+# ==============================================================================
+echo ""
+echo "------------------------------------------------------------------"
+echo " Installing DaVinci Resolve"
+echo "------------------------------------------------------------------"
+echo "This is the long part. Several minutes, and it is quiet for most of"
+echo "them. Leave it alone."
+echo ""
+
+if ! distrobox enter --name "${CONTAINER}" -- \
+    aquarius-resolve-setup "${INSTALLER}"; then
+    echo "" >&2
+    echo "The install did not finish." >&2
+    echo "Nothing on your actual system was changed — it all happened inside" >&2
+    echo "the container." >&2
+    echo "" >&2
+    echo "You can safely try again:   aq resolve install" >&2
+    echo "To start from a clean container:   aq resolve remove" >&2
+    exit 1
+fi
+
+# ==============================================================================
+# 6. Make the menu entries go through our launcher
+# ==============================================================================
+# The step above wrote menu entries into ~/.local/share/applications that step
+# into the container and run Resolve. They work as they are. We point them at
+# our own front door instead, which does the same thing plus the handful of
+# things a container cannot know about the desktop around it — chiefly what your
+# mouse pointer is supposed to look like. See aquarius-resolve-launch's header.
+#
+# It is written to be safe when it does not match: if a line is not the shape we
+# expect, the file is left exactly as it was and we say so. A slightly wrong
+# cursor is a far better outcome than a launcher that does not launch.
+echo ""
+echo "Tidying up the app-menu entries..."
+
+# distrobox-export's own Exec line looks like:
+#
+#     Exec=/usr/local/bin/distrobox-enter -n aquarius-resolve -e /opt/resolve/bin/resolve %u
+#
+# Everything after `-e` has to survive untouched, because it carries the file
+# arguments (`%u`) that make "open this project with Resolve" work. So the
+# replacement stops at `-e` and leaves the rest alone.
+#
+# `-e` OR `--`: distrobox's documented examples use `-e` for export and `--`
+# for `enter`, and the exported file has used both over the years. Matching
+# either costs nothing and saves a silent no-op.
+APPS_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/applications"
+mkdir -p "${APPS_DIR}" 2> /dev/null || true
+patched=0
+skipped=0
+while IFS= read -r entry; do
+    [ -n "${entry}" ] || continue
+    # Already ours from an earlier run — nothing to do.
+    grep -q "aquarius-resolve-launch" "${entry}" && continue
+    if grep -qE "^Exec=.*distrobox-enter .*-n +${CONTAINER}( |$)" "${entry}"; then
+        # `#` as the delimiter, because the pattern below contains a `|`.
+        sed -i -E "s#^Exec=.*-n +${CONTAINER} +(-e|--) +#Exec=/usr/libexec/aquarius-resolve-launch #" "${entry}"
+        grep -q "aquarius-resolve-launch" "${entry}" \
+            && patched=$((patched + 1)) \
+            || skipped=$((skipped + 1))
+    else
+        skipped=$((skipped + 1))
+    fi
+done < <(find "${APPS_DIR}" -maxdepth 1 -type f \
+    \( -iname '*resolve*.desktop' \
+    -o -iname '*davinci*.desktop' \
+    -o -iname '*blackmagic*.desktop' \) 2> /dev/null | sort)
+
+[ "${patched}" -gt 0 ] && echo "  ${patched} entries now go through the AquariusOS launcher."
+if [ "${skipped}" -gt 0 ]; then
+    echo "  ${skipped} entries were left alone — they did not look the way we expected."
+    echo "  Resolve will still start; the mouse pointer inside it may look wrong."
+fi
+
+update-desktop-database "${APPS_DIR}" > /dev/null 2>&1 || true
+
+# ==============================================================================
+# 7. Write down what was done
+# ==============================================================================
+# So that `aq resolve status` can answer "what am I actually running?" without
+# guessing, and so that a support conversation has facts in it.
+mkdir -p "${RECORD_DIR}" 2> /dev/null || true
+DIGEST="$(podman image inspect --format '{{index .RepoDigests 0}}' "${IMAGE}" 2> /dev/null || echo 'unknown')"
+{
+    echo "# Written by aquarius-resolve-install. Read by 'aq resolve status'."
+    echo "AQ_RESOLVE_INSTALLED_AT=$(date -Is)"
+    echo "AQ_RESOLVE_IMAGE=${IMAGE}"
+    echo "AQ_RESOLVE_DIGEST=${DIGEST}"
+    echo "AQ_RESOLVE_GPU_METHOD=${GPU_METHOD}"
+    echo "AQ_RESOLVE_SOURCE=$(basename "${INSTALLER}")"
+} > "${RECORD}"
+
+# ==============================================================================
+# 8. Done
+# ==============================================================================
+echo ""
+echo "=================================================================="
+echo " Done. 'DaVinci Resolve' is now in your apps."
+echo "=================================================================="
+echo ""
+echo "You can delete the file you downloaded — Resolve is installed now."
+echo ""
+echo "THE FIRST TIME YOU OPEN IT"
+echo ""
+echo "  * It opens as an X11 program through XWayland. That is normal and it"
+echo "    is the only way Resolve runs on any Linux — it has no Wayland"
+echo "    version. You will not notice."
+echo ""
+echo "  * On a big 4K screen the interface starts small. Fix it INSIDE"
+echo "    Resolve: DaVinci Resolve menu → Preferences → User → UI Settings →"
+echo "    'Interface Scale'. Set it and restart Resolve. Do not use the"
+echo "    operating system's display scale for this; Resolve ignores it."
+echo ""
+echo "  * Check it found the graphics card: Preferences → System → Memory and"
+echo "    GPU. GPU processing mode should say CUDA, and your card should be"
+echo "    listed. If it says the mode is unsupported, see:"
+echo "        aq resolve status"
+echo ""
+echo "TWO THINGS ABOUT RESOLVE ON LINUX THAT ARE NOT OUR DOING"
+echo ""
+echo "  * The FREE version cannot open ordinary phone and camera MP4 files at"
+echo "    all on Linux — no H.264 or H.265. That is Blackmagic's licensing."
+echo "  * Even Resolve STUDIO opens MP4s with SILENT AUDIO on Linux, because"
+echo "    it has no AAC decoder on this platform."
+echo ""
+echo "  AquariusOS fixes both from the outside. Right-click your footage and"
+echo "  choose 'Make Editor-Ready', or run:   aq-ingest --help"
+echo "  It rewraps the audio and makes proxies, and Resolve then imports the"
+echo "  files with picture and sound. No other operating system does this."
+echo ""
+echo "More: aq resolve --help,  and docs/restart/resolve.md"
+echo ""

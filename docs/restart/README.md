@@ -77,7 +77,8 @@ this is starting from an empty room.
   page and the login screen, and a dock along the bottom.
 - **The plumbing for what comes next.** Flatpak with Flathub already set up,
   `distrobox` and `podman` ready for the Resolve container, XWayland ready for
-  Resolve itself, and the NVIDIA container toolkit already wired in.
+  Resolve itself, and the NVIDIA container toolkit already wired in. R3a turned
+  all of that into a working **Install DaVinci Resolve** button.
 - **`aq-ingest`**, the "Make Editor-Ready" right-click menu — the one feature no
   other operating system ships.
 - **btrfs by default**, declared inside the image, so every installer agrees:
@@ -89,7 +90,8 @@ this is starting from an empty room.
 | --- | --- |
 | ~~The Aquarius Desktop (our own shell), labwc, Quickshell, greetd~~ | **shipped in R2** — see [`aquarius-session.md`](aquarius-session.md) |
 | The AquariusOS logo button in the top-left corner of the screen | **R2** (see below) |
-| DaVinci Resolve container, Aquarius Editor, Aquarius Writer, OBS, Blender | **R3** |
+| ~~DaVinci Resolve container~~ | **shipped in R3a** — see [`resolve.md`](resolve.md) |
+| Aquarius Editor, Aquarius Writer, OBS, Blender | **R3b** |
 | Steam, Proton, MangoHud — desktop gaming | **R4** |
 
 Two smaller absences, so they are not mistaken for bugs:
@@ -141,12 +143,30 @@ after it.
 | `50-aquarius-desktop.sh` | Makes it *ours*: wallpaper, logos, Ice theme, fonts, dock, the right-click ingest menu. |
 | `55-aquarius-session.sh` | The **Aquarius Desktop** — our own shell on the labwc window manager, added beside GNOME as a second choice at the login screen. Installs what the two compiled programs need, sets up the portals, and switches greetd off. See [`aquarius-session.md`](aquarius-session.md). |
 | `60-nvidia.sh` | The NVIDIA driver. Does nothing on the AMD/Intel image. The hardest file in the repo — see [`nvidia-notes.md`](nvidia-notes.md). |
+| `62-resolve-runtime.sh` | **DaVinci Resolve — everything except Resolve.** Resolve itself may not be shipped by anybody but Blackmagic, so this puts in place the setup that builds a Rocky Linux container on the user's own machine and installs their own download into it, plus the launcher, the `aq resolve` commands, the USB rules for licence dongles, and the graphics-card plumbing. Why a container at all: [`resolve.md`](resolve.md). |
 | `70-image-info.sh` | Teaches the system to call itself AquariusOS. |
 | `74-xremap-build.sh` | ⚠️ Does NOT run inside AquariusOS. It runs in a throwaway container whose only job is to compile the keyboard remapper, so that a compiler never ends up in the finished operating system. |
 | `55-aquarius-session.sh` (screen size) | Also installs `/usr/libexec/aquarius-display-scale`, which sets each monitor to the right size at every login. Without it labwc leaves every screen at 100% and a 4K desktop is physically tiny — the bench's first complaint on 2026-09-03. Guide: [`aquarius-display.md`](aquarius-display.md). |
 | `75-aquarius-keys.sh` | Mac-style keyboard shortcuts, on by default — Copy is Command-C. Installs what the step above built, and checks the whole feature. Plain-language guide: [`aquarius-keys.md`](aquarius-keys.md). |
 | `80-boot-branding.sh` | Everything you see BEFORE the login screen: the Aquarius boot splash, the name in the boot menu, the text login banners — and a rebuild of the boot ramdisk, without which none of it takes effect. ⚠️ Must run after `60-nvidia.sh`; see [`boot-branding.md`](boot-branding.md). |
 | `90-cleanup.sh` | Sweeps up, and refuses to ship an image with two kernels in it. |
+
+### There is a SECOND recipe, and it does not build the operating system
+
+`resolve-runtime/Containerfile` builds a small **Rocky Linux** that DaVinci
+Resolve runs inside. It is its own image, with its own build
+(`.github/workflows/build-resolve-runtime.yml`), and it is downloaded onto a
+machine the first time somebody sets Resolve up — never before, because it is
+about a gigabyte and not everybody uses it.
+
+It exists because Resolve carries its own copy of a library from 2021 that
+clashes with any modern Linux's own and kills it before its window opens.
+Enterprise Linux still carries the matching version, so in there the clash
+cannot happen. The whole argument is in [`resolve.md`](resolve.md).
+
+There is **no DaVinci Resolve inside it**, and there never will be —
+Blackmagic's licence does not allow anyone else to distribute their installer.
+Both builds check for its absence and refuse to publish an image containing it.
 
 ### 3. `system_files/` — files that are copied in as-is
 
@@ -227,6 +247,7 @@ thing locally. `just` with no arguments lists everything available.
 - **How the boot screen and the boot menu are branded:** [`boot-branding.md`](boot-branding.md)
 - **Mac-style keyboard shortcuts (Copy is Command-C):** [`aquarius-keys.md`](aquarius-keys.md)
 - **How big things are on the screen (and why it was too small):** [`aquarius-display.md`](aquarius-display.md)
+- **DaVinci Resolve — installing it, and why it lives in a container:** [`resolve.md`](resolve.md)
 - **Why the NVIDIA driver is done the way it is:** [`nvidia-notes.md`](nvidia-notes.md)
 - **Why Fedora and not Bazzite/Arch/Ubuntu:** [`../base-distro-reassessment-2026-09.md`](../base-distro-reassessment-2026-09.md)
 - **The plan for R2, R3 and R4:** `ROADMAP.md`, one folder above the repo

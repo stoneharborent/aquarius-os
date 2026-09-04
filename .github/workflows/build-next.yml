@@ -38,6 +38,9 @@ on:
       # above, so a side branch cannot overwrite the images real machines
       # update from. See the PUBLISHING heading in the job.
       - restart/aquarius-keys
+      # Phase R3a — DaVinci Resolve in a Rocky Linux container. Same rule:
+      # builds and checks, never publishes.
+      - restart/r3-resolve
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -1488,6 +1491,169 @@ jobs:
                 f"{len(doc['keymap'])} rule block(s), {rules} rules")
           PY
           done
+
+      # ------------------------------------------------------------------------
+      # DaVinci Resolve — everything except Resolve
+      # ------------------------------------------------------------------------
+      # ⚠️ WHAT THIS CAN AND CANNOT PROVE, SAID PLAINLY.
+      #
+      # There is no DaVinci Resolve here — we may not distribute it — and no
+      # graphics card in a GitHub runner. So nothing in CI can show that Resolve
+      # starts. What it CAN show is that every piece AquariusOS is responsible
+      # for arrived: the container machinery, the graphics-card plumbing, the
+      # USB rules for a licence dongle, the app-grid entry, and four scripts
+      # that parse.
+      #
+      # The runtime container has its own workflow and its own checks
+      # (.github/workflows/build-resolve-runtime.yml). The real proof of both is
+      # the bench: docs/restart/resolve.md.
+      - name: Check the DaVinci Resolve support is really in there
+        run: |
+          set -euo pipefail
+          cat > /tmp/verify-resolve.sh <<'SCRIPT'
+          set -u
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+
+          echo "== the container machinery Resolve runs inside =="
+          for pkg in podman distrobox; do
+            if rpm -q "${pkg}" > /dev/null 2>&1; then
+              ok "${pkg} $(rpm -q --queryformat '%{VERSION}-%{RELEASE}' "${pkg}")"
+            else
+              bad "${pkg} is NOT installed — the Resolve container could not be built"
+            fi
+          done
+
+          echo "== getting the graphics card into that container =="
+          if [ "${EXPECTED_NVIDIA}" = "1" ]; then
+            if rpm -q nvidia-container-toolkit > /dev/null 2>&1; then
+              ok "nvidia-container-toolkit $(rpm -q --queryformat '%{VERSION}' nvidia-container-toolkit)"
+            else
+              bad "nvidia-container-toolkit is NOT installed — Resolve would say its GPU mode is unsupported"
+            fi
+            if command -v nvidia-ctk > /dev/null 2>&1; then
+              ok "nvidia-ctk, the tool that describes the card to containers, is on the path"
+            else
+              bad "nvidia-ctk is missing"
+            fi
+            # The safety-net service, for driver builds without NVIDIA's own.
+            # Its two Condition lines are the whole reason it is safe to ship:
+            # without the second, it would fight nvidia-cdi-refresh for one file.
+            if systemctl is-enabled aquarius-resolve-cdi.service > /dev/null 2>&1; then
+              ok "the graphics-card safety-net service is switched on"
+            else
+              bad "aquarius-resolve-cdi.service is not switched on in the NVIDIA image"
+            fi
+            if grep -q '^ConditionPathExists=!/usr/lib/systemd/system/nvidia-cdi-refresh.service$' \
+                 /usr/lib/systemd/system/aquarius-resolve-cdi.service; then
+              ok "it stands down when NVIDIA's own service is present"
+            else
+              bad "the safety-net service would run alongside NVIDIA's own and fight it for one file"
+            fi
+          else
+            # The AMD/Intel image ships the same file (system_files is one tree)
+            # and must leave it switched off.
+            if systemctl is-enabled aquarius-resolve-cdi.service > /dev/null 2>&1; then
+              bad "the NVIDIA safety-net service is switched on in the AMD/Intel image"
+            else
+              ok "the NVIDIA safety-net service is correctly off in the AMD/Intel image"
+            fi
+          fi
+
+          echo "== the scripts =="
+          for f in /usr/libexec/aquarius-resolve-install \
+                   /usr/libexec/aquarius-resolve-install-gui \
+                   /usr/libexec/aquarius-resolve-launch; do
+            if [ -x "$f" ]; then ok "$(basename "$f") is present and runnable"
+            else bad "$f is missing or not runnable"; fi
+            if bash -n "$f" 2>/tmp/syn.txt; then ok "$(basename "$f") is valid shell"
+            else bad "$f has a syntax error"; cat /tmp/syn.txt; fi
+          done
+
+          echo "== which runtime container this image will pull =="
+          ENVFILE=/usr/share/aquarius/resolve/runtime.env
+          if [ ! -r "${ENVFILE}" ]; then
+            bad "${ENVFILE} is missing — nothing would know which container to download"
+          else
+            grep -E '^AQ_RESOLVE' "${ENVFILE}" | sed 's/^/       /'
+            grep -Eq '^AQ_RESOLVE_RUNTIME_IMAGE=ghcr\.io/[a-z0-9-]+/aquarius-resolve-runtime$' "${ENVFILE}" \
+              && ok "the runtime image is named" \
+              || bad "the runtime image name is not the shape it should be"
+            # An Enterprise Linux release number, never `latest`. A moving tag
+            # would one day follow us to Rocky 10 — which has the modern GLib
+            # this whole design exists to avoid — without anybody deciding to.
+            grep -Eq '^AQ_RESOLVE_RUNTIME_TAG=[0-9]+$' "${ENVFILE}" \
+              && ok "it is pinned to an Enterprise Linux release, not a moving tag" \
+              || bad "the runtime tag is not a release number — a moving tag could change userland by accident"
+          fi
+
+          echo "== the USB rules for a Studio licence dongle and a control panel =="
+          # These must be on the HOST. Resolve's own installer writes them
+          # inside the container, where they apply to nothing, and this system
+          # folder is read-only so nothing can add them afterwards.
+          RULES=/usr/lib/udev/rules.d/75-aquarius-resolve.rules
+          if [ ! -r "${RULES}" ]; then
+            bad "${RULES} is missing — a Resolve Studio dongle would not be seen"
+          else
+            grep -q 'idVendor}=="1edb"' "${RULES}" \
+              && ok "Blackmagic Design hardware (1edb) has a rule" \
+              || bad "no rule for Blackmagic Design hardware"
+            grep -q 'idVendor}=="096e"' "${RULES}" \
+              && ok "the Studio USB licence dongle (096e) has a rule" \
+              || bad "no rule for the Studio licence dongle"
+          fi
+
+          echo "== the way in that needs no terminal =="
+          DESK=/usr/share/applications/aquarius-install-resolve.desktop
+          if [ ! -r "${DESK}" ]; then
+            bad "${DESK} is missing — there would be no 'Install DaVinci Resolve' in the app grid"
+          else
+            cat "${DESK}" | sed 's/^/       /'
+            if desktop-file-validate "${DESK}"; then
+              ok "it passes freedesktop's own validator"
+            else
+              bad "it is not a valid desktop entry — the app grid would silently ignore it"
+            fi
+          fi
+
+          echo "== the aq resolve command =="
+          if aq resolve --help > /tmp/help.txt 2>&1; then
+            ok "'aq resolve --help' runs"
+            head -6 /tmp/help.txt | sed 's/^/       /'
+          else
+            bad "'aq resolve --help' does not run"
+            cat /tmp/help.txt
+          fi
+          # `aq resolve status` on a machine with no container must say so
+          # calmly rather than fall over. This is the state every new machine is
+          # in, so it is the state most people will see first.
+          if aq resolve status > /tmp/status.txt 2>&1; then
+            ok "'aq resolve status' runs on a machine with nothing installed"
+            head -8 /tmp/status.txt | sed 's/^/       /'
+          else
+            bad "'aq resolve status' fails when Resolve is not installed — which is every new machine"
+            cat /tmp/status.txt
+          fi
+
+          echo "== and: no Blackmagic software is in this image =="
+          # We may not distribute it. Making this impossible beats remembering.
+          if [ -e /opt/resolve ]; then
+            bad "/opt/resolve exists. We may not distribute Blackmagic's software. DO NOT PUBLISH."
+          else
+            ok "nothing of Blackmagic's is in this image"
+          fi
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::The DaVinci Resolve support is incomplete."
+            exit 1
+          fi
+          echo "All DaVinci Resolve checks passed."
+          SCRIPT
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            -e EXPECTED_NVIDIA="${NVIDIA}" \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-resolve.sh
 
       # ------------------------------------------------------------------------
       # PUBLISHING
