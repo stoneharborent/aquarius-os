@@ -1,0 +1,6 @@
+# Blender — extra permissions granted by AquariusOS
+#
+# Same reason as Kdenlive: project files, image sequences and video strips live
+# on external drives as often as they live in home.
+[Context]
+filesystems=xdg-videos;xdg-pictures;/run/media;/media;/mnt;

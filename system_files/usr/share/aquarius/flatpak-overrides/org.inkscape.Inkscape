@@ -1,0 +1,5 @@
+# Inkscape — extra permissions granted by AquariusOS
+#
+# Reach the scratch drive and the card reader, not just home.
+[Context]
+filesystems=xdg-pictures;/run/media;/media;/mnt;

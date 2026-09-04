@@ -24,22 +24,45 @@
 # is a file that really exists in the image, so a typo fails the build instead
 # of shipping a dock with a hole in it.
 #
-# The six, and why each earns a permanent slot:
+# The eight, and why each earns a permanent slot:
 #
-#   Files       every job on this computer starts with footage on a card
-#   Firefox     the browser the OS ships
-#   Terminal    Ptyxis, Fedora's terminal — and this machine is built around
-#               containers, which is where a terminal earns its place
-#   Text Editor the thing you reach for to look at a config file or a script
-#   Software    where the creator apps come from. A new user has to find it.
-#   Settings    GNOME buries it, and a new user needs it on day one
+#   Files           every job on this computer starts with footage on a card
+#   Aquarius Editor the flagship. Ours, built into the OS (Phase R3).
+#   Aquarius Writer the other one of ours, likewise built in.
+#   Firefox         the browser the OS ships, as an ordinary system package
+#   Terminal        Ptyxis, Fedora's terminal — and this machine is built
+#                   around containers, which is where a terminal earns its place
+#   Text Editor     the thing you reach for to look at a config file or a script
+#   Software        where the rest of the creator apps come from, and where you
+#                   go to remove one. A new user has to be able to find it.
+#   Settings        GNOME buries it, and a new user needs it on day one
 #
-# ⚠️ WHAT IS NOT HERE, AND WHY: Aquarius Editor, Aquarius Writer and Steam.
-# The line this replaced pinned all three. None of them are installed in this
-# image yet — the Aquarius apps come back in Phase R3, Steam in R4 — and a dock
-# icon for a program that is not installed is a dead square that does nothing
-# when clicked. The list stays honest: it names what is actually here.
-favorite-apps=['org.gnome.Nautilus.desktop', 'org.mozilla.firefox.desktop', 'org.gnome.Ptyxis.desktop', 'org.gnome.TextEditor.desktop', 'org.gnome.Software.desktop', 'org.gnome.Settings.desktop']
+# ⚠️ WHY OBS, KDENLIVE, BLENDER AND THE REST ARE NOT PINNED HERE, EVEN THOUGH
+#    AQUARIUSOS INSTALLS THEM.
+#
+# They are Flatpaks. They are not inside the image — they arrive over the
+# internet on the first boot (see /usr/share/flatpak/preinstall.d/), and their
+# menu entries land in /var/lib/flatpak/exports/share/applications/, which does
+# not exist while this image is being built. Pinning them would mean:
+#
+#   * a dock full of dead squares for the first ten minutes of a new machine's
+#     life, and forever on a machine that is never online, and
+#   * a failed build, because 50-aquarius-desktop.sh checks that every name on
+#     this line is a real file in /usr/share/applications — which is exactly
+#     the check that keeps this list honest, and it is right.
+#
+# So the rule is: THIS LINE NAMES ONLY THINGS THAT ARE INSIDE THE IMAGE. The
+# Flatpak creator apps appear in the app grid the moment they finish
+# installing, and anybody can drag one to the dock.
+#
+# ⚠️ ALSO NOT HERE: Steam. It arrives in Phase R4.
+#
+# The Aquarius Desktop — our own session — has its own dock and its own list,
+# which is /etc/skel/.config/aquarius-shell/dock.json. That one CAN name the
+# Flatpak apps, because the Aquarius dock simply skips a name it cannot find
+# rather than drawing a dead square. The two lists are deliberately allowed to
+# differ for that reason, and both are explained in docs/restart/creator-apps.md.
+favorite-apps=['org.gnome.Nautilus.desktop', 'aquarius-editor.desktop', 'aquarius-writer.desktop', 'org.mozilla.firefox.desktop', 'org.gnome.Ptyxis.desktop', 'org.gnome.TextEditor.desktop', 'org.gnome.Software.desktop', 'org.gnome.Settings.desktop']
 
 # ------------------------------------------------------------------------------
 # The GNOME Shell extensions that are switched on

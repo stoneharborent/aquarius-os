@@ -63,6 +63,18 @@ ARG NVIDIA=0
 # and docs/restart/nvidia-notes.md for the whole story.
 ARG AKMODS_NVIDIA_IMAGE=ghcr.io/ublue-os/akmods-nvidia-open
 
+# Where the OTHER pre-built kernel modules come from — the ordinary ones, which
+# for us means exactly one: v4l2loopback, the fake webcam behind OBS Studio's
+# "Start Virtual Camera" button. Same publisher, same signing key, same reason
+# (a kernel module has to be built for one exact kernel, and signed, or a
+# machine with Secure Boot on will not load it).
+#
+# Unlike the NVIDIA box this one is fetched for BOTH images, because a webcam
+# is not a graphics-card feature. build_files/62-virtual-camera.sh explains at
+# length what happens when its kernel and ours drift apart, which they
+# occasionally do.
+ARG AKMODS_IMAGE=ghcr.io/ublue-os/akmods
+
 # Which xremap — the program behind Aquarius Keys, the Mac-style keyboard
 # shortcuts. Nobody packages it for Fedora, so we compile it, and we compile
 # ONE exact version. The commit id is the real pin: it is a checksum of the
@@ -105,6 +117,7 @@ FROM scratch AS ctx
 COPY build_files /build_files
 COPY system_files /system_files
 COPY ingest /ingest
+COPY tests /tests
 
 # ------------------------------------------------------------------------------
 # The NVIDIA driver parts — fetched ONLY when we are building the NVIDIA image
@@ -130,6 +143,21 @@ COPY ingest /ingest
 FROM scratch AS nvidia-src-0
 FROM ${AKMODS_NVIDIA_IMAGE}:main-${FEDORA_VERSION} AS nvidia-src-1
 FROM nvidia-src-${NVIDIA} AS nvidia-src
+
+# ------------------------------------------------------------------------------
+# The ordinary pre-built kernel modules — fetched for BOTH images
+# ------------------------------------------------------------------------------
+# No conditional trick here, because this one is wanted either way: it carries
+# v4l2loopback, the fake webcam that OBS Studio's "Start Virtual Camera" button
+# needs, and a webcam is not a graphics-card feature.
+#
+# Universal Blue publish this box already compiled and already signed with the
+# same key as the NVIDIA modules above — the key this image already trusts. The
+# alternative, compiling it here, would produce a module signed by nobody, which
+# a computer with Secure Boot switched on refuses to load. Asking somebody to
+# turn Secure Boot off so that OBS can pretend to be a webcam is not a trade we
+# are willing to offer.
+FROM ${AKMODS_IMAGE}:main-${FEDORA_VERSION} AS akmods-src
 
 # ------------------------------------------------------------------------------
 # The keyboard remapper — compiled here, so the finished OS never sees a compiler
@@ -321,6 +349,16 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     NVIDIA="${NVIDIA}" /ctx/build_files/62-resolve-runtime.sh
 
+# 6c. The virtual camera. Runs AFTER step 6 because step 6 sometimes replaces
+#     this image's kernel, and a kernel module belongs to one exact kernel — ask
+#     the question before the swap and the answer is about a kernel that is no
+#     longer here. On a mismatch this step skips the module and says so; it
+#     never changes which kernel AquariusOS ships.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=bind,from=akmods-src,source=/,target=/ctx-akmods \
+    --mount=type=cache,dst=/var/cache/libdnf5 \
+    /ctx/build_files/62-virtual-camera.sh
+
 # 7. Identity. The OS learns to call itself AquariusOS.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     IMAGE_NAME="${IMAGE_NAME}" IMAGE_VENDOR="${IMAGE_VENDOR}" NVIDIA="${NVIDIA}" \
@@ -333,6 +371,18 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=xremap-build,source=/out,target=/ctx-xremap \
     /ctx/build_files/75-aquarius-keys.sh
+
+# 7c. The creator layer: Aquarius Editor and Aquarius Writer baked in, the list
+#     of creator Flatpaks that arrive on first boot, the extra permissions those
+#     apps need, and the ingest helper promoted to a proper feature.
+#
+#     This is the largest step in the build by a distance — it downloads and
+#     unpacks two apps that together come to several gigabytes — which is why it
+#     is its own layer: a change anywhere else in the build does not make anybody
+#     download it again.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache/libdnf5 \
+    /ctx/build_files/64-creator-apps.sh
 
 # 8. The boot path: the Aquarius splash screen, the name in the boot menu, the
 #    text login banners, and then a rebuild of the boot ramdisk so that all of

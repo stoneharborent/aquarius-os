@@ -1,0 +1,317 @@
+#!/usr/bin/bash
+# ==============================================================================
+# AquariusOS — install the creator apps, and tell the person what is happening
+# ==============================================================================
+# PLAIN ENGLISH
+#
+# Read the shopping list the operating system ships
+# (/usr/share/flatpak/preinstall.d/), install anything on it that is not here
+# yet, grant the handful of extra permissions creator apps need, and say so on
+# screen while it happens.
+#
+# Run by aquarius-flatpak-preinstall.service, as root, shortly after the
+# machine first gets online.
+#
+# ------------------------------------------------------------------------------
+# THE FOUR RULES THIS SCRIPT FOLLOWS, IN ORDER OF IMPORTANCE
+# ------------------------------------------------------------------------------
+#   1. NEVER PUT BACK SOMETHING THE PERSON REMOVED. This is why the installing
+#      is done by `flatpak preinstall` and not by a loop of our own: Flatpak
+#      records that you uninstalled a preinstalled app and never offers it
+#      again. A loop of `flatpak install` commands would cheerfully undo your
+#      decision at every boot, and that is the behaviour this script exists to
+#      avoid, not to have.
+#   2. NEVER OVERWRITE A PERMISSION SOMEBODY SET THEMSELVES. The overrides we
+#      ship are copied in only where no file exists yet.
+#   3. NEVER WEDGE A BOOT. Every failure path ends in "try again later". It
+#      never blocks a login and it never stops the machine starting.
+#   4. BE HONEST ON SCREEN. It says what it is doing, how far along it is, and
+#      what did not work, by name.
+#
+# ------------------------------------------------------------------------------
+# HOW THE PROGRESS REPORT WORKS, AND WHY IT IS BUILT THIS WAY
+# ------------------------------------------------------------------------------
+# `flatpak preinstall` is one long command. It prints its own progress, but
+# reading that output and turning it into a number would mean depending on the
+# exact wording of another project's console messages — which changes without
+# warning and would break silently.
+#
+# So we do not read its output at all. We start it, and then every twenty
+# seconds we ASK THE SYSTEM a question it can always answer honestly: how many
+# of the apps on the list are installed right now? That is `flatpak list`, and
+# it is true regardless of what any message says. The notification counts up
+# from that.
+#
+# This is the same rule the build scripts follow — trust content, never
+# appearances.
+# ==============================================================================
+
+set -uo pipefail
+
+LIST_DIRS=(/usr/share/flatpak/preinstall.d /etc/flatpak/preinstall.d)
+OVERRIDE_SRC="/usr/share/aquarius/flatpak-overrides"
+OVERRIDE_DST="/var/lib/flatpak/overrides"
+STATE_DIR="/etc/aquarius"
+STAMP_FILE="${STATE_DIR}/flatpak-preinstall-done"
+LOG_TAG="AquariusOS creator apps:"
+
+# Bump this by hand to make every machine do the whole thing again even though
+# the script itself has not changed. The hash underneath means ordinary edits
+# already cause a re-run on their own, so this is rarely needed.
+VER=1
+VER="${VER}-$(tr -d '[:space:]' < "$0" | sha256sum | cut -d ' ' -f 1)"
+
+say() { echo "${LOG_TAG} $*"; }
+
+# ------------------------------------------------------------------------------
+# notify — put a sentence on the screen of everybody logged in
+# ------------------------------------------------------------------------------
+# This runs as root, and root has no desktop. A notification belongs to a
+# person's session, so we go and find each logged-in person's message bus and
+# send it there, as them.
+#
+# /run/user/<number>/bus is that bus, and it exists exactly while somebody is
+# logged in. Nobody logged in yet (the very first boot often gets here before
+# the login screen) means no notification, which is correct: there is nobody to
+# read it, and the final one at the end will land.
+#
+# The "synchronous" hint is what makes the count REPLACE the previous line
+# instead of stacking seventeen notifications down the side of the screen.
+# Notification servers that do not know the hint simply ignore it.
+notify() {          # notify <tag> <summary> <body>
+    local tag="$1" summary="$2" body="$3" bus uid user
+    command -v notify-send > /dev/null 2>&1 || return 0
+    for bus in /run/user/*/bus; do
+        [ -S "${bus}" ] || continue
+        uid="${bus#/run/user/}"
+        uid="${uid%/bus}"
+        user="$(id -nu "${uid}" 2> /dev/null)" || continue
+        [ -n "${user}" ] || continue
+        runuser -u "${user}" -- env \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=${bus}" \
+            notify-send \
+            --app-name="AquariusOS" \
+            --icon=aquarius-logo \
+            --hint=string:x-canonical-private-synchronous:"${tag}" \
+            "${summary}" "${body}" > /dev/null 2>&1 || true
+    done
+}
+
+# ------------------------------------------------------------------------------
+# wanted_ids — the app IDs on the shopping list
+# ------------------------------------------------------------------------------
+# Used only for counting and reporting. The installing is Flatpak's job, not
+# this function's. A block looks like:
+#
+#     [Flatpak Preinstall com.obsproject.Studio]
+#     Branch=stable
+#
+# and a block carrying Install=false is one somebody switched off, so it is not
+# counted. A file in /etc wins over the same block in /usr by being read second.
+wanted_ids() {
+    local f found=0
+    for d in "${LIST_DIRS[@]}"; do
+        for f in "${d}"/*.preinstall; do
+            [ -r "${f}" ] && found=1
+        done
+    done
+    [ "${found}" -eq 1 ] || return 0
+    awk '
+        /^\[Flatpak Preinstall / {
+            id = $3; sub(/\]$/, "", id); cur = id; want[id] = 1; next
+        }
+        /^[[:space:]]*Install[[:space:]]*=/ {
+            v = tolower($0); sub(/.*=[[:space:]]*/, "", v); gsub(/[[:space:]]/, "", v)
+            if (cur != "" && (v == "false" || v == "0" || v == "no")) delete want[cur]
+        }
+        END { for (id in want) print id }
+    ' "${LIST_DIRS[0]}"/*.preinstall "${LIST_DIRS[1]}"/*.preinstall 2> /dev/null | sort -u
+}
+
+# How many of those are installed right now, system-wide. Asked of the system,
+# never remembered.
+count_installed() {         # count_installed <id> <id> ...
+    local have n=0 id
+    have="$(flatpak list --system --columns=application 2> /dev/null || true)"
+    for id in "$@"; do
+        printf '%s\n' "${have}" | grep -qx "${id}" && n=$((n + 1))
+    done
+    printf '%s\n' "${n}"
+}
+
+# ==============================================================================
+# 1. Have we already finished, with this exact version of this script?
+# ==============================================================================
+if [ -r "${STAMP_FILE}" ] && [ "$(cat "${STAMP_FILE}")" = "${VER}" ]; then
+    say "already done. Nothing to do."
+    exit 0
+fi
+
+say "checking the list..."
+
+# ==============================================================================
+# 2. Make sure the app store is switched on
+# ==============================================================================
+# The image ships Flathub's description at /usr/share/flatpak/remotes.d/ and
+# Flatpak reads that folder by itself. Doing it again here is harmless
+# (--if-not-exists) and means this still works if that ever changes. A failure
+# on either line is not worth stopping for — the install below will report the
+# real problem in plain words.
+if [ -r /usr/share/flatpak/remotes.d/flathub.flatpakrepo ]; then
+    flatpak remote-add --if-not-exists --system flathub \
+        /usr/share/flatpak/remotes.d/flathub.flatpakrepo || :
+else
+    flatpak remote-add --if-not-exists --system flathub \
+        https://dl.flathub.org/repo/flathub.flatpakrepo || :
+fi
+flatpak remote-modify --system --enable flathub || :
+
+# ==============================================================================
+# 3. Install, and count out loud while it happens
+# ==============================================================================
+mapfile -t WANTED < <(wanted_ids)
+TOTAL="${#WANTED[@]}"
+
+if [ "${TOTAL}" -eq 0 ]; then
+    say "the shopping list is empty. Nothing to install."
+    mkdir -p "${STATE_DIR}" && printf '%s\n' "${VER}" > "${STAMP_FILE}"
+    exit 0
+fi
+
+BEFORE="$(count_installed "${WANTED[@]}")"
+say "${TOTAL} apps on the list, ${BEFORE} already here."
+
+if [ "${BEFORE}" -lt "${TOTAL}" ]; then
+    notify aq-apps "Setting up your creator apps" \
+        "AquariusOS is downloading ${TOTAL} apps in the background. You can carry on using the computer — this takes about ten to twenty minutes on a normal connection."
+fi
+
+# ------------------------------------------------------------------------------
+# THE INSTALL ITSELF — Flatpak's own command, started in the background so this
+# script can keep reporting while it works.
+# ------------------------------------------------------------------------------
+INSTALL_OK=0
+if flatpak preinstall --help > /dev/null 2>&1; then
+    say "using 'flatpak preinstall' (Flatpak's own mechanism)."
+    flatpak preinstall -y --system --noninteractive &
+    FLATPAK_PID=$!
+
+    # Count up while it runs. Twenty seconds is often enough to see one more
+    # app land and cheap enough to be free.
+    while kill -0 "${FLATPAK_PID}" 2> /dev/null; do
+        sleep 20
+        kill -0 "${FLATPAK_PID}" 2> /dev/null || break
+        NOW="$(count_installed "${WANTED[@]}")"
+        if [ "${NOW}" -lt "${TOTAL}" ]; then
+            notify aq-apps "Setting up your creator apps" \
+                "${NOW} of ${TOTAL} installed. Still working — you can carry on using the computer."
+        fi
+    done
+
+    if wait "${FLATPAK_PID}"; then
+        INSTALL_OK=1
+    else
+        say "'flatpak preinstall' did not finish cleanly. What did and did not"
+        say "arrive is reported below, and it will try again at the next start-up."
+    fi
+else
+    # Should be impossible on Fedora 44 (flatpak 1.18) — kept because "the
+    # command is missing" is a much nicer thing to survive than to debug.
+    #
+    # ⚠️ THIS PATH CANNOT HONOUR RULE 1. It has no way to know that you
+    # uninstalled something on purpose, so it would put it back. That is why it
+    # only ever runs when the proper command is absent entirely, never when the
+    # proper command merely failed.
+    say "WARNING — this Flatpak has no 'preinstall' command. Falling back to"
+    say "installing app by app. This fallback cannot tell an app you removed on"
+    say "purpose from one that was never installed."
+    have="$(flatpak list --system --columns=application 2> /dev/null || true)"
+    for id in "${WANTED[@]}"; do
+        printf '%s\n' "${have}" | grep -qx "${id}" && continue
+        say "  installing ${id}"
+        flatpak install -y --system --noninteractive flathub "${id}" || \
+            say "  COULD NOT INSTALL ${id} — will try again at the next start-up"
+    done
+    INSTALL_OK=1
+fi
+
+# ==============================================================================
+# 4. The extra permissions creator apps need
+# ==============================================================================
+# Flatpak reads system-wide permission overrides from ONE place and it is not
+# in the image: /var/lib/flatpak/overrides/. On AquariusOS /var belongs to the
+# machine rather than to the operating system, so anything written there during
+# a build is thrown away at first boot. The files therefore ship read-only in
+# the image and are copied here, once, on the machine.
+#
+# ⚠️ A FILE THAT ALREADY EXISTS IS NEVER TOUCHED. If you have ever run
+# `flatpak override` or changed permissions in Flatseal, that file is yours and
+# it stays yours through every system update.
+#
+# The full explanation of what each one grants and why:
+#   /usr/share/aquarius/flatpak-overrides/README.md
+if [ -d "${OVERRIDE_SRC}" ]; then
+    say "granting the extra permissions creator apps need"
+    mkdir -p "${OVERRIDE_DST}"
+    for src in "${OVERRIDE_SRC}"/*; do
+        [ -f "${src}" ] || continue
+        name="$(basename "${src}")"
+        case "${name}" in
+            README.md | *.md) continue ;;
+        esac
+        if [ -e "${OVERRIDE_DST}/${name}" ]; then
+            say "  ${name}: a permission file already exists here — leaving yours alone"
+            continue
+        fi
+        if install -m 0644 "${src}" "${OVERRIDE_DST}/${name}"; then
+            say "  ${name}: granted"
+        else
+            say "  ${name}: could not be written (will be tried again)"
+        fi
+    done
+fi
+
+# ==============================================================================
+# 5. What happened, in one sentence
+# ==============================================================================
+# Three outcomes, and the exit code is how we ask systemd for the retry we want:
+#
+#   everything arrived   write the stamp, exit 0. Done forever.
+#   some did not         exit 0 WITHOUT the stamp. No stamp means we run again
+#                        at the next start-up, so a temporarily broken app gets
+#                        another go tomorrow instead of being hammered every
+#                        two minutes all day.
+#   nothing arrived      exit 1 — which almost always means "no internet yet",
+#                        and a non-zero exit is what makes systemd try again
+#                        shortly.
+AFTER="$(count_installed "${WANTED[@]}")"
+MISSING=()
+have="$(flatpak list --system --columns=application 2> /dev/null || true)"
+for id in "${WANTED[@]}"; do
+    printf '%s\n' "${have}" | grep -qx "${id}" || MISSING+=("${id}")
+done
+
+say "${AFTER} of ${TOTAL} apps are installed."
+
+if [ "${#MISSING[@]}" -eq 0 ]; then
+    mkdir -p "${STATE_DIR}"
+    printf '%s\n' "${VER}" > "${STAMP_FILE}"
+    [ "${BEFORE}" -lt "${TOTAL}" ] && notify aq-apps "Your creator apps are ready" \
+        "All ${TOTAL} apps are installed. You will find them in the app grid."
+    say "all present. Done."
+    exit 0
+fi
+
+say "still missing: ${MISSING[*]}"
+
+if [ "${AFTER}" -gt "${BEFORE}" ] || [ "${INSTALL_OK}" -eq 1 ]; then
+    notify aq-apps "Most of your creator apps are ready" \
+        "${AFTER} of ${TOTAL} installed. These could not be fetched this time and will be tried again automatically: ${MISSING[*]}"
+    say "they will be tried again the next time this computer starts."
+    exit 0
+fi
+
+notify aq-apps "Your creator apps are not installed yet" \
+    "AquariusOS could not reach the app store — usually that just means this computer is not online yet. It will keep trying."
+say "nothing could be installed — probably no internet yet. This will be retried automatically."
+exit 1

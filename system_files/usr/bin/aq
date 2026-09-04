@@ -7,7 +7,8 @@
 # A friendly front door for the settings AquariusOS adds on top of Fedora,
 # written so that every message is a sentence rather than a code.
 #
-# RIGHT NOW IT DOES TWO THINGS: keyboard shortcut style, and screen size.
+# RIGHT NOW IT DOES THREE THINGS: keyboard shortcut style, screen size, and
+# making camera files editable.
 #
 #     aq keys mac        use Mac-style shortcuts (Command-C to copy)
 #     aq keys windows    use the normal Linux ones (Control-C to copy)
@@ -24,6 +25,8 @@
 #     aq resolve shell        a terminal inside its container
 #     aq resolve update       install a newer Resolve over the top
 #     aq resolve remove       delete the container
+#     aq ingest FILE…         make camera files editable
+#     aq ingest watch on      watch ~/Videos/Ingest and do it automatically
 #
 # It is deliberately small. FEATURES 005 in the AquariusOS plan describes a
 # fuller `aq` — `aq status`, `aq snapshot` — and that is a later job. This is
@@ -84,6 +87,20 @@ USAGE
                         inside a small Rocky Linux on this computer, because
                         that is the only way it works reliably on Linux — the
                         help text explains why in plain English.
+    aq ingest FILE...   Make files from a camera, phone or drone open properly
+                        in a video editor. Editor-friendly copies appear in an
+                        "EditorReady" folder beside them; the originals are
+                        never touched. Point it at a folder and it does the
+                        whole folder.
+
+                        This is the same thing as right-clicking a file in
+                        Files and choosing "Make Editor-Ready".
+
+    aq ingest watch on  Watch ~/Videos/Ingest and convert anything dropped in
+                        there automatically. Off until you ask for it.
+    aq ingest watch off Stop watching.
+    aq ingest watch status
+                        Is it watching, what, and what happened last.
 
     aq --help           This message.
     aq --version        Which AquariusOS this is.
@@ -783,6 +800,101 @@ resolve() {
     esac
 }
 
+# aq ingest — make camera files open in a video editor
+# =============================================================================
+# WHY THIS EXISTS AT ALL, IN ONE PARAGRAPH
+#
+# The free DaVinci Resolve on Linux cannot open a file from a camera or a
+# phone. Not "opens it badly" — cannot. H.264 and H.265 decoding is Studio-only
+# and NVIDIA-only, and AAC audio is not supported in any version, at all. Every
+# person who tries Resolve on Linux hits this on their first import, and most
+# of them conclude Linux is not for editing. `aq-ingest` fixes it at the
+# operating-system level: it rewraps the sound to a format Resolve understands
+# and makes an edit-friendly copy of the picture, so the file simply opens.
+#
+# THIS SUBCOMMAND IS A FRONT DOOR, NOT A SECOND IMPLEMENTATION. All the work is
+# in /usr/bin/aq-ingest, which is the same program the right-click menu in
+# Files runs. Everything you can pass to that, you can pass here — including
+# --dry-run, which prints the plan and writes nothing.
+# =============================================================================
+
+AQ_INGEST_CMD="/usr/bin/aq-ingest"
+AQ_INGEST_WATCH="/usr/libexec/aquarius-ingest-watch"
+
+ingest_usage() {
+    cat << 'EOF'
+aq ingest — make camera files open in a video editor
+
+    aq ingest FILE...          Convert files or whole folders. Editor-friendly
+                               copies appear in an "EditorReady" folder beside
+                               the originals, which are never changed.
+    aq ingest --dry-run FILE   Say what would happen. Write nothing.
+
+    aq ingest watch on [FOLDER]
+                               Watch a folder (~/Videos/Ingest by default) and
+                               convert anything dropped into it automatically.
+                               Off until you ask for it.
+    aq ingest watch off        Stop watching.
+    aq ingest watch status     Is it watching, what, and what happened last.
+
+    The same job is on the right-click menu in Files, as "Make Editor-Ready".
+    For everything aq-ingest can do:  aq-ingest --help
+EOF
+}
+
+ingest_watch() {
+    if [ ! -x "${AQ_INGEST_WATCH}" ]; then
+        echo "aq: ${AQ_INGEST_WATCH} is missing from this copy of AquariusOS." >&2
+        echo "    That is a fault in the operating system, not in anything you typed." >&2
+        return 1
+    fi
+    case "${1:-}" in
+        on)
+            # `aq ingest watch on` with no folder means the default one, and
+            # --enable takes an optional argument, so the two cases are written
+            # out rather than smuggled through an unquoted expansion.
+            if [ -n "${2:-}" ]; then
+                "${AQ_INGEST_WATCH}" --enable "$2"
+            else
+                "${AQ_INGEST_WATCH}" --enable
+            fi
+            ;;
+        off) "${AQ_INGEST_WATCH}" --disable ;;
+        status | "") "${AQ_INGEST_WATCH}" --status ;;
+        -h | --help | help) ingest_usage ;;
+        *)
+            echo "aq: '${1}' is not something 'aq ingest watch' knows how to do." >&2
+            echo "    It understands: on, off, status." >&2
+            return 1
+            ;;
+    esac
+}
+
+ingest() {
+    if [ ! -x "${AQ_INGEST_CMD}" ]; then
+        echo "aq: ${AQ_INGEST_CMD} is missing from this copy of AquariusOS." >&2
+        echo "    That is a fault in the operating system, not in anything you typed." >&2
+        return 1
+    fi
+
+    case "${1:-}" in
+        "" | -h | --help | help)
+            ingest_usage
+            return 0
+            ;;
+        watch)
+            shift
+            ingest_watch "$@"
+            return
+            ;;
+    esac
+
+    # Everything else is handed straight through, flags and all, so that
+    # aq-ingest's own options keep working without this file having to know
+    # what they are.
+    "${AQ_INGEST_CMD}" "$@"
+}
+
 # -----------------------------------------------------------------------------
 # Which subcommand?
 # -----------------------------------------------------------------------------
@@ -804,6 +916,10 @@ case "${1:-}" in
     resolve)
         shift
         resolve "$@"
+        ;;
+    ingest)
+        shift
+        ingest "$@"
         ;;
     keys)
         case "${2:-}" in

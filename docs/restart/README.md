@@ -90,8 +90,8 @@ this is starting from an empty room.
 | --- | --- |
 | ~~The Aquarius Desktop (our own shell), labwc, Quickshell, greetd~~ | **shipped in R2** — see [`aquarius-session.md`](aquarius-session.md) |
 | The AquariusOS logo button in the top-left corner of the screen | **R2** (see below) |
-| ~~DaVinci Resolve container~~ | **shipped in R3a** — see [`resolve.md`](resolve.md) |
-| Aquarius Editor, Aquarius Writer, OBS, Blender | **R3b** |
+| ~~DaVinci Resolve, in its own Rocky Linux container~~ | **shipped in R3a** — see [`resolve.md`](resolve.md) |
+| ~~Aquarius Editor, Aquarius Writer, OBS, Kdenlive, Blender and the rest of the creator suite~~ | **shipped in R3b** — see [`creator-apps.md`](creator-apps.md) |
 | Steam, Proton, MangoHud — desktop gaming | **R4** |
 
 Two smaller absences, so they are not mistaken for bugs:
@@ -148,6 +148,8 @@ after it.
 | `74-xremap-build.sh` | ⚠️ Does NOT run inside AquariusOS. It runs in a throwaway container whose only job is to compile the keyboard remapper, so that a compiler never ends up in the finished operating system. |
 | `55-aquarius-session.sh` (screen size) | Also installs `/usr/libexec/aquarius-display-scale`, which sets each monitor to the right size at every login. Without it labwc leaves every screen at 100% and a 4K desktop is physically tiny — the bench's first complaint on 2026-09-03. Guide: [`aquarius-display.md`](aquarius-display.md). |
 | `75-aquarius-keys.sh` | Mac-style keyboard shortcuts, on by default — Copy is Command-C. Installs what the step above built, and checks the whole feature. Plain-language guide: [`aquarius-keys.md`](aquarius-keys.md). |
+| `62-virtual-camera.sh` | The fake webcam behind OBS Studio's "Start Virtual Camera" button. Takes a ready-made, already-signed kernel module from Universal Blue. ⚠️ Must run after `60-nvidia.sh`, which sometimes replaces this image's kernel. If the module and our kernel do not match it leaves the feature out and writes down why, rather than shipping something that cannot work. |
+| `64-creator-apps.sh` | **The creator layer.** Bakes Aquarius Editor and Aquarius Writer into the image, checks the list of creator Flatpaks against Flathub, validates the extra permissions those apps need, switches the first-boot installer on, and promotes the ingest helper. The biggest and slowest step. See [`creator-apps.md`](creator-apps.md). |
 | `80-boot-branding.sh` | Everything you see BEFORE the login screen: the Aquarius boot splash, the name in the boot menu, the text login banners — and a rebuild of the boot ramdisk, without which none of it takes effect. ⚠️ Must run after `60-nvidia.sh`; see [`boot-branding.md`](boot-branding.md). |
 | `90-cleanup.sh` | Sweeps up, and refuses to ship an image with two kernels in it. |
 
@@ -178,6 +180,14 @@ The interesting ones are the three `zz1-aquarius-*.gschema.override` files,
 which are GNOME's factory settings replaced with ours. Each one has a long
 plain-English header explaining what it does and, more usefully, what it
 deliberately does *not* do.
+
+Three more worth knowing about, all added in R3b:
+
+| Path | What it is |
+| --- | --- |
+| `usr/share/flatpak/preinstall.d/aquarius-creator-apps.preinstall` | The shopping list of creator apps. Adding or removing an app is a one-block edit here. |
+| `usr/share/aquarius/flatpak-overrides/` | The extra permissions those apps need — a camera for OBS, an external drive for Kdenlive. Its `README.md` explains why they cannot simply be shipped where Flatpak reads them. |
+| `etc/skel/.config/aquarius-shell/dock.json` | What a brand-new account finds pinned to the Aquarius Desktop's dock. |
 
 ---
 
@@ -245,6 +255,8 @@ thing locally. `just` with no arguments lists everything available.
 
 - **Moving the bench machine over:** [`bench-rebase.md`](bench-rebase.md)
 - **How the boot screen and the boot menu are branded:** [`boot-branding.md`](boot-branding.md)
+- **The creator apps: what ships, how it arrives, how to remove one:** [`creator-apps.md`](creator-apps.md)
+- **Making camera files open in an editor (the ingest helper):** [`ingest.md`](ingest.md)
 - **Mac-style keyboard shortcuts (Copy is Command-C):** [`aquarius-keys.md`](aquarius-keys.md)
 - **How big things are on the screen (and why it was too small):** [`aquarius-display.md`](aquarius-display.md)
 - **DaVinci Resolve — installing it, and why it lives in a container:** [`resolve.md`](resolve.md)
