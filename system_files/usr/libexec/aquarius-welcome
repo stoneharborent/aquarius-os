@@ -631,7 +631,13 @@ def run_window(apps_seen):
             start = aquarius_ui.pill_button(
                 "Start using AquariusOS", suggested=True
             )
-            start.set_tooltip_text("Close this window. It will not open again.")
+            # Not "it will not open again" — `aq welcome` opens it again, and a
+            # first screen that says something not quite true is a bad first
+            # screen. What is true is that logging in will not bring it back.
+            start.set_tooltip_text(
+                "Close this window. Logging in will not bring it back — "
+                "type 'aq welcome' if you ever want to see it again."
+            )
             start.connect("clicked", lambda _b: self.close())
 
             return aquarius_ui.page(
