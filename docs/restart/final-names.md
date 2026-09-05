@@ -1,7 +1,7 @@
 # Taking the real names
 
-*The restart becomes the actual AquariusOS. Six clicks and one command, in
-order. Assumes no Linux and no GitHub experience.*
+*The restart becomes the actual AquariusOS. A handful of clicks and one
+command, in this order. Assumes no Linux and no GitHub experience.*
 
 ---
 
@@ -26,7 +26,7 @@ means two things swap places:
 | The image for NVIDIA graphics | `aquarius-os-next-nvidia` | `aquarius-os-nvidia` |
 
 The code half is done and merged. **What is left is the part only you can do,
-because it happens in the GitHub website's settings, not in a file.**
+because it happens on the GitHub website rather than in a file.**
 
 Set aside about twenty minutes, most of which is waiting for a build.
 
