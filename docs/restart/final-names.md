@@ -216,6 +216,12 @@ is good, because that branch is meant to stay exactly as it was on its last day.
 > branch, so its nightly is still armed. Do the three parts of Step 2 in one
 > sitting rather than leaving it overnight.
 
+**Old Bazzite runs appear under the new names in the Actions list.** GitHub
+files runs by the workflow's *file path*, and both lines happen to use
+`.github/workflows/build.yml`. So the left-hand list shows **Build AquariusOS**,
+and its history includes the Bazzite builds from before today. Nothing is wrong;
+the run pages themselves still say which branch and which commit they were.
+
 **The ISO button appears.** *Build AquariusOS ISO* can now be started from the
 Actions tab like any other workflow. Until today the only way in was pushing a
 git tag, for the same default-branch reason. The tag still works.

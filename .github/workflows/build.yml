@@ -3776,7 +3776,9 @@ jobs:
         run: |
           set -uo pipefail
 
-          command -v skopeo >/dev/null || sudo apt-get install -y skopeo
+          if ! command -v skopeo >/dev/null; then
+            sudo apt-get update -qq && sudo apt-get install -y skopeo
+          fi
 
           # Reading a public package needs no credentials, but signing in costs
           # nothing and means a package that has been made private does not look
