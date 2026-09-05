@@ -216,6 +216,16 @@ class JobArithmeticTests(unittest.TestCase):
         self.assertEqual(job.percent, 100)
         self.assertEqual(job.snapshot().file_number, 3)
 
+    def test_the_last_file_is_still_named_once_it_is_finished(self):
+        # There is a moment between the last file finishing and the final message
+        # replacing the bar. Something is drawn in it, and it should not say
+        # "Converting your file · 100%" about a file we can name.
+        job = self.job(1)
+        job.start_file("clip.MP4")
+        job.finish_file()
+        self.assertEqual(job.snapshot().name, "clip.MP4")
+        self.assertEqual(job.percent, 100)
+
     def test_no_estimate_is_offered_in_the_first_couple_of_seconds(self):
         job = self.job(1)
         job.start_file("clip.MP4")

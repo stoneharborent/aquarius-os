@@ -268,7 +268,12 @@ class JobProgress:
     def finish_file(self) -> None:
         self.files_done = min(self.files_done + 1, self.total)
         self._fraction = 0.0
-        self.name = ""
+        # The name is deliberately KEPT. There is a moment between one file
+        # finishing and the next one starting — and, at the end of a run, between
+        # the last file finishing and the final message replacing the bar — where
+        # something still has to be drawn. Clearing the name here made that moment
+        # read "Converting your file · 100%", which is a small lie about a file we
+        # can perfectly well name.
 
     # -- what it works out ------------------------------------------------------------
 

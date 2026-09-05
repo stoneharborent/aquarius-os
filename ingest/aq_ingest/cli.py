@@ -155,7 +155,9 @@ class TerminalProgress:
     log file is noise, and carriage returns in captured output are worse than noise.
     """
 
-    #: Don't redraw more than once a second; see Notifier.working for why.
+    #: Twice a second — quicker than the notification's once, because writing a line to a
+    #: terminal costs nothing while redrawing a notification is a message on the session
+    #: bus. It is still throttled: without it this would redraw as fast as ffmpeg talks.
     INTERVAL = 0.5
 
     def __init__(self, stream=None, *, clock=None, enabled: bool | None = None) -> None:
