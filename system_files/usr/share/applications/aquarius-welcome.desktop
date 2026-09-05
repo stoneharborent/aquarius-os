@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Aquarius Welcome
+GenericName=First-run tour
+Comment=The AquariusOS welcome: keyboard style, your creator apps, and a few tips
+Exec=/usr/libexec/aquarius-welcome
+TryExec=/usr/libexec/aquarius-welcome
+Icon=aquarius-logo
+Terminal=false
+StartupNotify=true
+StartupWMClass=org.aquariusos.Welcome
+NoDisplay=true
+Categories=System;
+Keywords=welcome;setup;tour;first;start;keyboard;shortcuts;

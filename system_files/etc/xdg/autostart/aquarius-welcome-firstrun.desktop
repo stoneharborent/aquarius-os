@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Aquarius Welcome (first login)
+Comment=Walks you through the keyboard style and your creator apps, once
+Exec=/usr/libexec/aquarius-welcome --first-run
+TryExec=/usr/libexec/aquarius-welcome
+Icon=aquarius-logo
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=10

@@ -15,6 +15,12 @@ command turns it off again:
 aq keys windows
 ```
 
+Since 2026-09-04 nobody has to *discover* that. The first step of the
+[welcome](welcome.md), on a new account's first login, is the question "How
+should keyboard shortcuts work?" — two cards, **Mac** already chosen, with the
+line *Copy is ⌘C* under them. Whichever card is chosen, Continue runs exactly
+the command above. This page is still the full story.
+
 No other Linux operating system does this. It is one of the reasons to use
 AquariusOS instead of Fedora with a nice wallpaper.
 

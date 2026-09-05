@@ -95,6 +95,11 @@ on:
       # person's own home folder. Roughly four gigabytes off every image. Same
       # arrangement: builds and checks, never publishes.
       - restart/editor-optional
+      # Phase R5 — one first-boot welcome flow: how the keyboard should work,
+      # then the creator apps, then a page of tips. Replaces the creator-apps
+      # window as the thing that opens at a first login. Same arrangement:
+      # builds and checks, never publishes.
+      - restart/welcome
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -2992,6 +2997,175 @@ jobs:
           podman run --rm --pull=never -i \
             --entrypoint /usr/bin/bash \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-creator.sh
+
+      # ==================================================================
+      # THE WELCOME — the first three minutes, read back out of the image
+      # ==================================================================
+      # This is the window a brand-new person actually meets first: keyboard
+      # style, then the creator apps, then a page of tips. build_files/
+      # 67-welcome.sh checks it during the build; this asks the copy that is
+      # really in the finished image, which is the habit the whole repo runs on.
+      #
+      # The two things that would be invisible in a screenshot and expensive on
+      # somebody's first login:
+      #
+      #   * Mac must still be the preselected answer. Four things in this OS
+      #     have to agree that Mac is the default and this is the one a person
+      #     SEES.
+      #   * Exactly ONE thing may open at login, and both sessions must open the
+      #     SAME thing. GNOME reads /etc/xdg/autostart; labwc reads one file and
+      #     never that folder — so the fact is written down twice and can drift.
+      - name: Check the welcome flow in the finished image
+        run: |
+          set -euo pipefail
+          cat > /tmp/verify-welcome.sh <<'SCRIPT'
+          set -uo pipefail
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+
+          WELCOME=/usr/libexec/aquarius-welcome
+          CHOOSER=/usr/libexec/aquarius-creator-apps
+          AUTOSTART=/etc/xdg/autostart/aquarius-welcome-firstrun.desktop
+          OLD=/etc/xdg/autostart/aquarius-creator-apps-firstrun.desktop
+          LABWC=/usr/share/aquarius/labwc/autostart
+
+          echo "== the welcome is in the image =="
+          if [ -x "${WELCOME}" ]; then ok "${WELCOME} is here and runnable"
+          else bad "${WELCOME} is missing"; fi
+          if [ -r /usr/share/aquarius/welcome.env ]; then
+            ok "the build recorded what it did:"
+            sed 's/^/       /' /usr/share/aquarius/welcome.env
+          else
+            bad "/usr/share/aquarius/welcome.env is missing — the build did not record what it did"
+          fi
+
+          echo
+          echo "== the three steps, as the image itself describes them =="
+          "${WELCOME}" --dry-run > /tmp/wel.txt 2>&1 || true
+          sed 's/^/       /' /tmp/wel.txt
+          if grep -qx 'steps: 3' /tmp/wel.txt; then ok "a brand-new account gets three steps"
+          else bad "a brand-new account does not get three steps"; fi
+          if grep -q '^step 2 of 3: apps' /tmp/wel.txt \
+             && grep -qF "runs: ${CHOOSER} --embedded-flow" /tmp/wel.txt; then
+            ok "step 2 runs the real creator-apps window, not a copy of it"
+          else
+            bad "step 2 does not run ${CHOOSER} --embedded-flow"
+          fi
+
+          echo
+          echo "== Mac is still the preselected answer =="
+          if grep -qx 'default choice: mac' /tmp/wel.txt; then
+            ok "Mac is what the window opens on, as it is everywhere else in this OS"
+          else
+            bad "Mac is NOT the preselected keyboard style — the OS now disagrees with itself on its own first screen"
+          fi
+          if grep -q 'choice mac: Mac — Copy is ⌘C' /tmp/wel.txt \
+             && grep -q 'choice windows: Windows — Copy is Ctrl+C' /tmp/wel.txt; then
+            ok "both cards say what they mean in one keystroke each"
+          else
+            bad "the two keyboard cards no longer show their example keystroke"
+          fi
+
+          echo
+          echo "== an account that already chose its apps is not asked again =="
+          "${WELCOME}" --dry-run --pretend-apps-seen > /tmp/wel2.txt 2>&1 || true
+          sed 's/^/       /' /tmp/wel2.txt
+          if grep -qx 'steps: 2' /tmp/wel2.txt && grep -qx 'apps step: skipped' /tmp/wel2.txt; then
+            ok "it gets the keyboard question and the last page, and nothing else"
+          else
+            bad "an existing account would be asked to choose its apps all over again"
+          fi
+
+          echo
+          echo "== the keyboard answer goes through 'aq keys' and nowhere else =="
+          if grep -q '\[AQ, "keys", mode\]' "${WELCOME}"; then
+            ok "it runs the same command a person would type"
+          else
+            bad "it no longer delegates to 'aq keys'"
+          fi
+          if grep -qE 'mode=(mac|windows)' "${WELCOME}"; then
+            bad "it carries a copy of the keys.conf format — two writers of one file is two ways to disagree"
+          else
+            ok "it carries no copy of the keys.conf file format"
+          fi
+
+          echo
+          echo "== exactly one thing opens at login, and both sessions open it =="
+          if [ -e "${OLD}" ]; then
+            bad "${OLD} is still here — the creator-apps window would open twice at a first login"
+          else
+            ok "the old creator-apps first-login entry is gone"
+          fi
+          if grep -q 'aquarius-creator-apps --first-run' "${LABWC}" 2>/dev/null; then
+            bad "the Aquarius session still opens the creator-apps window directly at login"
+          else
+            ok "the Aquarius session does not open it directly either"
+          fi
+          if [ -r "${AUTOSTART}" ]; then
+            ok "the welcome's first-login entry is here"
+            GNOME_CMD="$(sed -n 's/^Exec=//p' "${AUTOSTART}" | head -n 1)"
+            echo "       GNOME runs: ${GNOME_CMD}"
+            if grep -qF "${GNOME_CMD}" "${LABWC}"; then
+              ok "and the Aquarius session runs exactly the same command"
+            else
+              bad "the two sessions run different commands at login"
+            fi
+          else
+            bad "${AUTOSTART} is missing — a first GNOME login would show no welcome at all"
+          fi
+          # Guarded, because desktop-file-validate is a build-time tool that the
+          # image is not obliged to keep. Its absence is not a fault in the
+          # welcome, and reporting it as one would be a check that lies.
+          if command -v desktop-file-validate >/dev/null 2>&1; then
+            if desktop-file-validate "${AUTOSTART}" \
+               && desktop-file-validate /usr/share/applications/aquarius-welcome.desktop; then
+              ok "both menu entries are well-formed"
+            else
+              bad "one of the welcome's two menu entries is not a well-formed desktop entry"
+            fi
+          else
+            echo "  note desktop-file-validate is not in this image; the build already validated both entries"
+          fi
+
+          echo
+          echo "== 'aq welcome' is the way back to it =="
+          if aq --help 2>&1 | grep -q 'aq welcome'; then
+            ok "'aq welcome' is in aq's own help, so it is findable"
+          else
+            bad "'aq welcome' is not mentioned by 'aq --help' — nobody would find it"
+          fi
+          if aq welcome --help > /tmp/welhelp.txt 2>&1; then
+            ok "'aq welcome --help' works"
+          else
+            bad "'aq welcome --help' failed:"; sed 's/^/       /' /tmp/welhelp.txt
+          fi
+
+          echo
+          echo "== the creator-apps window is still an ordinary app =="
+          # The whole change would be a regression if "Aquarius Apps" stopped
+          # working on its own.
+          if "${CHOOSER}" --dry-run > /tmp/chooser.txt 2>&1; then
+            ok "'Aquarius Apps' still reads its list exactly as it did before"
+          else
+            bad "the --embedded-flow change broke the ordinary chooser:"
+            sed 's/^/       /' /tmp/chooser.txt
+          fi
+          if grep -q 'subtitle="Step 2 of 3" if embedded else ""' "${CHOOSER}"; then
+            ok "and it only claims to be 'Step 2 of 3' when the welcome opened it"
+          else
+            bad "the chooser's step subtitle is not conditional — it would say 'Step 2 of 3' when opened on its own"
+          fi
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::The welcome flow in this image is wrong. Do not publish it."
+            exit 1
+          fi
+          echo "All welcome checks passed."
+          SCRIPT
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-welcome.sh
 
       - name: Check the 'Make Editor-Ready' menu really loads in Files
         run: |

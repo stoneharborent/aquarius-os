@@ -76,7 +76,7 @@ video on.
 | --- | --- |
 | `Containerfile` | The recipe. Short, heavily commented, rarely changes. |
 | `build_files/` | The eight build steps, numbered in the order they run. This is where day-to-day changes happen. |
-| `system_files/` | Files copied into the OS exactly as they are — wallpaper, logos, fonts, GNOME defaults. To add a file to the OS, put it here in the right place. |
+| `system_files/` | Files copied into the OS exactly as they are — wallpaper, logos, fonts, GNOME defaults, and the AquariusOS windows (the welcome, the app chooser, the Resolve installers). To add a file to the OS, put it here in the right place. |
 | `branding/` | The sources those files are made from: logo SVGs, wallpaper SVGs, the scripts that render them, and `tokens.md` (the colours). |
 | `ingest/` | `aq-ingest`, the "Make Editor-Ready" helper, with its own test suite. |
 | `.github/workflows/` | The build robot's instructions. |
@@ -115,7 +115,8 @@ Desktop gaming, properly, and it is **in the image now** (Phase R4): Steam,
 Proton, gamescope, gamemode, MangoHud, vkBasalt, umu, the 32-bit libraries a
 Windows game needs, and Xbox controller drivers — on both images, with nothing
 to set up. Four more gaming apps (Heroic, Lutris, ProtonUp-Qt, Protontricks)
-are offered, unticked, in the app chooser at first login.
+are offered, unticked, in the app chooser — step 2 of the welcome — at first
+login.
 
 There is no Game Mode session — Steam's own Big Picture does that job on a
 desktop — and handheld consoles are explicitly **out of scope**: that is

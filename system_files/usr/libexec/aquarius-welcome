@@ -1,0 +1,720 @@
+#!/usr/bin/python3
+# =============================================================================
+# aquarius-welcome — the first three minutes of AquariusOS
+# =============================================================================
+# PLAIN ENGLISH
+#
+# The very first time somebody logs in to AquariusOS, this window opens and
+# walks them through three questions and one goodbye:
+#
+#     Step 1 of 3   How should keyboard shortcuts work?   Mac, or Windows.
+#     Step 2 of 3   Your creator apps.                    Tick what you want.
+#     Step 3 of 3   You're set.                           Three tips, and out.
+#
+# Then it never opens again, unless somebody asks for it with `aq welcome`.
+#
+# =============================================================================
+# WHY THIS EXISTS — the thing it replaced
+# =============================================================================
+# Until 2026-09-04 the first login opened the creator-apps chooser and nothing
+# else. That window is good, but on its own it made a strange first impression:
+# a machine that says nothing at all about itself, and then, ten seconds in,
+# demands a shopping decision.
+#
+# And it left the single most surprising thing about this operating system
+# undeclared. AquariusOS remaps the keyboard to work like a Mac — Copy is ⌘C —
+# BY DEFAULT. That is a deliberate and unusual choice (FEATURES 008, Royce's
+# call), it is the right default for the people this OS is for, and it is
+# exactly the sort of thing that must be said out loud on the first screen
+# rather than discovered by a person whose Ctrl+C stopped working.
+#
+# So: one flow, three steps, asked once. Phase R5 of the roadmap.
+#
+# =============================================================================
+# ⚠️ THE APPS STEP IS A SEPARATE PROGRAM, ON PURPOSE — READ THIS BEFORE
+#    "TIDYING" IT INTO ONE WINDOW
+# =============================================================================
+# Step 2 is not drawn by this file. It runs /usr/libexec/aquarius-creator-apps
+# --embedded-flow as a child program, waits for it to finish, and then shows
+# step 3. This window hides itself while that one is up, so there is one window
+# on screen at a time and it reads as one flow.
+#
+# The alternative — pulling the chooser's pages inside this window — was
+# considered and rejected on 2026-09-04, and the reason is worth writing down
+# because it will be proposed again:
+#
+#   The chooser is a two-thousand-line window whose every page, footer and
+#   button was bench-tested by Royce on 3 and 4 September. Its pages are built
+#   inside one function, as closures, and forty of its methods assume they are
+#   ON a window: they set the window title, they swap the window's footer, they
+#   close the window when an install is cancelled. Turning that into a view that
+#   can live inside somebody else's window is a rewrite of the file, and the
+#   thing being rewritten is the one part of the first-boot experience that has
+#   already been proved to work on real hardware.
+#
+#   A child program costs one flicker between two windows. The rewrite risks the
+#   part that works. That trade is not close.
+#
+# What the flag does to the chooser is three cosmetic things and nothing else —
+# always open, "Step 2 of 3" in its title bar, "Continue" instead of "Close" on
+# its last page. Its own header explains them. Run without the flag it is
+# byte-for-byte the same window it was, which is what the build checks.
+#
+# =============================================================================
+# THE EXISTING-ACCOUNT RULE  (the migration)
+# =============================================================================
+# Royce already has an account on the bench machine. It has been through the
+# creator-apps chooser — the stamp ~/.config/aquarius/creator-apps-seen is
+# there — but it has obviously never seen a welcome, because there was not one.
+#
+# Asking him to choose his apps all over again would be rude and confusing. So:
+#
+#     creator-apps-seen exists, welcome-seen does not
+#         → run the keyboard step and the last page. TWO steps, not three, and
+#           the keyboard page says "Your apps are already set up." so the
+#           missing step is explained rather than merely absent.
+#
+#     neither exists  (a brand-new account)
+#         → all three steps.
+#
+# =============================================================================
+# WHERE THE KEYBOARD ANSWER GOES
+# =============================================================================
+# ⚠️ THIS FILE DOES NOT WRITE keys.conf, AND MUST NOT LEARN HOW.
+#
+# The format of that file is written down in exactly two places already — `aq
+# keys` writes it and /usr/libexec/aquarius-keys-run reads it — and a third
+# writer is a third chance for them to disagree about what the word in that file
+# means. So step 1 runs `aq keys mac` or `aq keys windows`, which is the same
+# command a person would type, and gets the "restart the remapper, no logout
+# needed" behaviour for free.
+#
+# The build enforces this: build_files/67-welcome.sh fails if this file ever
+# contains the settings file's own format.
+#
+# =============================================================================
+# TO LOOK AT ANY OF THIS WITHOUT A SCREEN
+# =============================================================================
+#     aquarius-welcome --dry-run
+#         Prints the steps, the two keyboard choices, which one is the default,
+#         and what this account would actually be shown. Opens no window,
+#         changes nothing. This is what the build runs.
+#
+#     aquarius-welcome --dry-run --pretend-apps-seen
+#         The same, as if this account had already been through the chooser —
+#         which is how the build proves the existing-account rule works without
+#         needing an existing account.
+# =============================================================================
+
+import os
+import subprocess
+import sys
+import time
+
+APP_ID = "org.aquariusos.Welcome"
+
+# The chooser, which is step 2. Not a copy of its pages — the program itself.
+CHOOSER = "/usr/libexec/aquarius-creator-apps"
+
+# The command that owns the keyboard setting. See the heading above.
+AQ = "/usr/bin/aq"
+
+# The two keyboard styles, in the order the cards appear, with the wording each
+# card carries. FIRST IN THIS LIST IS THE DEFAULT, and Mac is first because Mac
+# is the AquariusOS default everywhere else — /etc/skel/.config/aquarius/
+# keys.conf, aquarius-keys-run and `aq keys status` all say so. A welcome that
+# preselected the other one would be the operating system disagreeing with
+# itself on its own first screen.
+KEYBOARD_CHOICES = [
+    (
+        "mac",
+        "Mac",
+        "Copy is ⌘C · Quit is ⌘Q · Search is ⌘Space\n"
+        "The key beside the space bar is Command.",
+        "Copy is ⌘C",
+    ),
+    (
+        "windows",
+        "Windows",
+        "Copy is Ctrl+C\nThe normal Linux and Windows shortcuts.",
+        "Copy is Ctrl+C",
+    ),
+]
+DEFAULT_KEYBOARD = KEYBOARD_CHOICES[0][0]
+
+# The line under the two cards. It names the command rather than a Settings
+# panel because the command is what exists today: `aq keys` is shipped and
+# works, and there is no keyboard page in any settings app yet. Promising a
+# panel that is not there is how a welcome screen becomes a liar.
+KEYBOARD_NOTE = (
+    "You can change this any time. Open a terminal and type "
+    "aq keys mac or aq keys windows — it takes effect straight away, "
+    "with no need to log out."
+)
+
+# The three things worth knowing on day one. Not a manual: three sentences that
+# each answer a question a new person actually has.
+TIPS = [
+    (
+        "system-search-symbolic",
+        "⌘Space searches everything",
+        "Apps, files, settings, even sums. It is the fastest way to open "
+        "anything on this computer. (Super+Space if you chose Windows-style "
+        "shortcuts.)",
+    ),
+    (
+        "view-grid-symbolic",
+        "Aquarius Apps adds or removes apps any time",
+        "Everything you skipped is still there, and nothing you installed is "
+        "stuck. Open it from your apps, or type aq apps list.",
+    ),
+    (
+        "computer-symbolic",
+        "GNOME is one arrow key away at login",
+        "If the Aquarius Desktop ever gives you trouble, the login screen can "
+        "start a plain GNOME desktop instead. Nothing is lost either way.",
+    ),
+]
+
+
+# -----------------------------------------------------------------------------
+# Where this account's answers are remembered
+# -----------------------------------------------------------------------------
+# Two stamps, and they mean different things:
+#
+#   welcome-seen        this person has been through this flow.
+#   creator-apps-seen   this person has been offered the creator apps. Written
+#                       by the chooser itself, and it existed before this
+#                       program did — which is the whole basis of the
+#                       existing-account rule at the top of this file.
+#
+# Both are read here and only one is written here.
+# -----------------------------------------------------------------------------
+def config_dir():
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
+        os.path.expanduser("~"), ".config"
+    )
+    return os.path.join(base, "aquarius")
+
+
+def welcome_stamp():
+    return os.path.join(config_dir(), "welcome-seen")
+
+
+def apps_stamp():
+    return os.path.join(config_dir(), "creator-apps-seen")
+
+
+def apps_already_chosen(pretend=False):
+    """Has this account been offered the creator apps before?"""
+    return bool(pretend) or os.path.exists(apps_stamp())
+
+
+def write_welcome_stamp():
+    """Remember that this person has seen the welcome.
+
+    Written when the window APPEARS, not when it is finished with — the same
+    rule the chooser uses, and for the same reason: the promise is "you are
+    shown this once", and closing it half way through is a complete answer.
+    """
+    try:
+        os.makedirs(config_dir(), exist_ok=True)
+        with open(welcome_stamp(), "w", encoding="utf-8") as handle:
+            handle.write(time.strftime("%Y-%m-%d %H:%M:%S\n"))
+    except OSError:
+        pass  # Being welcomed twice is a small annoyance. Crashing is not.
+
+
+def steps_for(apps_seen):
+    """Which pages this account gets, in order.
+
+    Returned as names rather than numbers so that the step indicator, the page
+    order and the "what would happen" rehearsal all count the same way and
+    cannot drift apart.
+    """
+    if apps_seen:
+        return ["keyboard", "done"]
+    return ["keyboard", "apps", "done"]
+
+
+def set_keyboard(mode):
+    """Run `aq keys mac` or `aq keys windows`. See the heading above for why
+    this is a command and not a file write.
+
+    Returns (worked, what it said). Nothing here treats a failure as fatal: a
+    welcome screen that refuses to move on because a background service would
+    not restart would be a worse fault than the one it is reporting.
+    """
+    try:
+        result = subprocess.run(
+            [AQ, "keys", mode],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as problem:
+        return False, str(problem)
+    output = (result.stdout or "") + (result.stderr or "")
+    return result.returncode == 0, output.strip()
+
+
+# -----------------------------------------------------------------------------
+# The rehearsal — everything above, with no window at all
+# -----------------------------------------------------------------------------
+def rehearse(pretend_apps_seen):
+    """--dry-run. Prints the flow and changes nothing.
+
+    ⚠️ THE SHAPE OF THESE LINES IS A CONTRACT. build_files/67-welcome.sh reads
+    them — it is how a build with no screen in it can prove that Mac is still
+    the preselected answer and that the existing-account rule still holds. Add
+    lines freely; do not reword the ones already here.
+    """
+    apps_seen = apps_already_chosen(pretend_apps_seen)
+    steps = steps_for(apps_seen)
+
+    print("welcome window: Welcome to AquariusOS")
+    print("steps: %d" % len(steps))
+
+    number = 0
+    for step in steps:
+        number += 1
+        if step == "keyboard":
+            print(
+                "step %d of %d: keyboard — How should keyboard shortcuts work?"
+                % (number, len(steps))
+            )
+            for mode, title, detail, example in KEYBOARD_CHOICES:
+                mark = "  (preselected)" if mode == DEFAULT_KEYBOARD else ""
+                print("  choice %s: %s — %s%s" % (mode, title, example, mark))
+                for line in detail.splitlines():
+                    print("    %s" % line)
+            print("default choice: %s" % DEFAULT_KEYBOARD)
+            print("keyboard written by: %s keys mac|windows" % AQ)
+        elif step == "apps":
+            print(
+                "step %d of %d: apps — Your creator apps" % (number, len(steps))
+            )
+            print("  runs: %s --embedded-flow" % CHOOSER)
+        else:
+            print("step %d of %d: done — You're set." % (number, len(steps)))
+            for _icon, title, body in TIPS:
+                print("  tip: %s" % title)
+                print("    %s" % body)
+
+    print("tips: %d" % len(TIPS))
+    print("this account: %s" % ("apps already set up" if apps_seen else "brand new"))
+    print("apps step: %s" % ("skipped" if apps_seen else "shown"))
+    print("welcome stamp: %s" % welcome_stamp())
+    print("apps stamp: %s" % apps_stamp())
+    print("skippable steps: keyboard, apps")
+    return 0
+
+
+# -----------------------------------------------------------------------------
+# From here down is the window. Nothing above this line imports Gtk, which is
+# what lets --dry-run work in a build container with no screen — the same rule,
+# and the same reason, as the chooser next door.
+# -----------------------------------------------------------------------------
+def run_window(apps_seen):
+    import gi
+
+    gi.require_version("Gtk", "4.0")
+    gi.require_version("Adw", "1")
+    from gi.repository import Adw, Gio, GLib, Gtk  # noqa: F401
+
+    # The mark, the headings, the pages and the pill buttons are shared with the
+    # chooser and the two DaVinci Resolve windows. See the header of
+    # /usr/lib/aquarius/python/aquarius_ui.py — and note that it is imported
+    # HERE and not at the top of the file, for the --dry-run reason above.
+    sys.path.insert(0, "/usr/lib/aquarius/python")
+    import aquarius_ui
+
+    steps = steps_for(apps_seen)
+
+    class KeyboardCard(Gtk.ToggleButton):
+        """One of the two big cards on step 1.
+
+        A toggle button rather than a radio button on purpose: this is a choice
+        between two whole ideas, not between two words, and the design (the
+        first-boot chooser artboard) draws them as cards you press. The two are
+        joined into a group below, so pressing one releases the other and
+        neither can ever be off.
+        """
+
+        def __init__(self, title, detail):
+            super().__init__()
+            self.add_css_class("card")
+            self.set_hexpand(True)
+
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            box.set_margin_top(20)
+            box.set_margin_bottom(20)
+            box.set_margin_start(18)
+            box.set_margin_end(18)
+
+            heading = Gtk.Label(label=title)
+            heading.add_css_class("title-2")
+            heading.set_xalign(0.0)
+
+            body = Gtk.Label(label=detail)
+            body.set_wrap(True)
+            body.set_xalign(0.0)
+            body.add_css_class("dim-label")
+
+            box.append(heading)
+            box.append(body)
+            self.set_child(box)
+
+    class WelcomeWindow(Adw.ApplicationWindow):
+        def __init__(self, app):
+            super().__init__(application=app)
+            self.app = app
+            self.chooser_running = False
+
+            self.set_title("Welcome to AquariusOS")
+            self.set_default_size(760, 660)
+
+            self.choice = DEFAULT_KEYBOARD
+
+            self.stack = Gtk.Stack(
+                transition_type=Gtk.StackTransitionType.CROSSFADE,
+                transition_duration=180,
+                vexpand=True,
+            )
+            self.stack.add_named(self._build_keyboard_page(), "keyboard")
+            self.stack.add_named(self._build_done_page(), "done")
+
+            header = Adw.HeaderBar()
+            self.header_title = Adw.WindowTitle(
+                title="Welcome to AquariusOS", subtitle=""
+            )
+            header.set_title_widget(self.header_title)
+
+            self.toolbar = Adw.ToolbarView()
+            self.toolbar.add_top_bar(header)
+            self.toolbar.set_content(self.stack)
+            self.toolbar.add_bottom_bar(self._build_footer())
+            self.set_content(self.toolbar)
+
+            self.show_step("keyboard")
+
+        # -- the step indicator ------------------------------------------
+        def show_step(self, name):
+            """Move to a page and say, in the title bar, where that page is.
+
+            The indicator counts the steps THIS ACCOUNT gets, not the three a
+            brand-new one gets. Somebody whose apps are already set up sees
+            "Step 1 of 2" and "Step 2 of 2", which is true, rather than
+            "Step 1 of 3" followed by "Step 3 of 3", which looks like something
+            went wrong.
+            """
+            self.stack.set_visible_child_name(name)
+            if name in steps:
+                self.header_title.set_subtitle(
+                    "Step %d of %d" % (steps.index(name) + 1, len(steps))
+                )
+            self.footer.set_visible(name == "keyboard")
+
+        # -- step 1: the keyboard ----------------------------------------
+        def _build_keyboard_page(self):
+            mark, title, blurb = aquarius_ui.hero(
+                "How should keyboard shortcuts work?",
+                "AquariusOS can work the way a Mac does. Most people who edit "
+                "video came from one, so that is what it does unless you say "
+                "otherwise.",
+            )
+
+            # The live example. It is one short line and it is the whole point
+            # of this page: it turns an abstract question about "shortcut
+            # styles" into the one keystroke everybody in the world already has
+            # an opinion about.
+            #
+            # ⚠️ BUILT BEFORE THE CARDS, NOT AFTER THEM. Switching a card on
+            # fires its `toggled` handler, and that handler writes to this
+            # label. Build the cards first and the very first thing this page
+            # does is a traceback into the session log.
+            self.example = Gtk.Label()
+            self.example.add_css_class("title-3")
+            self.example.set_margin_top(10)
+            self._update_example()
+
+            cards = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+            cards.set_homogeneous(True)
+            cards.set_margin_top(6)
+
+            self.cards = {}
+            first = None
+            for mode, card_title, detail, _example in KEYBOARD_CHOICES:
+                card = KeyboardCard(card_title, detail)
+                if first is None:
+                    first = card
+                else:
+                    # Joining them makes it a real either/or: pressing one
+                    # releases the other, and the keyboard's arrow keys move
+                    # between them the way they do for radio buttons.
+                    card.set_group(first)
+                card.connect("toggled", self._on_card_toggled, mode)
+                self.cards[mode] = card
+                cards.append(card)
+
+            # ⚠️ SET AFTER THE GROUP IS JOINED, NEVER BEFORE. A toggle button
+            # that is switched on before it joins a group takes its group's
+            # "one of us is on" state with it, and both cards end up looking
+            # pressed.
+            self.cards[DEFAULT_KEYBOARD].set_active(True)
+
+            note = aquarius_ui.body_label(KEYBOARD_NOTE)
+            note.set_margin_top(4)
+
+            widgets = [mark, title, blurb, cards, self.example, note]
+
+            # The existing-account line. Said HERE, on the first page, rather
+            # than left as a step that silently is not there.
+            if apps_seen:
+                already = aquarius_ui.body_label(
+                    "Your apps are already set up, so this is the only "
+                    "question — everything else stays exactly as you left it."
+                )
+                already.set_margin_top(2)
+                widgets.append(already)
+
+            return aquarius_ui.page(widgets, maximum_size=680, spacing=14)
+
+        def _on_card_toggled(self, card, mode):
+            if card.get_active():
+                self.choice = mode
+                self._update_example()
+
+        def _update_example(self):
+            for mode, _title, _detail, example in KEYBOARD_CHOICES:
+                if mode == self.choice:
+                    self.example.set_label(example)
+                    return
+
+        # -- the footer --------------------------------------------------
+        def _build_footer(self):
+            self.footer_label = Gtk.Label(label="", xalign=0.0)
+            self.footer_label.set_hexpand(True)
+            self.footer_label.add_css_class("dim-label")
+
+            # Skipping step 1 is not "no answer" — it is "leave it as it is",
+            # which is Mac, which is the default. The button says so, because a
+            # Skip whose consequence is invisible is a trap.
+            self.skip_button = Gtk.Button(label="Skip")
+            self.skip_button.add_css_class("flat")
+            self.skip_button.set_tooltip_text(
+                "Leave the keyboard as it is — Mac-style — and carry on"
+            )
+            self.skip_button.connect("clicked", lambda _b: self._go_on(save=False))
+
+            self.continue_button = Gtk.Button(label="Continue")
+            self.continue_button.add_css_class("suggested-action")
+            self.continue_button.add_css_class("pill")
+            self.continue_button.connect("clicked", lambda _b: self._go_on(save=True))
+
+            self.footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            self.footer.set_margin_top(10)
+            self.footer.set_margin_bottom(10)
+            self.footer.set_margin_start(18)
+            self.footer.set_margin_end(18)
+            self.footer.append(self.footer_label)
+            self.footer.append(self.skip_button)
+            self.footer.append(self.continue_button)
+            return self.footer
+
+        # -- moving on from step 1 ---------------------------------------
+        def _go_on(self, save):
+            if save:
+                worked, said = set_keyboard(self.choice)
+                if not worked:
+                    # Not a dialog and not a stopped flow. The setting is a
+                    # preference, the welcome is a first impression, and an
+                    # error box on somebody's first screen about a keyboard
+                    # remapper is a worse outcome than a keyboard that is still
+                    # on the default. It is written to the session log, which is
+                    # where `aq keys status` sends people anyway.
+                    print(
+                        "aquarius-welcome: could not set the keyboard style: %s"
+                        % said,
+                        file=sys.stderr,
+                    )
+
+            if "apps" in steps:
+                self._run_chooser()
+            else:
+                self.show_step("done")
+
+        # -- step 2: the chooser, as a child program ---------------------
+        def _run_chooser(self):
+            """Open the creator-apps window and wait for it, without freezing.
+
+            Gio.Subprocess rather than subprocess.run: this is inside the code
+            that draws the screen, and a blocking wait here would freeze both
+            windows until the person finished choosing. The callback runs when
+            the child ends, whichever way it ended.
+            """
+            if self.chooser_running:
+                return
+            if not os.access(CHOOSER, os.X_OK):
+                # There is no honest step 2 without it. Skip straight to the
+                # last page rather than showing an error about a program the
+                # person has never heard of.
+                print(
+                    "aquarius-welcome: %s is not here, so the apps step is "
+                    "being skipped." % CHOOSER,
+                    file=sys.stderr,
+                )
+                self.show_step("done")
+                return
+
+            try:
+                child = Gio.Subprocess.new(
+                    [CHOOSER, "--embedded-flow"], Gio.SubprocessFlags.NONE
+                )
+            except GLib.Error as problem:
+                print(
+                    "aquarius-welcome: could not start the apps window: %s"
+                    % problem.message,
+                    file=sys.stderr,
+                )
+                self.show_step("done")
+                return
+
+            self.chooser_running = True
+            # One window on screen at a time. Hidden, not closed: a closed
+            # window would be the last window of this application and the
+            # application would quit, taking the last page with it. The hold()
+            # is the belt to that braces.
+            self.app.hold()
+            self.set_visible(False)
+            child.wait_check_async(None, self._chooser_finished)
+
+        def _chooser_finished(self, child, result):
+            self.chooser_running = False
+            try:
+                child.wait_check_finish(result)
+            except GLib.Error as problem:
+                # A non-zero exit is not a reason to stop. The person may have
+                # closed the window, or an install may have half-failed — both
+                # of which that window has already explained on its own last
+                # page, far better than this one could.
+                print(
+                    "aquarius-welcome: the apps window ended with: %s"
+                    % problem.message,
+                    file=sys.stderr,
+                )
+            self.show_step("done")
+            self.set_visible(True)
+            self.present()
+            self.app.release()
+
+        # -- step 3: done ------------------------------------------------
+        def _build_done_page(self):
+            mark, title, blurb = aquarius_ui.hero(
+                "You're set.",
+                "Three things worth knowing, and then this window gets out of "
+                "your way.",
+            )
+
+            group = Adw.PreferencesGroup()
+            for icon, tip_title, tip_body in TIPS:
+                row = Adw.ActionRow(title=tip_title)
+                row.set_title_lines(0)
+                row.set_subtitle(tip_body)
+                row.set_subtitle_lines(0)
+                image = Gtk.Image()
+                image.set_from_icon_name(icon)
+                image.set_valign(Gtk.Align.CENTER)
+                row.add_prefix(image)
+                group.add(row)
+
+            start = aquarius_ui.pill_button(
+                "Start using AquariusOS", suggested=True
+            )
+            start.set_tooltip_text("Close this window. It will not open again.")
+            start.connect("clicked", lambda _b: self.close())
+
+            return aquarius_ui.page(
+                [mark, title, blurb, group, aquarius_ui.button_row([start])],
+                maximum_size=640,
+                spacing=14,
+            )
+
+    class WelcomeApp(Adw.Application):
+        def __init__(self):
+            super().__init__(
+                application_id=APP_ID, flags=Gio.ApplicationFlags.NON_UNIQUE
+            )
+
+        def do_activate(self):
+            window = self.props.active_window
+            if window is None:
+                window = WelcomeWindow(self)
+            window.present()
+            # Written when the window appears, not when it is finished with.
+            # See write_welcome_stamp().
+            write_welcome_stamp()
+
+    GLib.set_prgname(APP_ID)
+    GLib.set_application_name("Aquarius Welcome")
+    return WelcomeApp().run([sys.argv[0]])
+
+
+def main(argv):
+    dry_run = False
+    first_run = False
+    pretend_apps_seen = False
+
+    args = list(argv[1:])
+    while args:
+        arg = args.pop(0)
+        if arg == "--dry-run":
+            dry_run = True
+        elif arg == "--first-run":
+            first_run = True
+        elif arg == "--pretend-apps-seen":
+            pretend_apps_seen = True
+            dry_run = True
+        elif arg in ("-h", "--help"):
+            print(
+                "aquarius-welcome — the AquariusOS welcome\n"
+                "\n"
+                "    aquarius-welcome [--first-run]\n"
+                "    aquarius-welcome --dry-run [--pretend-apps-seen]\n"
+                "\n"
+                "    --first-run          open only if this account has never\n"
+                "                         seen the welcome (used at login)\n"
+                "    --dry-run            print the steps and the default\n"
+                "                         answers, open no window, change\n"
+                "                         nothing\n"
+                "    --pretend-apps-seen  rehearse as an account that has\n"
+                "                         already chosen its apps (implies\n"
+                "                         --dry-run)\n"
+                "\n"
+                "The three steps are: how the keyboard works, which creator\n"
+                "apps you want, and a page of tips. Step 2 is %s.\n"
+                "\n"
+                "To see it again at any time: aq welcome" % CHOOSER
+            )
+            return 0
+        else:
+            print(
+                "aquarius-welcome: I do not understand '%s'." % arg,
+                file=sys.stderr,
+            )
+            return 2
+
+    if dry_run:
+        return rehearse(pretend_apps_seen)
+
+    if first_run and os.path.exists(welcome_stamp()):
+        # Already welcomed. Silence is the correct behaviour: this is the login
+        # autostart, and a window that reappears every morning is a window
+        # people learn to close without reading.
+        return 0
+
+    return run_window(apps_already_chosen())
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

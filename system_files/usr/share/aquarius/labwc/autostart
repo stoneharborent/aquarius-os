@@ -171,7 +171,15 @@ if [ -x /usr/libexec/aquarius-polkit-agent ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 5. The creator apps window, once, on the first login.
+# 5. The welcome, once, on the first login.
+#
+# ⚠️ THIS USED TO BE THE CREATOR APPS WINDOW ON ITS OWN, UNTIL 2026-09-04.
+# Now the first login opens /usr/libexec/aquarius-welcome, which asks how the
+# keyboard should work, then opens the creator apps window itself as its second
+# step, then says goodbye. The chooser is still an ordinary app — "Aquarius
+# Apps" in the app grid, `aq apps` on the command line — it simply is not what
+# starts at login any more. docs/restart/welcome.md is the plain-English
+# version.
 #
 # ⚠️ THIS LINE EXISTS BECAUSE LABWC DOES NOT READ /etc/xdg/autostart.
 #
@@ -183,12 +191,12 @@ fi
 # must run at login in BOTH sessions has to be written down twice: once as a
 # .desktop file for GNOME, and once here.
 #
-# So this line and /etc/xdg/autostart/aquarius-creator-apps-firstrun.desktop are
+# So this line and /etc/xdg/autostart/aquarius-welcome-firstrun.desktop are
 # the same fact said in two languages. CHANGE ONE, CHANGE BOTH — the build
 # checks that both exist and that they run the same command.
 #
-# --first-run is what makes it "once": the window looks for
-# ~/.config/aquarius/creator-apps-seen and returns silently if it is there. So
+# --first-run is what makes it "once": the welcome looks for
+# ~/.config/aquarius/welcome-seen and returns silently if it is there. So
 # this runs at every login and does nothing at all on all but the first.
 #
 # The ten-second wait matches the X-GNOME-Autostart-Delay in the GNOME copy. It
@@ -211,10 +219,10 @@ fi
 # other — and the shell repo's own test 17b fails if a login-time line appears
 # in one of its two session files and not the other.
 # ---------------------------------------------------------------------------
-if [ -x /usr/libexec/aquarius-creator-apps ]; then
+if [ -x /usr/libexec/aquarius-welcome ]; then
     (
         sleep 10
-        /usr/libexec/aquarius-creator-apps --first-run
+        /usr/libexec/aquarius-welcome --first-run
     ) >> "${AQ_LOG:-/dev/null}" 2>&1 &
 fi
 
