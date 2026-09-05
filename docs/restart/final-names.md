@@ -65,40 +65,41 @@ That red run is the safety catch working. Nothing was published. Carry on.
 
 ## Step 2 — rename the two branches
 
-Both renames are on the same page.
+Both renames happen on the repository's list of branches — **not** in Settings.
+Get there once and stay there:
+
+1. Go to <https://github.com/stoneharborent/aquarius-os>
+2. In the file tree on the left, click the **branch dropdown** (it says `main`)
+3. Click **View all branches**
 
 **2a. Rename the old line out of the way.**
 
-1. Go to <https://github.com/stoneharborent/aquarius-os>
-2. **Settings** (the tab along the top, on the right)
-3. **Branches** (in the left-hand menu)
-4. Find **`main`** in the list. Click the **pencil** icon beside it.
-5. Type **`bazzite-archive`** and press **Rename branch**.
-
-GitHub will warn you that this is the default branch and that some things will
-break. Read it, then continue — the things it lists are covered at the bottom of
-this page.
+1. Find **`main`** in the list.
+2. Click the **⋯** menu at the right-hand end of its row → **Rename branch**.
+3. Type **`bazzite-archive`**.
+4. Read the warning about local copies, then press **Rename branch**.
 
 > **What just happened:** `bazzite-archive` is now the default branch, because a
-> renamed default branch stays the default under its new name. That is fine and
-> it lasts about thirty seconds.
+> renamed default branch keeps that job under its new name. That is expected,
+> and it lasts about a minute.
 
 **2b. Give the name to the new line.**
 
-1. Same page. Find **`restart/fedora-bootc`** in the list.
-2. Click its **pencil** icon.
-3. Type **`main`** and press **Rename branch**.
+1. Same list. Find **`restart/fedora-bootc`**.
+2. **⋯** → **Rename branch** → type **`main`** → **Rename branch**.
 
 **2c. Make it the default.**
 
-⚠️ **This does not happen by itself.** GitHub kept `bazzite-archive` as the
-default in step 2a, and renaming a *non-default* branch in step 2b does not
-change which branch is default. You have to say so:
+⚠️ **This does not happen by itself.** GitHub left `bazzite-archive` holding the
+default-branch job in step 2a, and renaming a branch that is *not* the default,
+as you just did in 2b, does not take it. You have to say so:
 
-1. **Settings** → **General** (the first item in the left-hand menu)
+1. **Settings** (the tab along the top of the repository — it opens on
+   *General*)
 2. Scroll to **Default branch**
-3. Click the **⇄** (switch) button beside the branch name
-4. Choose **`main`** and press **Update**, then confirm.
+3. Click the **⇄** switch button to the right of the branch name
+4. Pick **`main`** from the dropdown, press **Update**, then
+   **I understand, update the default branch**.
 
 **How to know it worked:** go back to the repository's front page. The branch
 button near the top-left should say **`main`**, and the README you see below it
