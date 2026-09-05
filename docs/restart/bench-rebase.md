@@ -157,6 +157,11 @@ If instead you see a manufacturer's logo, or a small grey spinning circle, then
 the boot splash did not take. That means the boot ramdisk was not rebuilt, and
 [`boot-branding.md`](boot-branding.md) explains what that is and how to check it.
 
+**No "Failed Units" line.** Since 5 September 2026 the text that scrolls past
+before the login screen should end without any red **Failed Units** count. If
+you catch it and it says `Failed Units: 1  systemd-remount-fs.service`, that is
+the old image — see the entry at the bottom of this page.
+
 **At the login screen.** The AquariusOS logo. Your username, as before.
 
 **After logging in.** A light, ice-blue GNOME desktop:
@@ -368,3 +373,107 @@ where it survives every update.
 
 **Everything works but it looks wrong.** Screenshots are genuinely the fastest
 way to sort that out — the look is the one thing CI cannot check.
+
+---
+
+### "Failed Units: 1 — systemd-remount-fs.service" on every boot
+
+**Fixed 5 September 2026. Nothing was ever wrong with your computer.**
+
+Until that date, every boot ended with this on the console:
+
+```
+Failed Units: 1
+  systemd-remount-fs.service
+```
+
+It was harmless. It had been there since the machine was installed, it never
+broke anything, and the only real damage it did was to teach you to ignore a
+line that would matter if something ever genuinely failed.
+
+**What that service does, and why it could not do it here.** On an ordinary
+Linux computer the main disk is mounted read-only at first, so the disk-checking
+program can look at it safely, and then something goes back and mounts it
+properly. That something is `systemd-remount-fs.service`. It reads `/etc/fstab`,
+finds the line for `/`, and mounts it again to match.
+
+AquariusOS does not start that way. Here `/` is not a disk — it is a read-only,
+checksummed image of the system with a writable layer on top, put together in
+the boot ramdisk before anything else runs, and already mounted exactly right.
+The Linux kernel refuses to re-mount that kind of thing with different options.
+So the service ran, tried the one thing it exists to do, was told no, and
+reported failure. Every boot.
+
+**Where the bad line came from.** Nobody's mistake, and worth knowing because it
+explains why it took a while to spot:
+
+1. The Fedora installer wrote an `/etc/fstab` the way it has for twenty years,
+   including a line for `/`.
+2. bootc then *added* `ro` to that line on first boot, which was itself a
+   workaround for a different problem.
+3. `systemd-remount-fs` read the result and hit the wall above.
+
+**What we changed.** Two things, for two different sets of machines:
+
+- **Machines installed from now on** never get the line at all. The installer
+  takes it back out. This is bootc's own advice: an operating system built this
+  way should have no `/` line in `/etc/fstab`, because the root filesystem is
+  described on the kernel command line instead. It sticks — bootc only ever
+  edits an existing `/` line, it never adds one.
+- **Your bench, and any machine installed before this date,** still has the line,
+  because `/etc/fstab` lives on your own disk and no update we publish can reach
+  inside it. For those, the image now tells the service to skip itself on this
+  kind of machine, where it has no job to do anyway. We deliberately did **not**
+  write a program that edits your `/etc/fstab` behind your back at boot: if that
+  ever went wrong the machine would not start, which is far too much risk for a
+  cosmetic message.
+
+**How to confirm it worked.** Update and restart:
+
+```bash
+sudo bootc upgrade
+sudo systemctl reboot
+```
+
+Then, once you are logged back in:
+
+```bash
+systemctl --failed
+```
+
+It should say **`0 loaded units listed`**. That is the whole check.
+
+If you want to see the service being skipped on purpose rather than just absent
+from the failure list:
+
+```bash
+systemctl status systemd-remount-fs.service
+```
+
+The line to look for is **`Condition: start condition unmet`**. The service is
+still installed and still perfectly readable — `systemctl cat
+systemd-remount-fs.service` shows our added file and the reasoning behind it. It
+is simply skipped, which is not the same as failed and does not appear in any
+count.
+
+**Optional, and not required.** If you would like your `/etc/fstab` to match
+what a freshly installed machine now gets, you can delete the `/` line yourself.
+Open it with `sudo nano /etc/fstab` and delete only the line whose second column
+is exactly `/` — it looks like this:
+
+```
+UUID=de5051b3-…  /  btrfs  subvol=root,compress=zstd:1,ro  0 0
+```
+
+⚠️ **Leave every other line alone.** `/boot`, `/boot/efi`, `/home` and `/var`
+are real and this machine needs them; deleting the `/var` or `/home` line
+produces a computer that does not start. There is a one-line fix circulating
+online for this problem that keeps only the `/boot` line and throws the rest
+away — do not use it, it is written for a simpler disk layout than yours.
+
+Nothing depends on you doing this. The banner is already clean either way.
+
+**Background, if you ever want it:** [bootc issue
+971](https://github.com/bootc-dev/bootc/issues/971), [ostree issue
+3193](https://github.com/ostreedev/ostree/issues/3193), and bootc's own
+[install documentation](https://bootc-dev.github.io/bootc/bootc-install.html).
