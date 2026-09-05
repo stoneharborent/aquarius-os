@@ -29,6 +29,61 @@
 # copy somewhere the login screen can read it.
 #
 # -----------------------------------------------------------------------------
+# ⚠️ IT MAKES THE COPY SAFE FIRST. READ THIS BEFORE CHANGING ANYTHING HERE.
+# -----------------------------------------------------------------------------
+# 2026-09-05, the bench: the machine booted to a black screen with a mouse
+# pointer on it and no login screen at all. Removing the two files this program
+# writes, and restarting the login screen, brought it straight back.
+#
+# So THIS PROGRAM'S OUTPUT WAS THE CAUSE. That much is certain, because taking
+# it away is what fixed it.
+#
+# WHAT IS NOT CERTAIN IS WHY, and it is worth being straight about that rather
+# than writing a confident story into a comment. The most obvious suspect is
+# the size: Royce's monitor is set to 125%, which is a PART SIZE, and part sizes
+# on GNOME's login screen have a long history of quietly not working. But this
+# image is Fedora 44, which is GNOME 50, and GNOME 50 turned part sizes on by
+# default for everybody (mutter merge request 4877, February 2026) — so "the
+# login screen cannot do 125%" is a weaker explanation here than it would have
+# been a year ago. A second documented possibility is that mutter rejected the
+# whole arrangement because it did not match the monitors actually plugged in
+# (its own validator says "Logical monitors not adjacent" and throws the file
+# away). We could not confirm either from upstream bug reports.
+#
+# THAT UNCERTAINTY IS WHY THERE ARE TWO DEFENCES AND NOT ONE:
+#
+#   * this program only ever hands over a SANITISED file, which removes the most
+#     plausible specific cause; and
+#   * aquarius-gdm-guard.service watches the boot and takes these files away by
+#     itself if no login screen appears — which works no matter what the cause
+#     turns out to be. That is the one that would have saved the bench.
+#
+# So this program no longer copies the file. It copies a SANITISED file:
+# /usr/libexec/aquarius-monitors-sanitize reads the arrangement, replaces any
+# part size with the nearest whole size that still leaves a usable screen
+# (125% -> 100%), passes everything else through untouched, and refuses to
+# produce anything at all out of a file it cannot understand. Its own header has
+# the full rule table.
+#
+# THE ONE RULE THIS PROGRAM NOW OBEYS: the login screen is never handed a file
+# that has not been through the sanitiser. If the sanitiser will not produce
+# one, nothing is copied and the login screen keeps whatever it had — which is
+# always better than a black screen.
+#
+# PART SIZES CAN BE TURNED BACK ON, once somebody has watched a real machine
+# boot with them:
+#     sudo aq login scale fractional     let part sizes through
+#     sudo aq login scale integer        whole sizes only (the default)
+#     sudo aq login scale status         which one is on, and what happened
+# That writes /var/lib/aquarius/gdm-fractional-ok, and this program then runs
+# the sanitiser in pass-through mode. See docs/restart/login.md.
+#
+# OUR OWN GREETER IS NOT AFFECTED BY ANY OF THIS. The part-size problem belongs
+# to GNOME's login screen specifically. The AquariusOS greeter draws on labwc,
+# which does part sizes properly, so /var/lib/aquarius/display-scale below still
+# gets the real number — 1.25, not 1.
+#
+# -----------------------------------------------------------------------------
 # WHERE IT PUTS THE COPY, AND WHY IN TWO PLACES
 # -----------------------------------------------------------------------------
 #   /etc/xdg/monitors.xml               THE PRIMARY TARGET.
@@ -83,23 +138,64 @@
 #   sudo /usr/libexec/aquarius-gdm-display            do it
 #   sudo /usr/libexec/aquarius-gdm-display --dry-run  say what it would do
 #   sudo /usr/libexec/aquarius-gdm-display --status   what the login screen has
+#
+# EVERYTHING IT DOES IS WRITTEN DOWN at /var/lib/aquarius/gdm-display.log, in
+# the same plain English as the messages on screen — because the one question
+# somebody will ask afterwards is "why is my login screen a different size than
+# my desktop", and the answer has to be findable without knowing any of this.
 # =============================================================================
 
 set -uo pipefail
 
-AQ_SYSTEM_XML="/etc/xdg/monitors.xml"
-AQ_GDM_DIR="/var/lib/gdm/.config"
+# Every path below can be moved by setting AQ_GDM_DISPLAY_ROOT, which exists for
+# ONE reason: so that tests/test-gdm-scale-sanitize.sh can run this program for
+# real, against fake home folders in a temporary directory, without being root
+# and without touching the machine it is running on. It is never set in normal
+# use, and if it is unset every path is exactly what it always was.
+AQ_ROOT="${AQ_GDM_DISPLAY_ROOT:-}"
+
+AQ_SYSTEM_XML="${AQ_ROOT}/etc/xdg/monitors.xml"
+AQ_GDM_DIR="${AQ_ROOT}/var/lib/gdm/.config"
 AQ_GDM_XML="${AQ_GDM_DIR}/monitors.xml"
-AQ_STATE_DIR="/var/lib/aquarius"
+AQ_STATE_DIR="${AQ_ROOT}/var/lib/aquarius"
 AQ_SCALE_FILE="${AQ_STATE_DIR}/display-scale"
-AQ_SCALE_HELPER="/usr/libexec/aquarius-display-scale"
+AQ_LOG="${AQ_STATE_DIR}/gdm-display.log"
+# The marker that says "a human has watched this machine boot with part sizes on
+# the login screen, and it worked". Written by `aq login scale fractional`.
+AQ_FRACTIONAL_MARKER="${AQ_STATE_DIR}/gdm-fractional-ok"
+AQ_HOMES="${AQ_ROOT}/home"
+AQ_SCALE_HELPER="${AQ_SCALE_HELPER_OVERRIDE:-/usr/libexec/aquarius-display-scale}"
+AQ_SANITIZER="${AQ_SANITIZER_OVERRIDE:-/usr/libexec/aquarius-monitors-sanitize}"
 
 AQ_DRY_RUN=0
 
 say() { echo "aquarius-gdm-display: $*"; }
 
+# say() it, and keep it. The log is best-effort in both directions: a full disk
+# must never turn "the login screen is the right size" into a failure, and a
+# missing log must never stop the copy happening.
+note() {
+    say "$*"
+    mkdir -p "${AQ_STATE_DIR}" 2> /dev/null || true
+    printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "${AQ_LOG}" 2> /dev/null || true
+}
+
+# Are part sizes allowed through to GNOME's login screen?
+#
+# Two things have to be true, and needing both is the point. The dconf key is
+# what MIGHT make the greeter able to do part sizes; the marker file is a person
+# saying they watched it work. Shipping the key on its own would be betting the
+# login screen on a setting we have not seen take effect, and losing that bet
+# looks like the black screen of 2026-09-05.
+aq_fractional_allowed() {
+    [ -e "${AQ_FRACTIONAL_MARKER}" ]
+}
+
 usage() {
-    sed -n '2,90p' "$0" | sed 's/^# \{0,1\}//'
+    # Print the header comment — however long it is — and stop at the first line
+    # that is not a comment. A fixed line range was here before and went stale
+    # the first time the header grew.
+    awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
 }
 
 case "${1:-}" in
@@ -111,6 +207,18 @@ case "${1:-}" in
         AQ_DRY_RUN=1
         ;;
     --status)
+        echo "What size can GNOME's login screen be?"
+        if aq_fractional_allowed; then
+            echo "  PART SIZES ARE ALLOWED (125%, 150%) — somebody switched them on"
+            echo "  with 'sudo aq login scale fractional'. If the login screen ever"
+            echo "  comes up black, switch them off: sudo aq login scale integer"
+        else
+            echo "  whole sizes only (100%, 200%) — the safe default."
+            echo "  A part size in your own settings is rounded to the nearest whole"
+            echo "  one for the login screen, and your desktop is unaffected."
+            echo "  To try part sizes:  sudo aq login scale fractional"
+        fi
+        echo
         echo "The login screen's copy:"
         for f in "${AQ_SYSTEM_XML}" "${AQ_GDM_XML}"; do
             if [ -r "${f}" ]; then
@@ -121,9 +229,14 @@ case "${1:-}" in
             fi
         done
         if [ -r "${AQ_SCALE_FILE}" ]; then
-            echo "  ${AQ_SCALE_FILE}  -> $(cat "${AQ_SCALE_FILE}")"
+            echo "  ${AQ_SCALE_FILE}  -> $(cat "${AQ_SCALE_FILE}")   (the AquariusOS greeter — part sizes fine)"
         else
             echo "  ${AQ_SCALE_FILE}  (not written yet)"
+        fi
+        if [ -r "${AQ_LOG}" ]; then
+            echo
+            echo "The last few things that happened (${AQ_LOG}):"
+            tail -n 8 "${AQ_LOG}" | sed 's/^/  /'
         fi
         exit 0
         ;;
@@ -137,7 +250,7 @@ case "${1:-}" in
         ;;
 esac
 
-if [ "$(id -u)" -ne 0 ] && [ "${AQ_DRY_RUN}" -eq 0 ]; then
+if [ "$(id -u)" -ne 0 ] && [ "${AQ_DRY_RUN}" -eq 0 ] && [ -z "${AQ_ROOT}" ]; then
     echo "aquarius-gdm-display: this has to be run as root — it writes into /etc" >&2
     echo "                      and into the login screen's own folder." >&2
     echo "                      Try:  sudo /usr/libexec/aquarius-gdm-display" >&2
@@ -159,7 +272,7 @@ fi
 # is about proving a build step ran; nothing is being proved here.
 AQ_NEWEST=""
 AQ_NEWEST_HOME=""
-for aq_home in /home/*; do
+for aq_home in "${AQ_HOMES}"/*; do
     [ -d "${aq_home}" ] || continue
     aq_candidate="${aq_home}/.config/monitors.xml"
     [ -r "${aq_candidate}" ] || continue
@@ -180,35 +293,68 @@ fi
 
 say "using ${AQ_NEWEST}"
 
+AQ_SCALES="$(sed -n 's/.*<scale>\(.*\)<\/scale>.*/\1/p' "${AQ_NEWEST}" | sort -u | tr '\n' ' ')"
+say "the screen sizes in it: ${AQ_SCALES:-(none named — the monitors run at 100%)}"
+
 # -----------------------------------------------------------------------------
-# 2. Check it before trusting it
+# 2. Make a SAFE version of it — this is the step that stops the black screen
 # -----------------------------------------------------------------------------
-# A truncated or half-written monitors.xml handed to the login screen is a
-# genuinely bad outcome — mutter can end up with no usable output configuration
-# and show a blank screen. So: it has to parse as XML, and it has to actually be
-# a monitors file, before it goes anywhere.
-if ! python3 -c '
-import sys, xml.etree.ElementTree as ET
-try:
-    root = ET.parse(sys.argv[1]).getroot()
-except Exception as problem:
-    print("  it is not valid XML: %s" % problem)
-    sys.exit(1)
-if root.tag != "monitors":
-    print("  its top element is <%s>, not <monitors>" % root.tag)
-    sys.exit(1)
-if root.find("configuration") is None:
-    print("  it has no <configuration> in it")
-    sys.exit(1)
-sys.exit(0)
-' "${AQ_NEWEST}"; then
-    say "that file is not a usable display arrangement, so nothing was copied."
-    say "The login screen keeps whatever it had. Nothing is broken."
+# ⚠️ NOTHING BELOW THIS POINT MAY COPY ${AQ_NEWEST} DIRECTLY. Read the warning
+# in this program's header: handing GNOME's login screen a part size (125%) it
+# has not been told it may use produces a black screen with a mouse pointer and
+# no error anywhere. That is the bug of 2026-09-05.
+#
+# The sanitiser does two jobs at once, and the second one used to be a block of
+# python inline here:
+#
+#   * it CHECKS the file — valid XML, really a <monitors> document, has a
+#     <configuration> in it. A truncated or half-written one is refused.
+#   * it FIXES the sizes it must, and only those.
+#
+# Its exit code is the whole contract: 0 means "the safe copy is written and you
+# may use it", anything else means "do not copy anything". There is no third
+# answer and no partial success — because the failure mode we are defending
+# against is precisely a file that was almost right.
+AQ_SAFE=""
+aq_cleanup() { [ -n "${AQ_SAFE}" ] && rm -f "${AQ_SAFE}"; }
+trap aq_cleanup EXIT
+
+if [ ! -x "${AQ_SANITIZER}" ]; then
+    note "WARNING: ${AQ_SANITIZER} is missing, so there is no way to check this"
+    note "file is safe for the login screen. Nothing was copied — that is"
+    note "deliberate. The login screen keeps whatever it had."
     exit 0
 fi
 
-AQ_SCALES="$(sed -n 's/.*<scale>\(.*\)<\/scale>.*/\1/p' "${AQ_NEWEST}" | sort -u | tr '\n' ' ')"
-say "the screen sizes in it: ${AQ_SCALES:-(none named — the monitors run at 100%)}"
+AQ_SAFE="$(mktemp -t aquarius-monitors.XXXXXX)" || {
+    note "could not make a temporary file, so nothing was copied."
+    exit 0
+}
+
+AQ_SANITIZE_ARGS=""
+if aq_fractional_allowed; then
+    AQ_SANITIZE_ARGS="--allow-fractional"
+    note "part sizes are switched ON for the login screen (${AQ_FRACTIONAL_MARKER})"
+fi
+
+# Every line the sanitiser prints goes into the log as well as the journal. This
+# is the record of WHY the login screen ended up the size it did, and it is the
+# first thing to read when somebody asks.
+AQ_SANITIZE_OUT="$("${AQ_SANITIZER}" ${AQ_SANITIZE_ARGS} "${AQ_NEWEST}" "${AQ_SAFE}" 2>&1)"
+AQ_SANITIZE_RC=$?
+
+while IFS= read -r aq_line; do
+    [ -n "${aq_line}" ] && note "${aq_line}"
+done <<< "${AQ_SANITIZE_OUT}"
+
+if [ "${AQ_SANITIZE_RC}" -ne 0 ] || [ ! -s "${AQ_SAFE}" ]; then
+    note "that file could not be made safe for the login screen, so nothing was"
+    note "copied. The login screen keeps whatever it had. Nothing is broken."
+    exit 0
+fi
+
+AQ_SAFE_SCALES="$(sed -n 's/.*<scale>\(.*\)<\/scale>.*/\1/p' "${AQ_SAFE}" | sort -u | tr '\n' ' ')"
+say "the sizes the login screen will be given: ${AQ_SAFE_SCALES:-(none named — 100%)}"
 
 # -----------------------------------------------------------------------------
 # 3. Work out the one number our own greeter reads
@@ -251,24 +397,61 @@ fi
 # install(1) rather than cp: it sets the owner and the permissions in the same
 # breath, and it writes to a temporary name and renames, so a reader can never
 # see a half-written file.
-install -D -o root -g root -m 0644 "${AQ_NEWEST}" "${AQ_SYSTEM_XML}"
-say "wrote ${AQ_SYSTEM_XML}"
+# ⚠️ ${AQ_SAFE} AND NOT ${AQ_NEWEST}. The sanitised copy is the only thing that
+# may reach the login screen. See the header, and the bug of 2026-09-05.
+#
+# Each write is CHECKED and reported honestly. It used to say "wrote X"
+# unconditionally, on the line after the command, which meant a failed copy
+# produced a log saying it had succeeded — and this log is the thing somebody
+# reads when the login screen is the wrong size.
+#
+# The parent folder is made in its own step rather than relying on `install -D`,
+# which creates parents with GNU coreutils and does not on BSD. The image only
+# has the GNU one; the tests run wherever the tests run.
+aq_install_copy() {
+    local destination="$1"
+    shift
+    if ! install -d -m 0755 "$(dirname "${destination}")" 2> /dev/null; then
+        note "could not make the folder for ${destination} — it was not written."
+        return 1
+    fi
+    if install "$@" -m 0644 "${AQ_SAFE}" "${destination}"; then
+        note "wrote ${destination}"
+        return 0
+    fi
+    note "could not write ${destination}. The login screen keeps whatever it had there."
+    return 1
+}
+
+if [ -n "${AQ_ROOT}" ]; then
+    aq_install_copy "${AQ_SYSTEM_XML}"
+else
+    aq_install_copy "${AQ_SYSTEM_XML}" -o root -g root
+fi
 
 # The gdm user's own folder. This only exists if the gdm package is installed,
 # which it always is here — but a missing user should be a message, not a stack
 # of errors.
-if getent passwd gdm > /dev/null 2>&1; then
-    install -d -o gdm -g gdm -m 0700 "${AQ_GDM_DIR}"
-    install -o gdm -g gdm -m 0644 "${AQ_NEWEST}" "${AQ_GDM_XML}"
-    say "wrote ${AQ_GDM_XML}"
+if [ -n "${AQ_ROOT}" ]; then
+    # Under a test root there is no gdm user and no right to give a file away,
+    # so the copy is made as whoever is running. The CONTENT is the thing being
+    # tested; the ownership is checked on a real machine by the CI step.
+    aq_install_copy "${AQ_GDM_XML}"
+elif getent passwd gdm > /dev/null 2>&1; then
+    install -d -o gdm -g gdm -m 0700 "${AQ_GDM_DIR}" 2> /dev/null || true
+    aq_install_copy "${AQ_GDM_XML}" -o gdm -g gdm
 else
     say "there is no 'gdm' user on this machine, so the second copy was skipped."
 fi
 
-install -d -o root -g root -m 0755 "${AQ_STATE_DIR}"
+if [ -n "${AQ_ROOT}" ]; then
+    install -d -m 0755 "${AQ_STATE_DIR}"
+else
+    install -d -o root -g root -m 0755 "${AQ_STATE_DIR}"
+fi
 printf '%s\n' "${AQ_SCALE}" > "${AQ_SCALE_FILE}"
 chmod 0644 "${AQ_SCALE_FILE}"
-say "wrote ${AQ_SCALE_FILE}"
+note "wrote ${AQ_SCALE_FILE} (${AQ_SCALE}x, for the AquariusOS greeter)"
 
 # -----------------------------------------------------------------------------
 # 5. SELinux
