@@ -1,0 +1,295 @@
+#!/usr/bin/bash
+# =============================================================================
+# aquarius-gdm-guard — if the login screen does not appear, take away the thing
+#                      most likely to be stopping it, and try once more
+# =============================================================================
+# WHAT THIS IS FOR, IN PLAIN ENGLISH
+#
+# On 2026-09-05 the bench machine booted to a black screen with a mouse pointer
+# on it and nothing else. No login screen. The cause was a display arrangement
+# that AquariusOS had helpfully copied to the login screen, containing a size
+# the login screen could not do (see aquarius-monitors-sanitize for the whole
+# story). The fix, once someone worked it out, was to delete two files and
+# restart the login screen.
+#
+# The sanitiser now makes sure that particular file is never wrong again. This
+# is the SECOND line of defence: the one that runs when something we did not
+# predict goes wrong in the same place. It watches the boot, and if no login
+# screen has appeared after a short while, it undoes the only thing AquariusOS
+# added to the login screen — the copied display arrangement — and restarts it.
+#
+# Nobody has to know any of this. The machine either comes up, or it comes up
+# forty-five seconds later looking slightly small, and there is a line in the
+# log saying exactly what happened and why.
+#
+# -----------------------------------------------------------------------------
+# WHEN IT DECIDES SOMETHING IS WRONG — the exact trigger, so it cannot surprise
+# -----------------------------------------------------------------------------
+# It gives up and acts when ALL of these are true:
+#
+#   1. GDM is the login screen this computer is using       (not greetd, not none)
+#   2. at least one of the two copied files actually exists  (there is something
+#                                                             to take away)
+#   3. 45 seconds after the login screen was started, there is still NO
+#      graphical session on this machine — no greeter, and nobody logged in
+#   4. it has not already acted once during this boot
+#
+# If ANY of those is false it does nothing at all and exits successfully. In
+# particular: it does not care whether GDM is "running". GDM restarts itself
+# forever, so "running" is true even in the broken case; that is exactly why a
+# systemd OnFailure= hook on gdm.service cannot catch this and why this program
+# exists at all. What it looks at instead is whether a SESSION appeared, which
+# is the thing a person would call "the login screen came up".
+#
+# -----------------------------------------------------------------------------
+# WHY IT CANNOT LOOP
+# -----------------------------------------------------------------------------
+# Three separate reasons, because a repair that fights the machine is worse
+# than the fault it repairs:
+#
+#   * It is a Type=oneshot service ordered After=display-manager.service. It
+#     runs ONCE, when the login screen is started at boot. Restarting
+#     gdm.service does not start this service again — After= is an ordering
+#     rule for startup, not a trigger.
+#   * It writes a stamp at /run/aquarius/gdm-guard-acted before it acts, and
+#     refuses to act if the stamp is there. /run is emptied at every boot, so
+#     the stamp means "already tried, this boot".
+#   * It acts exactly once and then exits. There is no retry, no second wait
+#     and no timer. If the restart does not help, the fault was not this one,
+#     and the right thing is to stop and leave the evidence alone.
+#
+# -----------------------------------------------------------------------------
+# WHAT IT TAKES AWAY, AND WHY THAT IS SAFE
+# -----------------------------------------------------------------------------
+#   /etc/xdg/monitors.xml               both are COPIES, made by
+#   /var/lib/gdm/.config/monitors.xml   /usr/libexec/aquarius-gdm-display
+#
+# Neither is anybody's own file, neither holds anything that is not also in the
+# home folder it was copied from, and losing both costs exactly one thing: the
+# login screen goes back to 100%, which is what every stock Fedora machine
+# does. They are re-made at the next logout or the next boot — by which time
+# the sanitiser will have made them safe.
+#
+# RUNNING IT BY HAND
+#   sudo /usr/libexec/aquarius-gdm-guard --status    what it would look at
+#   sudo /usr/libexec/aquarius-gdm-guard --now       do the repair immediately
+# =============================================================================
+
+set -uo pipefail
+
+AQ_SYSTEM_XML="/etc/xdg/monitors.xml"
+AQ_GDM_XML="/var/lib/gdm/.config/monitors.xml"
+AQ_STATE_DIR="/var/lib/aquarius"
+AQ_LOG="${AQ_STATE_DIR}/gdm-display.log"
+AQ_STAMP_DIR="/run/aquarius"
+AQ_STAMP="${AQ_STAMP_DIR}/gdm-guard-acted"
+
+# How long to give the login screen before deciding it is not coming. 45
+# seconds is the number in the header and the number here; if it ever changes,
+# it changes in both places and in docs/restart/login.md.
+AQ_TOTAL_WAIT=45
+# How long to wait before looking at all. A login screen that has not appeared
+# in the first twenty seconds is not necessarily broken — a slow disk, a slow
+# graphics driver — so the first look is deliberately late.
+AQ_FIRST_LOOK=20
+AQ_POLL_EVERY=5
+
+say() { echo "aquarius-gdm-guard: $*"; }
+
+# Everything this program decides is written down, because the whole point is
+# that a person finds out afterwards why their login screen is a different size
+# than they left it. The log is best-effort: a full disk must not turn a repair
+# into a failure.
+note() {
+    say "$*"
+    mkdir -p "${AQ_STATE_DIR}" 2> /dev/null || true
+    printf '%s  aquarius-gdm-guard: %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" \
+        >> "${AQ_LOG}" 2> /dev/null || true
+}
+
+# -----------------------------------------------------------------------------
+# Is there a graphical session on this machine?
+# -----------------------------------------------------------------------------
+# "The login screen came up" and "somebody is already logged in" are both fine,
+# and both are the same question to logind: is there a session whose type is a
+# graphical one?
+#
+# It is asked this roundabout way — list the session ids, then ask about each
+# one — because the COLUMNS of `loginctl list-sessions` have changed between
+# systemd versions and the first column has not, while `show-session -p Type
+# --value` has meant the same thing for a decade. Parsing the table would be a
+# check that quietly stops working at some future Fedora.
+aq_graphical_session_exists() {
+    local session type
+    for session in $(loginctl list-sessions --no-legend 2> /dev/null | awk '{print $1}'); do
+        type="$(loginctl show-session "${session}" -p Type --value 2> /dev/null)"
+        case "${type}" in
+            wayland | x11 | mir) return 0 ;;
+        esac
+    done
+    return 1
+}
+
+# A second, independent signal: does the "gdm" user have a session? That is the
+# greeter itself. Checked as well as the above rather than instead of it,
+# because on a machine set to log somebody in automatically there is never a
+# greeter session at all, and the guard must not treat a successful automatic
+# login as a failure.
+aq_greeter_user_session_exists() {
+    local state
+    state="$(loginctl show-user gdm -p State --value 2> /dev/null)"
+    case "${state}" in
+        active | online | opening) return 0 ;;
+    esac
+    return 1
+}
+
+aq_login_screen_is_up() {
+    aq_graphical_session_exists || aq_greeter_user_session_exists
+}
+
+aq_copies_exist() {
+    [ -e "${AQ_SYSTEM_XML}" ] || [ -e "${AQ_GDM_XML}" ]
+}
+
+aq_status() {
+    echo "Is GDM the login screen in use?"
+    if systemctl is-enabled gdm.service > /dev/null 2>&1; then
+        echo "  yes"
+    else
+        echo "  no — this guard does nothing (it only knows how to repair GDM)"
+    fi
+
+    echo "Are the copied display arrangements there?"
+    for f in "${AQ_SYSTEM_XML}" "${AQ_GDM_XML}"; do
+        if [ -e "${f}" ]; then
+            echo "  yes  ${f}"
+        else
+            echo "  no   ${f}"
+        fi
+    done
+
+    echo "Is there a graphical session right now?"
+    if aq_login_screen_is_up; then
+        echo "  yes — nothing to repair"
+    else
+        echo "  NO  — if this were 45 seconds into a boot, the guard would act"
+    fi
+
+    echo "Has the guard already acted during this boot?"
+    if [ -e "${AQ_STAMP}" ]; then
+        echo "  yes  ${AQ_STAMP} — it will not act again until the next boot"
+    else
+        echo "  no"
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# The repair itself
+# -----------------------------------------------------------------------------
+aq_repair() {
+    mkdir -p "${AQ_STAMP_DIR}" 2> /dev/null || true
+    : > "${AQ_STAMP}" 2> /dev/null || true
+
+    note "no login screen appeared within ${AQ_TOTAL_WAIT} seconds of the login"
+    note "screen starting. The most likely cause is the display arrangement"
+    note "AquariusOS copied for it, so both copies are being removed and the"
+    note "login screen restarted once. It will come back at 100%."
+
+    rm -f "${AQ_SYSTEM_XML}" "${AQ_GDM_XML}" 2> /dev/null || true
+    note "removed ${AQ_SYSTEM_XML} and ${AQ_GDM_XML}"
+
+    # A few lines of the greeter's own complaint, kept next to the decision, so
+    # that the log says what the machine thought was wrong and not only what we
+    # did about it. Best-effort: no journal is not a reason to skip the repair.
+    if command -v journalctl > /dev/null 2>&1; then
+        journalctl -b -u gdm.service -n 15 --no-pager 2> /dev/null \
+            | sed 's/^/    /' >> "${AQ_LOG}" 2> /dev/null || true
+    fi
+
+    if systemctl restart gdm.service 2> /dev/null; then
+        note "the login screen was restarted."
+    else
+        note "the login screen would not restart. Press Ctrl+Alt+F3 for a text"
+        note "login and run: sudo systemctl restart gdm"
+    fi
+
+    note "If the login screen is now the wrong size, that is this repair and not"
+    note "a fault: run 'sudo aq login scale status' to see what happened."
+}
+
+case "${1:-}" in
+    -h | --help | help)
+        sed -n '2,90p' "$0" | sed 's/^# \{0,1\}//'
+        exit 0
+        ;;
+    --status)
+        aq_status
+        exit 0
+        ;;
+    --now)
+        if [ "$(id -u)" -ne 0 ]; then
+            echo "aquarius-gdm-guard: this has to be run as root." >&2
+            exit 1
+        fi
+        aq_repair
+        exit 0
+        ;;
+    "") : ;;
+    *)
+        echo "aquarius-gdm-guard: '$1' is not something this understands." >&2
+        echo "                    Try --help, --status or --now." >&2
+        exit 1
+        ;;
+esac
+
+# =============================================================================
+# The watch
+# =============================================================================
+# Every early exit below is a SUCCESS. This program is a safety net; a safety
+# net that reports failures gives a machine a red line in `systemctl status` for
+# the rest of its life because nothing went wrong.
+
+if [ -e "${AQ_STAMP}" ]; then
+    say "already acted once during this boot — doing nothing."
+    exit 0
+fi
+
+# greetd is the other login screen (see `aq login`). This guard knows how to
+# repair GDM and nothing else, and quietly standing aside is much better than
+# restarting a login screen it does not understand.
+if ! systemctl is-enabled gdm.service > /dev/null 2>&1; then
+    say "GDM is not the login screen on this computer — nothing to watch."
+    exit 0
+fi
+
+# If neither copy exists there is nothing this guard could take away, so its
+# repair would be a login-screen restart for no reason. A machine where nobody
+# has ever set a display scale is in exactly this state.
+if ! aq_copies_exist; then
+    say "no copied display arrangement to take away — nothing to watch."
+    exit 0
+fi
+
+say "watching for the login screen (up to ${AQ_TOTAL_WAIT}s)."
+
+aq_waited=0
+sleep "${AQ_FIRST_LOOK}"
+aq_waited="${AQ_FIRST_LOOK}"
+
+while [ "${aq_waited}" -lt "${AQ_TOTAL_WAIT}" ]; do
+    if aq_login_screen_is_up; then
+        say "the login screen is up after ${aq_waited}s. Nothing to do."
+        exit 0
+    fi
+    sleep "${AQ_POLL_EVERY}"
+    aq_waited=$((aq_waited + AQ_POLL_EVERY))
+done
+
+if aq_login_screen_is_up; then
+    say "the login screen is up after ${aq_waited}s. Nothing to do."
+    exit 0
+fi
+
+aq_repair
+exit 0

@@ -1,0 +1,73 @@
+# =============================================================================
+# aquarius-gdm-guard.service — if the login screen never appears, undo our
+#                              change to it and try once more
+# =============================================================================
+# WHAT THIS IS FOR
+#
+# On 2026-09-05 the bench machine booted to a black screen with a mouse pointer
+# and no login screen. AquariusOS had copied the display arrangement to the
+# login screen — a helpful thing — and that arrangement asked for a size the
+# login screen could not do, so it drew nothing at all.
+#
+# The sanitiser (aquarius-monitors-sanitize) now makes sure that exact file is
+# never wrong again. This service is the second line of defence for the case we
+# did not predict: it watches the boot, and if no login screen has appeared
+# after 45 seconds it removes the copied arrangement and restarts the login
+# screen once. The machine comes up. Slightly small, perhaps, but up.
+#
+# ⚠️ WHY THIS IS A SEPARATE SERVICE AND NOT `OnFailure=` ON gdm.service
+#
+# The obvious way to catch "the login screen is broken" is to hang an
+# OnFailure= off gdm.service. It does not work, and it is worth writing down
+# why so nobody spends an afternoon on it:
+#
+#   GDM NEVER FAILS. It is configured to restart itself, so when its greeter
+#   dies it starts another one, forever. systemd sees a service that is
+#   perfectly alive. `systemctl is-active gdm` says "active". OnFailure= never
+#   fires, and neither does anything else that waits for a failure — because
+#   from systemd's point of view nothing failed. What is actually broken is one
+#   step further in: the greeter comes up and draws nothing.
+#
+# So the question this service asks is not "did gdm fail" but "did a login
+# screen ever APPEAR" — is there a graphical session on this machine? That is
+# the same question a person asks by looking at the monitor.
+#
+# WHY After= AND NOT Requires=
+#   After=display-manager.service means "start me after the login screen is
+#   started, if it is going to be". It creates no dependency: this service can
+#   never be the reason a login screen does not start, which for a thing whose
+#   whole job is to rescue the login screen is the first rule.
+#
+# IT CANNOT LOOP. Type=oneshot, it runs once per boot, it acts at most once
+# (guarded by a stamp under /run, which is emptied at every boot), and
+# restarting gdm.service does not start this service again — After= orders
+# startup, it does not trigger. The full trigger conditions are written out in
+# the program's own header and in docs/restart/login.md.
+# =============================================================================
+[Unit]
+Description=Rescue the login screen if it never appears
+Documentation=https://github.com/stoneharborent/aquarius-os/blob/main/docs/restart/login.md
+After=display-manager.service systemd-logind.service
+Wants=systemd-logind.service
+# Only worth running on a machine that is trying to be graphical at all. A
+# server install, or a machine booted to a text console on purpose, has no
+# login screen to rescue and should not have a service sitting there waiting
+# forty-five seconds to say so.
+ConditionPathExists=/usr/libexec/aquarius-gdm-guard
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/aquarius-gdm-guard
+RemainAfterExit=no
+# It waits up to 45 seconds by design, and it removes files and restarts a
+# service. 180 seconds is a generous outer bound that still guarantees it can
+# never sit there forever holding a slot.
+TimeoutStartSec=180
+# A safety net must never itself be a fault. If this program breaks, the
+# machine should carry on exactly as it would have without it.
+SuccessExitStatus=0 1
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical.target
