@@ -140,6 +140,11 @@ on:
       # vendor's firmware and both CPU microcodes. Same arrangement: builds and
       # checks, never publishes.
       - restart/firmware
+      # The "Failed Units: 1 systemd-remount-fs.service" line printed on the
+      # console at every boot — a service that cannot succeed on this kind of
+      # machine and was never detecting a real fault. Same arrangement: builds
+      # and checks, never publishes.
+      - restart/remount-fs
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -1333,6 +1338,133 @@ jobs:
             -e WANT_WATERMARK="${WATERMARK_SUM}" \
             -e WANT_FRAMES="${REPO_FRAMES}" \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-boot.sh
+
+      # ------------------------------------------------------------------------
+      # THE BOOT BANNER HAS NOTHING TO COMPLAIN ABOUT
+      # ------------------------------------------------------------------------
+      # Every boot, under the AquariusOS banner the step above just checked, the
+      # console printed:
+      #
+      #     Failed Units: 1
+      #       systemd-remount-fs.service
+      #
+      # Nothing was wrong. That service re-mounts `/` to match /etc/fstab, and on
+      # this operating system `/` is an overlay assembled in the boot ramdisk
+      # that the kernel refuses to re-mount. It asks a question this kind of
+      # machine has no answer to and reports failure for it, forever — which
+      # trains a person to ignore the one line that would matter if something
+      # ever really did break.
+      #
+      # The image ships a drop-in that skips the service on an image-mode boot.
+      # This reads it back OUT OF THE FINISHED IMAGE, which is the point: the
+      # build script's own check runs mid-build, and something later in the
+      # build could still overwrite the file. This is the last word.
+      #
+      # ⚠️ WHAT THIS CANNOT PROVE, AND SAYS SO. The condition turns on a marker
+      # file, /run/ostree-booted, that only exists on a real booted machine.
+      # A container cannot demonstrate the skip actually happening. This checks
+      # that the instruction is present, correctly spelled, and attached to a
+      # unit that exists. The real proof is the bench console after a reboot —
+      # docs/restart/bench-rebase.md says what to look for.
+      - name: Check the boot banner has nothing to complain about
+        run: |
+          set -euo pipefail
+          cat > /tmp/verify-remount.sh <<'SCRIPT'
+          set -u
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+
+          DROPIN=/usr/lib/systemd/system/systemd-remount-fs.service.d/10-aquarius-ostree.conf
+          UNIT=/usr/lib/systemd/system/systemd-remount-fs.service
+
+          echo "== the drop-in is in the finished image =="
+          if [ -f "${DROPIN}" ]; then
+            ok "${DROPIN} is present"
+            echo "     what it actually says:"
+            sed 's/^/       /' "${DROPIN}" | grep -v '^ *#' | grep -v '^ *$' || true
+          else
+            bad "${DROPIN} is missing — the console would say 'Failed Units: 1' on every boot"
+          fi
+
+          echo "== it says the one thing it has to say =="
+          # Contents, never timestamps. An exact-line match: a near miss here
+          # (ConditionPathExist, a lost '!', a stray space) is a line systemd
+          # silently ignores, and the symptom is identical to no file at all.
+          if grep -qx 'ConditionPathExists=!/run/ostree-booted' "${DROPIN}" 2>/dev/null; then
+            ok "ConditionPathExists=!/run/ostree-booted is there, exactly"
+          else
+            bad "the condition line is missing or misspelled — systemd would skip the"
+            bad "line, run the service anyway, and the banner would come back"
+          fi
+
+          echo "== it is under a [Unit] heading =="
+          # A setting outside its section is read as belonging to whatever came
+          # before it, and ConditionPathExists= only means anything under [Unit].
+          if awk '/^\[Unit\]/{u=1;next} /^\[/{u=0} u && /^ConditionPathExists=!\/run\/ostree-booted$/{found=1} END{exit !found}' "${DROPIN}" 2>/dev/null; then
+            ok "the condition sits under [Unit], where it counts"
+          else
+            bad "the condition is not under a [Unit] heading — systemd would ignore it"
+          fi
+
+          echo "== the unit it attaches to exists =="
+          # systemd matches drop-ins to units by the folder name. Rename the
+          # unit upstream, or mistype the folder, and this file is never read —
+          # with no error anywhere.
+          if [ -f "${UNIT}" ]; then
+            ok "systemd-remount-fs.service exists, so the drop-in folder name is right"
+          else
+            bad "systemd-remount-fs.service is not in this image — the drop-in folder"
+            bad "name no longer matches any unit, so the file does nothing"
+          fi
+
+          echo "== systemd itself can read the result =="
+          # Advisory: inside a container systemd-analyze frequently cannot start
+          # a manager at all. If that happens it never reads the file, prints no
+          # complaint, and a check that only looks for complaints reports a
+          # confident OK over a tool that did nothing. So say which happened.
+          #
+          # ⚠️ AND CHECK THE TOOL IS EVEN THERE FIRST. Without this, a missing
+          # systemd-analyze produces an empty answer, matches none of the
+          # patterns below, and falls into the final `else` — printing "systemd
+          # read the unit and understood every line" about a tool that was never
+          # run. That is the unearned green tick this repo has a rule against.
+          if ! command -v systemd-analyze > /dev/null 2>&1; then
+            echo "  NOTE systemd-analyze is not in this image, so nothing was verified"
+            echo "       here. The checks above are what guard this."
+          else
+            v="$(systemd-analyze verify systemd-remount-fs.service 2>&1 || true)"
+            printf '%s\n' "${v}" | sed 's/^/     /'
+            if printf '%s' "${v}" | grep -Eqi "failed to initialize manager|failed to lookup runtimedirectory"; then
+              echo "  NOTE systemd-analyze could not start in this container, so it did not"
+              echo "       read the file. The checks above are what guard this."
+            elif printf '%s' "${v}" | grep -Eqi "unknown (key|lvalue)|failed to parse"; then
+              bad "systemd cannot understand part of the unit with our drop-in applied"
+            else
+              ok "systemd read the unit with our drop-in and understood every line"
+            fi
+          fi
+
+          echo "== and the service is NOT masked =="
+          # Masking would also silence the banner, and would be the wrong fix: it
+          # kills the service on every machine including ones where it has a real
+          # job. If somebody 'fixes' this again by masking, say so.
+          if [ -L "${UNIT}" ] && [ "$(readlink "${UNIT}")" = "/dev/null" ]; then
+            bad "systemd-remount-fs.service is masked. That is not the fix we chose —"
+            bad "see the drop-in's own header for why the condition is used instead."
+          else
+            ok "the service is left intact and merely skipped on an image-mode boot"
+          fi
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::The systemd-remount-fs drop-in is wrong or missing. Machines booting this image would print 'Failed Units: 1' on every boot. See docs/restart/bench-rebase.md."
+            exit 1
+          fi
+          echo "All boot-banner checks passed."
+          SCRIPT
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-remount.sh
 
       # ------------------------------------------------------------------------
       # THE "NO STRAY NAMES" AUDIT

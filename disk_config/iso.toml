@@ -72,10 +72,98 @@ volume_id = "AQUARIUSOS"
 application_id = "AquariusOS"
 publisher = "Stone Harbor Entertainment"
 
+# ------------------------------------------------------------------------------
+# What runs on the freshly installed machine, once, before its first restart
+# ------------------------------------------------------------------------------
+# `%post` is Anaconda's "now that the system is written to disk, run this inside
+# it" step. Two things happen here, and they are unrelated to each other.
+#
+# 1. `bootc switch` — the whole point of the ISO, described above: it tells the
+#    new machine which published image it IS, and should keep updating from.
+#
+# 2. The `/` line is taken back out of /etc/fstab. This one needs explaining.
+#
+# ------------------------------------------------------------------------------
+# WHY WE DELETE A LINE THE INSTALLER JUST WROTE
+# ------------------------------------------------------------------------------
+# THE SYMPTOM. On a machine installed from an ISO without this step, every boot
+# ends with the console banner saying:
+#
+#     Failed Units: 1
+#       systemd-remount-fs.service
+#
+# Nothing is broken. But a person reading "Failed" on their screen every morning
+# reasonably assumes something is wrong — and the next time something genuinely
+# is, that line is already there and means nothing.
+#
+# THE CAUSE, in three steps, none of which is anybody's mistake:
+#
+#   a. Anaconda writes an /etc/fstab the way it has for twenty years, and that
+#      includes a line for `/`.
+#   b. On first boot, bootc notices the fstab came from Anaconda and ADDS `ro`
+#      to that line (bootc-fstab-edit.service). That was itself a workaround for
+#      a different problem.
+#   c. systemd-remount-fs.service then reads the line and tries to re-mount `/`
+#      to match it. On this operating system `/` is not a disk — it is a
+#      read-only checksummed image with a writable layer on top (composefs),
+#      assembled in the boot ramdisk and already mounted correctly. The kernel
+#      refuses to re-mount an overlay with different options:
+#
+#        mount: /: fsconfig system call failed: overlay: No changes allowed in reconfigure.
+#
+#      So the service fails. Every boot, forever.
+#
+# THE FIX IS THE ONE BOOTC ITSELF PRESCRIBES. An image-mode system should have
+# no line for `/` in /etc/fstab at all: the root filesystem is described by the
+# kernel command line (`root=`, `rootflags=`) and mounted from the ramdisk, and
+# fstab never gets a say. bootc's maintainer gave that answer in both trackers
+# and it is now in bootc's install documentation:
+#
+#     https://bootc-dev.github.io/bootc/bootc-install.html
+#     https://github.com/bootc-dev/bootc/issues/971
+#     https://github.com/ostreedev/ostree/issues/3193
+#
+# It sticks, permanently: bootc's fstab editor only ever MODIFIES an existing
+# `/` line to add `ro`. With no such line it changes nothing and never adds one.
+#
+# ⚠️ ONLY THE `/` LINE GOES. The other lines are real mounts this machine needs
+# — `/boot`, `/boot/efi`, `/home`, `/var` — and deleting `/var` or `/home` would
+# produce a computer that does not start. The published one-line workaround
+# going around for this (`grep "boot " /etc/fstab > …`) throws those away and
+# must not be copied. The awk below matches on the SECOND field being exactly
+# `/`, so it removes that one line and nothing else, and leaves comments and
+# blank lines alone.
+#
+# `cat > /etc/fstab` rather than `mv`: it rewrites the file that is already
+# there, which keeps its permissions and its SELinux label. A moved-in
+# replacement can arrive mislabelled, and a mislabelled fstab is a bad first
+# morning.
+#
+# ⚠️ THE `grep /boot` GUARD IS NOT DECORATION. If the awk above ever went wrong,
+# the temporary file could be empty, and copying an empty file over /etc/fstab
+# would produce a machine with no /boot, no /home and no /var — one that does
+# not start. So the new file is only accepted if it still contains the /boot
+# line, which proves it survived. If it does not, NOTHING is written, the
+# original fstab is left exactly as it was, and the worst case is the cosmetic
+# banner this whole section is about — which the image handles anyway, below.
+#
+# Machines installed from an OLDER ISO still have the bad line, because
+# /etc/fstab is on their disk and no image update can reach it. They are covered
+# separately, in the image, by
+# system_files/usr/lib/systemd/system/systemd-remount-fs.service.d/10-aquarius-ostree.conf
 [customizations.installer.kickstart]
 contents = """
 %post
 bootc switch --mutate-in-place --transport registry ghcr.io/stoneharborent/aquarius-os:latest
+
+awk '$1 ~ /^#/ || $2 != "/"' /etc/fstab > /tmp/aq-fstab
+if grep -q '[[:space:]]/boot[[:space:]]' /tmp/aq-fstab; then
+  echo '# The entry for / was removed by the AquariusOS installer, on purpose.' >> /tmp/aq-fstab
+  echo '# bootc mounts / itself, from the kernel command line. An entry here makes' >> /tmp/aq-fstab
+  echo '# systemd-remount-fs.service fail on every boot. Do not add one back.' >> /tmp/aq-fstab
+  cat /tmp/aq-fstab > /etc/fstab
+fi
+rm -f /tmp/aq-fstab
 %end
 """
 

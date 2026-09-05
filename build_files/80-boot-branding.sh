@@ -19,6 +19,8 @@
 #   2. Tell the boot menu to call itself AquariusOS.
 #   3. Make the kernel actually ASK for a graphical splash at start-up.
 #   4. Fix the text banners — /etc/issue, /etc/motd, /etc/fedora-release.
+#  4b. Check that the banner has nothing to complain about — the "Failed Units"
+#      line that used to print under it, every boot, for no real reason.
 #   5. Replace the Fedora artwork that other programs still point at by name.
 #   6. Rebuild the boot ramdisk, so that all of the above is really used.
 #
@@ -441,6 +443,109 @@ if [ -s /etc/motd ]; then
     bad "/etc/motd is not empty — every ssh login would print it"
 else
     ok "/etc/motd is empty (deliberate)"
+fi
+
+# ==============================================================================
+# 4b. THE OTHER THING PRINTED ON THAT SAME SCREEN: "Failed Units: 1"
+# ==============================================================================
+# Directly under the banner section 4 just wrote, every boot printed this:
+#
+#     Failed Units: 1
+#       systemd-remount-fs.service
+#
+# Nothing was wrong. Nothing was missing. The machine worked perfectly. But a
+# person who reads "Failed" on their screen every morning, forever, reasonably
+# assumes something is wrong with their computer — and the next time something
+# genuinely IS wrong, that line is already there and means nothing. A warning
+# that is always on is not a warning, and section 4 above is about exactly this
+# screen, so this belongs here.
+#
+# ------------------------------------------------------------------------------
+# WHY THAT SERVICE COULD NEVER SUCCEED HERE
+# ------------------------------------------------------------------------------
+# systemd-remount-fs.service exists to re-mount `/` to match /etc/fstab, which
+# is a sensible thing to do on an ordinary computer where `/` is a disk.
+#
+# On AquariusOS `/` is not a disk. It is a read-only, checksummed image with a
+# writable layer on top (composefs), assembled in the boot ramdisk before
+# systemd starts and already mounted correctly. The kernel REFUSES to re-mount
+# an overlay with different options — that is the exact journal message:
+#
+#     mount: /: fsconfig system call failed: overlay: No changes allowed in reconfigure.
+#
+# So the service asks a question this kind of computer has no answer to, is told
+# no, and reports failure. Every boot.
+#
+# The fix ships as a drop-in file that arrived at step 5 with the rest of
+# system_files/. It adds one line — "skip this on an image-mode boot" — and the
+# whole story, including the upstream links, is written inside the file itself.
+#
+# ⚠️ IT IS CHECKED HERE, NOT AT STEP 2 WHERE THE FILESYSTEMS ARE. Step 2 runs
+# BEFORE step 5, so at step 2 this file does not exist yet and the check would
+# fail on a perfectly good image. This step runs after step 5, and is about this
+# screen anyway.
+say "The boot banner has nothing to complain about"
+
+AQ_REMOUNT_DROPIN=/usr/lib/systemd/system/systemd-remount-fs.service.d/10-aquarius-ostree.conf
+
+# Contents, never timestamps — the rule at the top of aq-lib.sh. This reads the
+# actual setting out of the actual file in the actual image.
+aq_file_has "${AQ_REMOUNT_DROPIN}" \
+    '^ConditionPathExists=!/run/ostree-booted$' \
+    "the drop-in tells systemd-remount-fs to skip an image-mode boot"
+
+# The service it is a drop-in FOR has to exist, or that folder is just a folder
+# with a file in it that nothing will ever read. systemd matches drop-ins to
+# units by folder name and says nothing at all when the name is wrong.
+if [ -f /usr/lib/systemd/system/systemd-remount-fs.service ]; then
+    ok "systemd-remount-fs.service is present, so the drop-in has something to attach to"
+else
+    bad "systemd-remount-fs.service does not exist — the drop-in folder is misnamed,"
+    bad "or systemd renamed the unit. Either way the drop-in does nothing."
+fi
+
+# ⚠️ THE MARKER FILE CANNOT BE CHECKED HERE, AND THAT IS NOT A GAP.
+# /run/ostree-booted is created by ostree in the boot ramdisk — touch_run_ostree()
+# in ostree's switchroot code — on every boot of an image-mode machine, before
+# systemd starts. It is what bootc itself uses to ask the same question. This is
+# a container being built, not a booted machine, so it is legitimately absent.
+# Its presence HERE would mean the condition might skip the service in contexts
+# we never intended, so absence is what we assert.
+#
+# The real proof is the bench console after a reboot. docs/restart/bench-rebase.md
+# says exactly what to look for.
+if [ -e /run/ostree-booted ]; then
+    bad "/run/ostree-booted exists during the BUILD. That is not expected and the"
+    bad "condition's behaviour should be re-checked before publishing this image."
+else
+    ok "/run/ostree-booted is absent at build time, as expected (it is a boot-time marker)"
+fi
+
+# systemd is fussy about unit files and says so only at runtime, on somebody's
+# machine, in a log they will never read. Ask it here instead. Its verdict is
+# advisory — in a container it also warns about units that only exist on a real
+# machine — so the output is printed and only a real parse failure is a fault.
+if aq_have systemd-analyze; then
+    aq_remount_verify="$(systemd-analyze verify systemd-remount-fs.service 2>&1 || true)"
+    printf '%s\n' "${aq_remount_verify}" | sed 's/^/  /'
+
+    # ⚠️ AND CHECK THAT IT ACTUALLY LOOKED. Inside a container systemd-analyze
+    # often cannot start a manager at all, never reaches the file, prints no
+    # complaint — and a check that only looks for complaints then reports a
+    # confident OK over a tool that did nothing. A green tick nobody earned is
+    # worse than no tick, so say which of the two happened. (This trap cost us
+    # the 2026-09-03 build; see the same guard in 75-aquarius-keys.sh.)
+    if printf '%s' "${aq_remount_verify}" \
+        | grep -Eqi "failed to initialize manager|failed to lookup runtimedirectory"; then
+        echo "  note   systemd-analyze could not start inside this container, so it did"
+        echo "         not read the drop-in. The content check above is what guards it."
+    elif printf '%s' "${aq_remount_verify}" \
+        | grep -Eqi "unknown (key|lvalue)|failed to parse"; then
+        bad "systemd cannot understand part of the drop-in (see above). A setting it"
+        bad "cannot read is a setting that does nothing, silently — and the banner stays."
+    else
+        ok "systemd read systemd-remount-fs.service with our drop-in and understood it"
+    fi
 fi
 
 # ==============================================================================
