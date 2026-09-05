@@ -140,6 +140,13 @@ on:
       # vendor's firmware and both CPU microcodes. Same arrangement: builds and
       # checks, never publishes.
       - restart/firmware
+      # The black login screen — the 2026-09-05 bench bug, where the machine
+      # booted to a mouse pointer on an empty screen. The display arrangement
+      # AquariusOS copies for the login screen is now made safe before it is
+      # handed over (part sizes become whole ones), and a guard removes it and
+      # restarts the login screen if none appears. Same arrangement as every
+      # side branch: builds and checks, never publishes.
+      - restart/gdm-scale-fix
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -202,6 +209,21 @@ jobs:
       # ------------------------------------------------------------------------
       - name: Check logging out leaves the machine clean
         run: ./tests/test-session-teardown.sh
+
+      # ------------------------------------------------------------------------
+      # The login screen can only be given a size it can draw
+      # ------------------------------------------------------------------------
+      # ⚠️ THIS IS THE FASTEST WARNING FOR THE WORST FAILURE THIS PROJECT HAS
+      # HAD. 2026-09-05: the bench booted to a black screen with a mouse pointer
+      # and no login screen, because AquariusOS had copied a display arrangement
+      # asking for 125% to a login screen that drew nothing rather than round it.
+      # A machine nobody can log in to is not a bug you find by looking at a
+      # build log, so the rule is checked here, before anything is built, and
+      # again inside the finished image further down.
+      #
+      # The first fixture in this test is Royce's own monitor.
+      - name: Check the login screen is only given a size it can draw
+        run: ./tests/test-gdm-scale-sanitize.sh
 
       - name: Work out what this image is called
         run: |
@@ -842,7 +864,9 @@ jobs:
               prefer-light \
               'Inter 11' \
               'JetBrains Mono 10' \
-              blue
+              blue \
+              scale-monitor-framebuffer \
+              xwayland-native-scaling
             do
               if grep -a -q "${want}" /etc/dconf/db/gdm; then
                 ok "the login screen carries '${want}'"
@@ -915,6 +939,135 @@ jobs:
             bad "the logout hook does not end in 'exit 0' — a logout could fail on it"
           fi
 
+          # ====================================================================
+          # ⚠️ THE BLACK SCREEN OF 2026-09-05 — the checks that stop it coming
+          #    back. Everything above is about the login screen looking right.
+          #    This is about it APPEARING AT ALL.
+          # ====================================================================
+          # The bench booted to a mouse pointer on an empty screen. The cause was
+          # this image's own helpfulness: it had copied Royce's display
+          # arrangement, which asks for 125%, to the login screen, and the login
+          # screen drew nothing rather than round it down.
+          echo "== the safety check on what the login screen is given =="
+          if [ -x /usr/libexec/aquarius-monitors-sanitize ]; then
+            ok "/usr/libexec/aquarius-monitors-sanitize is installed and executable"
+          else
+            bad "the sanitiser is missing — nothing would stop a part size reaching the login screen"
+          fi
+          if python3 -m py_compile /usr/libexec/aquarius-monitors-sanitize 2>/dev/null; then
+            ok "it is valid python"
+          else
+            bad "/usr/libexec/aquarius-monitors-sanitize does not compile"
+          fi
+
+          # ⚠️ THE RULE ITSELF, PROVED INSIDE THE FINISHED IMAGE, against Royce's
+          # own monitor. A sanitiser that is present and does nothing is exactly
+          # as bad as one that is absent and much harder to notice.
+          fixture_dir="$(mktemp -d)"
+          cat > "${fixture_dir}/in.xml" <<'XML'
+          <monitors version="2">
+            <configuration>
+              <logicalmonitor>
+                <x>0</x><y>0</y><scale>1.25</scale><primary>yes</primary>
+                <monitor>
+                  <monitorspec><connector>DP-1</connector></monitorspec>
+                  <mode><width>3840</width><height>2160</height><rate>59.997</rate></mode>
+                </monitor>
+              </logicalmonitor>
+            </configuration>
+          </monitors>
+          XML
+          if /usr/libexec/aquarius-monitors-sanitize \
+               "${fixture_dir}/in.xml" "${fixture_dir}/out.xml" >/dev/null 2>&1 \
+             && grep -q '<scale>1</scale>' "${fixture_dir}/out.xml"; then
+            ok "a 4K screen asking for 125% really comes out as 100%"
+          else
+            bad "the sanitiser did NOT turn 125% into 100% — the bench would boot to a black screen"
+          fi
+          # And it must refuse a file it cannot understand rather than pass it on.
+          printf '<monitors><configuration>' > "${fixture_dir}/broken.xml"
+          if /usr/libexec/aquarius-monitors-sanitize \
+               "${fixture_dir}/broken.xml" "${fixture_dir}/broken-out.xml" >/dev/null 2>&1; then
+            bad "the sanitiser accepted a half-written file — it must refuse"
+          elif [ -e "${fixture_dir}/broken-out.xml" ]; then
+            bad "the sanitiser refused a half-written file but wrote output anyway"
+          else
+            ok "a half-written arrangement is refused and nothing is written"
+          fi
+          rm -rf "${fixture_dir}"
+
+          # The messenger must USE it. The original bug was not a wrong rule, it
+          # was a copy with no rule in front of it, so this checks the wiring and
+          # not just the parts.
+          if grep -q 'aquarius-monitors-sanitize' /usr/libexec/aquarius-gdm-display; then
+            ok "the messenger runs the sanitiser before copying anything"
+          else
+            bad "/usr/libexec/aquarius-gdm-display does not call the sanitiser — that IS the 2026-09-05 bug"
+          fi
+          # ...and it must hand over the SAFE copy, not the original. Grepping for
+          # the tempting mistake rather than for the right answer: an `install` of
+          # ${AQ_NEWEST} is exactly how this regresses.
+          if grep -Eq '^\s*install .*\$\{AQ_NEWEST\}' /usr/libexec/aquarius-gdm-display; then
+            bad "the messenger still copies the user's file directly somewhere — only the sanitised copy may be handed over"
+          else
+            ok "nothing in the messenger copies the unsanitised file"
+          fi
+
+          echo "== the guard that rescues a login screen that never appears =="
+          if [ -x /usr/libexec/aquarius-gdm-guard ]; then
+            ok "/usr/libexec/aquarius-gdm-guard is installed and executable"
+          else
+            bad "the guard is missing — a black login screen would stay black"
+          fi
+          if bash -n /usr/libexec/aquarius-gdm-guard 2>/dev/null; then
+            ok "it is valid shell"
+          else
+            bad "/usr/libexec/aquarius-gdm-guard does not parse as shell"
+          fi
+          if systemctl is-enabled aquarius-gdm-guard.service > /dev/null 2>&1; then
+            ok "aquarius-gdm-guard.service is switched on"
+          else
+            bad "aquarius-gdm-guard.service is not switched on — nothing would rescue the login screen"
+          fi
+          # ⚠️ THE RESCUER MUST NEVER BE ABLE TO STOP THE RESCUE. After= orders
+          # it; Requires= would make the login screen depend on it.
+          if grep -q '^After=display-manager.service' /usr/lib/systemd/system/aquarius-gdm-guard.service; then
+            ok "it is ordered after the login screen and does not depend on it"
+          else
+            bad "the guard is not ordered After=display-manager.service"
+          fi
+          if grep -Eq '^(Requires|BindsTo|Requisite)=.*display-manager' \
+               /usr/lib/systemd/system/aquarius-gdm-guard.service; then
+            bad "the guard makes the login screen depend on it — a broken rescuer could stop the rescue"
+          else
+            ok "the login screen does not depend on the guard"
+          fi
+          # It repairs at most once per boot, and the stamp that guarantees that
+          # has to be on a filesystem that is emptied at boot. A stamp under /var
+          # would mean it repairs once in the machine's life and never again.
+          if grep -q '^AQ_STAMP_DIR="/run/' /usr/libexec/aquarius-gdm-guard; then
+            ok "its 'already tried' stamp is under /run, so it resets at every boot"
+          else
+            bad "the guard's stamp is not under /run — it would only ever repair once, ever"
+          fi
+
+          echo "== whole sizes are the default until somebody says otherwise =="
+          # Shipping the marker would mean shipping the untested behaviour to
+          # every machine. It is created by hand, on one machine, by
+          # `sudo aq login scale fractional`.
+          if [ -e /var/lib/aquarius/gdm-fractional-ok ]; then
+            bad "/var/lib/aquarius/gdm-fractional-ok is baked into the image — part sizes must be opt-in, per machine"
+          else
+            ok "part sizes are off by default (no marker file in the image)"
+          fi
+          if aq_out="$(aq login scale status 2>&1)"; then
+            ok "'aq login scale status' runs"
+            printf '%s\n' "${aq_out}" | sed 's/^/       /'
+          else
+            bad "'aq login scale status' failed"
+            printf '%s\n' "${aq_out}" | sed 's/^/       /'
+          fi
+
           if [ "$fails" -ne 0 ]; then
             echo "::error::The login screen is not set up the way this image intends."
             exit 1
@@ -924,6 +1077,36 @@ jobs:
           podman run --rm --pull=never -i \
             --entrypoint /usr/bin/bash \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-login.sh
+
+      # ------------------------------------------------------------------------
+      # The same rule table again, against the INSTALLED copies
+      # ------------------------------------------------------------------------
+      # The step before the build ran these tests against the files in the
+      # repository. This runs the identical tests against the programs as they
+      # actually exist in the finished image — which is the only version that
+      # will ever run on Royce's machine, and the one that a bad COPY step or a
+      # missing chmod would break without changing a single line of source.
+      - name: Check the login screen size rules hold in the finished image
+        run: |
+          set -euo pipefail
+          podman run --rm --pull=never \
+            -v "${GITHUB_WORKSPACE}/tests/test-gdm-scale-sanitize.sh:/tmp/test-gdm-scale.sh:ro" \
+            -v "${GITHUB_WORKSPACE}/system_files/usr/libexec/aquarius-gdm-guard:/tmp/guard-ref:ro" \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" -c '
+              set -e
+              # The test looks for the guard next to itself, so give it the one
+              # place it expects while everything else it exercises is the
+              # installed copy.
+              mkdir -p /tmp/t/system_files/usr/libexec
+              cp /tmp/guard-ref /tmp/t/system_files/usr/libexec/aquarius-gdm-guard
+              mkdir -p /tmp/t/tests
+              cp /tmp/test-gdm-scale.sh /tmp/t/tests/
+              chmod +x /tmp/t/tests/test-gdm-scale-sanitize.sh
+              /tmp/t/tests/test-gdm-scale-sanitize.sh \
+                /usr/libexec/aquarius-monitors-sanitize \
+                /usr/libexec/aquarius-gdm-display
+            '
 
       # Part B of the same photograph: our OWN login screen, drawn by the
       # Aquarius Shell on top of greetd. It ships fully configured and SWITCHED

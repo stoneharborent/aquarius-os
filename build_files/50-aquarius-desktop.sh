@@ -283,6 +283,42 @@ cursor-theme='Adwaita'
 icon-theme='Adwaita'
 EOF
 
+# ------------------------------------------------------------------------------
+# The login screen and PART SIZES (125%, 150%) — the 2026-09-05 black screen
+# ------------------------------------------------------------------------------
+# WHAT HAPPENED. The bench booted to a black screen with a mouse pointer and no
+# login screen. Removing the display arrangement AquariusOS had copied for the
+# login screen, and restarting it, brought it straight back. Royce's monitor is
+# set to 125% — a PART SIZE.
+#
+# WHAT THIS FILE IS. Part sizes on GNOME used to be hidden behind a switch
+# called experimental-features, and nobody ever set that switch for the login
+# screen's own user, which is the classic reason a copied 125% does nothing.
+#
+# ⚠️ HONEST NOTE, so nobody re-does the research: on THIS image the switch is
+# probably not needed. Fedora 44 is GNOME 50, and GNOME 50 made part sizes and
+# native Xwayland scaling non-experimental — on by default for everybody
+# (mutter merge request 4877, merged 2026-02-02; GNOME 50 release notes call it
+# the "initial stable implementation"). So this file is a belt: it costs one
+# dconf key, it changes nothing while the upstream default holds, and it keeps
+# part sizes working on the login screen if Fedora ever patches that default
+# back off.
+#
+# ⚠️ AND IT IS NOT WHAT MAKES THE MACHINE SAFE. Writing this key does not let
+# the login screen be handed a part size — that decision belongs to
+# /usr/libexec/aquarius-monitors-sanitize, which rounds part sizes to whole ones
+# unless somebody has run `sudo aq login scale fractional`. The key and the
+# permission are deliberately two different things: the key says "this might
+# work", the marker file says "a person watched it work".
+#
+# The value has two entries because GNOME 47's own release notes document them
+# as a pair: scale-monitor-framebuffer is the screen itself, and
+# xwayland-native-scaling is for older X11 apps drawn inside Wayland.
+cat > /etc/dconf/db/gdm.d/03-aquarius-scale << 'EOF'
+[org/gnome/mutter]
+experimental-features=['scale-monitor-framebuffer', 'xwayland-native-scaling']
+EOF
+
 if ! aq_have dconf; then
     echo "AQUARIUS ERROR: the 'dconf' command is not in this image." >&2
     exit 1
@@ -303,7 +339,8 @@ fi
 # The appearance keys, read back out of the BUILT database rather than out of
 # the file we just wrote. dconf update can skip a file it dislikes without
 # saying anything, so "the file exists" proves nothing at all.
-for aq_want in prefer-light 'Inter 11' 'JetBrains Mono 10' Adwaita; do
+for aq_want in prefer-light 'Inter 11' 'JetBrains Mono 10' Adwaita \
+    scale-monitor-framebuffer xwayland-native-scaling; do
     if grep -a -q "${aq_want}" /etc/dconf/db/gdm 2> /dev/null; then
         ok "the login screen database carries '${aq_want}'"
     else
@@ -337,6 +374,128 @@ if systemctl is-enabled aquarius-gdm-display.service > /dev/null 2>&1; then
     ok "it will run at every boot, before the login screen starts"
 else
     bad "aquarius-gdm-display.service is not switched on — the login screen would never be told the screen size"
+fi
+
+# ------------------------------------------------------------------------------
+# The safety check that stands between that file and the login screen
+# ------------------------------------------------------------------------------
+# ⚠️ THE MESSENGER MUST NOT RUN WITHOUT THIS. 2026-09-05: the bench booted to a
+# black screen with a mouse pointer and no login screen, because the messenger
+# had faithfully handed the login screen a display arrangement asking for 125%.
+# The sanitiser rounds part sizes to whole ones before anything is copied. If it
+# is missing, the messenger refuses to copy at all — which is safe, but means a
+# login screen stuck at 100% forever, so a missing sanitiser is a build failure
+# and not a warning.
+say "The safety check on what the login screen is given"
+
+AQ_SANITIZER="/usr/libexec/aquarius-monitors-sanitize"
+chmod 0755 "${AQ_SANITIZER}"
+
+if [ -x "${AQ_SANITIZER}" ]; then
+    ok "$(basename "${AQ_SANITIZER}") is installed and executable"
+else
+    bad "${AQ_SANITIZER} is missing — the messenger would refuse to copy anything and the login screen would stay at 100%"
+fi
+
+if aq_have python3; then
+    ok "python3 is in this image (the sanitiser is written in it)"
+else
+    echo "AQUARIUS ERROR: python3 is not in this image, so ${AQ_SANITIZER}" >&2
+    echo "                could never run and the login screen size fix is dead." >&2
+    exit 1
+fi
+
+if python3 -m py_compile "${AQ_SANITIZER}"; then
+    ok "it is valid python"
+else
+    bad "${AQ_SANITIZER} does not compile"
+fi
+
+# Prove the RULE, not just the file. A sanitiser that is present and does
+# nothing is exactly as bad as one that is absent, and much harder to notice.
+# Royce's own case is the fixture: one 4K screen asking for 125%.
+aq_scale_fixture="$(mktemp -d)"
+cat > "${aq_scale_fixture}/in.xml" << 'EOF'
+<monitors version="2">
+  <configuration>
+    <logicalmonitor>
+      <x>0</x><y>0</y><scale>1.25</scale><primary>yes</primary>
+      <monitor>
+        <monitorspec><connector>DP-1</connector></monitorspec>
+        <mode><width>3840</width><height>2160</height><rate>59.997</rate></mode>
+      </monitor>
+    </logicalmonitor>
+  </configuration>
+</monitors>
+EOF
+if "${AQ_SANITIZER}" "${aq_scale_fixture}/in.xml" "${aq_scale_fixture}/out.xml" > /dev/null 2>&1 \
+    && grep -q '<scale>1</scale>' "${aq_scale_fixture}/out.xml"; then
+    ok "a 4K screen asking for 125% really does come out as 100%"
+else
+    bad "${AQ_SANITIZER} did not turn 125% into 100% — the black screen of 2026-09-05 could happen again"
+fi
+rm -rf "${aq_scale_fixture}"
+
+# ------------------------------------------------------------------------------
+# The self-healing guard
+# ------------------------------------------------------------------------------
+# The sanitiser removes the cause we THINK we found. This removes any cause at
+# all: if no login screen has appeared 45 seconds into a boot, it takes the
+# copied files away and restarts the login screen once. Its own header has the
+# exact trigger and the three separate reasons it cannot loop.
+say "The guard that rescues the login screen if it never appears"
+
+AQ_GDM_GUARD="/usr/libexec/aquarius-gdm-guard"
+chmod 0755 "${AQ_GDM_GUARD}"
+
+if [ -x "${AQ_GDM_GUARD}" ]; then
+    ok "$(basename "${AQ_GDM_GUARD}") is installed and executable"
+else
+    bad "${AQ_GDM_GUARD} is missing — a login screen that failed to draw would stay failed"
+fi
+
+if bash -n "${AQ_GDM_GUARD}"; then
+    ok "it is valid shell"
+else
+    bad "${AQ_GDM_GUARD} does not parse as shell"
+fi
+
+systemctl enable aquarius-gdm-guard.service
+if systemctl is-enabled aquarius-gdm-guard.service > /dev/null 2>&1; then
+    ok "it will watch every boot"
+else
+    bad "aquarius-gdm-guard.service is not switched on — nothing would rescue a black login screen"
+fi
+
+AQ_GUARD_UNIT="/usr/lib/systemd/system/aquarius-gdm-guard.service"
+
+# ⚠️ After= AND NOT Requires=/Wants=. This service exists to rescue the login
+# screen; a dependency the other way round would let a broken rescuer stop the
+# thing it is meant to rescue. Checked as a string because it is the one line in
+# the file that could turn a safety net into a hazard.
+aq_file_has "${AQ_GUARD_UNIT}" '^After=display-manager\.service' \
+    "the guard runs after the login screen is started, and never blocks it"
+if grep -Eq '^(Requires|BindsTo|Requisite)=.*display-manager' "${AQ_GUARD_UNIT}"; then
+    bad "${AQ_GUARD_UNIT} makes the login screen depend on the guard — the rescuer must never be able to stop the rescue"
+else
+    ok "the guard is not something the login screen depends on"
+fi
+
+# systemd's own opinion of the file. Advisory: inside a container it often
+# cannot start a manager at all, and a confident tick over a tool that did
+# nothing is worse than no tick, so which of the two happened is said out loud.
+# Same treatment as build_files/75-aquarius-keys.sh — see the long note there.
+if aq_have systemd-analyze; then
+    aq_guard_verify="$(systemd-analyze verify "${AQ_GUARD_UNIT}" 2>&1 || true)"
+    printf '%s\n' "${aq_guard_verify}" | sed 's/^/  /'
+    if printf '%s' "${aq_guard_verify}" | grep -Eqi "failed to initialize manager|failed to lookup runtimedirectory"; then
+        echo "  NOTE: systemd-analyze could not start inside this container, so it did"
+        echo "        not read the file. The line checks above are what guard this unit."
+    elif printf '%s' "${aq_guard_verify}" | grep -Eqi "unknown (key|lvalue)|failed to parse"; then
+        bad "systemd cannot understand part of ${AQ_GUARD_UNIT} — a setting it cannot read does nothing, silently"
+    else
+        ok "systemd read the guard's service file and understood every line"
+    fi
 fi
 
 # ------------------------------------------------------------------------------
