@@ -954,10 +954,22 @@ jobs:
           else
             bad "the sanitiser is missing — nothing would stop a part size reaching the login screen"
           fi
-          if python3 -m py_compile /usr/libexec/aquarius-monitors-sanitize 2>/dev/null; then
+          # compile() rather than py_compile, which would write a __pycache__
+          # into /usr/libexec. See the note in 50-aquarius-desktop.sh.
+          if python3 -c "import sys; compile(open(sys.argv[1]).read(), sys.argv[1], 'exec')" \
+               /usr/libexec/aquarius-monitors-sanitize 2>/dev/null; then
             ok "it is valid python"
           else
             bad "/usr/libexec/aquarius-monitors-sanitize does not compile"
+          fi
+
+          # ⚠️ AND NOTHING WAS LEFT BEHIND BY THE BUILD. The build checks this
+          # program compiles; an earlier version did it with py_compile, which
+          # writes, and shipped a __pycache__ folder to every machine.
+          if [ -e /usr/libexec/__pycache__ ]; then
+            bad "/usr/libexec/__pycache__ was baked into the image — a build step wrote where it should only have read"
+          else
+            ok "the build left no __pycache__ litter in /usr/libexec"
           fi
 
           # ⚠️ THE RULE ITSELF, PROVED INSIDE THE FINISHED IMAGE, against Royce's

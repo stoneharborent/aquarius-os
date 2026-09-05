@@ -331,16 +331,26 @@ AQ_SAFE="$(mktemp -t aquarius-monitors.XXXXXX)" || {
     exit 0
 }
 
-AQ_SANITIZE_ARGS=""
+# An array rather than a string, so the arguments are passed as arguments and
+# never re-split by the shell. Overkill for one flag today; the right habit in
+# the one code path where a mistake means a machine nobody can log in to.
+AQ_SANITIZE_ARGS=()
 if aq_fractional_allowed; then
-    AQ_SANITIZE_ARGS="--allow-fractional"
+    AQ_SANITIZE_ARGS=(--allow-fractional)
     note "part sizes are switched ON for the login screen (${AQ_FRACTIONAL_MARKER})"
 fi
 
 # Every line the sanitiser prints goes into the log as well as the journal. This
 # is the record of WHY the login screen ended up the size it did, and it is the
 # first thing to read when somebody asks.
-AQ_SANITIZE_OUT="$("${AQ_SANITIZER}" ${AQ_SANITIZE_ARGS} "${AQ_NEWEST}" "${AQ_SAFE}" 2>&1)"
+# The odd-looking ${a[@]+"${a[@]}"} is "expand the array, or nothing if it is
+# empty". Plain "${a[@]}" on an EMPTY array is an unbound-variable error under
+# `set -u` on bash 3.2 — which is not what this image runs, but is what the
+# tests run on, and a safety check that only works on the machine it ships to is
+# a safety check nobody can test.
+AQ_SANITIZE_OUT="$("${AQ_SANITIZER}" \
+    ${AQ_SANITIZE_ARGS[@]+"${AQ_SANITIZE_ARGS[@]}"} \
+    "${AQ_NEWEST}" "${AQ_SAFE}" 2>&1)"
 AQ_SANITIZE_RC=$?
 
 while IFS= read -r aq_line; do

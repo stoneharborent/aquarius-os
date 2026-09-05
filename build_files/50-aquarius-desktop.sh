@@ -405,7 +405,14 @@ else
     exit 1
 fi
 
-if python3 -m py_compile "${AQ_SANITIZER}"; then
+# ⚠️ compile() AND NOT `python3 -m py_compile`. py_compile WRITES: it leaves a
+# __pycache__ folder next to the file, which would be baked into /usr/libexec on
+# every machine that ever installs AquariusOS. Nothing would read it — Python
+# only uses __pycache__ for imported modules, not for programs run directly —
+# so it is pure litter shipped forever. compile() does the identical syntax
+# check in memory and writes nothing.
+if python3 -c "import sys; compile(open(sys.argv[1]).read(), sys.argv[1], 'exec')" \
+    "${AQ_SANITIZER}"; then
     ok "it is valid python"
 else
     bad "${AQ_SANITIZER} does not compile"
