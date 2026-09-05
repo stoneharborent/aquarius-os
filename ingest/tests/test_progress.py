@@ -407,9 +407,14 @@ class RealFfmpegTests(unittest.TestCase):
     def test_a_photo_is_converted_without_pretending_to_have_a_bar(self):
         # heif-convert has no progress to report and ffmpeg's would be over before it was
         # drawn, so a still must go down the plain path even when a callback is offered.
-        if not fixtures.has_program("heif-enc"):
-            self.skipTest("heif-enc is not installed, so there is no HEIC to convert")
-        source = fixtures.heic_still()
+        # heif-enc being INSTALLED is not the same as heif-enc being able to make a
+        # HEIC: on GitHub's Ubuntu runner it is there but has no HEVC encoder behind
+        # it, so building the fixture fails rather than the tool being missing. Every
+        # other HEIC test in this suite skips on the same exception; this one joins them.
+        try:
+            source = fixtures.heic_still()
+        except fixtures.FixtureUnavailable as exc:
+            self.skipTest(str(exc))
         out = Path(fixtures.root()) / "still-check.png"
         out.unlink(missing_ok=True)
         self.addCleanup(lambda: out.unlink(missing_ok=True))
