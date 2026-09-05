@@ -10,12 +10,21 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from . import progress as progress_mod
 from . import rules
 from .config import Settings
 from .rules import Plan
-from .tools import ToolFailed, ToolMissing, find, require, run
+from .tools import ToolFailed, ToolMissing, find, require, run, run_watching
 
 FFMPEG_BASE = ["-y", "-hide_banner", "-nostdin", "-v", "error"]
+
+#: What we add to an ffmpeg command line when somebody is watching the progress bar.
+#:
+#: ``-progress pipe:1`` makes ffmpeg print a small ``key=value`` block to stdout every
+#: half second saying how far it has got. ``-nostats`` turns off its ordinary one-line
+#: status chatter, which goes to stderr and would otherwise be mixed in with the error
+#: message we quote back to the user when something goes wrong.
+FFMPEG_PROGRESS = ["-progress", "pipe:1", "-nostats"]
 
 
 def _temp_path(destination: Path) -> Path:
@@ -92,24 +101,57 @@ def _still_argv(source: Path, temp: Path, settings: Settings) -> list[str]:
     return argv + [str(temp)]
 
 
-def execute(plan: Plan, source: Path, destination: Path, probe: dict, settings: Settings) -> None:
-    """Run one plan. Raises ToolFailed / ToolMissing with a plain-language message."""
+def execute(
+    plan: Plan,
+    source: Path,
+    destination: Path,
+    probe: dict,
+    settings: Settings,
+    *,
+    on_fraction=None,
+) -> None:
+    """Run one plan. Raises ToolFailed / ToolMissing with a plain-language message.
+
+    ``on_fraction`` is called with a number between 0.0 and 1.0 as the conversion
+    proceeds, so a notification can draw a progress bar. It is optional in every sense:
+    pass nothing and the command runs exactly as it always did, and even when it is
+    passed, a photo conversion (which finishes in a blink and has no timeline to measure)
+    never calls it.
+    """
     destination.parent.mkdir(parents=True, exist_ok=True)
     temp = _temp_path(destination)
     if temp.exists():
         temp.unlink()
 
+    watched = False
     if plan.action == rules.REWRAP:
         argv = _rewrap_argv(source, temp, plan, probe)
+        watched = True
     elif plan.action == rules.TRANSCODE:
         argv = _transcode_argv(source, temp, plan, probe)
+        watched = True
     elif plan.action == rules.STILL_CONVERT:
+        # A still is one frame. heif-convert has no progress to report and ffmpeg's would
+        # be over before it was drawn, so this one is simply run.
         argv = _still_argv(source, temp, settings)
     else:
         raise ValueError(f"execute() called with nothing to do: {plan.action}")
 
+    duration = progress_mod.duration_from_probe(probe)
+    watching = on_fraction is not None and watched and duration is not None
+
     try:
-        run(argv)
+        if watching:
+            argv = [argv[0], *FFMPEG_PROGRESS, *argv[1:]]
+            reader = progress_mod.FfmpegProgress()
+
+            def on_line(line: str) -> None:
+                if reader.feed(line):
+                    on_fraction(reader.fraction_of(duration))
+
+            run_watching(argv, on_line)
+        else:
+            run(argv)
     except (ToolFailed, ToolMissing):
         if temp.exists():
             temp.unlink()

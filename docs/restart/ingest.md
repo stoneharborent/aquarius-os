@@ -34,9 +34,9 @@ utility.
 2. Select the files, or the whole folder.
 3. Right-click → **Make Editor-Ready**.
 
-A notification says it has started, another counts the progress, and a last one
-tells you what happened. Editor-friendly copies appear in a folder called
-**EditorReady** next to the originals.
+**One notification appears and stays there, filling up**, until the work is
+done. Editor-friendly copies appear in a folder called **EditorReady** next to
+the originals.
 
 **Your original files are never touched.** Not renamed, not moved, not
 modified. The tool treats them as read-only.
@@ -44,6 +44,65 @@ modified. The tool treats them as read-only.
 > ⚠️ **Right-click the card's FOLDER in the file list, not the device in the
 > sidebar.** The sidebar entry is a place, not a folder, and the menu does not
 > appear on it. Open the card first, then right-click.
+
+---
+
+## Watching it work
+
+*Added 2026-09-04, because Royce asked for it after the first bench test: the
+old notification said it had started and then went quiet for the several minutes
+a real camera clip takes.*
+
+There is now **one** notification for the whole job, and it is redrawn in place
+rather than joined by more:
+
+```
+┌────────────────────────────────────────────────┐
+│ ⬤  Making your files editor-ready            × │
+│    Converting A001_C003.MP4 · 42% ·             │
+│    about 2 min left                             │
+│    ▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░░░░░                  │
+└────────────────────────────────────────────────┘
+```
+
+When it finishes, that same notification becomes the answer:
+
+```
+┌────────────────────────────────────────────────┐
+│ ⬤  A001_C003.MP4 is editor-ready             × │
+│    1 transcoded, 0 failed                       │
+│    The fixed copy is in: /run/media/…/EditorReady│
+│    [ Show in Files ]                            │
+└────────────────────────────────────────────────┘
+```
+
+**Converting several files at once** counts them: `Converting 12 files · 3 of
+12 · 24% · about 9 min left`.
+
+### Where the numbers come from
+
+**The percentage** is ffmpeg's own. It is asked to report itself, and it says how
+many seconds of the new file it has written; divided by how long the clip is,
+that is the percentage. Nothing is estimated or guessed at.
+
+Every file in a run counts the same amount, though — a ten-second clip and a
+ten-minute clip each move the bar by the same step. Weighting them by length
+would mean reading all 200 clips on a card before starting the first one, which
+is a minute of nothing happening at the start of every offload.
+
+**The time left** is elapsed time scaled by how much is left to do, then
+smoothed, so a slow few seconds does not turn "2 min" into "20 min" and back
+again. For the first couple of seconds it says nothing at all, because any guess
+made that early is wrong by minutes. It is deliberately vague — "about 3 min
+left", never "3 minutes 14 seconds" — because vague is what we actually know.
+
+### What it looks like in each desktop
+
+| Where | What you see |
+| --- | --- |
+| **The Aquarius Desktop** (our own shell) | The bar, drawn in the accent colour, in the popup and again in the notifications panel if you open it. The popup does **not** time out while the job is running — it stays until the job is done. |
+| **GNOME** (the fallback session) | The same one notification, updating in place, with the percentage and the time left **in the words**: "Converting A001_C003.MP4 · 42% · about 2 min left". GNOME Shell has no progress bar in its notifications and ignores the bar part outright — which is exactly why the numbers are written into the sentence as well. |
+| **A terminal** (`aq ingest …`) | One line at the bottom, rewritten in place: `Converting A001_C003.MP4 · 42% · about 2 min left`. It is wiped before the report is printed. Nothing is drawn if the output is going into a file or a pipe. |
 
 ### The terminal way
 
@@ -202,10 +261,12 @@ and refuses to publish unless a "Make Editor-Ready" item comes back
 
 ## Bench test, for Royce
 
-The point of this test is a **real camera file**, not a synthetic one. The 95
+The point of this test is a **real camera file**, not a synthetic one. The
 automated tests already cover every branch of the decision table with generated
-fixtures; what they cannot prove is that a file from your actual camera, on
-your actual machine, ends up in Resolve with sound.
+fixtures, and the progress arithmetic against a clock they control; what they
+cannot prove is that a file from your actual camera, on your actual machine,
+ends up in Resolve with sound — or that a bar filling up on a real screen looks
+right.
 
 1. **Get a real file onto the machine.** Either put a card in the reader, or
    send a clip from your phone with **LocalSend** (it is one of the
@@ -231,7 +292,41 @@ your actual machine, ends up in Resolve with sound.
 6. **Check the original is untouched.** Same name, same size, same date, in
    the same place.
 
-7. **Try the watch folder.**
+7. **Watch the progress bar on a clip that takes a while.** This is the
+   2026-09-04 request, and it needs a clip long enough to have progress worth
+   showing — **a minute or two of 4K**, not a five-second test.
+
+   Right-click it → **Make Editor-Ready**, then watch the notification. Expect,
+   in order:
+
+   - one notification, saying "Making your files editor-ready";
+   - a bar under the text that **fills up**, with a percentage beside it;
+   - "about N min left" appearing after a couple of seconds and counting down
+     without jumping about;
+   - the popup **staying on screen** for the whole conversion rather than
+     disappearing after five seconds;
+   - and at the end, that **same** notification — not a second one — turning
+     into "clip.MP4 is editor-ready", with a **Show in Files** button that
+     opens the EditorReady folder.
+
+   Then log out into **GNOME** and do it again. Expect the same single
+   notification updating in place, with the percentage and the time left in the
+   text. There is no bar there, and that is GNOME's own limitation, not a fault.
+
+   And once in a terminal:
+   ```
+   aq ingest ~/Videos/that-clip.MP4
+   ```
+   Expect one line rewriting itself at the bottom of the terminal, wiped when
+   the report prints.
+
+   **If the bar never moves**, the first thing to check is that this is really a
+   long clip: a file that converts in under a second only ever reports "done".
+   ```
+   aq ingest --dry-run <the file>     # says what it thinks the file is
+   ```
+
+8. **Try the watch folder.**
    ```
    aq ingest watch on
    ```
@@ -243,7 +338,7 @@ your actual machine, ends up in Resolve with sound.
    aq ingest watch off
    ```
 
-8. **If anything goes wrong**, these three answer almost every question:
+9. **If anything goes wrong**, these three answer almost every question:
    ```
    aq ingest watch status
    cat ~/.local/state/aquarius/ingest.log

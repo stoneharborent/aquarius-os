@@ -95,6 +95,12 @@ on:
       # person's own home folder. Roughly four gigabytes off every image. Same
       # arrangement: builds and checks, never publishes.
       - restart/editor-optional
+      # The progress bar — the 2026-09-04 bench request: "Make Editor-Ready"
+      # said it had started and then went quiet for the several minutes a real
+      # camera clip takes. It now shows a filling bar, a percentage and a plain
+      # time left, in one notification redrawn in place. Same arrangement:
+      # builds and checks, never publishes.
+      - restart/ingest-progress
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:

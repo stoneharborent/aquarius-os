@@ -13,6 +13,24 @@ import unittest
 from pathlib import Path
 
 from aq_ingest import cli, notify, runner
+from aq_ingest.progress import Snapshot
+
+
+def snapshot(
+    *,
+    percent: int = 0,
+    files_done: int = 0,
+    total: int = 1,
+    name: str = "clip.MP4",
+    time_left: str = "",
+) -> Snapshot:
+    return Snapshot(
+        percent=percent,
+        files_done=files_done,
+        total=total,
+        name=name,
+        time_left=time_left,
+    )
 
 
 def result(status: str, name: str = "clip.MP4", output: str | None = None, **kw) -> runner.Result:
@@ -28,10 +46,13 @@ def result(status: str, name: str = "clip.MP4", output: str | None = None, **kw)
 class FakeSender:
     """Stands in for running notify-send. Records every call; answers like the real thing."""
 
-    def __init__(self, *, help_text: str = "--action", stdout: str = "", returncode: int = 0):
+    #: What a current notify-send (libnotify 0.8, what Fedora 44 ships) says it can do.
+    MODERN_HELP = "--action --hint --print-id --replace-id --expire-time"
+
+    def __init__(self, *, help_text: str | None = None, stdout: str = "", returncode: int = 0):
         self.calls: list[list[str]] = []
         self.timeouts: list[int] = []
-        self.help_text = help_text
+        self.help_text = self.MODERN_HELP if help_text is None else help_text
         self.stdout = stdout
         self.returncode = returncode
 
@@ -43,16 +64,37 @@ class FakeSender:
         return subprocess.CompletedProcess(argv, self.returncode, self.stdout, "")
 
     @property
+    def sent(self) -> list[list[str]]:
+        """The notifications only.
+
+        The Notifier asks `notify-send --help` once, to find out whether this build has
+        `--action` and `--hint`, and that question is not a notification. Every test that
+        counts messages or indexes into them uses this rather than `calls`.
+        """
+        return [call for call in self.calls if "--help" not in call]
+
+    @property
     def bodies(self) -> list[str]:
-        return [call[-1] for call in self.calls if "--help" not in call]
+        return [call[-1] for call in self.sent]
 
     @property
     def titles(self) -> list[str]:
-        return [call[-2] for call in self.calls if "--help" not in call]
+        return [call[-2] for call in self.sent]
+
+    def hint(self, call: list[str], name: str) -> str | None:
+        """The value of one `--hint=TYPE:NAME:VALUE` on a command line, if it is there."""
+        for arg in call:
+            if arg.startswith("--hint="):
+                _, _, spec = arg.partition("=")
+                kind, _, rest = spec.partition(":")
+                key, _, value = rest.partition(":")
+                if key == name:
+                    return value
+        return None
 
 
 def make(**kw) -> tuple[notify.Notifier, FakeSender]:
-    sender = FakeSender(help_text=kw.pop("help_text", "--action"), stdout=kw.pop("stdout", ""))
+    sender = FakeSender(help_text=kw.pop("help_text", None), stdout=kw.pop("stdout", ""))
     opened: list[Path] = []
     ticks = iter(range(0, 10_000))
     notifier = notify.Notifier(
@@ -102,10 +144,19 @@ class WordingTests(unittest.TestCase):
             notify.progress_body(3, 12, "clip.MP4"), "Finished 3 of 12 — clip.MP4"
         )
 
-    def test_success_says_so(self):
+    def test_one_finished_file_is_named_in_the_headline(self):
+        # Right-clicking a single clip is the commonest way this tool is used, so the
+        # message that arrives four minutes later says WHICH clip is ready.
         results = [result(runner.REWRAPPED, output="/cards/A001/EditorReady/clip.mov")]
-        self.assertEqual(notify.finish_title(results), "Your files are editor-ready")
+        self.assertEqual(notify.finish_title(results), "clip.MP4 is editor-ready")
         self.assertFalse(notify.is_urgent(results))
+
+    def test_several_finished_files_are_summarised(self):
+        results = [
+            result(runner.REWRAPPED, "a.MP4", "/cards/A001/EditorReady/a.mov"),
+            result(runner.REWRAPPED, "b.MP4", "/cards/A001/EditorReady/b.mov"),
+        ]
+        self.assertEqual(notify.finish_title(results), "Your files are editor-ready")
 
     def test_a_run_that_changed_nothing_does_not_claim_it_fixed_things(self):
         results = [result(runner.ALREADY_READY), result(runner.UP_TO_DATE)]
@@ -134,7 +185,7 @@ class WordingTests(unittest.TestCase):
         results = [result(runner.TRANSCODED, output="/cards/A001/EditorReady/clip.mov")]
         body = notify.finish_body(results, "1 transcoded, 0 failed")
         self.assertIn("1 transcoded", body)
-        self.assertIn("Fixed copies are in: /cards/A001/EditorReady", body)
+        self.assertIn("The fixed copy is in: /cards/A001/EditorReady", body)
 
     def test_several_output_folders_are_counted_not_listed_forever(self):
         results = [
@@ -160,6 +211,40 @@ class WordingTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------------
+# The progress line — what a person reads while they wait
+# ---------------------------------------------------------------------------------
+
+
+class WorkingWordingTests(unittest.TestCase):
+    def test_one_file_is_named_with_its_percentage_and_time_left(self):
+        body = notify.working_body(
+            snapshot(percent=42, total=1, name="clip.MP4", time_left="about 2 min left")
+        )
+        self.assertEqual(body, "Converting clip.MP4 · 42% · about 2 min left")
+
+    def test_several_files_count_which_one_is_in_hand(self):
+        body = notify.working_body(
+            snapshot(percent=38, files_done=1, total=3, time_left="about 5 min left")
+        )
+        self.assertEqual(body, "Converting 3 files · 2 of 3 · 38% · about 5 min left")
+
+    def test_no_time_is_shown_until_there_is_one_worth_showing(self):
+        # For the first couple of seconds any estimate is nonsense. Printing nothing is
+        # better than printing nonsense.
+        body = notify.working_body(snapshot(percent=3, total=1, name="clip.MP4"))
+        self.assertEqual(body, "Converting clip.MP4 · 3%")
+
+    def test_the_counter_never_runs_past_the_total(self):
+        # The last file's completion pushes files_done up to the total; "4 of 3" would be
+        # nonsense on screen.
+        self.assertEqual(snapshot(files_done=3, total=3).file_number, 3)
+
+    def test_a_file_name_still_cannot_break_the_message(self):
+        body = notify.working_body(snapshot(percent=10, total=1, name="A&B <raw>.mp4"))
+        self.assertIn("A&amp;B &lt;raw&gt;.mp4", body)
+
+
+# ---------------------------------------------------------------------------------
 # Sending
 # ---------------------------------------------------------------------------------
 
@@ -169,6 +254,7 @@ class SendingTests(unittest.TestCase):
         notifier = notify.Notifier(program=None, sender=self.fail)
         self.assertFalse(notifier.active)
         notifier.start(3)
+        notifier.working(snapshot(percent=50, total=3))
         notifier.progress(1, 3, "a.MP4")
         notifier.finish([result(runner.REWRAPPED)], "1 rewrapped, 0 failed")
         notifier.failure("boom")
@@ -179,7 +265,7 @@ class SendingTests(unittest.TestCase):
     def test_the_start_notification_carries_our_name_and_icon(self):
         notifier, sender = make()
         notifier.start(4)
-        argv = sender.calls[0]
+        argv = sender.sent[0]
         self.assertIn("--app-name", argv)
         self.assertIn(notify.APP_NAME, argv)
         self.assertIn(notify.ICON, argv)
@@ -189,15 +275,15 @@ class SendingTests(unittest.TestCase):
     def test_later_notifications_replace_the_first_one(self):
         notifier, sender = make(stdout="41\n")
         notifier.start(4)
-        notifier.progress(1, 4, "a.MP4")
-        self.assertIn("--replace-id", sender.calls[1])
-        self.assertIn("41", sender.calls[1])
+        notifier.working(snapshot(percent=25, total=4, files_done=1))
+        self.assertIn("--replace-id", sender.sent[1])
+        self.assertIn("41", sender.sent[1])
 
     def test_a_notify_send_without_print_id_support_does_not_break_the_run(self):
         notifier, sender = make(stdout="not a number")
         notifier.start(4)
-        notifier.progress(1, 4, "a.MP4")
-        self.assertNotIn("--replace-id", sender.calls[1])
+        notifier.working(snapshot(percent=25, total=4, files_done=1))
+        self.assertNotIn("--replace-id", sender.sent[1])
 
     def test_progress_is_throttled(self):
         sender = FakeSender()
@@ -207,19 +293,19 @@ class SendingTests(unittest.TestCase):
         notifier.start(10)
         for i in range(1, 6):
             notifier.progress(i, 10, f"clip{i}.MP4")
-        self.assertEqual(len(sender.calls), 1, "the clock never moved, so only start should send")
+        self.assertEqual(len(sender.sent), 1, "the clock never moved, so only start should send")
 
-    def test_a_single_file_gets_no_progress_chatter(self):
+    def test_a_single_file_gets_no_dry_run_chatter(self):
         notifier, sender = make()
         notifier.start(1)
         notifier.progress(1, 1, "clip.MP4")
-        self.assertEqual(len(sender.calls), 1)
+        self.assertEqual(len(sender.sent), 1)
 
     def test_nothing_is_sent_for_an_empty_run(self):
         notifier, sender = make()
         notifier.start(0)
         notifier.finish([], "")
-        self.assertEqual(sender.calls, [])
+        self.assertEqual(sender.sent, [])
 
     def test_the_finish_notification_offers_to_open_the_folder(self):
         notifier, sender = make(stdout="")
@@ -227,7 +313,7 @@ class SendingTests(unittest.TestCase):
             [result(runner.REWRAPPED, output="/cards/A001/EditorReady/clip.mov")],
             "1 rewrapped, 0 failed",
         )
-        final = sender.calls[-1]
+        final = sender.sent[-1]
         self.assertIn(f"--action={notify.OPEN_ACTION}={notify.OPEN_ACTION_LABEL}", final)
         # --action makes notify-send wait for a click, so it must not be cut short.
         self.assertGreater(sender.timeouts[-1], 60)
@@ -254,27 +340,157 @@ class SendingTests(unittest.TestCase):
             [result(runner.REWRAPPED, output="/cards/A001/EditorReady/clip.mov")],
             "1 rewrapped, 0 failed",
         )
-        final = sender.calls[-1]
+        final = sender.sent[-1]
         self.assertFalse([a for a in final if a.startswith("--action")])
-        self.assertEqual(final[-2], "Your files are editor-ready")
+        self.assertEqual(final[-2], "clip.MP4 is editor-ready")
 
     def test_nothing_written_means_no_button_to_offer(self):
         notifier, sender = make()
         notifier.finish([result(runner.ALREADY_READY)], "1 already editor-ready, 0 failed")
-        self.assertFalse([a for a in sender.calls[-1] if a.startswith("--action")])
+        self.assertFalse([a for a in sender.sent[-1] if a.startswith("--action")])
 
     def test_a_failed_run_is_marked_critical(self):
         notifier, sender = make()
         notifier.finish([result(runner.FAILED)], "0 rewrapped, 1 failed")
-        argv = sender.calls[-1]
+        argv = sender.sent[-1]
         self.assertEqual(argv[argv.index("--urgency") + 1], "critical")
 
     def test_a_could_not_start_problem_is_shown_too(self):
         notifier, sender = make()
         notifier.failure("aq-ingest cannot run.\nffmpeg is missing.")
-        argv = sender.calls[-1]
+        argv = sender.sent[-1]
         self.assertEqual(argv[-2], "aq-ingest could not run")
         self.assertIn("ffmpeg is missing", argv[-1])
+
+    # -- the progress bar ----------------------------------------------------------
+
+    def test_the_bar_is_sent_as_the_standard_progress_hint(self):
+        notifier, sender = make(stdout="7\n")
+        notifier.start(3)
+        notifier.working(snapshot(percent=42, files_done=1, total=3))
+        update = sender.sent[-1]
+        self.assertEqual(sender.hint(update, notify.VALUE_HINT), "42")
+        self.assertEqual(
+            sender.hint(update, notify.SYNCHRONOUS_HINT), notify.SYNCHRONOUS_TAG
+        )
+
+    def test_the_percentage_is_in_the_words_too_so_gnome_can_show_it(self):
+        # GNOME Shell has no progress bar and ignores the `value` hint outright. It does
+        # draw the body, so the numbers have to be in the sentence as well as in a hint.
+        notifier, sender = make(stdout="7\n")
+        notifier.start(1)
+        notifier.working(snapshot(percent=42, total=1, time_left="about 2 min left"))
+        self.assertIn("42%", sender.bodies[-1])
+        self.assertIn("about 2 min left", sender.bodies[-1])
+
+    def test_the_whole_run_is_one_notification_redrawn(self):
+        notifier, sender = make(stdout="7\n")
+        notifier.start(3)
+        for percent in (10, 40, 80):
+            notifier.working(snapshot(percent=percent, total=3))
+        notifier.finish(
+            [result(runner.TRANSCODED, output="/cards/A001/EditorReady/clip.mov")],
+            "1 transcoded, 0 failed",
+        )
+        # One --print-id, and everything after it replaces that same id. Four more
+        # messages without this would be four notifications piled on top of each other.
+        first, *rest = sender.sent
+        self.assertIn("--print-id", first)
+        self.assertTrue(rest)
+        for call in rest:
+            self.assertIn("--replace-id", call)
+            self.assertEqual(call[call.index("--replace-id") + 1], "7")
+
+    def test_the_bar_is_redrawn_at_most_once_a_second(self):
+        sender = FakeSender(stdout="7\n")
+        notifier = notify.Notifier(
+            program="/usr/bin/notify-send", sender=sender, clock=lambda: 0.0
+        )
+        notifier.start(3)
+        for percent in range(1, 30):
+            notifier.working(snapshot(percent=percent, total=3))
+        self.assertEqual(len(sender.sent), 1, "the clock never moved, so nothing else should send")
+
+    def test_the_same_percentage_twice_is_not_sent_twice(self):
+        notifier, sender = make(stdout="7\n")
+        notifier.start(3)
+        notifier.working(snapshot(percent=15, total=3))
+        before = len(sender.sent)
+        notifier.working(snapshot(percent=15, total=3))
+        self.assertEqual(len(sender.sent), before)
+
+    def test_the_progress_message_asks_not_to_be_taken_off_the_screen(self):
+        # A card of footage takes twenty minutes. A progress bar that vanishes after five
+        # seconds is worse than no progress bar.
+        notifier, sender = make(stdout="7\n")
+        notifier.start(3)
+        start = sender.sent[0]
+        self.assertEqual(start[start.index("--expire-time") + 1], notify.NEVER_EXPIRE)
+
+    def test_the_final_message_does_go_away_on_its_own(self):
+        notifier, sender = make(stdout="7\n")
+        notifier.start(1)
+        notifier.finish(
+            [result(runner.TRANSCODED, output="/cards/A001/EditorReady/clip.mov")],
+            "1 transcoded, 0 failed",
+        )
+        self.assertNotIn("--expire-time", sender.sent[-1])
+
+    def test_the_final_button_says_show_in_files(self):
+        notifier, sender = make(stdout="7\n")
+        notifier.finish(
+            [result(runner.TRANSCODED, output="/cards/A001/EditorReady/clip.mov")],
+            "1 transcoded, 0 failed",
+        )
+        self.assertIn(f"--action={notify.OPEN_ACTION}=Show in Files", sender.sent[-1])
+
+    def test_every_message_in_a_run_is_tagged_including_the_last_one(self):
+        # The tag is the fallback for a run that never got an id back — if the
+        # notification daemon was not answering when the run started, --print-id
+        # gives us nothing and every redraw is a NEW notification. Leaving the tag
+        # off the final message would then leave the never-expiring progress bar on
+        # screen at 60% for ever, with "editor-ready" sitting beside it.
+        notifier, sender = make(stdout="not a number")
+        notifier.start(2)
+        notifier.working(snapshot(percent=50, total=2))
+        notifier.finish(
+            [result(runner.TRANSCODED, output="/cards/A001/EditorReady/clip.mov")],
+            "1 transcoded, 0 failed",
+        )
+        self.assertGreaterEqual(len(sender.sent), 3)
+        for call in sender.sent:
+            self.assertEqual(
+                sender.hint(call, notify.SYNCHRONOUS_HINT),
+                notify.SYNCHRONOUS_TAG,
+                call,
+            )
+
+    def test_only_the_working_messages_carry_a_bar(self):
+        notifier, sender = make(stdout="7\n")
+        notifier.start(1)
+        notifier.finish(
+            [result(runner.TRANSCODED, output="/cards/A001/EditorReady/clip.mov")],
+            "1 transcoded, 0 failed",
+        )
+        # The final message is news, not a job in progress: no bar on it.
+        self.assertIsNone(sender.hint(sender.sent[-1], notify.VALUE_HINT))
+
+    def test_a_notify_send_with_no_hint_support_still_gets_the_message_out(self):
+        # Losing the whole notification to gain a bar would be a bad trade, so the hint is
+        # dropped and the percentage survives in the words.
+        notifier, sender = make(help_text="usage: notify-send [OPTION...]", stdout="7\n")
+        notifier.start(3)
+        notifier.working(snapshot(percent=42, total=3))
+        update = sender.sent[-1]
+        self.assertFalse([a for a in update if a.startswith("--hint")])
+        self.assertIn("42%", update[-1])
+
+    def test_a_dry_run_draws_no_bar_because_it_converts_nothing(self):
+        notifier, sender = make(dry_run=True)
+        notifier.start(3)
+        before = len(sender.sent)
+        notifier.working(snapshot(percent=50, total=3))
+        self.assertEqual(len(sender.sent), before)
 
     def test_a_notify_send_that_explodes_does_not_take_the_run_with_it(self):
         def boom(argv, *, timeout):
@@ -313,6 +529,36 @@ class CommandLineTests(unittest.TestCase):
 
     def test_the_notifier_knows_it_is_a_dry_run(self):
         self.assertTrue(cli.make_notifier(self.parse("--notify", "--dry-run", "x")).dry_run)
+
+    def test_the_terminal_gets_the_same_numbers_on_one_rewritten_line(self):
+        out = io.StringIO()
+        ticks = iter(range(0, 100))
+        line = cli.TerminalProgress(out, clock=lambda: next(ticks) * 10.0, enabled=True)
+        line.update(snapshot(percent=42, total=1, name="clip.MP4", time_left="about 2 min left"))
+        text = out.getvalue()
+        self.assertTrue(text.startswith("\r"), "it should rewrite its own line, not scroll")
+        self.assertIn("Converting clip.MP4 · 42% · about 2 min left", text)
+
+    def test_the_terminal_line_is_wiped_before_the_report_is_printed(self):
+        out = io.StringIO()
+        ticks = iter(range(0, 100))
+        line = cli.TerminalProgress(out, clock=lambda: next(ticks) * 10.0, enabled=True)
+        line.update(snapshot(percent=42, total=1, name="clip.MP4"))
+        line.done()
+        self.assertTrue(out.getvalue().endswith("\r"))
+        self.assertNotIn("\n", out.getvalue(), "it owns one line and leaves it clean")
+
+    def test_nothing_is_drawn_when_nobody_is_looking(self):
+        # A pipe, a log, the watch-folder service, --json. Carriage returns in captured
+        # output are worse than no progress at all.
+        out = io.StringIO()
+        line = cli.TerminalProgress(out, enabled=False)
+        line.update(snapshot(percent=42))
+        line.done()
+        self.assertEqual(out.getvalue(), "")
+
+    def test_a_plain_stringio_is_not_mistaken_for_a_terminal(self):
+        self.assertFalse(cli.TerminalProgress(io.StringIO()).enabled)
 
     def test_help_mentions_the_right_click_menu(self):
         out = io.StringIO()

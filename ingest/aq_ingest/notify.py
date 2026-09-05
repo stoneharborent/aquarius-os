@@ -16,6 +16,44 @@ Two rules shape everything in here:
 
 The message-building functions at the top are pure — text in, text out, no subprocesses —
 so the wording is testable without a desktop.
+
+--------------------------------------------------------------------------------------
+THE PROGRESS BAR (added 2026-09-04, Royce's bench request)
+--------------------------------------------------------------------------------------
+Converting a card of footage takes minutes, and "it started" followed by silence is not
+enough to know whether to go and make a coffee. So the one notification a run puts on
+screen now carries **a filling bar and a plain time left**, and is redrawn in place as the
+work proceeds:
+
+    ┌──────────────────────────────────────────────┐
+    │ ⬤  Making your files editor-ready          × │
+    │    Converting A001_C003.MP4 · 42% ·           │
+    │    about 2 min left                           │
+    │    ▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░                     │
+    └──────────────────────────────────────────────┘
+
+**Why it is still `notify-send` and not a D-Bus client of our own.** Everything the bar
+needs is already on this command line and already proven on Royce's bench machine:
+
+  * ``--print-id`` / ``--replace-id`` are how one notification is updated instead of a
+    hundred piling up. They have been in libnotify since 0.8 (Fedora 44 ships 0.8.x) and
+    this module has been using them since Milestone 2 — the start → finish replacement was
+    confirmed working on the bench on 2026-08-28.
+  * ``--hint=int:value:NN`` is the standard progress hint, understood by KDE, our own
+    Aquarius shell, and every daemon descended from Ubuntu's. It has been in notify-send
+    far longer than ``--action``, which we already probe for.
+  * The alternative — talking to ``org.freedesktop.Notifications`` through
+    ``gi.repository.Gio`` — would put **python3-gobject** on aq-ingest's critical path.
+    The spec's rule for this tool is *Python 3, standard library only, shelling out to
+    ffmpeg*, and taking on a GObject dependency so that a courtesy message can be drawn
+    would be the wrong way round. Notifications are never load-bearing; their transport
+    should not be either.
+
+**GNOME renders the same information.** GNOME Shell ignores the ``value`` hint entirely —
+it has no progress bar in its notification — but it honours ``replaces_id``, so the one
+notification updates in place, and the percentage and the time left are in the **body
+text**, which it does draw. That is why the numbers are words as well as a hint: a desktop
+that cannot show a bar still shows the progress.
 """
 
 from __future__ import annotations
@@ -25,6 +63,7 @@ import subprocess
 from pathlib import Path
 
 from . import runner
+from .progress import Snapshot
 
 #: What the notification says it is. Shown by KDE next to the message.
 APP_NAME = "AquariusOS"
@@ -33,9 +72,28 @@ APP_NAME = "AquariusOS"
 #: /usr/share/icons/hicolor/scalable/apps/aquarius-logo.svg
 ICON = "aquarius-logo"
 
-#: The key notify-send prints on stdout when the "Open folder" button is clicked.
+#: The key notify-send prints on stdout when the button on the final message is clicked.
 OPEN_ACTION = "open"
-OPEN_ACTION_LABEL = "Open folder"
+
+#: What that button says. "Show in Files" names the actual application it opens — Files is
+#: the file manager in both the Aquarius Session and the GNOME fallback — which is more
+#: use to somebody new to Linux than the generic "Open folder" this used to say.
+OPEN_ACTION_LABEL = "Show in Files"
+
+#: The progress hint. An int from 0 to 100; daemons that understand it draw a bar.
+#: https://specifications.freedesktop.org/notification-spec/latest/hints.html
+VALUE_HINT = "value"
+
+#: The "this message replaces the last one with the same tag" hint. Belt and braces
+#: alongside --replace-id: a daemon that honours one or the other still ends up with a
+#: single notification rather than a stack of them.
+SYNCHRONOUS_HINT = "x-canonical-private-synchronous"
+SYNCHRONOUS_TAG = "aq-ingest"
+
+#: notify-send's spelling of "do not take this off the screen by yourself". The progress
+#: message uses it so a long conversion is not represented by a toast that vanished four
+#: minutes ago; the final message carries no such request and goes away on its own.
+NEVER_EXPIRE = "0"
 
 #: Statuses that mean a new file was actually written.
 _WROTE_SOMETHING = (runner.REWRAPPED, runner.TRANSCODED, runner.CONVERTED)
@@ -97,6 +155,37 @@ def progress_body(done: int, total: int, name: str, dry_run: bool = False) -> st
     return f"{verb} {done} of {total} — {escape(shorten(name))}"
 
 
+#: The separator between the parts of the working message. A middle dot rather than a
+#: comma, because two of the three parts already contain commas' worth of words.
+_DOT = " · "
+
+
+def working_body(snapshot: Snapshot) -> str:
+    """The line under the title while a conversion is running.
+
+    One file:      ``Converting clip.MP4 · 42% · about 2 min left``
+    Several:       ``Converting 3 files · 1 of 3 · 38% · about 5 min left``
+
+    The time left is left off entirely until there is one worth printing — for the first
+    couple of seconds of a run any estimate is nonsense, and printing a nonsense one is
+    worse than printing none.
+
+    The word is "files", not "clips", because a run can contain iPhone photos as well as
+    footage and this message must be true of both.
+    """
+    parts: list[str] = []
+    if snapshot.total <= 1:
+        name = escape(shorten(snapshot.name)) if snapshot.name else "your file"
+        parts.append(f"Converting {name}")
+    else:
+        parts.append(f"Converting {_plural(snapshot.total, 'file')}")
+        parts.append(f"{snapshot.file_number} of {snapshot.total}")
+    parts.append(f"{snapshot.percent}%")
+    if snapshot.time_left:
+        parts.append(snapshot.time_left)
+    return _DOT.join(parts)
+
+
 def failed(results: list[runner.Result]) -> list[runner.Result]:
     return [r for r in results if r.status == runner.FAILED]
 
@@ -120,13 +209,25 @@ def is_urgent(results: list[runner.Result]) -> bool:
     return bool(failed(results))
 
 
+def written(results: list[runner.Result]) -> list[runner.Result]:
+    """The files that actually got a new copy written for them."""
+    return [r for r in results if r.status in _WROTE_SOMETHING]
+
+
 def finish_title(results: list[runner.Result], dry_run: bool = False) -> str:
     problems = failed(results)
     if problems:
         return f"{_plural(len(problems), 'file')} could not be made editor-ready"
     if dry_run:
         return "Preview only — nothing was changed"
-    if wrote_anything(results):
+
+    made = written(results)
+    # Right-clicking ONE clip is the commonest way this tool is used, and in that case
+    # naming the file is far more use than "your files": it says which of the four things
+    # you set going a minute ago has just finished.
+    if len(made) == 1:
+        return f"{shorten(made[0].source.name)} is editor-ready"
+    if made:
         return "Your files are editor-ready"
     return "Nothing needed changing"
 
@@ -151,7 +252,9 @@ def finish_body(
 
     folders = output_folders(results)
     if folders and not dry_run:
-        lines.append(f"Fixed copies are in: {escape(str(folders[0]))}")
+        one = len(written(results)) == 1
+        label = "The fixed copy is in" if one else "Fixed copies are in"
+        lines.append(f"{label}: {escape(str(folders[0]))}")
         if len(folders) > 1:
             lines.append(f"…and {len(folders) - 1} more folder(s).")
 
@@ -226,6 +329,7 @@ class Notifier:
         self._help_text = help_text
         self._notification_id: str | None = None
         self._last_progress = 0.0
+        self._last_percent = -1
 
     # -- capability ---------------------------------------------------------------
 
@@ -241,10 +345,26 @@ class Notifier:
         """
         if not self.active:
             return False
+        return "--action" in self._help()
+
+    def supports_hints(self) -> bool:
+        """Does this notify-send have --hint? (Every libnotify since 0.4 does.)
+
+        Probed rather than assumed for the same reason --action is: a notify-send that
+        does not have the flag would refuse the whole command line, and losing the message
+        entirely to gain a progress bar would be a bad trade. Without it the bar is
+        missing and the percentage in the body text still says everything.
+        """
+        if not self.active:
+            return False
+        return "--hint" in self._help()
+
+    def _help(self) -> str:
+        """notify-send's own --help output, asked for once and remembered."""
         if self._help_text is None:
             proc = self._dispatch([self.program, "--help"], timeout=10)
             self._help_text = "" if proc is None else f"{proc.stdout or ''}{proc.stderr or ''}"
-        return "--action" in self._help_text
+        return self._help_text
 
     # -- the three moments in a run -----------------------------------------------
 
@@ -255,14 +375,54 @@ class Notifier:
             start_title(self.dry_run),
             start_body(total, self.dry_run),
             urgency="low",
+            # A run can take twenty minutes. Asking the desktop not to take this off the
+            # screen by itself is what stops the progress bar disappearing four minutes in
+            # and leaving the person with no idea whether anything is still happening.
+            # The final message replaces this one and does NOT ask for that, so it behaves
+            # like any other notification and goes away on its own.
+            expire=None if self.dry_run else NEVER_EXPIRE,
+            progress=0 if not self.dry_run else None,
             extra=["--print-id"],
         )
         proc = self._dispatch(argv, timeout=15)
         self._notification_id = self._read_id(proc)
         self._last_progress = self._clock()
+        self._last_percent = 0
+
+    def working(self, snapshot: Snapshot) -> None:
+        """Redraw the notification with the bar and the time left.
+
+        Called as often as ffmpeg reports — twice a second or so — and deliberately
+        ignores almost all of them. A notification redrawn thirty times a second is a
+        notification that flickers, and on some daemons it is also one that re-triggers a
+        sound. So: at most once a second, and only when the percentage has actually moved.
+        """
+        if not self.active or self.dry_run or snapshot.total <= 0:
+            return
+        if snapshot.percent == self._last_percent:
+            return
+        now = self._clock()
+        if now - self._last_progress < PROGRESS_INTERVAL:
+            return
+        self._last_progress = now
+        self._last_percent = snapshot.percent
+
+        argv = self._base_argv(
+            start_title(self.dry_run),
+            working_body(snapshot),
+            urgency="low",
+            expire=NEVER_EXPIRE,
+            progress=snapshot.percent,
+        )
+        self._dispatch(argv, timeout=15)
 
     def progress(self, done: int, total: int, name: str) -> None:
-        """Update the notification in place. Throttled, and skipped for single files."""
+        """The dry-run counter: "Looked at 3 of 12".
+
+        A dry run runs no ffmpeg, so there is nothing to measure and no bar to draw — it
+        only walks the files and says what it would do. Counting them is the whole of the
+        progress there is.
+        """
         if not self.active or total < 2 or done >= total:
             return
         now = self._clock()
@@ -337,9 +497,28 @@ class Notifier:
             return None
 
     def _base_argv(
-        self, title: str, body: str, *, urgency: str, extra: list[str] | None = None
+        self,
+        title: str,
+        body: str,
+        *,
+        urgency: str,
+        extra: list[str] | None = None,
+        expire: str | None = None,
+        progress: int | None = None,
     ) -> list[str]:
-        """Build a notify-send command line. The title and body always come last."""
+        """Build a notify-send command line. The title and body always come last.
+
+        ``progress`` is the 0–100 the desktop draws as a bar. Passing it also tags the
+        message, so a daemon that replaces by tag rather than by id still shows one
+        notification rather than a growing stack.
+
+        No ``desktop-entry`` hint is sent, on purpose. That hint names a ``.desktop`` file
+        so the desktop can look up an icon and group by application — and aq-ingest has no
+        ``.desktop`` file of its own (it is reached from the Files right-click menu, not
+        from the app grid). Naming one that does not exist would be a small lie that buys
+        nothing: ``--app-name AquariusOS`` already groups every message from this tool
+        together, and ``--icon`` already supplies the icon.
+        """
         argv = [
             self.program,
             "--app-name",
@@ -349,6 +528,26 @@ class Notifier:
             "--urgency",
             urgency,
         ]
+        if expire is not None:
+            argv += ["--expire-time", expire]
+        if self.supports_hints():
+            # THE TAG GOES ON EVERY MESSAGE, not just the ones with a bar, and that
+            # is what makes the fallback path correct.
+            #
+            # Normally --replace-id does the work and this is never needed. But
+            # --print-id gives us nothing if the notification daemon was not
+            # answering when the run started — right-click a card ten seconds after
+            # logging in and that is a real possibility. With no id, every redraw
+            # becomes a NEW notification, and a desktop that honours this tag still
+            # collapses them into one.
+            #
+            # Leaving the tag off the final message was a hole: the progress
+            # notification asks never to expire, so it would have sat there at 60%
+            # for ever with the "editor-ready" message beside it. Tagged, the last
+            # message replaces the bar, exactly as it does through --replace-id.
+            argv.append(f"--hint=string:{SYNCHRONOUS_HINT}:{SYNCHRONOUS_TAG}")
+            if progress is not None:
+                argv.append(f"--hint=int:{VALUE_HINT}:{max(0, min(100, int(progress)))}")
         if self._notification_id:
             argv += ["--replace-id", self._notification_id]
         argv += extra or []
