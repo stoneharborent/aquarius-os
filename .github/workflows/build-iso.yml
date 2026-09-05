@@ -238,7 +238,7 @@ jobs:
 
       - name: Build the ISO
         id: build
-        uses: osbuild/bootc-image-builder-action@8661cd3832544ad68c12dcde8681b13ab0f56a8d # main
+        uses: osbuild/bootc-image-builder-action@b43efcb44d76d46d55022b66d3dbb89bdf6e5c9a # main
         with:
           builder-image: "quay.io/centos-bootc/bootc-image-builder:latest"
           config-file: ${{ steps.config.outputs.config-file }}
