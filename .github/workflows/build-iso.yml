@@ -86,8 +86,15 @@ on:
       - 'iso-base-*'
       - 'iso-nvidia-*'
 
+# ⚠️ THE VARIANT HAS TO BE IN THIS NAME. Runs that share a concurrency group
+# cancel each other, and both variants started from the button share the same
+# branch — so a group of workflow-plus-branch would mean pressing "Run workflow"
+# for nvidia silently killed the base ISO that was already twenty minutes in.
+# That exact bug happened on the Bazzite line on 2026-08-26 and was fixed the
+# same way; it stayed fixed here only by accident, because until the button
+# existed every ISO was started by a differently-named tag.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.variant || 'from-a-tag' }}
   cancel-in-progress: true
 
 jobs:
