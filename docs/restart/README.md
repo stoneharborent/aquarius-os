@@ -141,6 +141,7 @@ after it.
 | `aq-lib.sh` | Shared helpers. Read the top of this one first — it explains the "trust content, never timestamps" rule that shapes every check in the repo. |
 | `10-repos.sh` | Adds RPM Fusion, so the next step has real codecs to install. |
 | `20-hardware-media.sh` | Makes it a working computer: graphics, sound, network, power, firmware, filesystems, and every codec. The biggest step. |
+| `20-hardware-media.sh` (the firmware) | **The programs that live inside the hardware.** Every Wi-Fi and Bluetooth vendor, every graphics vendor, laptop speaker amplifiers, laptop webcams, and both CPU makers' microcode — then counts the actual files on disk to prove they landed. ⚠️ Fedora split `linux-firmware` into about thirty per-vendor packages and the leftovers no longer contain any radio; installing only the old name is what left the bench with "No Wi-Fi Adapter Found" on 2026-09-05. Plain-language guide: [`hardware.md`](hardware.md). |
 | `30-session.sh` | The invisible layer between "has drivers" and "has a desktop": the login screen, portals, XWayland, Flatpak, fonts, containers. |
 | `40-gnome-desktop.sh` | GNOME — a hand-written short list, with a note on everything deliberately left out. |
 | `50-aquarius-desktop.sh` | Makes it *ours*: wallpaper, logos, Ice theme, fonts, dock, the right-click ingest menu. |
@@ -285,6 +286,7 @@ thing locally. `just` with no arguments lists everything available.
 - **The login screen — why it looked like stock Fedora, and the two answers:** [`login.md`](login.md)
 - **DaVinci Resolve — installing it, and why it lives in a container:** [`resolve.md`](resolve.md)
 - **Gaming: what ships, the launch options worth knowing, and what is deliberately not here:** [`gaming.md`](gaming.md)
+- **Wi-Fi, Bluetooth and graphics firmware — what it is and how to check it:** [`hardware.md`](hardware.md)
 - **Which kernel AquariusOS ships, and why it is pinned:** [`kernel.md`](kernel.md)
 - **Why the NVIDIA driver is done the way it is:** [`nvidia-notes.md`](nvidia-notes.md)
 - **Why Fedora and not Bazzite/Arch/Ubuntu:** [`../base-distro-reassessment-2026-09.md`](../base-distro-reassessment-2026-09.md)
