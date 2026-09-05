@@ -261,7 +261,7 @@ and refuses to publish unless a "Make Editor-Ready" item comes back
 
 ## Bench test, for Royce
 
-The point of this test is a **real camera file**, not a synthetic one. The 159
+The point of this test is a **real camera file**, not a synthetic one. The
 automated tests already cover every branch of the decision table with generated
 fixtures, and the progress arithmetic against a clock they control; what they
 cannot prove is that a file from your actual camera, on your actual machine,
