@@ -1101,21 +1101,22 @@ jobs:
       - name: Check the login screen size rules hold in the finished image
         run: |
           set -euo pipefail
+          # Each file is mounted at the exact path the test expects to find it,
+          # rather than copied and renamed inside — an earlier version mounted
+          # the test under a shorter name and then looked for the long one, and
+          # failed on a missing file rather than on anything real.
+          #
+          # The test resolves the guard relative to itself, so the repository's
+          # copy is mounted at that relative path. Everything the test actually
+          # exercises — the sanitiser and the messenger — is named explicitly on
+          # the command line and is the INSTALLED copy.
           podman run --rm --pull=never \
-            -v "${GITHUB_WORKSPACE}/tests/test-gdm-scale-sanitize.sh:/tmp/test-gdm-scale.sh:ro" \
-            -v "${GITHUB_WORKSPACE}/system_files/usr/libexec/aquarius-gdm-guard:/tmp/guard-ref:ro" \
+            -v "${GITHUB_WORKSPACE}/tests/test-gdm-scale-sanitize.sh:/tmp/t/tests/test-gdm-scale-sanitize.sh:ro" \
+            -v "${GITHUB_WORKSPACE}/system_files/usr/libexec/aquarius-gdm-guard:/tmp/t/system_files/usr/libexec/aquarius-gdm-guard:ro" \
             --entrypoint /usr/bin/bash \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" -c '
               set -e
-              # The test looks for the guard next to itself, so give it the one
-              # place it expects while everything else it exercises is the
-              # installed copy.
-              mkdir -p /tmp/t/system_files/usr/libexec
-              cp /tmp/guard-ref /tmp/t/system_files/usr/libexec/aquarius-gdm-guard
-              mkdir -p /tmp/t/tests
-              cp /tmp/test-gdm-scale.sh /tmp/t/tests/
-              chmod +x /tmp/t/tests/test-gdm-scale-sanitize.sh
-              /tmp/t/tests/test-gdm-scale-sanitize.sh \
+              bash /tmp/t/tests/test-gdm-scale-sanitize.sh \
                 /usr/libexec/aquarius-monitors-sanitize \
                 /usr/libexec/aquarius-gdm-display
             '
