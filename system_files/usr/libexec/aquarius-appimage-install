@@ -40,9 +40,13 @@
 # that prompt is the one part of this feature that has actually failed on the
 # bench. So this runs as you, with no pkexec, no sudo, and nothing privileged.
 #
-# It REFUSES to run as root, and that is deliberate too: run under sudo it would
-# install the app into root's home folder, where the person who asked for it can
-# never see it, and the failure would look like success.
+# It REFUSES to INSTALL, UPDATE or REMOVE as root, and that is deliberate too:
+# run under sudo it would install the app into root's home folder, where the
+# person who asked for it can never see it, and the failure would look like
+# success.
+#
+# Asking it a question — `--status`, `--check-update` — is allowed as anybody,
+# because a question installs nothing and answers about whoever is asking.
 #
 # ------------------------------------------------------------------------------
 # WHERE THINGS GO, AND WHY IT IS SHAPED LIKE THAT
@@ -141,7 +145,8 @@ aquarius-appimage-install — install one of our own apps into your home folder
     --dry-run         walk every step and touch nothing. No network is used.
 
 The IDs are the ones `aq apps list` prints. Runs as you: no password, and
-nothing outside your own home folder is touched. Refuses to run as root.
+nothing outside your own home folder is touched. Installing, updating and
+removing refuse to run as root; asking a question does not.
 USAGE
 }
 
@@ -175,7 +180,21 @@ done
 # ⚠️ REFUSING ROOT IS NOT FUSSINESS. Under sudo, $HOME is root's home folder, so
 # every path below would point somewhere the person who asked can never see, and
 # the install would "succeed" into a folder nobody will ever open.
-if [ "$(id -u)" -eq 0 ] && [ "${DRY_RUN}" -eq 0 ]; then
+#
+# ⚠️ BUT ONLY FOR THE THINGS THAT WRITE, AND THAT DISTINCTION WAS MISSING AT
+#    FIRST (found in CI, 2026-09-04). `--status` and `--check-update` install
+#    nothing; they answer a question about whoever is asking. Refusing them as
+#    root did real damage in a place nobody would have looked: `aq apps list`
+#    asks `--status` to find out what is installed and treats a failure as "not
+#    installed", so on a root shell it would have reported the app missing when
+#    it was sitting right there. A question answered wrongly is worse than a
+#    question refused.
+case "${ACTION}" in
+    install | update | remove) AQ_WRITES=1 ;;
+    *) AQ_WRITES=0 ;;
+esac
+
+if [ "${AQ_WRITES}" -eq 1 ] && [ "$(id -u)" -eq 0 ] && [ "${DRY_RUN}" -eq 0 ]; then
     say "Do not run this with sudo."
     say ""
     say "This installs an app into YOUR OWN home folder and needs no special"
@@ -193,7 +212,8 @@ fi
 #    check refused to rehearse and every check after it failed. It is a real
 #    requirement for a real install and a meaningless one for a rehearsal,
 #    which writes into a throwaway folder of its own a few lines below.
-if [ "${DRY_RUN}" -eq 0 ] && { [ -z "${HOME:-}" ] || [ ! -d "${HOME}" ]; }; then
+if [ "${AQ_WRITES}" -eq 1 ] && [ "${DRY_RUN}" -eq 0 ] \
+    && { [ -z "${HOME:-}" ] || [ ! -d "${HOME}" ]; }; then
     say "ERROR — this session has no home folder, so there is nowhere to install to."
     progress "FAIL There is no home folder to install into."
     exit 1
