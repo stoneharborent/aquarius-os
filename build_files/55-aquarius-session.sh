@@ -827,7 +827,17 @@ AQ_DISPLAY_HELPER="/usr/libexec/aquarius-display-scale"
 
 # It is a Python program, so ask Python whether it is even readable before
 # running it. A syntax error here would mean every screen silently stays at 100%.
-if python3 -m py_compile "${AQ_DISPLAY_HELPER}" 2> /dev/null; then
+#
+# ⚠️ NOT `python3 -m py_compile`, which is what this line used to be. That form
+# WRITES: it leaves a __pycache__ folder next to the file, so every AquariusOS
+# machine has been shipping /usr/libexec/__pycache__ — bytecode that nothing can
+# ever use, because Python only reads __pycache__ for imported modules and never
+# for a program run directly. The rest of this repo already compiles to a
+# throwaway path in /tmp for exactly this reason (62-resolve-runtime.sh,
+# 66-creator-apps-chooser.sh, 67-welcome.sh); this one line was missed. Found by
+# the new /usr/libexec/__pycache__ check in build.yml, 2026-09-05.
+if python3 -c 'import py_compile, sys; py_compile.compile(sys.argv[1], cfile="/tmp/aq-display-scale-check.pyc", doraise=True)' \
+    "${AQ_DISPLAY_HELPER}" 2> /dev/null; then
     ok "the display-scale helper is valid Python"
 else
     bad "the display-scale helper has a syntax error — every screen would stay at 100%"
