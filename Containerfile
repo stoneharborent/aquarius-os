@@ -32,8 +32,8 @@
 # ------------------------------------------------------------------------------
 # TWO IMAGES COME OUT OF THIS ONE FILE
 # ------------------------------------------------------------------------------
-#   aquarius-os-next          for AMD and Intel graphics
-#   aquarius-os-next-nvidia   for NVIDIA graphics
+#   aquarius-os          for AMD and Intel graphics
+#   aquarius-os-nvidia   for NVIDIA graphics
 #
 # They are the same recipe. The only difference is a switch called NVIDIA:
 # 0 means "no NVIDIA driver", 1 means "install it". There is no second recipe
@@ -247,7 +247,7 @@ ARG NVIDIA
 # these into the OS so that `bootc upgrade` knows where to look for updates and
 # the About page knows what to call itself. The defaults mean a plain
 # `podman build .` with no arguments still produces a sensible image.
-ARG IMAGE_NAME=aquarius-os-next
+ARG IMAGE_NAME=aquarius-os
 ARG IMAGE_VENDOR=stoneharborent
 
 # ------------------------------------------------------------------------------

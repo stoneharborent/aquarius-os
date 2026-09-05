@@ -14,19 +14,20 @@ much smaller than it sounds.**
 
 > ## ⚠️ Which branch am I looking at?
 >
-> **This is `restart/fedora-bootc`** — AquariusOS rebuilt from scratch on bare
-> Fedora, started 2 September 2026. It publishes:
+> **`main` is AquariusOS** — rebuilt from scratch on bare Fedora, started
+> 2 September 2026. It publishes:
 >
-> - `ghcr.io/stoneharborent/aquarius-os-next` — AMD and Intel graphics
-> - `ghcr.io/stoneharborent/aquarius-os-next-nvidia` — NVIDIA graphics
+> - `ghcr.io/stoneharborent/aquarius-os` — AMD and Intel graphics
+> - `ghcr.io/stoneharborent/aquarius-os-nvidia` — NVIDIA graphics
 >
-> **The `main` branch is the older Bazzite-based line.** It is frozen — no new
-> work goes there — but it is still built and published, so the six images it
-> produces keep updating for anyone running them. **Nothing from this branch is
-> ever merged into `main`.**
+> **`bazzite-archive` is the older Bazzite-based line**, which was `main` until
+> 4 September 2026. It is frozen and no longer built: its six images stay in the
+> registry, each with a permanent `bazzite-final` tag, and nothing is ever
+> merged between the two branches.
 >
 > Why we started over: [`docs/base-distro-reassessment-2026-09.md`](docs/base-distro-reassessment-2026-09.md)
 > What that means in practice: [`docs/restart/README.md`](docs/restart/README.md)
+> How the names and branches were swapped over: [`docs/restart/final-names.md`](docs/restart/final-names.md)
 
 ---
 
@@ -37,8 +38,8 @@ much smaller than it sounds.**
    (the recipe)             (the free build robot)         (the OS)
 
    Containerfile      ──►   reads the recipe         ──►   ghcr.io/stoneharborent/
-   build_files/             starts from Fedora             aquarius-os-next
-   system_files/            runs our eight steps           aquarius-os-next-nvidia
+   build_files/             starts from Fedora             aquarius-os
+   system_files/            runs our eight steps           aquarius-os-nvidia
    aquarius-os.env          INSPECTS the result
                             publishes and signs it                │
         ▲                                                        ▼
@@ -129,29 +130,35 @@ Full guide: [`docs/restart/gaming.md`](docs/restart/gaming.md).
 
 Full guide: [`GETTING-STARTED.md`](GETTING-STARTED.md).
 
-**Change something in the OS** — edit a file, commit, push to
-`restart/fedora-bootc`. GitHub builds and publishes both images. Watch it at
+**Change something in the OS** — edit a file, commit, push to `main`. GitHub
+builds and publishes both images. Watch it at
 [Actions](https://github.com/stoneharborent/aquarius-os/actions).
 
 **Put a new build on a machine that already runs AquariusOS** — on that Linux
 machine (not on the Mac), run `command -v bootc`. If it prints a path:
-`sudo bootc switch ghcr.io/stoneharborent/aquarius-os-next-nvidia:latest`. If it
+`sudo bootc switch ghcr.io/stoneharborent/aquarius-os-nvidia:latest`. If it
 prints nothing, the older tool does the same job:
-`sudo rpm-ostree rebase ostree-unverified-registry:ghcr.io/stoneharborent/aquarius-os-next-nvidia:latest`.
+`sudo rpm-ostree rebase ostree-unverified-registry:ghcr.io/stoneharborent/aquarius-os-nvidia:latest`.
 Then reboot. Reversible with `sudo bootc rollback`. Step by step:
 [`docs/restart/bench-rebase.md`](docs/restart/bench-rebase.md).
 
-**Install on a machine that does not run it yet** — build an ISO by hand, by
-pushing a tag (`git tag iso-nvidia-2026-09-03 && git push origin iso-nvidia-2026-09-03`).
-Why a tag and not the Actions button: see
+**Install on a machine that does not run it yet** — build an ISO by hand:
+Actions → **Build AquariusOS ISO** → *Run workflow*. Pushing a tag
+(`git tag iso-nvidia-2026-09-05 && git push origin iso-nvidia-2026-09-05`) still
+works and is the way to build one from a branch. Details: see
 [`GETTING-STARTED.md`](GETTING-STARTED.md#3-make-an-installer-usb-stick).
 
 ---
 
 ## The rules
 
-1. **Never merge this branch into `main`.**
-2. **New image names** (`aquarius-os-next*`) until Phase R3 closes.
+1. **Never merge `bazzite-archive` and `main`.** They are two different
+   operating systems that happen to share a repository.
+2. **The images are called `aquarius-os` and `aquarius-os-nvidia`.** For two
+   days in September 2026, while both lines were live, they were published
+   under temporary names ending in `-next`. That is history now, and the build
+   fails if one of those names comes back. See
+   [`docs/restart/final-names.md`](docs/restart/final-names.md).
 3. **One recipe, two images.** The NVIDIA difference is a build switch, never a
    second Containerfile.
 4. **Check the result by reading its contents** — the value a setting reports,

@@ -8,31 +8,29 @@
 # See docs/restart/bench-rebase.md.
 #
 # ------------------------------------------------------------------------------
-# HOW TO RUN IT — AND WHY THERE ARE TWO WAYS
+# HOW TO RUN IT
 # ------------------------------------------------------------------------------
-# ⚠️ GitHub has a rule that catches everybody exactly once: **the "Run workflow"
-# button only appears for workflows that exist on the repository's DEFAULT
-# branch.** Ours is `main`, which is the frozen Bazzite line, and nothing from
-# this branch is ever put there. So until the restart branch becomes the default
-# branch (which happens when Phase R3 closes), the button below does not exist
-# in the Actions page and pressing it is not an option.
+# THE ORDINARY WAY — press the button.
 #
-# So there are two triggers, and which one you use depends on today's date.
+#     1. GitHub → this repository → Actions
+#     2. "Build AquariusOS ISO" in the left-hand list
+#     3. "Run workflow", pick the variant, press the green button
 #
-# TODAY — push a tag. Tags are not branches, so this touches nothing.
+# ⚠️ That button only appears for workflows that exist on the repository's
+# DEFAULT branch. That is `main`, and this file is on it, so the button is
+# there. Before 4 September 2026 it was not: `main` was the older Bazzite line
+# then and this file lived on a branch, so the only way in was the tag below.
 #
-#     git tag iso-nvidia-2026-09-03
-#     git push origin iso-nvidia-2026-09-03
+# THE OTHER WAY — push a tag. Still supported, and still the way to start an
+# ISO from a branch that is not the default one. Tags are not branches, so
+# this touches nothing.
+#
+#     git tag iso-nvidia-2026-09-05
+#     git push origin iso-nvidia-2026-09-05
 #
 #   The tag name says which image: it must start with `iso-base-` or
 #   `iso-nvidia-`. Anything after that is yours — a date is the obvious thing.
 #   Pushing the tag starts the build.
-#
-# ONCE THIS BRANCH IS THE DEFAULT BRANCH — the ordinary way.
-#
-#     1. GitHub → this repository → Actions
-#     2. "Build AquariusOS ISO (next)" in the left-hand list
-#     3. "Run workflow", pick the variant, press the green button
 #
 # Either way: wait 20-40 minutes, then download the ISO from the Artifacts
 # section at the bottom of the run's page.
@@ -45,12 +43,13 @@
 # the build workflow has never finished green, there is nothing here to wrap.
 #
 # ------------------------------------------------------------------------------
-# WHY THIS IS SIMPLER THAN THE ONE ON `main`
+# WHY THIS IS SIMPLER THAN THE BAZZITE ONE
 # ------------------------------------------------------------------------------
-# The Bazzite line could not use the ordinary Fedora installer: bootc-image-
-# builder choked on the extra software sources Bazzite carries
-# (osbuild/bootc-image-builder#1188), so we used Titanoboa, Universal Blue's
-# live-ISO builder, and then had to undress its Bazzite-flavoured live session.
+# The Bazzite line (now on the `bazzite-archive` branch) could not use the
+# ordinary Fedora installer: bootc-image-builder choked on the extra software
+# sources Bazzite carries (osbuild/bootc-image-builder#1188), so we used
+# Titanoboa, Universal Blue's live-ISO builder, and then had to undress its
+# Bazzite-flavoured live session.
 #
 # AquariusOS is plain Fedora now and has none of those sources, so the standard
 # tool works. This whole workflow is one action call.
@@ -61,10 +60,10 @@
 # we use. Expect to revisit this once in the next year.
 # ==============================================================================
 
-name: Build AquariusOS ISO (next)
+name: Build AquariusOS ISO
 
 on:
-  # The ordinary way — only available once this branch is the default branch.
+  # The ordinary way: Actions → this workflow → "Run workflow".
   workflow_dispatch:
     inputs:
       variant:
@@ -80,14 +79,22 @@ on:
         required: false
         default: latest
         type: string
-  # The way that works today. Push a tag whose name starts with the variant.
+  # The other way. Push a tag whose name starts with the variant — still the
+  # way to build an ISO from a branch that is not the default one.
   push:
     tags:
       - 'iso-base-*'
       - 'iso-nvidia-*'
 
+# ⚠️ THE VARIANT HAS TO BE IN THIS NAME. Runs that share a concurrency group
+# cancel each other, and both variants started from the button share the same
+# branch — so a group of workflow-plus-branch would mean pressing "Run workflow"
+# for nvidia silently killed the base ISO that was already twenty minutes in.
+# That exact bug happened on the Bazzite line on 2026-08-26 and was fixed the
+# same way; it stayed fixed here only by accident, because until the button
+# existed every ISO was started by a differently-named tag.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.variant || 'from-a-tag' }}
   cancel-in-progress: true
 
 jobs:
@@ -295,7 +302,7 @@ jobs:
             echo ""
             echo "1. **The image is not published yet.** This workflow wraps an image that already"
             echo "   exists at \`${{ steps.names.outputs.image-ref }}\`. Check that"
-            echo "   \"Build AquariusOS (next)\" has finished green at least once."
+            echo "   \"Build AquariusOS\" has finished green at least once."
             echo "2. **The package is private.** A newly published package on GitHub is private"
             echo "   until somebody makes it public — one click, once, on the package's page."
             echo "3. **Out of disk.** An ISO is several gigabytes and the build machine is not"

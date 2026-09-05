@@ -118,7 +118,7 @@ UseFirmwareBackground=false
 
 Miss one of those sections and the badge comes back on that one screen only,
 which is the kind of thing you find out about six weeks later. So the check in
-`.github/workflows/build-next.yml` fails the build if the word `true` ever
+`.github/workflows/build.yml` fails the build if the word `true` ever
 appears next to that setting anywhere in the theme.
 
 ---
@@ -317,7 +317,7 @@ The build checks, after the sweep, that they are still the About page's.
 AquariusOS **is** Fedora 44 with our choices on top. Pretending otherwise in the
 places a *program* reads breaks real things. Every one of these is deliberate,
 none of them is visible to somebody using the machine, and each is written into
-the audit in `.github/workflows/build-next.yml` with its reason:
+the audit in `.github/workflows/build.yml` with its reason:
 
 | Still says Fedora | Why it must |
 | --- | --- |

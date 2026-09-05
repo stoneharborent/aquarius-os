@@ -11,9 +11,21 @@
 #   3. pushes it to GitHub's container registry
 #   4. signs it, so a machine can prove an update really came from us
 #
-# ⚠️ THIS WORKFLOW ONLY EXISTS ON THE `restart/fedora-bootc` BRANCH, and it only
-# builds from that branch. The Bazzite line has its own workflow on `main` and
-# the two never touch. Nothing here is ever merged into `main`.
+# ⚠️ WHICH BRANCHES THIS PUBLISHES FROM, AND WHY THERE ARE TWO.
+#
+# This is the AquariusOS build. It publishes from `main` — the ordinary,
+# permanent home for it.
+#
+# It ALSO still publishes from `restart/fedora-bootc`, because until 4 September
+# 2026 that WAS the branch this line lived on, and `main` was the older,
+# Bazzite-based operating system. On that date Royce renamed the branches: the
+# old `main` became `bazzite-archive` and this branch became `main`. Naming both
+# here means the same file is correct before the rename and after it, so nothing
+# has to be edited in the ten minutes between the two clicks. See
+# docs/restart/final-names.md.
+#
+# The Bazzite line's own workflow stays behind on `bazzite-archive` and is never
+# merged with this one.
 #
 # ⚠️ STEP 2 IS THE POINT. It would be easy to build an image, see no red text,
 # and publish something that boots to a black screen. Every check in the verify
@@ -25,12 +37,16 @@
 # 2026-08-31 and it is now a rule.
 # ==============================================================================
 
-name: Build AquariusOS (next)
+name: Build AquariusOS
 
 on:
   push:
     branches:
-      # The real line. Pushes here build, check, publish and sign.
+      # The real line, after the 4 September 2026 branch rename. Pushes here
+      # build, check, publish and sign.
+      - main
+      # The real line, before that rename. Same treatment, for exactly as long
+      # as this branch name still exists.
       - restart/fedora-bootc
       # A side branch, so that work in progress gets the same build and the
       # same checks before it is merged. It BUILDS AND CHECKS ONLY — every
@@ -112,6 +128,11 @@ on:
       # taking the shell commit that has it. Same arrangement: builds and
       # checks, never publishes.
       - restart/shell-welcome
+      # The rename to the final image names, and getting every workflow ready
+      # for the branch rename. Same arrangement: builds and checks, never
+      # publishes — deliberately, because this is the branch that decides what
+      # `aquarius-os:latest` means and it must be proven green first.
+      - restart/flip
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -3898,20 +3919,94 @@ jobs:
       # ------------------------------------------------------------------------
       # PUBLISHING
       # ------------------------------------------------------------------------
-      # ⚠️ EVERY STEP FROM HERE DOWN ONLY RUNS ON `restart/fedora-bootc`.
+      # ⚠️ EVERY STEP FROM HERE DOWN ONLY RUNS ON THE REAL LINE — which is
+      # `main` after the 4 September 2026 branch rename, and was
+      # `restart/fedora-bootc` before it. Both are named, so this file is
+      # correct on either side of that rename.
       #
       # Side branches (`restart/aquarius-keys`, `restart/r3-apps` and any
       # future one) build the
       # image and run every check above, and then stop. They must not publish,
-      # because publishing means pushing to the `aquarius-os-next:latest` tags
+      # because publishing means pushing to the `aquarius-os:latest` tags
       # that real machines update from — so a half-finished side branch would
       # overwrite the working image on the bench PC with its own work in
       # progress. Building and checking is the whole value of running CI on a
       # side branch; publishing from one is only a way to break something.
       #
       # Fable removes these `if:` lines when a side branch is merged back.
+
+      # ------------------------------------------------------------------------
+      # THE SAFETY CATCH — do not publish over history that was never saved
+      # ------------------------------------------------------------------------
+      # `aquarius-os:latest` and `aquarius-os-nvidia:latest` used to be the
+      # older, Bazzite-based operating system. From 4 September 2026 they are
+      # this one. The moment this workflow publishes, the older image stops
+      # being findable by name — so before that ever happens, all six Bazzite
+      # images must have been copied to a permanent `bazzite-final` tag.
+      #
+      # That copying is a separate workflow ("Archive the Bazzite image tags"),
+      # run once, by hand. This step is what makes forgetting it impossible: it
+      # simply asks the registry whether the archive exists, and stops the run
+      # if it does not. Nothing has been pushed at this point, so stopping here
+      # costs a build and breaks nothing.
+      #
+      # Once the archive exists this step is six quick questions to the registry
+      # and always passes. It stays in the file because the archive is the only
+      # copy of a year's work, and a check that has already saved you once is
+      # not worth deleting.
+      - name: Check the Bazzite images were archived first
+        if: github.ref_name == 'main' || github.ref_name == 'restart/fedora-bootc'
+        env:
+          OWNER: ${{ github.repository_owner }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+
+          if ! command -v skopeo >/dev/null; then
+            sudo apt-get update -qq && sudo apt-get install -y skopeo
+          fi
+
+          # Reading a public package needs no credentials, but signing in costs
+          # nothing and means a package that has been made private does not look
+          # like a missing archive.
+          echo "${GH_TOKEN}" | skopeo login ghcr.io \
+            --username "${GITHUB_ACTOR}" --password-stdin >/dev/null 2>&1 || true
+
+          missing=0
+          for img in aquarius-os aquarius-os-nvidia aquarius-os-deck \
+                     aquarius-os-gnome aquarius-os-gnome-nvidia aquarius-os-gnome-deck; do
+            ref="docker://ghcr.io/${OWNER,,}/${img}:bazzite-final"
+            if digest="$(skopeo inspect --no-tags --format '{{.Digest}}' "${ref}" 2>/dev/null)"; then
+              echo "  OK   ${img}:bazzite-final  ${digest}"
+            else
+              echo "  FAIL ${img}:bazzite-final is not there"
+              missing=1
+            fi
+          done
+
+          if [ "${missing}" -ne 0 ]; then
+            {
+              echo "### Stopped before publishing — on purpose"
+              echo ""
+              echo "The image built and passed every check. It was **not published**, because"
+              echo "the older Bazzite images have not been saved under their permanent"
+              echo "\`bazzite-final\` tag yet, and publishing would take their names away."
+              echo ""
+              echo "**What to do:**"
+              echo ""
+              echo "1. Actions → **Archive the Bazzite image tags** → *Run workflow*"
+              echo "   (leave the dry-run box ticked the first time, then run it again unticked)."
+              echo "2. Come back to this run and press **Re-run all jobs**."
+              echo ""
+              echo "The whole sequence is written out in \`docs/restart/final-names.md\`."
+            } >> "${GITHUB_STEP_SUMMARY}"
+            echo "::error::The Bazzite images have not been archived yet, so publishing would overwrite them. Run 'Archive the Bazzite image tags' first — see docs/restart/final-names.md."
+            exit 1
+          fi
+          echo "The Bazzite images are safely archived. Publishing is allowed."
+
       - name: Work out the tags to publish under
-        if: github.ref_name == 'restart/fedora-bootc'
+        if: github.ref_name == 'main' || github.ref_name == 'restart/fedora-bootc'
         id: tags
         run: |
           alias_tags="$(just generate-build-tags "${IMAGE_NAME}" "${DEFAULT_TAG}")"
@@ -3919,13 +4014,13 @@ jobs:
           echo "alias_tags=${alias_tags}" >> "${GITHUB_OUTPUT}"
 
       - name: Apply the tags
-        if: github.ref_name == 'restart/fedora-bootc'
+        if: github.ref_name == 'main' || github.ref_name == 'restart/fedora-bootc'
         env:
           ALIAS_TAGS: ${{ steps.tags.outputs.alias_tags }}
         run: just tag-images "${IMAGE_NAME}" "${DEFAULT_TAG}" "${ALIAS_TAGS}"
 
       - name: Sign in to GitHub's container registry
-        if: github.ref_name == 'restart/fedora-bootc'
+        if: github.ref_name == 'main' || github.ref_name == 'restart/fedora-bootc'
         uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
         with:
           registry: ghcr.io
@@ -3933,7 +4028,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish
-        if: github.ref_name == 'restart/fedora-bootc'
+        if: github.ref_name == 'main' || github.ref_name == 'restart/fedora-bootc'
         id: push-image
         env:
           ALIAS_TAGS: ${{ steps.tags.outputs.alias_tags }}
@@ -3947,7 +4042,7 @@ jobs:
           echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
 
       - name: Install cosign
-        if: github.ref_name == 'restart/fedora-bootc'
+        if: github.ref_name == 'main' || github.ref_name == 'restart/fedora-bootc'
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
           cosign-release: 'v3.1.2'
@@ -3957,7 +4052,7 @@ jobs:
       # called SIGNING_SECRET; the matching public half is cosign.pub in this
       # repository, and it is the same pair the Bazzite line uses.
       - name: Sign the published image
-        if: github.ref_name == 'restart/fedora-bootc'
+        if: github.ref_name == 'main' || github.ref_name == 'restart/fedora-bootc'
         env:
           COSIGN_EXPERIMENTAL: false
           COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
@@ -3970,7 +4065,7 @@ jobs:
             "${IMAGE_REGISTRY}/${IMAGE_NAME}@${DIGEST}"
 
       - name: What was published
-        if: github.ref_name == 'restart/fedora-bootc'
+        if: github.ref_name == 'main' || github.ref_name == 'restart/fedora-bootc'
         run: |
           echo "### ${IMAGE_NAME}" >> "${GITHUB_STEP_SUMMARY}"
           echo "" >> "${GITHUB_STEP_SUMMARY}"
@@ -4131,3 +4226,95 @@ jobs:
             exit 1
           fi
           echo "The shell matches what the image build expects."
+
+  # ============================================================================
+  # The names have not slipped back
+  # ============================================================================
+  # From 2 to 4 September 2026 these images were published under temporary names
+  # — `aquarius-os-next` and `aquarius-os-next-nvidia` — so that the restart
+  # could be built and installed without overwriting the older Bazzite images
+  # people were still running. Those names are finished.
+  #
+  # The danger is not that somebody types the old name on purpose. It is that an
+  # old branch gets merged, or a paragraph gets copied from an old document, and
+  # the word comes back into a place that MATTERS — the build settings, the
+  # recipe, the installer's kickstart — where it would publish or install the
+  # wrong thing, and nothing else in CI would notice, because building an image
+  # under a wrong name works perfectly.
+  #
+  # So this job reads the whole repository and fails if the old name appears
+  # anywhere except the handful of files that are ALLOWED to say it, because
+  # their job is to record that it happened.
+  #
+  # It takes about five seconds and runs beside the thirty-minute image build,
+  # so a name mistake is visible almost immediately.
+  names:
+    name: The old image names have not come back
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Look for the retired names
+        run: |
+          set -uo pipefail
+
+          # The files whose whole purpose is to explain the old names. A match
+          # in one of these is correct and expected.
+          allowed=(
+            "aquarius-os.env"                 # the history note beside the names
+            "docs/restart/final-names.md"     # the step-by-step for the rename
+            "docs/restart/history.md"         # the record of what was archived
+            "docs/restart/bench-rebase.md"    # names the image the bench came FROM
+            ".github/workflows/build.yml"     # this comment, and this job
+          )
+
+          echo "== searching every tracked file for 'aquarius-os-next' =="
+          hits="$(git grep -n --fixed-strings 'aquarius-os-next' -- . || true)"
+
+          if [ -z "${hits}" ]; then
+            echo "  OK   the retired names appear nowhere at all"
+            exit 0
+          fi
+
+          fails=0
+          while IFS= read -r line; do
+            file="${line%%:*}"
+            ok=0
+            for a in "${allowed[@]}"; do
+              [ "${file}" = "${a}" ] && ok=1 && break
+            done
+            if [ "${ok}" -eq 1 ]; then
+              echo "  ok   ${line}"
+            else
+              echo "  FAIL ${line}"
+              fails=1
+            fi
+          done <<< "${hits}"
+
+          if [ "${fails}" -ne 0 ]; then
+            echo "::error::The retired image name 'aquarius-os-next' is back in a file that is not a history note. The images are called aquarius-os and aquarius-os-nvidia. See docs/restart/final-names.md."
+            exit 1
+          fi
+          echo "  OK   every mention is in a file that exists to record the history"
+
+      - name: The names the build will actually publish
+        run: |
+          set -euo pipefail
+          # Read them back out of the one file that defines them, rather than
+          # trusting that the line above says what we think it says.
+          # shellcheck disable=SC1091
+          . ./aquarius-os.env
+          echo "IMAGE_NAME        = ${IMAGE_NAME}"
+          echo "NVIDIA_IMAGE_NAME = ${NVIDIA_IMAGE_NAME}"
+          fails=0
+          [ "${IMAGE_NAME}" = "aquarius-os" ] || { echo "  FAIL IMAGE_NAME should be aquarius-os"; fails=1; }
+          [ "${NVIDIA_IMAGE_NAME}" = "aquarius-os-nvidia" ] || { echo "  FAIL NVIDIA_IMAGE_NAME should be aquarius-os-nvidia"; fails=1; }
+          # And the installer must point new machines at the same place.
+          grep -q 'ghcr.io/stoneharborent/aquarius-os:latest' disk_config/iso.toml \
+            || { echo "  FAIL disk_config/iso.toml does not point installed machines at ghcr.io/stoneharborent/aquarius-os:latest"; fails=1; }
+          if [ "${fails}" -ne 0 ]; then
+            echo "::error::The published names are not the final ones."
+            exit 1
+          fi
+          echo "  OK   both names and the installer's update target are the final ones"

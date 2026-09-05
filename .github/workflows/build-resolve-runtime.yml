@@ -25,16 +25,20 @@
 # ⚠️ WHAT GETS PUBLISHED, AND FROM WHERE — read this before changing the `if:`
 # lines at the bottom.
 #
-#   restart/fedora-bootc   the real line. Publishes `9`, `latest`, a dated tag
+#   main                   the real line. Publishes `9`, `latest`, a dated tag
 #                          and a commit tag. These are what finished machines
 #                          pull.
+#   restart/fedora-bootc   the same, because that is what the real line was
+#                          called before the 4 September 2026 branch rename.
+#                          Both are named so this file is correct on either
+#                          side of that rename. See docs/restart/final-names.md.
 #   any other branch       publishes ONLY a `dev-<branch>` tag, so a
 #                          work-in-progress runtime can be tried on the bench
 #                          without ever touching the tags real machines use.
 #                          Use it with:
 #                              AQ_RESOLVE_RUNTIME_TAG=dev-<branch> aq resolve install
 #
-# This is a deliberate difference from build-next.yml, where a side branch
+# This is a deliberate difference from build.yml, where a side branch
 # publishes nothing at all. The operating system on a side branch has no reason
 # to exist outside CI; the runtime does — it is the only way to test Resolve on
 # real hardware before merging, and the `dev-` prefix means it cannot collide
@@ -46,6 +50,8 @@ name: Build the Resolve runtime
 on:
   push:
     branches:
+      # The real line after the 4 September 2026 branch rename, and before it.
+      - main
       - restart/fedora-bootc
       - restart/r3-resolve
       # Phase R3 polish. It adds the cursor theme to the runtime, so the
@@ -364,7 +370,7 @@ jobs:
         id: push-image
         run: |
           set -euo pipefail
-          if [ "${{ github.ref_name }}" = "restart/fedora-bootc" ]; then
+          if [ "${{ github.ref_name }}" = "main" ] || [ "${{ github.ref_name }}" = "restart/fedora-bootc" ]; then
             # The real tags. `9` is what /usr/share/aquarius/resolve/runtime.env
             # names, so it is the one that matters; the others are for humans
             # and for rolling back.
@@ -387,7 +393,7 @@ jobs:
           echo "tags=${TAGS}" >> "${GITHUB_OUTPUT}"
 
       - name: Install cosign
-        if: github.ref_name == 'restart/fedora-bootc'
+        if: github.ref_name == 'main' || github.ref_name == 'restart/fedora-bootc'
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
           cosign-release: 'v3.1.2'
@@ -401,7 +407,7 @@ jobs:
       # onto one bench machine on purpose; signing it would suggest a permanence
       # it does not have.
       - name: Sign the published runtime
-        if: github.ref_name == 'restart/fedora-bootc'
+        if: github.ref_name == 'main' || github.ref_name == 'restart/fedora-bootc'
         env:
           COSIGN_EXPERIMENTAL: false
           COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
@@ -421,7 +427,7 @@ jobs:
             echo ""
             echo "Published to \`${IMAGE_REGISTRY}/${IMAGE_NAME}\` as: \`${TAGS}\`"
             echo ""
-            if [ "${{ github.ref_name }}" != "restart/fedora-bootc" ]; then
+            if [ "${{ github.ref_name }}" != "main" ] && [ "${{ github.ref_name }}" != "restart/fedora-bootc" ]; then
               echo "This is a side-branch build. To try it on the bench:"
               echo ""
               echo '```'

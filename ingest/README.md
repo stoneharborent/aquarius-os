@@ -184,7 +184,7 @@ A record of every run is kept at `~/.local/state/aquarius/ingest.log`.
 > **Note on the old `tests/test_desktop.py`.** It went with the Bazzite line. It worked by
 > looking for particular lines of text inside `build_files/build.sh` and inside the KDE
 > right-click menu, and neither exists any more. What it was trying to prove is now proved
-> directly against the finished image in `.github/workflows/build-next.yml`, which is a
+> directly against the finished image in `.github/workflows/build.yml`, which is a
 > stronger check than reading a build script. The old file is still on `main`.
 
 ### Running the tests
