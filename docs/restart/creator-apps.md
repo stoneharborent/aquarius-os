@@ -338,7 +338,7 @@ Both installers report on the same two channels: the human words go into
 > the other ten with it. And after each one, the script does not believe the
 > exit code: it asks `flatpak info` whether the app is really there.
 
-### How it opens by itself, once  — through the welcome
+### How it opens by itself, once — through the welcome
 
 **⚠️ This changed on 2026-09-04 (Phase R5).** This window no longer starts itself
 at login. The [welcome](welcome.md) does, and opens this window as its own
