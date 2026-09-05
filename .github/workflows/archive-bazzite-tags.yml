@@ -1,0 +1,234 @@
+---
+# ==============================================================================
+# Archive the Bazzite image tags
+# ==============================================================================
+# PLAIN ENGLISH
+#
+# AquariusOS was built twice. The first version (August 2026) was built on top
+# of Bazzite and produced six images. The second version — the one this
+# repository builds now — was started from scratch on bare Fedora in September
+# 2026, and it takes over two of those six names.
+#
+# A container registry has no undo. When the new build publishes
+# `aquarius-os:latest`, the older image stops being findable by that name. The
+# picture is still in the registry, but only by a long number nobody has written
+# down.
+#
+# So before that happens, this workflow gives each of the six old images a
+# permanent second name: `bazzite-final`. Nothing is copied, moved or rebuilt —
+# a tag is a label, and this adds one. Afterwards the old operating system is
+# always one command away:
+#
+#     sudo bootc switch ghcr.io/stoneharborent/aquarius-os-gnome-nvidia:bazzite-final
+#
+# ------------------------------------------------------------------------------
+# HOW TO RUN IT
+# ------------------------------------------------------------------------------
+#   1. GitHub → this repository → Actions
+#   2. "Archive the Bazzite image tags" in the left-hand list
+#   3. "Run workflow"
+#         — leave **Dry run** ticked the first time. It changes nothing and
+#           prints exactly what it would do.
+#         — untick it and run again to actually add the tags.
+#
+# It takes under a minute. Running it twice is harmless: an image that already
+# has a `bazzite-final` tag is left exactly as it is.
+#
+# ⚠️ THE BUTTON ONLY EXISTS ON THE DEFAULT BRANCH. That is how GitHub works, for
+# every workflow. So this can only be run once this branch is `main` — which is
+# fine, because the build workflow refuses to publish until this has been done.
+# The order is written out in docs/restart/final-names.md.
+#
+# ------------------------------------------------------------------------------
+# WHY IT NEVER OVERWRITES AN EXISTING ARCHIVE
+# ------------------------------------------------------------------------------
+# If an image already has a `bazzite-final` tag, this workflow leaves it alone —
+# even when `latest` now points somewhere else. That is the whole point: after
+# the new line publishes, `latest` IS somewhere else, and copying it over the
+# archive would destroy the very thing being protected. The archive is written
+# once and then only read.
+# ==============================================================================
+
+name: Archive the Bazzite image tags
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run — list what is there and change nothing."
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: archive-bazzite-tags
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    name: Copy latest to bazzite-final
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Install skopeo if the runner does not have it
+        run: |
+          set -euo pipefail
+          if command -v skopeo >/dev/null; then
+            skopeo --version
+          else
+            sudo apt-get update -qq
+            sudo apt-get install -y skopeo
+          fi
+
+      - name: Sign in to GitHub's container registry
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Archive them
+        env:
+          OWNER: ${{ github.repository_owner }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -uo pipefail
+
+          # The six images the Bazzite line published. The first two are the
+          # ones whose names the new line takes; the other four are archived
+          # too, so that all six are recoverable the same way and nobody has to
+          # remember which is which.
+          IMAGES=(
+            aquarius-os
+            aquarius-os-nvidia
+            aquarius-os-deck
+            aquarius-os-gnome
+            aquarius-os-gnome-nvidia
+            aquarius-os-gnome-deck
+          )
+
+          REGISTRY="ghcr.io/${OWNER,,}"
+          ARCHIVE_TAG="bazzite-final"
+
+          if [ "${DRY_RUN}" = "true" ]; then
+            echo "=============================================="
+            echo " DRY RUN — nothing will be changed."
+            echo "=============================================="
+          fi
+          echo ""
+
+          # `skopeo inspect` on a tag that is not there exits non-zero. That is
+          # a normal answer here, not a failure, so every call is guarded.
+          digest_of() {
+            skopeo inspect --no-tags --format '{{.Digest}}' "docker://$1" 2>/dev/null || true
+          }
+          created_of() {
+            skopeo inspect --no-tags --format '{{.Created}}' "docker://$1" 2>/dev/null || true
+          }
+
+          rows=""
+          copied=0
+          skipped=0
+          problems=0
+
+          for img in "${IMAGES[@]}"; do
+            echo "----------------------------------------------"
+            echo "${img}"
+
+            latest_ref="${REGISTRY}/${img}:latest"
+            archive_ref="${REGISTRY}/${img}:${ARCHIVE_TAG}"
+
+            latest_digest="$(digest_of "${latest_ref}")"
+            archive_digest="$(digest_of "${archive_ref}")"
+            latest_created="$(created_of "${latest_ref}")"
+
+            echo "  latest         ${latest_digest:-<not found>}   ${latest_created:-}"
+            echo "  ${ARCHIVE_TAG}  ${archive_digest:-<not there yet>}"
+
+            if [ -n "${archive_digest}" ]; then
+              # Already archived. Never touched again — see the note at the top.
+              if [ "${archive_digest}" = "${latest_digest}" ]; then
+                note="already archived (same as latest)"
+              else
+                note="already archived (latest has moved on since — left alone)"
+              fi
+              echo "  → ${note}"
+              skipped=$((skipped + 1))
+              rows="${rows}| \`${img}\` | \`${latest_digest:-—}\` | \`${archive_digest}\` | ${note} |"$'\n'
+              continue
+            fi
+
+            if [ -z "${latest_digest}" ]; then
+              echo "  → PROBLEM: there is no ${img}:latest to archive."
+              echo "::warning::${img}:latest was not found, so nothing was archived for it."
+              problems=$((problems + 1))
+              rows="${rows}| \`${img}\` | — | — | **no \`latest\` found** |"$'\n'
+              continue
+            fi
+
+            if [ "${DRY_RUN}" = "true" ]; then
+              echo "  → would copy latest to ${ARCHIVE_TAG}"
+              rows="${rows}| \`${img}\` | \`${latest_digest}\` | — | would be archived |"$'\n'
+              continue
+            fi
+
+            echo "  → copying latest to ${ARCHIVE_TAG}"
+            # --all copies every architecture in the manifest list, not just the
+            # one this runner happens to be. These images are x86-only today,
+            # but an archive that quietly dropped an architecture would be a
+            # nasty thing to discover in a year.
+            if skopeo copy --all "docker://${latest_ref}" "docker://${archive_ref}"; then
+              new_digest="$(digest_of "${archive_ref}")"
+              if [ "${new_digest}" = "${latest_digest}" ]; then
+                echo "  → done, and read back: ${new_digest}"
+                copied=$((copied + 1))
+                rows="${rows}| \`${img}\` | \`${latest_digest}\` | \`${new_digest}\` | archived now |"$'\n'
+              else
+                echo "  → PROBLEM: the copy finished but ${ARCHIVE_TAG} reads back as '${new_digest:-<nothing>}'"
+                problems=$((problems + 1))
+                rows="${rows}| \`${img}\` | \`${latest_digest}\` | \`${new_digest:-—}\` | **copy did not read back** |"$'\n'
+              fi
+            else
+              echo "  → PROBLEM: the copy failed."
+              problems=$((problems + 1))
+              rows="${rows}| \`${img}\` | \`${latest_digest}\` | — | **copy failed** |"$'\n'
+            fi
+          done
+
+          echo ""
+          echo "=============================================="
+          echo " archived now: ${copied}   already archived: ${skipped}   problems: ${problems}"
+          echo "=============================================="
+
+          {
+            if [ "${DRY_RUN}" = "true" ]; then
+              echo "### Dry run — nothing was changed"
+            else
+              echo "### The Bazzite images"
+            fi
+            echo ""
+            echo "| Image | \`latest\` | \`${ARCHIVE_TAG}\` | What happened |"
+            echo "| --- | --- | --- | --- |"
+            printf '%s' "${rows}"
+            echo ""
+            if [ "${DRY_RUN}" = "true" ]; then
+              echo "Nothing was changed. To do it for real, run this workflow again with the"
+              echo "**Dry run** box unticked."
+            else
+              echo "Archived now: **${copied}** · already archived: **${skipped}** · problems: **${problems}**"
+              echo ""
+              echo "Any of them can be put back on a machine with, for example:"
+              echo ""
+              echo '```'
+              echo "sudo bootc switch ghcr.io/${OWNER,,}/aquarius-os-gnome-nvidia:${ARCHIVE_TAG}"
+              echo '```'
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          if [ "${problems}" -ne 0 ]; then
+            echo "::error::${problems} image(s) could not be archived. Read the table above before running the build workflow."
+            exit 1
+          fi

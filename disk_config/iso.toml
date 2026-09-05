@@ -43,7 +43,7 @@
 # machine, which uses this file as it stands, does the sensible thing.
 #
 # ⚠️ The owner segment must be a real GitHub owner. If it is ever empty the
-# reference becomes "ghcr.io//aquarius-os-next", the ISO builds perfectly, and
+# reference becomes "ghcr.io//aquarius-os", the ISO builds perfectly, and
 # the machine it installs cannot update — which is discovered weeks later.
 # ==============================================================================
 
@@ -75,7 +75,7 @@ publisher = "Stone Harbor Entertainment"
 [customizations.installer.kickstart]
 contents = """
 %post
-bootc switch --mutate-in-place --transport registry ghcr.io/stoneharborent/aquarius-os-next:latest
+bootc switch --mutate-in-place --transport registry ghcr.io/stoneharborent/aquarius-os:latest
 %end
 """
 

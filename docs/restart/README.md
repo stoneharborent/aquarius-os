@@ -27,26 +27,29 @@ now is there because we chose it.
 
 This is worth saying plainly, because "we started over" sounds alarming.
 
-The six Bazzite-based images are still published and still updating. The 4090
-bench machine, which is running one of them right now, keeps working exactly as
-it did. The old recipe lives on the `main` branch and is frozen — no new work
-lands on it, but it is not deleted and it is not going anywhere.
+The six Bazzite-based images are all still in the registry. The old recipe lives
+on the `bazzite-archive` branch — it was `main` until 4 September 2026 — and it
+is frozen: no new work lands on it, it is not deleted, and it is not going
+anywhere.
 
-The new line publishes under **different names** so it cannot possibly overwrite
-the old one:
+**The current images are the plain ones:**
 
-| Old (Bazzite, frozen) | New (Fedora, current) |
+| Image | For |
 | --- | --- |
-| `aquarius-os-gnome` | `aquarius-os-next` |
-| `aquarius-os-gnome-nvidia` | `aquarius-os-next-nvidia` |
+| `ghcr.io/stoneharborent/aquarius-os` | AMD and Intel graphics |
+| `ghcr.io/stoneharborent/aquarius-os-nvidia` | NVIDIA graphics |
 
-Moving the bench from one to the other is one command on the bench PC — `bootc
+For two days, while both lines were live, the new one published under temporary
+names ending in `-next` so that it could not overwrite images real machines were
+following. On 4 September 2026 the plain names came home, and every Bazzite
+image was given a permanent `bazzite-final` tag first so that none of them could
+be lost. The full story, and the exact clicks it took:
+[`final-names.md`](final-names.md) and [`history.md`](history.md).
+
+Moving a machine from one image to another is one command on that PC — `bootc
 switch`, or `rpm-ostree rebase` on a machine that does not have `bootc` — and it
 is reversible with a single command. That is what
 [`bench-rebase.md`](bench-rebase.md) walks through.
-
-The word "next" comes off the names when Phase R3 finishes and the new line has
-earned them.
 
 ---
 
@@ -225,7 +228,7 @@ It happens twice, on purpose:
 2. **After the build**, in GitHub Actions, by starting the finished image and
    interrogating it the way a real machine would — before anything is published.
 
-The second one is why `.github/workflows/build-next.yml` is long. It is not
+The second one is why `.github/workflows/build.yml` is long. It is not
 ceremony. It is the difference between "the build was green" and "the image
 actually works".
 
@@ -235,16 +238,16 @@ actually works".
 
 You do not need a Linux computer. GitHub builds the OS.
 
-- **Every push to `restart/fedora-bootc`** builds and publishes both images.
-  Watch it at GitHub → Actions → *Build AquariusOS (next)*.
-- **Installer ISOs are built by hand** when they are needed, by pushing a tag
-  named `iso-base-…` or `iso-nvidia-…`. It takes 20–40 minutes and the ISO
-  appears at the bottom of the run's page.
+- **Every push to `main`** builds and publishes both images. Watch it at
+  GitHub → Actions → *Build AquariusOS*.
+- **Installer ISOs are built by hand** when they are needed: Actions →
+  *Build AquariusOS ISO* → **Run workflow**, pick the variant. It takes 20–40
+  minutes and the ISO appears at the bottom of the run's page.
 
-  It is a tag rather than the usual "Run workflow" button because GitHub only
-  shows that button for workflows on the repository's *default* branch, and ours
-  is still `main`. The button starts working, with no change to anything, the
-  day this branch becomes the default one.
+  Pushing a tag named `iso-base-…` or `iso-nvidia-…` does the same thing and is
+  the way to build an ISO from a branch. Before 4 September 2026 it was the
+  *only* way, because GitHub only shows the "Run workflow" button for workflows
+  on the repository's default branch, and this line was not on it yet.
 
 If you *do* have a Linux machine with `podman` on it, `just build` does the same
 thing locally. `just` with no arguments lists everything available.
@@ -253,9 +256,11 @@ thing locally. `just` with no arguments lists everything available.
 
 ## The rules that do not move
 
-1. **Never merge this branch into `main`.** `main` is the frozen Bazzite line
-   and the six published images depend on it staying exactly as it is.
-2. **New names until R3 closes.** `aquarius-os-next`, not `aquarius-os`.
+1. **Never merge `bazzite-archive` and `main`.** `bazzite-archive` is the
+   frozen Bazzite line, kept exactly as it was on the day it stopped.
+2. **The images are `aquarius-os` and `aquarius-os-nvidia`.** The temporary
+   `-next` names are retired, and the build fails if one reappears outside a
+   history note.
 3. **One recipe.** The NVIDIA difference is a switch, not a second Containerfile.
    Adding a second recipe is how two images quietly drift apart.
 4. **Read the result back.** Content, never timestamps.
@@ -266,6 +271,8 @@ thing locally. `just` with no arguments lists everything available.
 
 ## Where to go next
 
+- **Taking the real names, step by step (the clicks Royce makes):** [`final-names.md`](final-names.md)
+- **What the Bazzite line left behind, and how to get any of it back:** [`history.md`](history.md)
 - **Moving the bench machine over:** [`bench-rebase.md`](bench-rebase.md)
 - **How the boot screen and the boot menu are branded:** [`boot-branding.md`](boot-branding.md)
 - **The creator apps: what ships, how it arrives, how to remove one:** [`creator-apps.md`](creator-apps.md)

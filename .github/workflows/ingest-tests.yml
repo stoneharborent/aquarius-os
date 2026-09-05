@@ -10,7 +10,7 @@
 # and inside the KDE right-click menu file, and neither of those exists any more.
 # What it was trying to prove — that the ingest tool and its right-click menu really
 # end up installed and working — is now proved directly against the finished image
-# in .github/workflows/build-next.yml, which is a stronger check than reading a
+# in .github/workflows/build.yml, which is a stronger check than reading a
 # build script. The old file is still on `main` if you want to see it.
 name: aq-ingest tests
 
@@ -22,6 +22,8 @@ on:
       - '.github/workflows/ingest-tests.yml'
   push:
     branches:
+      # The real line after the 4 September 2026 branch rename, and before it.
+      - main
       - restart/fedora-bootc
       # Phase R3b promotes the ingest helper (aq ingest, the watch folder), so
       # its branch has to run these tests too — the 95 fixtures are the only
@@ -85,7 +87,7 @@ jobs:
       #
       # This runner is Ubuntu and the OS is Fedora, so this is not the same
       # machine the menu ships on — the check that counts runs INSIDE the
-      # finished image, in build-next.yml. What this one adds is the other half
+      # finished image, in build.yml. What this one adds is the other half
       # of the fix: Ubuntu's Files offers extension interface 4.0 and Fedora 44's
       # offers 4.1, and after the 2026-09-04 bug the extension has to work on
       # both instead of demanding one of them. This is the 4.0 half.

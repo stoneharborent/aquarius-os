@@ -2,9 +2,9 @@
 
 *How to actually do things with this repository. Assumes no Linux experience.*
 
-> **This page is for the `restart/fedora-bootc` branch** — AquariusOS rebuilt on
-> bare Fedora. The `main` branch is the older Bazzite line, frozen, with its own
-> (different) instructions. Nothing here is ever merged into `main`.
+> **This page is for `main`** — AquariusOS, rebuilt on bare Fedora. The
+> `bazzite-archive` branch is the older Bazzite line: frozen, no longer built,
+> with its own (different) instructions. Nothing is ever merged between the two.
 >
 > The previous version of this page walked through setting the GitHub repository
 > up from nothing — creating it, adding the signing key, making packages public.
@@ -27,7 +27,7 @@
 ### The loop
 
 1. Edit a file.
-2. `git add`, `git commit`, `git push` to `restart/fedora-bootc`.
+2. `git add`, `git commit`, `git push` to `main`.
 3. GitHub builds both images, checks them, and publishes them.
 4. Watch it at [Actions](https://github.com/stoneharborent/aquarius-os/actions).
 
@@ -83,7 +83,7 @@ command -v bootc
 **If that printed a path:**
 
 ```bash
-sudo bootc switch ghcr.io/stoneharborent/aquarius-os-next-nvidia:latest
+sudo bootc switch ghcr.io/stoneharborent/aquarius-os-nvidia:latest
 sudo systemctl reboot
 ```
 
@@ -91,7 +91,7 @@ sudo systemctl reboot
 `ostree-unverified-registry:` prefix is how you hand it a container image:
 
 ```bash
-sudo rpm-ostree rebase ostree-unverified-registry:ghcr.io/stoneharborent/aquarius-os-next-nvidia:latest
+sudo rpm-ostree rebase ostree-unverified-registry:ghcr.io/stoneharborent/aquarius-os-nvidia:latest
 sudo systemctl reboot
 ```
 
@@ -219,7 +219,7 @@ You do not need this — GitHub does it — but if you have a Linux machine with
 ```bash
 just                # list everything you can do
 just build          # the AMD/Intel image
-just build aquarius-os-next-nvidia latest 1   # the NVIDIA one
+just build aquarius-os-nvidia latest 1   # the NVIDIA one
 just lint           # check the build scripts for common shell mistakes
 ```
 

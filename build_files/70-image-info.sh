@@ -46,7 +46,7 @@ LOGO_ICON="aquarius-logo"
 # the logo in `neofetch` and friends.
 LOGO_COLOR="0;38;2;138;180;255"
 
-IMAGE_NAME="${IMAGE_NAME:-aquarius-os-next}"
+IMAGE_NAME="${IMAGE_NAME:-aquarius-os}"
 IMAGE_VENDOR="${IMAGE_VENDOR:-stoneharborent}"
 NVIDIA="${NVIDIA:-0}"
 

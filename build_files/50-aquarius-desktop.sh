@@ -648,7 +648,7 @@ ok "aq-ingest runs"
 # session: this file compiled perfectly and then stopped on its first line when
 # Files actually ran it, so the menu item was missing with no error anywhere.
 # The check that catches that kind of failure cannot live here — it needs the
-# finished image — so it runs in .github/workflows/build-next.yml, in the step
+# finished image — so it runs in .github/workflows/build.yml, in the step
 # called "Check the 'Make Editor-Ready' menu really loads in Files". It loads
 # this file the way Files does and insists on getting a menu item back for a
 # video. Do not treat the compile below as proof the menu works.

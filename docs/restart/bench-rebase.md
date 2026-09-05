@@ -13,11 +13,22 @@ every step is reversible.*
 
 ---
 
+> ### A note on names, if you are reading an old command somewhere
+>
+> This page was written on 3 September 2026, when the new images were published
+> under temporary names ending in `-next` so they could not overwrite the older
+> Bazzite ones. On 4 September 2026 they took the plain names, and every command
+> below now says `aquarius-os-nvidia`. If you find a `-next` name in an old note,
+> a chat message or a screenshot, it means the same image — frozen at its last
+> build on that date. See [`final-names.md`](final-names.md).
+
+---
+
 ## What you are about to do
 
-Your bench PC currently runs `aquarius-os-gnome-nvidia` — the Bazzite-based
-image. You are going to point it at `aquarius-os-next-nvidia` — the new
-Fedora-based one — reboot, and look at it.
+Your bench PC runs an older AquariusOS image. You are going to point it at
+`aquarius-os-nvidia` — the current one, built on Fedora — reboot, and look at
+it.
 
 **This is not an install and it does not erase anything.** Your files, your home
 folder, your user account, your Wi-Fi passwords: all untouched. The operating
@@ -36,13 +47,13 @@ Set aside about fifteen minutes. Most of that is downloading.
 
 **Check the image exists.** Go to
 <https://github.com/stoneharborent/aquarius-os/actions> and find the most recent
-run of **Build AquariusOS (next)**. It must have a green tick. If it is still
+run of **Build AquariusOS**. It must have a green tick. If it is still
 running, or red, stop here — there is nothing to switch to yet.
 
 **The package should already be public** — confirmed 3 September 2026, so there
 is nothing for you to do here. If Step 2 comes back saying *unauthorized* or
 *manifest unknown*, it means the package went private: open
-<https://github.com/orgs/stoneharborent/packages>, click `aquarius-os-next-nvidia`,
+<https://github.com/orgs/stoneharborent/packages>, click `aquarius-os-nvidia`,
 then **Package settings → Danger Zone → Change visibility → Public**, and run the
 command again.
 
@@ -77,7 +88,7 @@ particular machine actually has before you type a command at it.
 ### Step 2a — if `command -v bootc` printed a path
 
 ```bash
-sudo bootc switch ghcr.io/stoneharborent/aquarius-os-next-nvidia:latest
+sudo bootc switch ghcr.io/stoneharborent/aquarius-os-nvidia:latest
 ```
 
 ### Step 2b — if it printed nothing
@@ -88,7 +99,7 @@ sudo bootc switch ghcr.io/stoneharborent/aquarius-os-next-nvidia:latest
      (https://bootc.dev/bootc/upgrades.html). -->
 
 ```bash
-sudo rpm-ostree rebase ostree-unverified-registry:ghcr.io/stoneharborent/aquarius-os-next-nvidia:latest
+sudo rpm-ostree rebase ostree-unverified-registry:ghcr.io/stoneharborent/aquarius-os-nvidia:latest
 ```
 
 **Either way:** it will ask for your password, then download several gigabytes,
@@ -198,7 +209,7 @@ bootc status
 ```
 
 **Expect** it to print a block describing the *booted* image, and for that image
-to be `ghcr.io/stoneharborent/aquarius-os-next-nvidia:latest`.
+to be `ghcr.io/stoneharborent/aquarius-os-nvidia:latest`.
 
 **What a wrong result looks like:**
 
@@ -206,8 +217,8 @@ to be `ghcr.io/stoneharborent/aquarius-os-next-nvidia:latest`.
 | --- | --- | --- |
 | `NAME="Bazzite"` or `NAME="Fedora Linux"` | You are still on the old system | Reboot and pick the **top** entry at the boot menu |
 | `bootc: command not found` | You are not on the new image at all (the new one always has `bootc`) — or you typed it on the Mac | Check you are on the bench, then reboot and take the top entry |
-| `bootc status` shows `aquarius-os-gnome-nvidia` as booted | The switch was staged but you booted the old entry | Reboot, take the top entry |
-| The image line says `aquarius-os-next-nvidia` but `NAME=` is wrong | Shouldn't happen — say so, that is a build bug | Send both outputs |
+| `bootc status` shows an image name ending in `-gnome-nvidia` or `-next-nvidia` | The switch was staged but you booted the old entry | Reboot, take the top entry |
+| The image line says `aquarius-os-nvidia` but `NAME=` is wrong | Shouldn't happen — say so, that is a build bug | Send both outputs |
 
 ---
 

@@ -191,7 +191,7 @@ are different sentences:
 | `build_files/58-kernel-pin.sh` | Does the pin itself, then reads the result back off disk. |
 | `build_files/62-virtual-camera.sh`, `build_files/68-gaming.sh`, `build_files/60-nvidia.sh` | Each module step re-asks whether the module it is about to install matches the kernel, and stops the build if it does not. |
 | `build_files/90-cleanup.sh` | At the very end: is the kernel still the one that was pinned, and is there exactly one of it? |
-| `.github/workflows/build-next.yml` | Starts the **finished** image and asks it directly — the pin note, the package database and the folder on disk must all say the same version, and all three (four on NVIDIA) modules must be installed and filed under it. |
+| `.github/workflows/build.yml` | Starts the **finished** image and asks it directly — the pin note, the package database and the folder on disk must all say the same version, and all three (four on NVIDIA) modules must be installed and filed under it. |
 
 ---
 

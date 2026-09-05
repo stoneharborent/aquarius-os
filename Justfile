@@ -151,7 +151,7 @@ tag-images $target_image=image_name $tag=default_tag tags="":
 # The build
 # ------------------------------------------------------------------------------
 
-# Build an AquariusOS image. `just build aquarius-os-next-nvidia latest 1`
+# Build an AquariusOS image. `just build aquarius-os-nvidia latest 1`
 build $target_image=image_name $tag=default_tag $nvidia="0":
     #!/usr/bin/env bash
 
