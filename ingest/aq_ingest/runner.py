@@ -167,7 +167,15 @@ def process_one(
     dry_run: bool = False,
     force: bool = False,
     force_transcode: bool = False,
+    on_fraction=None,
 ) -> Result:
+    """Decide what this one file needs and do it.
+
+    ``on_fraction`` is handed a number from 0.0 to 1.0 while a conversion is running, so
+    the caller can keep a progress bar moving. Nothing else about this function changes
+    when it is passed, and it is never called for a file that is left alone, skipped, or
+    only planned.
+    """
     try:
         probe = probe_file(source)
     except ToolMissing:
@@ -209,7 +217,7 @@ def process_one(
         )
 
     try:
-        actions.execute(plan, source, output, probe, settings)
+        actions.execute(plan, source, output, probe, settings, on_fraction=on_fraction)
     except (ToolFailed, ToolMissing) as exc:
         return Result(source, FAILED, str(exc), output=None, action=plan.action, rule=plan.rule)
     except OSError as exc:

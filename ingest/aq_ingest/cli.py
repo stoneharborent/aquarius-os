@@ -13,7 +13,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import __version__, notify, runner
+from . import __version__, notify, progress as progress_mod, runner
 from .config import (
     ConfigError,
     Settings,
@@ -142,6 +142,74 @@ def make_notifier(args: argparse.Namespace) -> notify.Notifier:
     return notify.Notifier(enabled=args.notify, dry_run=args.dry_run)
 
 
+class TerminalProgress:
+    """The same percentage and time left, for somebody who ran this in a terminal.
+
+    One line, rewritten in place with a carriage return, wiped when the run ends so the
+    report underneath starts on a clean line:
+
+        Converting A001_C003.MP4 · 42% · about 2 min left
+
+    **Only when a person is watching.** If stdout is not a terminal — a script, a pipe,
+    the watch-folder service, `--json` — this draws nothing at all. A progress bar in a
+    log file is noise, and carriage returns in captured output are worse than noise.
+    """
+
+    #: Don't redraw more than once a second; see Notifier.working for why.
+    INTERVAL = 0.5
+
+    def __init__(self, stream=None, *, clock=None, enabled: bool | None = None) -> None:
+        self.stream = stream if stream is not None else sys.stdout
+        if clock is None:
+            import time
+
+            clock = time.monotonic
+        self._clock = clock
+        if enabled is None:
+            enabled = bool(getattr(self.stream, "isatty", lambda: False)())
+        self.enabled = enabled
+        # Far enough in the past that the FIRST update is never throttled away. Starting
+        # this at 0.0 meant the opening "Converting … · 0%" was swallowed and the terminal
+        # sat silent for the first second of every run.
+        self._last = float("-inf")
+        self._percent = -1
+        self._width = 0
+
+    def update(self, snapshot: progress_mod.Snapshot) -> None:
+        if not self.enabled or snapshot.percent == self._percent:
+            return
+        now = self._clock()
+        if now - self._last < self.INTERVAL:
+            return
+        self._last = now
+        self._percent = snapshot.percent
+
+        parts = [f"Converting {snapshot.name or 'your files'}"]
+        if snapshot.total > 1:
+            parts.append(f"{snapshot.file_number} of {snapshot.total}")
+        parts.append(f"{snapshot.percent}%")
+        if snapshot.time_left:
+            parts.append(snapshot.time_left)
+        line = " · ".join(parts)
+        self._width = max(self._width, len(line))
+        self._write(f"\r{line.ljust(self._width)}")
+
+    def done(self) -> None:
+        """Wipe the line. Called however the run ends, including when it fails."""
+        if not self.enabled or self._width == 0:
+            return
+        self._write("\r" + " " * self._width + "\r")
+        self._width = 0
+
+    def _write(self, text: str) -> None:
+        try:
+            self.stream.write(text)
+            self.stream.flush()
+        except (OSError, ValueError):
+            # A closed or unwritable stdout must not end a conversion that is working.
+            self.enabled = False
+
+
 def _stop(notifier: notify.Notifier, message: str) -> int:
     """Report a we-cannot-start problem on both the terminal and the desktop."""
     print(message, file=sys.stderr)
@@ -179,9 +247,21 @@ def main(argv: list[str] | None = None) -> int:
     total = len(jobs)
     notifier.start(total)
 
+    # One tracker feeds both surfaces — the notification and, if somebody is sitting in a
+    # terminal, the line at the bottom of it. They therefore always agree.
+    job = progress_mod.JobProgress(total)
+    terminal = TerminalProgress(enabled=False if args.json else None)
+
+    def show() -> None:
+        snapshot = job.snapshot()
+        notifier.working(snapshot)
+        terminal.update(snapshot)
+
     results: list[runner.Result] = []
     try:
         for done, (source, root) in enumerate(jobs, start=1):
+            job.start_file(source.name)
+            show()
             results.append(
                 runner.process_one(
                     source,
@@ -190,11 +270,23 @@ def main(argv: list[str] | None = None) -> int:
                     dry_run=args.dry_run,
                     force=args.force,
                     force_transcode=args.force_transcode,
+                    on_fraction=(
+                        None
+                        if args.dry_run
+                        else lambda fraction: (job.update_file(fraction), show())
+                    ),
                 )
             )
-            notifier.progress(done, total, source.name)
+            job.finish_file()
+            show()
+            if args.dry_run:
+                notifier.progress(done, total, source.name)
     except ToolMissing as exc:
         return _stop(notifier, f"aq-ingest cannot run.\n{exc}")
+    finally:
+        # However this ends — finished, failed, or interrupted — the half-drawn progress
+        # line is wiped before anything else is printed over it.
+        terminal.done()
 
     summary = runner.summarize(results)
     if args.dry_run:

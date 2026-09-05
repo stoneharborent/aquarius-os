@@ -364,6 +364,7 @@ class RecordingNotifier:
         self.dry_run = dry_run
         self.started: list[int] = []
         self.progress_calls: list[tuple[int, int, str]] = []
+        self.working_calls: list = []
         self.finished: list[tuple[list, str]] = []
         self.failures: list[str] = []
 
@@ -371,6 +372,9 @@ class RecordingNotifier:
 
     def start(self, total):
         self.started.append(total)
+
+    def working(self, snapshot):
+        self.working_calls.append(snapshot)
 
     def progress(self, done, total, name):
         self.progress_calls.append((done, total, name))
@@ -412,6 +416,26 @@ class NotificationTests(IngestTestCase):
         self.fixture(fixtures.aac_mp4, "A001/one.mp4")
         self.fixture(fixtures.aac_mp4, "A001/two.mp4")
         self.run_cli("--notify", "--resolve-edition", "studio", str(self.work / "A001"))
+
+        snapshots = self.notifier.working_calls
+        self.assertTrue(snapshots, "a real two-file run should report progress")
+
+        # The bar only ever fills up. A percentage that slips backwards reads as a bug
+        # even when the arithmetic behind it is defensible.
+        percents = [s.percent for s in snapshots]
+        self.assertEqual(percents, sorted(percents), percents)
+        self.assertEqual(percents[-1], 100, "the last thing said should be 'finished'")
+
+        # And it always knows which file it is on, out of how many.
+        self.assertEqual({s.total for s in snapshots}, {2})
+        self.assertTrue(all(1 <= s.file_number <= 2 for s in snapshots))
+
+    def test_a_dry_run_counts_files_instead_of_drawing_a_bar(self):
+        # Nothing is converted in a dry run, so there is no ffmpeg to measure and no
+        # percentage to show — only "looked at 1 of 2".
+        self.fixture(fixtures.aac_mp4, "A001/one.mp4")
+        self.fixture(fixtures.aac_mp4, "A001/two.mp4")
+        self.run_cli("--notify", "--dry-run", str(self.work / "A001"))
         self.assertEqual([c[0] for c in self.notifier.progress_calls], [1, 2])
         self.assertEqual({c[1] for c in self.notifier.progress_calls}, {2})
 

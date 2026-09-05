@@ -32,6 +32,11 @@ on:
       # missing in Files because the extension refused to load. Its test lives
       # in ingest/tests/, so this branch runs these tests too.
       - restart/nautilus-fix
+      # The progress bar in the "Make Editor-Ready" notification. Almost all of
+      # this branch IS ingest/, including the arithmetic behind "about 2 min
+      # left" and the parser for ffmpeg's progress output, so these tests are
+      # the check that matters for it.
+      - restart/ingest-progress
     paths:
       - 'ingest/**'
       - 'system_files/usr/share/nautilus-python/**'
