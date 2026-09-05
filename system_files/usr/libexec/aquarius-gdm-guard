@@ -153,34 +153,57 @@ aq_copies_exist() {
 }
 
 aq_status() {
+    # ⚠️ ALL FOUR CONDITIONS, AND THEN THE VERDICT. An earlier version of this
+    # printed the four answers and then said "the guard would act" based on the
+    # session one alone — which was wrong on any machine where the other three
+    # said no, and a status command that overstates what is about to happen is
+    # worse than no status command.
+    local blockers=0
+
     echo "Is GDM the login screen in use?"
     if systemctl is-enabled gdm.service > /dev/null 2>&1; then
         echo "  yes"
     else
         echo "  no — this guard does nothing (it only knows how to repair GDM)"
+        blockers=$((blockers + 1))
     fi
 
     echo "Are the copied display arrangements there?"
-    for f in "${AQ_SYSTEM_XML}" "${AQ_GDM_XML}"; do
-        if [ -e "${f}" ]; then
-            echo "  yes  ${f}"
-        else
-            echo "  no   ${f}"
-        fi
-    done
+    if aq_copies_exist; then
+        for f in "${AQ_SYSTEM_XML}" "${AQ_GDM_XML}"; do
+            if [ -e "${f}" ]; then
+                echo "  yes  ${f}"
+            else
+                echo "  no   ${f}"
+            fi
+        done
+    else
+        echo "  no — there is nothing for the guard to take away"
+        blockers=$((blockers + 1))
+    fi
 
     echo "Is there a graphical session right now?"
     if aq_login_screen_is_up; then
-        echo "  yes — nothing to repair"
+        echo "  yes — the login screen is up"
+        blockers=$((blockers + 1))
     else
-        echo "  NO  — if this were 45 seconds into a boot, the guard would act"
+        echo "  no"
     fi
 
     echo "Has the guard already acted during this boot?"
     if [ -e "${AQ_STAMP}" ]; then
         echo "  yes  ${AQ_STAMP} — it will not act again until the next boot"
+        blockers=$((blockers + 1))
     else
         echo "  no"
+    fi
+
+    echo
+    if [ "${blockers}" -eq 0 ]; then
+        echo "So: 45 seconds into a boot, the guard WOULD remove those files and"
+        echo "restart the login screen."
+    else
+        echo "So: the guard would do nothing. See the 'no' answers above."
     fi
 }
 
@@ -220,7 +243,10 @@ aq_repair() {
 
 case "${1:-}" in
     -h | --help | help)
-        sed -n '2,90p' "$0" | sed 's/^# \{0,1\}//'
+        # Print the header comment, however long it is, and stop at the first
+        # line that is not a comment. A fixed line range was here first and it
+        # spilled the code into the help text the moment the header grew.
+        awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
         exit 0
         ;;
     --status)
