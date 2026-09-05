@@ -87,6 +87,11 @@ Useful extras:
 | `--json` | Prints the report as JSON. For other programs, not for people. |
 | `--notify` | Report progress and the result as desktop notifications. This is what the right-click menu uses; there is no reason to type it yourself. |
 
+While it is converting, one notification stays on screen and is redrawn in place with a
+progress bar, a percentage and a plain time left. Run it in a terminal instead and the same
+numbers appear as a single rewritten line. Neither is drawn for a `--dry-run`, which
+converts nothing and therefore has nothing to measure.
+
 Run `aq-ingest --help` at any time.
 
 ### Running it before it is installed in the OS
@@ -157,6 +162,9 @@ A record of every run is kept at `~/.local/state/aquarius/ingest.log`.
 - `aq_ingest/notify.py` is the desktop-notification layer (`--notify`). The wording
   functions are pure; the `Notifier` funnels every outside call through one place that
   cannot raise, because a notification must never be able to break a run.
+- `aq_ingest/progress.py` works out the percentage and the "about 2 min left" from
+  ffmpeg's own `-progress` output. Pure arithmetic — no subprocesses, no clock of its own
+  — so it is testable anywhere.
 
 ### How it gets into the OS
 
