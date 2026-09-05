@@ -461,21 +461,27 @@ jobs:
       # not there, the driver loads, finds nothing, and gives up — and GNOME
       # then says "No Wi-Fi Adapter Found", which reads as broken hardware.
       #
-      # That is what Royce's bench reported on 5 September 2026. Fedora split
-      # `linux-firmware` into about thirty per-vendor packages; the one still
-      # called `linux-firmware` is now only the ~50 MB leftovers, and Fedora's
-      # container bases switch weak dependencies off, so the vendor packages it
-      # "Recommends" never arrived. The image had NetworkManager, wpa_supplicant
-      # and the mt7925e driver, and no MediaTek blob for any of them to use.
+      # Royce's bench reported exactly that on 5 September 2026, on a board
+      # whose radio is a MediaTek MT7925.
       #
-      # This step is deliberately two checks. `rpm -q` proves the packages are
-      # installed; the file counts prove the blobs actually landed on disk under
-      # the names the kernel will ask for. The first would have caught a typo.
-      # Only the second catches "the package is in and the shelf is still
-      # empty", which is the failure that shipped.
+      # ⚠️ READ THIS BEFORE BLAMING THE FIRMWARE AGAIN. The first build of this
+      # check proved the MediaTek firmware was ALREADY in the image: the Fedora
+      # bootc base carries thirteen vendor firmware packages as weak
+      # dependencies of `linux-firmware`, mt7xxx among them. So missing
+      # firmware was NOT the cause of that bench fault, and this step exists to
+      # keep it that way rather than to have fixed it.
       #
-      # It runs on BOTH images, because the AMD/Intel one was missing
-      # amd-gpu-firmware — the firmware for the hardware it is named after.
+      # What it does do, in three parts:
+      #   1. `rpm -q` every firmware package, so the day a weak dependency
+      #      quietly stops arriving the build goes red instead of the machine.
+      #   2. Count the blobs actually on disk, because "the package is in and
+      #      the shelf is empty" looks identical from the package database.
+      #   3. Check the kernel DRIVERS as well. Firmware alone is useless, and a
+      #      missing driver produces the very same "No Wi-Fi Adapter Found".
+      #      This is the half that moves when 58-kernel-pin.sh swaps the
+      #      kernel, so it can only be checked here, on the finished image.
+      #
+      # Runs on BOTH images.
       #
       # Plain-language guide: docs/restart/hardware.md
       - name: Check the Wi-Fi, Bluetooth and graphics firmware is really in there
@@ -554,6 +560,34 @@ jobs:
           n_iwl="$(find /usr/lib/firmware -name 'iwlwifi-*' \( -type f -o -type l \) | wc -l | tr -d ' ')"
           if [ "$n_iwl" -ge 40 ]; then ok "Intel Wi-Fi — $n_iwl iwlwifi blobs"
           else bad "Intel Wi-Fi — only $n_iwl iwlwifi blobs, expected at least 40"; fi
+
+          echo "== the OTHER half: the drivers =="
+          # Firmware alone is useless. A working Wi-Fi chip needs the kernel's
+          # driver AND the manufacturer's firmware, and missing either one looks
+          # exactly the same from the desktop: "No Wi-Fi Adapter Found".
+          #
+          # This is checked HERE rather than in build_files/20-hardware-media.sh
+          # because 58-kernel-pin.sh can replace this image's entire kernel long
+          # after the firmware is installed, taking every module with it. Only
+          # the finished image knows which modules actually shipped.
+          echo "   kernel(s) whose modules are in this image:"
+          ls -1 /usr/lib/modules/ | sed 's/^/     /'
+          check_mod() {   # check_mod <module> "<whose hardware>"
+            if [ -n "$(find /usr/lib/modules -name "$1.ko*" 2>/dev/null | head -1)" ]; then
+              ok "$2 — driver $1"
+            else
+              bad "$2 — driver $1 is MISSING; that chip reports itself absent even with firmware present"
+            fi
+          }
+          check_mod mt7925e    "MediaTek MT7925 Wi-Fi 7 (the bench board)"
+          check_mod mt7921e    "MediaTek MT7921/7922 Wi-Fi 6E"
+          check_mod iwlwifi    "Intel Wi-Fi"
+          check_mod ath11k_pci "Qualcomm Atheros Wi-Fi 6"
+          check_mod rtw89_pci  "Realtek Wi-Fi 6/7"
+          check_mod brcmfmac   "Broadcom Wi-Fi"
+          check_mod btusb      "Bluetooth over USB (every internal Bluetooth radio)"
+          check_mod amdgpu     "AMD graphics"
+          check_mod i915       "Intel graphics"
 
           echo "== Bluetooth still has its program as well as its firmware =="
           for pkg in bluez bluez-tools NetworkManager-bluetooth; do

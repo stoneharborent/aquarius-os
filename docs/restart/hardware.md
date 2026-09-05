@@ -20,6 +20,11 @@ sitting on the motherboard the whole time, working perfectly.
 
 The operating system could not use it, and then told him it did not exist.
 
+**This fault is still open.** The first suspect was missing firmware; the checks
+described here proved that wrong, and the story of how is further down. Read
+*Checking it on a real machine* at the end — those three commands are what will
+identify the real cause.
+
 ---
 
 ## What firmware actually is
@@ -53,45 +58,50 @@ missing" and "there is no card in this computer". They look identical.
 
 ---
 
-## Why the file was missing
+## What we thought was wrong, and what the build actually found
 
-Up to a couple of years ago, Fedora shipped **one** package called
-`linux-firmware` that contained every manufacturer's blobs — every Wi-Fi chip,
-every graphics card, everything. Install that one name and you were done.
+The obvious suspect was missing firmware, and the reasoning was sound: Fedora
+used to ship **one** package called `linux-firmware` containing every
+manufacturer's blobs, and it does not any more. Today it is about **thirty**
+separate packages, one per manufacturer, and the one *still called*
+`linux-firmware` is only the leftovers — about 50 MB of odds and ends with **no
+Wi-Fi in it at all**. Our build asked for `linux-firmware` plus two Intel
+packages and nothing else, which certainly *looks* like an image with no
+MediaTek firmware in it.
 
-Fedora split it up. Today `linux-firmware` is about **thirty** separate
-packages, one per manufacturer:
+> ### ⚠️ It wasn't that.
+>
+> The first build with these checks in it proved the MediaTek firmware was
+> **already in the image Royce booted** — all three MT7925 files, exactly where
+> the kernel looks for them.
+>
+> The reason is a detail nobody had checked: the split `linux-firmware` package
+> *suggests* the vendor packages (in packaging terms it "Recommends" them), and
+> suggestions are switched **on** in this build. So the Fedora base image we
+> start from already carries thirteen of them, MediaTek included, without
+> anyone asking.
 
-```
-mt7xxx-firmware        MediaTek Wi-Fi and Bluetooth
-realtek-firmware       Realtek Wi-Fi and Bluetooth
-atheros-firmware       Qualcomm Atheros Wi-Fi and Bluetooth
-brcmfmac-firmware      Broadcom and Cypress
-amd-gpu-firmware       AMD graphics
-intel-gpu-firmware     Intel graphics
-...and about twenty-four more
-```
+So the bench's "No Wi-Fi Adapter Found" has a different cause, and it is still
+open. What is ruled out now, on both images, is the entire firmware half of the
+problem — the packages are named, the blobs are counted, and the build goes red
+if either changes.
 
-The package **still called `linux-firmware`** is now only the leftovers — about
-50 MB of odds and ends, with **no Wi-Fi in it at all**.
+### What actually changed on 5 September 2026
 
-Our build asked for `linux-firmware`, plus the two Intel Wi-Fi packages, and
-nothing else. It got exactly what it asked for.
+Four firmware packages really were absent, because they are **not** in the
+suggestions list and so nothing was bringing them: `mediatek-firmware`,
+`libertas-firmware`, `iwlegacy-firmware` and `intel-vsc-firmware`. About 14 MB.
+None of them is the MT7925.
 
-### The near miss that makes this worse
+The other twenty-one names in the list were already arriving. Writing them down
+anyway is the real point of the change:
 
-The split `linux-firmware` package politely *suggests* the vendor packages —
-in packaging terms it "Recommends" them. On an ordinary Fedora desktop that
-suggestion is taken automatically, everything arrives, and nobody ever notices
-the split happened.
-
-Fedora's **container** base images switch those suggestions off, so that images
-stay small. AquariusOS is built from a container base image. So the suggestion
-was ignored, silently, and the build printed no warning, produced no error, and
-went green.
-
-That is why this was invisible until a real machine tried to join a real
-Wi-Fi network.
+**A suggestion is not a promise.** It is somebody else's default. It can be
+dropped upstream, switched off by one option anywhere in our build, or vanish
+when the base image is re-cut — and every one of those is **silent**. Nothing
+goes red; the image just ships without a radio, and the first anyone hears of
+it is a machine claiming its Wi-Fi card does not exist. Naming the packages and
+counting their files turns that silent failure into a failed build.
 
 ---
 
@@ -143,7 +153,13 @@ That is a cheap insurance policy.
 | `amd-ucode-firmware` | 1 MB | AMD processor fixes, loaded at boot |
 | `microcode_ctl` | 16 MB | The same for Intel, plus the tool that loads both |
 
-**Total added: about 272 MB downloaded, roughly 275 MB on disk.**
+**What all that costs: almost nothing.** The list above is about 275 MB of
+firmware in total, but roughly 260 MB of it was already arriving as a
+suggestion, so the image grew by about **14 MB** — from 6.85 GB to 6.87 GB on
+the AMD/Intel image, and 8.74 GB to 8.76 GB on the NVIDIA one. Both are far
+under their ceilings (9 GB and 12 GB). `/usr/lib/firmware` ends up 438 MB on
+the AMD/Intel image and 546 MB on the NVIDIA one, the difference being the
+NVIDIA driver's own firmware.
 
 ### What we deliberately leave out
 
@@ -170,15 +186,25 @@ computer and cannot appear inside one:
 
 ## How the build proves it
 
-Two checks, because they catch different mistakes, and both run on **both**
-images.
+Three checks, because they catch different mistakes, and all of them run on
+**both** images.
 
-1. **`rpm -q` on every package.** Proves each one is really installed and was
-   not quietly replaced by something else. This would catch a typo.
+1. **`rpm -q` on every package.** Proves each one is really installed. Most of
+   them arrive as a suggestion rather than because we asked, so this is the
+   check that goes red the day a suggestion quietly stops being made.
 
 2. **Counting the actual files on disk.** Proves the blobs landed in the folders
-   the kernel will look in. *This* is the check that catches the failure we
-   actually shipped — "the package is installed and the shelf is still empty".
+   the kernel will look in. "The package is installed and the shelf is empty"
+   looks identical from the package database, and only this catches it.
+
+3. **Checking the kernel drivers.** Firmware alone does nothing: a Wi-Fi chip
+   needs Linux's driver *and* the manufacturer's firmware, and missing either
+   one produces the very same "No Wi-Fi Adapter Found". The build looks for
+   `mt7925e` (the bench board), `mt7921e`, `iwlwifi`, `ath11k_pci`, `rtw89_pci`,
+   `brcmfmac`, `btusb`, `amdgpu` and `i915`, and prints which kernel's modules
+   they are. This one *has* to run on the finished image rather than during the
+   build, because `58-kernel-pin.sh` can replace the whole kernel — and every
+   module with it — long after the firmware is installed.
 
 The first thing check 2 looks at is Royce's own chip:
 
@@ -269,6 +295,39 @@ bluetoothctl show
 
 A block of text with a `Powered: yes` line means the Bluetooth half loaded its
 firmware too.
+
+### Two more, because the firmware turned out not to be the problem
+
+Since the MT7925's firmware was already in the image, these two are the ones
+most likely to actually find the fault.
+
+**4. Did the driver load?**
+
+```
+lsmod | grep mt79
+```
+
+You want to see `mt7925e` and `mt792x_lib` listed. **Nothing at all** means the
+driver never loaded — and the cause is then either that the module is not in
+this image, or that the kernel never saw the card:
+
+```
+lspci -nn | grep -i network
+```
+
+If `lspci` shows no MediaTek device, Linux is not the problem. The card is
+either disabled in the BIOS, not seated, or the board's Wi-Fi module is
+genuinely absent (some X870 boards ship both ways).
+
+**5. Is the radio switched off?**
+
+```
+rfkill list
+```
+
+`Soft blocked: yes` means software turned the radio off — `rfkill unblock all`
+fixes it. `Hard blocked: yes` means a physical switch or a BIOS setting did,
+and no amount of software will help until that is changed.
 
 ### If it is still broken
 

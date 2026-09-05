@@ -189,33 +189,42 @@ aq_dnf install \
 # the desktop then tells you the hardware is not there at all. That is not a
 # figure of speech: GNOME's own words are "No Wi-Fi Adapter Found".
 #
-# ⚠️ THE TRAP THAT COST US A BENCH BOOT (2026-09-05)
+# WHY THIS LIST IS WRITTEN OUT IN FULL
 #
 # Up to Fedora 39, `linux-firmware` was ONE package containing every vendor's
 # blobs. It is not any more. Fedora split it into about thirty per-vendor
-# sub-packages, and the package still called `linux-firmware` is now only the
+# sub-packages, and the package still called `linux-firmware` is only the
 # ~50 MB leftovers — no MediaTek, no Realtek, no Atheros, no Broadcom, no
-# graphics firmware at all.
+# graphics firmware in it at all.
 #
-# The split package "Recommends" the vendor ones, which on an ordinary Fedora
-# desktop quietly drags them all in. It does NOT here: Fedora's container base
-# images turn weak dependencies off (`install_weak_deps=False` in dnf.conf) so
-# that images stay small. So `dnf install linux-firmware` in this build did
-# exactly what it was asked and produced a machine with no Wi-Fi.
+# Thirteen of those vendor packages come in anyway today, because the split
+# `linux-firmware` "Recommends" them and weak dependencies are switched ON in
+# this build — so the Fedora bootc base image we start from already carries
+# amd-gpu, amd-ucode, atheros, brcmfmac, cirrus-audio, intel-audio, intel-gpu,
+# mt7xxx, nvidia-gpu, nxpwireless, qcom-wwan, realtek and tiwilink. Naming them
+# here is therefore mostly a no-op today (the build log says "already
+# installed"), and that is exactly the point:
 #
-# That is what happened on Royce's bench on 5 September 2026. The board is an
-# MSI X870 Tomahawk WIFI, whose radio is a MediaTek MT7925. The kernel loaded
-# its `mt7925e` driver, looked in /usr/lib/firmware/mediatek/mt7925/, found an
-# empty shelf, and the Wi-Fi menu reported no adapter.
+#   ⚠️ A RECOMMENDS IS NOT A CONTRACT. It is somebody else's default. It can be
+#   dropped upstream, or switched off by a `--setopt=install_weak_deps=False`
+#   anywhere in this build, or vanish when the base image is re-cut — and every
+#   one of those changes is SILENT. Nothing goes red. The image simply ships
+#   without a radio, and the first anyone knows is a machine that says its
+#   Wi-Fi card does not exist. Writing the names here, and checking them below,
+#   turns that silent failure into a failed build.
 #
-# WHY WE SHIP THE WHOLE RADIO SET AND NOT JUST MEDIATEK
+# The four that were genuinely absent until 2026-09-05 are `mediatek-firmware`,
+# `libertas-firmware`, `iwlegacy-firmware` and `intel-vsc-firmware` — they are
+# not in the Recommends list, so nothing was bringing them. The Intel iwlwifi
+# set was already hand-listed here for the same reason.
 #
-# Naming only the chip on today's bench would fix today's bench and break the
-# next machine. AquariusOS is meant to be installed on laptops, and a laptop's
-# Wi-Fi is whichever of five vendors the manufacturer got a good price on that
-# quarter. Every one of these packages is between 1 and 60 MB, and a radio you
-# did not ship is an install that ends at "there is no internet on this
-# computer" — with no way to download the fix.
+# WHY WE NAME THE WHOLE RADIO SET AND NOT JUST MEDIATEK
+#
+# Naming only the chip on today's bench would cover today's bench and nothing
+# else. AquariusOS is meant to be installed on laptops, and a laptop's Wi-Fi is
+# whichever of five vendors the manufacturer got a good price on that quarter.
+# A radio we did not ship is an install that ends at "there is no internet on
+# this computer" — with no way to download the fix.
 #
 # So the rule for this list is: every Wi-Fi and Bluetooth vendor, every GPU
 # vendor, every laptop audio amplifier, and both CPU vendors' microcode. What
@@ -544,6 +553,24 @@ if [ "${n_iwl}" -ge 40 ]; then
 else
     bad "Intel Wi-Fi: only ${n_iwl} iwlwifi blobs, expected at least 40"
 fi
+
+# ------------------------------------------------------------------------------
+# The OTHER half — the drivers — is NOT checked here, on purpose
+# ------------------------------------------------------------------------------
+# Firmware on its own is useless. Making a Wi-Fi chip work takes two pieces from
+# two different places:
+#
+#   the driver     Linux's own code for that family of chip, in kernel-modules
+#   the firmware   the manufacturer's program, checked above
+#
+# Missing EITHER produces the identical symptom: the chip never registers as a
+# network device and the desktop says "No Wi-Fi Adapter Found". So the drivers
+# must be checked too — but not from this file. `58-kernel-pin.sh` runs later
+# and can replace this image's whole kernel, taking every module with it. A
+# driver check here would pass against a kernel that is not the one shipped.
+#
+# The driver check therefore lives in the CI step "Check the Wi-Fi, Bluetooth
+# and graphics firmware is really in there", which reads the FINISHED image.
 
 # The real test of the codec layer is not "is the package installed" but "can
 # ffmpeg actually do the thing". Asking it to list its encoders and looking for
