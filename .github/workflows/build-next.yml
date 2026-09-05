@@ -106,6 +106,12 @@ on:
       # window as the thing that opens at a first login. Same arrangement:
       # builds and checks, never publishes.
       - restart/welcome
+      # Carrying the welcome back into the aquarius-shell repository's own
+      # session files, so a session started from a clone of the shell opens
+      # the welcome at first login rather than the creator-apps window, and
+      # taking the shell commit that has it. Same arrangement: builds and
+      # checks, never publishes.
+      - restart/shell-welcome
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:

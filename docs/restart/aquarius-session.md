@@ -630,7 +630,7 @@ first.
 One line, in `aquarius-os.env`:
 
 ```
-AQUARIUS_SHELL_REF="b14f4195ade4a379d795431aa3628c92d56d2029"
+AQUARIUS_SHELL_REF="6fd5ac1a845351994fb98219e867b50836df5560"
 ```
 
 Change the commit, push, and the next build bakes in the new one. The build
