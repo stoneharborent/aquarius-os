@@ -29,6 +29,8 @@
 #     aq apps list            which creator apps you have
 #     aq apps install ID      install one you skipped
 #
+#     aq welcome              see the AquariusOS welcome again
+#
 #     aq ingest FILE…         make camera files editable
 #     aq ingest watch on      watch ~/Videos/Ingest and do it automatically
 #
@@ -109,6 +111,12 @@ USAGE
     aq apps list        The creator apps AquariusOS suggests, and whether you
                         have each one. 'aq apps install <id>' adds one you
                         skipped; 'aq apps status' says how many you have.
+
+    aq welcome          Show the AquariusOS welcome again — the three-step
+                        window a new account sees at its first login: how the
+                        keyboard should work, which creator apps you want, and
+                        a page of tips. Safe to run any time; it changes
+                        nothing until you press something.
 
     aq login status     Which login screen this computer starts with — GNOME's
                         (GDM) or the AquariusOS one (greetd) — and whether the
@@ -1578,6 +1586,34 @@ apps() {
     esac
 }
 
+# =============================================================================
+# aq welcome — see the first-login walkthrough again
+# =============================================================================
+# The welcome is the window a brand-new account gets ten seconds after its first
+# login: how the keyboard should work, which creator apps it wants, and a page
+# of tips. It is shown once and then never again, which is right — and it is
+# also why there has to be a way to ask for it back.
+#
+# Everything is handed straight to the program, so `aq welcome --help` and
+# `aq welcome --dry-run` do what they say. `aq welcome` on its own opens the
+# window and starts at step 1, whether or not this account has seen it before:
+# --first-run, the "only if they have never seen it" behaviour, belongs to the
+# login autostart and to nothing a person types.
+#
+# Plain-English guide: docs/restart/welcome.md
+# =============================================================================
+AQ_WELCOME="/usr/libexec/aquarius-welcome"
+
+welcome() {
+    if [ ! -x "${AQ_WELCOME}" ]; then
+        echo "aq: this copy of AquariusOS has no welcome window at" >&2
+        echo "    ${AQ_WELCOME}. That is a fault in the operating system," >&2
+        echo "    not in anything you typed." >&2
+        return 1
+    fi
+    "${AQ_WELCOME}" "$@"
+}
+
 # -----------------------------------------------------------------------------
 # Which subcommand?
 # -----------------------------------------------------------------------------
@@ -1611,6 +1647,10 @@ case "${1:-}" in
     login)
         shift
         login "$@"
+        ;;
+    welcome)
+        shift
+        welcome "$@"
         ;;
     keys)
         case "${2:-}" in

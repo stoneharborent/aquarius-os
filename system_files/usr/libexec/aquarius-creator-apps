@@ -167,6 +167,33 @@
 #         Print what choosing exactly those apps would install — which is how
 #         the build proves that picking OBS really does pull its plug-ins in.
 # =============================================================================
+#
+# =============================================================================
+# --embedded-flow — WHEN THIS WINDOW IS STEP 2 OF THE WELCOME  (2026-09-04)
+# =============================================================================
+# Since the welcome flow was built, this window is no longer the first thing a
+# new person sees. /usr/libexec/aquarius-welcome is: it asks about the keyboard,
+# then it opens THIS window, waits for it, and then shows a last page.
+#
+# --embedded-flow is how this window is told it is playing that part. It changes
+# three small things and nothing else:
+#
+#   1. It always opens. --first-run means "open only if this person has never
+#      been asked", which is right for a login autostart and wrong here: the
+#      welcome has ALREADY decided that this person should be asked. If the two
+#      flags are given together, this one wins.
+#   2. It says "Step 2 of 3" beside the title, so the person can see that this
+#      window is part of something with an end to it.
+#   3. The last page's main button says "Continue" instead of "Close", because
+#      closing this window is not the end of anything — the welcome is waiting
+#      behind it with one more page.
+#
+# ⚠️ NOTHING ELSE ABOUT THIS WINDOW CHANGES, AND THAT IS THE POINT. It is the
+#    same program, the same list, the same installers and the same "Skip for
+#    now". Run without the flag — from the app grid, from `aq apps`, from the
+#    build's --dry-run — it behaves exactly as it did before the welcome
+#    existed, which is what the build checks.
+# =============================================================================
 
 import json
 import os
@@ -686,7 +713,7 @@ def rehearse(catalog_from, selection):
 # From here down is the window. Nothing above this line imports Gtk, which is
 # what lets --dry-run work on a machine with no screen and no desktop installed.
 # -----------------------------------------------------------------------------
-def run_window(first_run):
+def run_window(first_run, embedded=False):
     import gi
 
     gi.require_version("Gtk", "4.0")
@@ -1106,7 +1133,13 @@ def run_window(first_run):
             self.stack.add_named(self._build_done_page(), "done")
 
             header = Adw.HeaderBar()
-            self.header_title = Adw.WindowTitle(title="Your creator apps", subtitle="")
+            # In the welcome flow the subtitle says where in it you are. On its
+            # own — from the app grid, from `aq apps` — there is no flow to be
+            # in and the subtitle stays empty, exactly as it always was.
+            self.header_title = Adw.WindowTitle(
+                title="Your creator apps",
+                subtitle="Step 2 of 3" if embedded else "",
+            )
             header.set_title_widget(self.header_title)
 
             self.toolbar = Adw.ToolbarView()
@@ -1278,7 +1311,10 @@ def run_window(first_run):
             self.skip_button = Gtk.Button(label="Skip for now")
             self.skip_button.add_css_class("flat")
             self.skip_button.set_tooltip_text(
-                "Close without installing anything. Everything here stays "
+                "Go on without installing anything. Everything here stays "
+                "available in Aquarius Apps."
+                if embedded
+                else "Close without installing anything. Everything here stays "
                 "available in Aquarius Apps."
             )
             self.skip_button.connect("clicked", lambda _b: self.close())
@@ -1491,6 +1527,19 @@ def run_window(first_run):
 
             close_button = aquarius_ui.pill_button("Close")
             close_button.connect("clicked", lambda _b: self.close())
+
+            # ⚠️ IN THE WELCOME FLOW, CLOSING THIS WINDOW IS NOT THE END.
+            # /usr/libexec/aquarius-welcome is waiting behind it with one more
+            # page, so the button that gets you there is the suggested one and
+            # it says what it does. "Open apps" is still there and still works;
+            # it is simply not the thing to press next.
+            if embedded:
+                close_button.set_label("Continue")
+                close_button.set_tooltip_text(
+                    "Go back to the welcome and finish setting up"
+                )
+                close_button.add_css_class("suggested-action")
+                self.done_open.remove_css_class("suggested-action")
 
             self.done_retry = aquarius_ui.pill_button("Try the ones that failed again")
             self.done_retry.connect("clicked", self._on_retry_failed)
@@ -2018,11 +2067,15 @@ def run_window(first_run):
             if window is None:
                 window = ChooserWindow(self, self.entries, self.warning)
             window.present()
-            if first_run:
+            if first_run or embedded:
+                # In the welcome flow this window IS the "you have been asked"
+                # moment, so the stamp is written here too. Without this line an
+                # account that went through the welcome would be offered the
+                # apps again at its next login by any older autostart entry.
                 write_stamp()
 
     # ----------------------------------------------------------------------
-    if first_run and os.path.exists(stamp_path):
+    if first_run and not embedded and os.path.exists(stamp_path):
         # Already offered to this person once. Silence is the correct behaviour:
         # this is the login autostart, and a window that reappears every morning
         # is a window people learn to close without reading.
@@ -2059,6 +2112,7 @@ def main(argv):
     global DRY_RUN
     dry_run = False
     first_run = False
+    embedded = False
     catalog_from = None
     selection = None
 
@@ -2069,6 +2123,8 @@ def main(argv):
             dry_run = True
         elif arg == "--first-run":
             first_run = True
+        elif arg == "--embedded-flow":
+            embedded = True
         elif arg == "--catalog-from":
             catalog_from = args.pop(0) if args else None
         elif arg.startswith("--catalog-from="):
@@ -2081,11 +2137,15 @@ def main(argv):
             print(
                 "aquarius-creator-apps — the Aquarius Apps window\n"
                 "\n"
-                "    aquarius-creator-apps [--first-run]\n"
+                "    aquarius-creator-apps [--first-run] [--embedded-flow]\n"
                 "    aquarius-creator-apps --dry-run [--catalog-from FILE] [--select id,id]\n"
                 "\n"
                 "    --first-run        open only if this account has not been\n"
                 "                       offered the apps before (used at login)\n"
+                "    --embedded-flow    this window is step 2 of the AquariusOS\n"
+                "                       welcome: always open, say 'Step 2 of 3',\n"
+                "                       and finish with 'Continue' rather than\n"
+                "                       'Close'. Wins over --first-run.\n"
                 "    --dry-run          print what it read and what it would do,\n"
                 "                       open no window, install nothing\n"
                 "    --catalog-from F   read the app list from F instead of from\n"
@@ -2111,7 +2171,7 @@ def main(argv):
         return rehearse(catalog_from, selection)
 
     DRY_RUN = dry_run
-    return run_window(first_run)
+    return run_window(first_run, embedded)
 
 
 if __name__ == "__main__":

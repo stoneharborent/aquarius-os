@@ -154,8 +154,9 @@ always a fault, never "there are no apps".
 **The apps are not in the installer**, and **nothing downloads until you say
 so.**
 
-At your first login a window appears listing the eleven apps AquariusOS
-suggests, with a sentence about each one and the everyday ones already ticked.
+At your first login the [welcome](welcome.md) opens. Its second step is this
+window, listing the eleven apps AquariusOS suggests, with a sentence about each
+one and the everyday ones already ticked.
 You untick what you do not want, press the button, and those are installed.
 The five OBS plug-ins are not in the list — they come along with OBS Studio
 if you keep it, because on their own they do nothing.
@@ -337,30 +338,42 @@ Both installers report on the same two channels: the human words go into
 > the other ten with it. And after each one, the script does not believe the
 > exit code: it asks `flatpak info` whether the app is really there.
 
-### How it opens by itself, once
+### How it opens by itself, once — through the welcome
 
-Two files, because the two desktops start things differently:
+**⚠️ This changed on 2026-09-04 (Phase R5).** This window no longer starts itself
+at login. The [welcome](welcome.md) does, and opens this window as its own
+second step, with `--embedded-flow`.
 
-| Session | What starts it |
+| Session | What starts the welcome |
 | --- | --- |
-| GNOME (the fallback) | `/etc/xdg/autostart/aquarius-creator-apps-firstrun.desktop` |
+| GNOME (the fallback) | `/etc/xdg/autostart/aquarius-welcome-firstrun.desktop` |
 | The Aquarius Desktop | a block at the end of `/usr/share/aquarius/labwc/autostart` |
 
 **labwc does not read `/etc/xdg/autostart` at all.** It reads exactly one file,
 its own `autostart`, and that is deliberate — it is what keeps a dozen GNOME
 background programs out of the Aquarius session. The cost is that anything
 which must run at login in both sessions is written down twice, and the build
-checks that the two copies still say the same thing.
+checks that the two copies still run the same command.
 
-Both wait ten seconds, so the window arrives once the desktop has settled
-rather than on top of a login screen. Both pass `--first-run`, which is what
-makes it happen once: the window looks for `~/.config/aquarius/creator-apps-seen`
-and returns silently if it is there. Delete that file to be asked again.
+Both wait ten seconds, so the window arrives once the desktop has settled rather
+than on top of a login screen. Both pass `--first-run`, which is what makes it
+happen once: the welcome looks for `~/.config/aquarius/welcome-seen` and returns
+silently if it is there.
+
+This window keeps a stamp of its own, `~/.config/aquarius/creator-apps-seen`,
+written the moment it appears — including when the welcome opened it. Delete
+that file and `~/.config/aquarius/welcome-seen` to be asked everything again.
+
+The two entries that used to start THIS window at login —
+`aquarius-creator-apps-firstrun.desktop` and its own block in the labwc
+`autostart` — are gone, and the build fails if either comes back: a brand-new
+person would otherwise get this window twice, once by itself and once inside the
+welcome.
 
 > **A note for whoever next syncs the `aquarius-shell` repository:** that repo
-> is the home of the labwc `autostart` file and AquariusOS ships a copy. The
-> first-run block has to be carried across, or a session built from the shell
-> repo will never offer anybody their creator apps.
+> is the home of the labwc `autostart` file and AquariusOS ships a copy. Its
+> copy still carries the OLD creator-apps first-run block; the replacement lines
+> are at the bottom of [`welcome.md`](welcome.md).
 
 ### Opening it again — "Aquarius Apps"
 
@@ -730,7 +743,8 @@ capture cards, the plug-ins — is unaffected either way.
 
 ## Doing it from a terminal — `aq apps`
 
-The chooser at first login is the main way to pick. Afterwards, this is the
+The chooser — step 2 of the [welcome](welcome.md) — is the main way to pick.
+Afterwards, this is the
 same job typed out:
 
 ```
@@ -870,11 +884,12 @@ And, for the chooser window specifically:
 - The installer is root-owned and `0755` or tighter. `pkexec` refuses to run a
   program anybody could have edited, and if it refuses, the single password
   prompt this whole feature depends on never appears.
-- Both menu entries pass the freedesktop validator, the app-grid one is called
-  *Aquarius Apps*, and the first-login one has **no `OnlyShowIn`** — a session
-  name there would be the only session that ever ran it.
-- The Aquarius session's `autostart` carries the same first-run line, so the
-  two copies cannot drift apart silently.
+- The app-grid menu entry passes the freedesktop validator and is called
+  *Aquarius Apps*. (The first-login entries moved to the welcome on 2026-09-04
+  and the build fails if the old ones come back — see
+  [`welcome.md`](welcome.md).)
+- It understands `--embedded-flow`, the flag the welcome passes, and only claims
+  to be "Step 2 of 3" when the welcome opened it.
 - **Nothing installs itself.** The installer service has no `[Install]` section
   and nothing has linked it into a `.wants` folder. *(Read from the files, not
   from `systemctl is-enabled`, which exits **zero** — success — for a unit whose

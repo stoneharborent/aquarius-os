@@ -29,8 +29,15 @@
 #       window starts it through pkexec, which is where the single password
 #       prompt comes from.
 #
-# ...and two menu entries: "Aquarius Apps" in the app grid, and a hidden one in
-# /etc/xdg/autostart that opens the window once, at the first login.
+# ...and one menu entry: "Aquarius Apps" in the app grid.
+#
+# ⚠️ IT USED TO ADD A SECOND ONE — a hidden /etc/xdg/autostart entry that opened
+#    this window at the first login. That is gone as of 2026-09-04 (roadmap
+#    Phase R5). The first login now opens /usr/libexec/aquarius-welcome, which
+#    asks about the keyboard first and then opens THIS window as its second
+#    step. Section 4 below checks the old entries really are gone, because two
+#    things opening this window at a first login is a fault nobody would see
+#    until the one moment it matters.
 #
 # ------------------------------------------------------------------------------
 # WHAT THIS STEP CHECKS, AND WHY EACH CHECK IS HERE
@@ -54,7 +61,7 @@ source "$(dirname "$0")/aq-lib.sh"
 CHOOSER=/usr/libexec/aquarius-creator-apps
 HELPER=/usr/libexec/aquarius-creator-apps-install
 APP_ENTRY=/usr/share/applications/aquarius-creator-apps.desktop
-AUTOSTART=/etc/xdg/autostart/aquarius-creator-apps-firstrun.desktop
+OLD_AUTOSTART=/etc/xdg/autostart/aquarius-creator-apps-firstrun.desktop
 LABWC_AUTOSTART=/usr/share/aquarius/labwc/autostart
 FIXTURE=/ctx/tests/creator-apps-catalog.fixture
 
@@ -228,60 +235,79 @@ aq_file_has "${CHOOSER}" 'self\.footer\.set_visible\(True\)' \
     "which puts the footer back, so that page still has its buttons"
 
 # ==============================================================================
-# 3. The menu entries
+# 3. The menu entry
 # ==============================================================================
-say "The two menu entries"
+say "The app grid entry"
 if ! aq_have desktop-file-validate; then
     echo "desktop-file-validate is not here yet; installing desktop-file-utils."
     aq_dnf install desktop-file-utils
 fi
-for entry in "${APP_ENTRY}" "${AUTOSTART}"; do
-    if [ ! -r "${entry}" ]; then
-        bad "${entry} is missing"
-        continue
-    fi
-    if desktop-file-validate "${entry}"; then
-        ok "$(basename "${entry}") is a well-formed menu entry"
-    else
-        bad "$(basename "${entry}") is not a well-formed menu entry"
-    fi
-done
+if [ ! -r "${APP_ENTRY}" ]; then
+    bad "${APP_ENTRY} is missing"
+elif desktop-file-validate "${APP_ENTRY}"; then
+    ok "$(basename "${APP_ENTRY}") is a well-formed menu entry"
+else
+    bad "$(basename "${APP_ENTRY}") is not a well-formed menu entry"
+fi
 
 aq_file_has "${APP_ENTRY}" '^Name=Aquarius Apps$' \
     "the app grid entry is called Aquarius Apps"
 aq_file_has "${APP_ENTRY}" "^Exec=${CHOOSER}\$" \
     "and it opens the chooser"
 
-# ⚠️ OnlyShowIn WOULD BREAK THE ONE THING THIS ENTRY IS FOR. GNOME reads
-# /etc/xdg/autostart; a session named in OnlyShowIn would be the only one that
-# ran it. There is no session name that covers both GNOME and ours, so the key
-# must simply not be there.
-say "The first-login entry runs in every session that reads autostart"
-if grep -Eq '^(OnlyShowIn|NotShowIn)=' "${AUTOSTART}" 2> /dev/null; then
-    bad "the first-login entry has OnlyShowIn/NotShowIn, which would stop it running in some sessions"
+# ==============================================================================
+# 4. This window no longer starts itself at login — the welcome does
+# ==============================================================================
+# ⚠️ THE 2026-09-04 CHANGE (roadmap Phase R5). Until this branch, the first
+# login opened THIS window and nothing else. Now it opens
+# /usr/libexec/aquarius-welcome, which asks about the keyboard first and then
+# opens this window as its second step.
+#
+# So the two old first-login entries must be GONE, not merely unused. A stale
+# /etc/xdg/autostart entry would open this window a second time, ten seconds
+# after the welcome had already opened it — the sort of fault that only shows up
+# on somebody's very first login, which is the worst possible time.
+#
+# The welcome's own entries are checked by build_files/67-welcome.sh, which runs
+# straight after this step.
+say "Nothing opens this window at login any more"
+if [ -e "${OLD_AUTOSTART}" ]; then
+    bad "${OLD_AUTOSTART} is still here — the chooser would open twice at a first login, once by itself and once inside the welcome"
 else
-    ok "the first-login entry has no OnlyShowIn or NotShowIn"
+    ok "the old first-login entry for this window is gone"
 fi
-aq_file_has "${AUTOSTART}" '^Exec=.*aquarius-creator-apps --first-run$' \
-    "the first-login entry asks for the once-only behaviour (--first-run)"
-aq_file_has "${AUTOSTART}" '^X-GNOME-Autostart-Delay=10$' \
-    "and waits ten seconds so the desktop has settled"
+if grep -q 'aquarius-creator-apps --first-run' "${LABWC_AUTOSTART}" 2> /dev/null; then
+    bad "the Aquarius session's autostart still opens this window directly at login — the welcome should be what opens"
+else
+    ok "the Aquarius session's autostart does not open this window directly either"
+fi
 
 # ==============================================================================
-# 4. The Aquarius session has to be told separately
+# 4b. ...but it knows how to BE the welcome's second step
 # ==============================================================================
-# ⚠️ labwc DOES NOT READ /etc/xdg/autostart. It reads exactly one file, the
-# `autostart` next to its rc.xml, and that is deliberate — it is what keeps a
-# dozen GNOME background programs out of the Aquarius session (see the check
-# "Nothing in this session may fight the shell" in 55-aquarius-session.sh).
-#
-# The cost of that decision is this: anything that must run at login in BOTH
-# sessions is written down twice. This check is here so that the two copies
-# cannot drift apart silently, which is exactly the sort of fault that shows up
-# only on the one session nobody tested.
-say "The Aquarius session opens it too"
-aq_file_has "${LABWC_AUTOSTART}" 'aquarius-creator-apps --first-run' \
-    "the Aquarius session's autostart opens the chooser on a first login"
+# --embedded-flow is the flag the welcome passes. It changes three cosmetic
+# things — always open, "Step 2 of 3" beside the title, "Continue" instead of
+# "Close" on the last page — and nothing else, which is why every other check in
+# this file still runs the window exactly as it always did.
+say "It knows how to be step 2 of the welcome"
+aq_file_has "${CHOOSER}" '[-]-embedded-flow' \
+    "the window understands --embedded-flow"
+aq_file_has "${CHOOSER}" 'def run_window\(first_run, embedded=False\)' \
+    "and carries that answer into the window it draws"
+aq_file_has "${CHOOSER}" 'subtitle="Step 2 of 3" if embedded else ""' \
+    "in the welcome it says which step of the welcome it is"
+aq_file_has "${CHOOSER}" 'close_button\.set_label\("Continue"\)' \
+    "and its last page offers Continue rather than Close, because the welcome is still waiting"
+aq_file_has "${CHOOSER}" 'if first_run or embedded:' \
+    "going through the welcome counts as having been asked, so it is not asked again"
+# The flag must not leak into the ordinary window. If it did, somebody opening
+# Aquarius Apps from the app grid would be told they were on "step 2 of 3" of
+# something they never started.
+if "${CHOOSER}" --dry-run > /dev/null 2>&1; then
+    ok "run with no flags at all, it still reads its list exactly as before"
+else
+    bad "the --embedded-flow change broke the ordinary window"
+fi
 
 # ==============================================================================
 # 5. Nothing installs itself any more

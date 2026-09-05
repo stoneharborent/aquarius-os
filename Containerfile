@@ -429,6 +429,26 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     /ctx/build_files/66-creator-apps-chooser.sh
 
+# 7d-bis. The welcome — the window that comes BEFORE that one, and the thing a
+#     brand-new person actually meets first:
+#
+#         Step 1 of 3   How should keyboard shortcuts work?   Mac, or Windows.
+#         Step 2 of 3   Your creator apps.                    (step 7d's window)
+#         Step 3 of 3   You're set.                           Three tips, and out.
+#
+#     ⚠️ THIS STEP TAKES THE FIRST LOGIN AWAY FROM STEP 7d (Phase R5,
+#     2026-09-04). Until now the creator-apps window opened itself at a first
+#     login; now the welcome does, and opens that window as its own second step.
+#     Step 7d fails the build if its old first-login entries come back, because
+#     two windows opening at somebody's very first login is a fault nobody would
+#     see until the one moment it matters.
+#
+#     After step 7d because it checks that window's flag, and because both are
+#     drawn with the GTK 4 and libadwaita pieces step 7d asks for by name.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache/libdnf5 \
+    /ctx/build_files/67-welcome.sh
+
 # 7e. The gaming layer: Steam, Proton's supporting cast, gamescope, gamemode,
 #     MangoHud, the 32-bit graphics libraries a Windows game needs, and the
 #     Xbox controller drivers. In BOTH images — this machine is meant to be a

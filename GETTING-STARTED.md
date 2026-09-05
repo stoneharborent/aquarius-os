@@ -234,6 +234,7 @@ only emulate x86 very slowly.
 | --- | --- |
 | [`docs/restart/README.md`](docs/restart/README.md) | What changed in the restart, what R1 builds, how to read the build |
 | [`docs/restart/bench-rebase.md`](docs/restart/bench-rebase.md) | Moving the bench machine onto the new line, step by step |
+| [`docs/restart/welcome.md`](docs/restart/welcome.md) | What a brand-new person sees at their first login, and how to see it again |
 | [`docs/restart/nvidia-notes.md`](docs/restart/nvidia-notes.md) | How the NVIDIA driver is done and why |
 | [`docs/base-distro-reassessment-2026-09.md`](docs/base-distro-reassessment-2026-09.md) | Why Fedora, and not Bazzite / Arch / Ubuntu / Enterprise Linux |
 | `ROADMAP.md` (one folder above the repo) | What R2, R3 and R4 are |
