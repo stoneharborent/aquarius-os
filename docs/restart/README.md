@@ -284,6 +284,7 @@ thing locally. `just` with no arguments lists everything available.
 - **Mac-style keyboard shortcuts (Copy is Command-C):** [`aquarius-keys.md`](aquarius-keys.md)
 - **How big things are on the screen (and why it was too small):** [`aquarius-display.md`](aquarius-display.md)
 - **The login screen — why it looked like stock Fedora, and the two answers:** [`login.md`](login.md)
+- **⚠️ The BLACK login screen of 5 September, and how the computer now gets itself out of it:** [`login.md`](login.md#the-black-login-screen-of-5-september-2026)
 - **DaVinci Resolve — installing it, and why it lives in a container:** [`resolve.md`](resolve.md)
 - **Gaming: what ships, the launch options worth knowing, and what is deliberately not here:** [`gaming.md`](gaming.md)
 - **Wi-Fi, Bluetooth and graphics firmware — what it is and how to check it:** [`hardware.md`](hardware.md)

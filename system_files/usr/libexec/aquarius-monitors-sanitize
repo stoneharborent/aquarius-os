@@ -1,0 +1,515 @@
+#!/usr/bin/python3
+# =============================================================================
+# aquarius-monitors-sanitize — make a display arrangement SAFE for the login
+#                              screen before we hand it over
+# =============================================================================
+# THE BUG THIS EXISTS FOR, IN PLAIN ENGLISH
+#
+# 2026-09-05, the bench. Royce turned the machine on and got a black screen
+# with nothing on it but a mouse pointer. No login screen, no error, no way in.
+#
+# The cause was a kindness that went wrong. AquariusOS copies your display
+# arrangement — the file that says "this monitor runs at 125%" — to a place the
+# login screen can read, so that the login screen is the same size as your
+# desktop. That copying program is /usr/libexec/aquarius-gdm-display.
+#
+# Deleting the two copied files and restarting the login screen brought it
+# straight back. So the copied file was the cause; that is certain.
+#
+# WHY it stopped the login screen drawing is NOT certain, and this program is
+# built for the most plausible specific reason rather than a proven one:
+#
+#   "125%" is a PART SIZE — a size that is not a whole number of times bigger.
+#   Part sizes on GNOME's login screen have a long history of quietly not
+#   working, because they used to need a switch called experimental-features
+#   that nobody sets for the login screen's own user.
+#
+# The honest caveat, written down so nobody repeats the research: this image is
+# Fedora 44, which is GNOME 50, and GNOME 50 turned part sizes on by default for
+# everybody (mutter merge request 4877, merged February 2026). So the size may
+# not have been the problem at all — another documented possibility is that the
+# arrangement simply did not match the monitors plugged in, and mutter threw the
+# whole file away.
+#
+# THIS PROGRAM IS THEREFORE NOT THE WHOLE FIX. It narrows the most likely cause.
+# The thing that catches the case we have not thought of is
+# aquarius-gdm-guard.service, which takes the copied files away by itself if no
+# login screen appears within 45 seconds of a boot.
+#
+# -----------------------------------------------------------------------------
+# WHAT THIS PROGRAM DOES ABOUT IT
+# -----------------------------------------------------------------------------
+# It stands between your file and the login screen's copy of it, and it makes
+# sure the login screen is never handed a size it cannot do.
+#
+#   your file  ->  [ this program ]  ->  the login screen's copy
+#     125%                                    100%
+#
+# Everything else in the file — which monitors, where they sit, which one is
+# the main one, what resolution and refresh rate — is passed through untouched.
+# The ONLY thing it will change is a part size, and only into the nearest whole
+# size that still leaves a usable screen.
+#
+# THE RULE IT USES
+#
+#   a whole size (100%, 200%, 300%)     left exactly as it is
+#   no size given at all                left exactly as it is (means 100%)
+#   125%                          ->    100%   (nearest whole size)
+#   150%                          ->    200%   if the screen is big enough
+#                                       100%   if it is not
+#   175%                          ->    200%
+#   nonsense (0%, 900%, "big")    ->    100%   (safe, always works)
+#
+# "big enough" means: after dividing the screen by the new size, there are still
+# at least 960 by 600 dots to draw a login screen on. That floor is our own
+# choice, not GNOME's. It is far smaller than any real desktop and far bigger
+# than a login card, so it only ever fires when rounding up would give something
+# absurd — a 1080p screen at 200% would leave 960x540, and 540 is below it.
+#
+# -----------------------------------------------------------------------------
+# THE OTHER MODE: LETTING PART SIZES THROUGH
+# -----------------------------------------------------------------------------
+# On GNOME 50 the login screen almost certainly CAN do part sizes already, and
+# AquariusOS also writes the old switch that used to be needed into the login
+# screen's own settings database (/etc/dconf/db/gdm.d/03-aquarius-scale) so that
+# it keeps working if Fedora ever turns the default back off.
+#
+# We still do not USE part sizes by default, and the reasoning is about cost
+# rather than about GNOME: being wrong costs a machine nobody can log in to,
+# and being right saves a login screen from looking small for ninety seconds.
+# So the safe behaviour is the default and part sizes are opt-in, switched on
+# by hand once somebody has watched a real machine boot with them:
+#
+#     sudo aq login scale fractional      let part sizes through
+#     sudo aq login scale integer         go back to whole sizes (the default)
+#     sudo aq login scale status          which one is on
+#
+# The first of those writes a marker file, /var/lib/aquarius/gdm-fractional-ok,
+# and this program is run with --allow-fractional when that marker is there.
+#
+# -----------------------------------------------------------------------------
+# RUNNING IT BY HAND
+# -----------------------------------------------------------------------------
+#   aquarius-monitors-sanitize IN OUT          make a safe copy of IN at OUT
+#   aquarius-monitors-sanitize IN OUT --allow-fractional
+#                                              ...but leave part sizes alone
+#   aquarius-monitors-sanitize --check IN      say what it would change, write
+#                                              nothing
+#
+# WHAT IT PRINTS is one plain-English line per thing it noticed. The program
+# that calls it (aquarius-gdm-display) copies those lines into
+# /var/lib/aquarius/gdm-display.log so there is a record of why the login screen
+# is the size it is.
+#
+# WHAT THE EXIT CODE MEANS — this is the contract, and callers depend on it:
+#   0   OUT was written and is safe to give to the login screen
+#   1   nothing was written. The input could not be understood, or could not be
+#       written out. THE CALLER MUST NOT COPY ANYTHING. Leaving the login screen
+#       with whatever it already had is always better than giving it something
+#       we do not understand.
+#   2   the command line itself was wrong (a programming mistake, not a data one)
+#
+# NOTE ON COMMENTS IN THE FILE: when this program has to change something it
+# rebuilds the file from the parts it understood, and XML comments are not one
+# of those parts. GNOME never writes comments into monitors.xml, so this has no
+# effect in practice — but if nothing needs changing, the file is copied byte
+# for byte and the question does not arise.
+# =============================================================================
+
+import os
+import shutil
+import sys
+import tempfile
+import xml.etree.ElementTree as ET
+
+# The smallest login screen we are willing to round our way into. See the long
+# note above: our own number, deliberately generous, only fires on absurdity.
+MIN_LOGICAL_WIDTH = 960
+MIN_LOGICAL_HEIGHT = 600
+
+# The whole sizes GNOME actually supports. 4x exists in theory and on nothing
+# anybody owns; going above 3 is more likely to be a corrupted file than a wish.
+MIN_SCALE = 1
+MAX_SCALE = 3
+
+PROG = "aquarius-monitors-sanitize"
+
+
+def say(message):
+    """One plain-English line. The caller copies these into the log."""
+    print("%s: %s" % (PROG, message), flush=True)
+
+
+def round_half_up(value):
+    """
+    The nearest whole number, with exact halves going UP.
+
+    Python's own round() does NOT do this — round(1.5) is 2 but round(2.5) is
+    also 2, because it rounds halves to the nearest even number. That is a
+    perfectly good rule for statistics and a surprising one here, where 150%
+    should become 200% and not sometimes 200% and sometimes 100%.
+    """
+    import math
+
+    return int(math.floor(value + 0.5))
+
+
+def is_whole(value):
+    """Is this size a whole number of times bigger? 1, 2.0 and 3 are; 1.25 is not."""
+    return abs(value - round(value)) < 1e-6
+
+
+def describe_monitor(logical):
+    """
+    A name a person would recognise for this block of the file, for the log.
+
+    Falls back through connector name, then resolution, then a shrug — because
+    this string only ever appears in a message and must never be the reason
+    something fails.
+    """
+    names = []
+    for monitor in logical.findall("monitor"):
+        spec = monitor.find("monitorspec")
+        if spec is None:
+            continue
+        connector = spec.find("connector")
+        if connector is not None and (connector.text or "").strip():
+            names.append(connector.text.strip())
+    if names:
+        return " + ".join(names)
+    size = mode_size(logical)
+    if size:
+        return "the %dx%d screen" % size
+    return "one of the screens"
+
+
+def mode_size(logical):
+    """
+    How many dots this block of the file is describing, or None if it does not
+    say.
+
+    Two wrinkles, both real:
+
+    * A block can list SEVERAL monitors, which means they are mirrored — all
+      showing the same thing. The one that constrains the result is the
+      smallest, so that is the one we measure.
+    * A block can be rotated a quarter turn, in which case the width and the
+      height swap over before anybody divides anything.
+    """
+    best = None
+    for monitor in logical.findall("monitor"):
+        mode = monitor.find("mode")
+        if mode is None:
+            continue
+        width_node = mode.find("width")
+        height_node = mode.find("height")
+        if width_node is None or height_node is None:
+            continue
+        try:
+            width = int((width_node.text or "").strip())
+            height = int((height_node.text or "").strip())
+        except (TypeError, ValueError):
+            continue
+        if width <= 0 or height <= 0:
+            continue
+        if best is None or width * height < best[0] * best[1]:
+            best = (width, height)
+
+    if best is None:
+        return None
+
+    transform = logical.find("transform")
+    if transform is not None:
+        rotation = transform.find("rotation")
+        if rotation is not None and (rotation.text or "").strip() in ("left", "right"):
+            best = (best[1], best[0])
+    return best
+
+
+def fits(size, scale):
+    """
+    Would a login screen at this size still have room to draw on?
+
+    With no measurements to go on we say NO, because the only place this is
+    asked is "dare I round UP", and rounding up blind is exactly how you end up
+    with a login screen the size of a postage stamp.
+    """
+    if size is None:
+        return False
+    return (size[0] / scale) >= MIN_LOGICAL_WIDTH and (size[1] / scale) >= MIN_LOGICAL_HEIGHT
+
+
+def safe_scale(wanted, size):
+    """
+    The whole size to use instead of `wanted`.
+
+    Start at the nearest whole number, then walk DOWN — never up — until the
+    result leaves a screen big enough to draw on. 100% is the floor and always
+    works, because 100% is what a monitor does with no instructions at all.
+    """
+    candidate = round_half_up(wanted)
+    if candidate > MAX_SCALE:
+        candidate = MAX_SCALE
+    if candidate < MIN_SCALE:
+        candidate = MIN_SCALE
+
+    while candidate > MIN_SCALE and not fits(size, candidate):
+        candidate -= 1
+    return candidate
+
+
+def sanitize(root, allow_fractional):
+    """
+    Walk every screen in the file and fix the sizes that are not safe.
+
+    Returns the number of things changed. Zero means the file is already safe
+    and the caller should copy the original rather than rebuild it.
+
+    `root.iter` rather than a loop over configurations on purpose: GNOME's file
+    holds one block per monitor ARRANGEMENT it has ever seen — the laptop on its
+    own, the laptop with the big monitor, and so on — and any of them could be
+    the one in force at the next boot. All of them get made safe.
+    """
+    changed = 0
+
+    for logical in root.iter("logicalmonitor"):
+        scale_node = logical.find("scale")
+        if scale_node is None:
+            continue
+
+        raw = (scale_node.text or "").strip()
+        if not raw:
+            # No number written down at all. GNOME reads that as 100%, which is
+            # already safe, so there is nothing to do and nothing to say.
+            continue
+
+        who = describe_monitor(logical)
+
+        try:
+            wanted = float(raw)
+        except ValueError:
+            scale_node.text = "1"
+            changed += 1
+            say(
+                "%s asked for a size of '%s', which is not a number at all. "
+                "The login screen will use 100%%." % (who, raw)
+            )
+            continue
+
+        if wanted <= 0 or wanted > MAX_SCALE + 1:
+            scale_node.text = "1"
+            changed += 1
+            say(
+                "%s asked for %s, which is not a size any screen can be. "
+                "The login screen will use 100%%." % (who, format_percent(wanted))
+            )
+            continue
+
+        if is_whole(wanted):
+            # A whole size. This is the case that must not be touched: writing
+            # "2" where the file said "2.0" would rebuild the whole file for no
+            # reason, and rebuilding is the risky operation here.
+            continue
+
+        if allow_fractional:
+            say(
+                "%s asked for %s. Part sizes are switched ON for the login "
+                "screen (aq login scale fractional), so it is being passed "
+                "through unchanged." % (who, format_percent(wanted))
+            )
+            continue
+
+        size = mode_size(logical)
+        replacement = safe_scale(wanted, size)
+        scale_node.text = str(replacement)
+        changed += 1
+
+        if size is None:
+            why = (
+                "the file does not say how many dots that screen has, so there "
+                "was no way to check a bigger size would fit"
+            )
+        else:
+            why = "%dx%d dots at %s would leave %dx%d to draw on" % (
+                size[0],
+                size[1],
+                format_percent(replacement),
+                int(size[0] / replacement),
+                int(size[1] / replacement),
+            )
+
+        say(
+            "%s asked for %s. The login screen cannot do part sizes, so it "
+            "will use %s instead (%s)."
+            % (who, format_percent(wanted), format_percent(replacement), why)
+        )
+
+    return changed
+
+
+def format_percent(scale):
+    """125% rather than 1.25 — the words Settings > Displays uses."""
+    percent = float(scale) * 100.0
+    if abs(percent - round(percent)) < 1e-6:
+        return "%d%%" % int(round(percent))
+    return "%.1f%%" % percent
+
+
+def write_atomically(root, destination):
+    """
+    Write the rebuilt file so that no reader can ever see it half-written.
+
+    Into a temporary name in the same folder, then rename — a rename is a single
+    indivisible step, so the login screen either reads the old file or the new
+    one and never a torn one. This matters more here than almost anywhere else
+    in AquariusOS: a half-written display arrangement is the black screen again.
+    """
+    folder = os.path.dirname(os.path.abspath(destination)) or "."
+    handle = None
+    temporary = None
+    try:
+        os.makedirs(folder, exist_ok=True)
+        handle, temporary = tempfile.mkstemp(prefix=".monitors-", suffix=".xml", dir=folder)
+        with os.fdopen(handle, "wb") as stream:
+            handle = None
+            stream.write(ET.tostring(root, encoding="utf-8"))
+            stream.write(b"\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary, 0o644)
+        os.replace(temporary, destination)
+        temporary = None
+    finally:
+        if handle is not None:
+            os.close(handle)
+        if temporary is not None and os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def usage():
+    print(
+        "\n".join(
+            [
+                "%s — make a display arrangement safe for the login screen" % PROG,
+                "",
+                "USAGE",
+                "    %s IN OUT [--allow-fractional]" % PROG,
+                "    %s --check IN [--allow-fractional]" % PROG,
+                "",
+                "IN is somebody's ~/.config/monitors.xml. OUT is where the safe copy goes.",
+                "--check says what it would change and writes nothing.",
+                "",
+                "EXIT CODES",
+                "    0  OUT was written and is safe to hand to the login screen",
+                "    1  nothing was written — do not copy anything",
+                "    2  the command line was wrong",
+            ]
+        )
+    )
+
+
+def main(argv):
+    allow_fractional = False
+    check_only = False
+    positional = []
+
+    for argument in argv[1:]:
+        if argument == "--allow-fractional":
+            allow_fractional = True
+        elif argument == "--check":
+            check_only = True
+        elif argument in ("-h", "--help", "help"):
+            usage()
+            return 0
+        elif argument.startswith("-"):
+            sys.stderr.write("%s: '%s' is not an option this understands.\n" % (PROG, argument))
+            return 2
+        else:
+            positional.append(argument)
+
+    if check_only:
+        if len(positional) != 1:
+            usage()
+            return 2
+        source = positional[0]
+        destination = None
+    else:
+        if len(positional) != 2:
+            usage()
+            return 2
+        source, destination = positional
+
+    # ------------------------------------------------------------------------
+    # Understand it before trusting it
+    # ------------------------------------------------------------------------
+    # Three separate things are checked, because "it is a file" is not the same
+    # as "it is a display arrangement", and handing the login screen something
+    # that is merely a valid XML file is no safer than handing it rubbish.
+    try:
+        tree = ET.parse(source)
+    except FileNotFoundError:
+        say("there is no file at %s, so there is nothing to make safe." % source)
+        return 1
+    except Exception as problem:
+        say(
+            "%s is not valid XML (%s), so nothing was written. The login screen "
+            "keeps whatever it already had." % (source, problem)
+        )
+        return 1
+
+    root = tree.getroot()
+    if root.tag != "monitors":
+        say(
+            "%s starts with <%s> and not <monitors>, so it is not a display "
+            "arrangement. Nothing was written." % (source, root.tag)
+        )
+        return 1
+    if root.find("configuration") is None:
+        say(
+            "%s has no <configuration> in it, so there is no arrangement to "
+            "copy. Nothing was written." % source
+        )
+        return 1
+
+    changed = sanitize(root, allow_fractional)
+
+    if check_only:
+        if changed == 0:
+            say("%s is already safe for the login screen. Nothing would change." % source)
+        elif changed == 1:
+            say("one screen size would be changed. Nothing was written (--check).")
+        else:
+            say("%d screen sizes would be changed. Nothing was written (--check)." % changed)
+        return 0
+
+    # ------------------------------------------------------------------------
+    # Write it
+    # ------------------------------------------------------------------------
+    # NOTHING CHANGED is the common case and it gets its own path: copy the
+    # original bytes. Rebuilding a file we did not need to touch is a way to
+    # introduce a difference we did not intend, and the whole point of this
+    # program is to not be the thing that breaks the login screen.
+    try:
+        if changed == 0:
+            folder = os.path.dirname(os.path.abspath(destination)) or "."
+            os.makedirs(folder, exist_ok=True)
+            shutil.copyfile(source, destination)
+            os.chmod(destination, 0o644)
+            if allow_fractional:
+                say("nothing needed changing, so the arrangement was copied exactly as it is.")
+            else:
+                say("the display arrangement was already safe, so it was copied unchanged.")
+        else:
+            write_atomically(root, destination)
+    except Exception as problem:
+        say(
+            "could not write %s (%s), so nothing was copied. The login screen "
+            "keeps whatever it already had." % (destination, problem)
+        )
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
