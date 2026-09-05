@@ -444,6 +444,37 @@ class SendingTests(unittest.TestCase):
         )
         self.assertIn(f"--action={notify.OPEN_ACTION}=Show in Files", sender.sent[-1])
 
+    def test_every_message_in_a_run_is_tagged_including_the_last_one(self):
+        # The tag is the fallback for a run that never got an id back — if the
+        # notification daemon was not answering when the run started, --print-id
+        # gives us nothing and every redraw is a NEW notification. Leaving the tag
+        # off the final message would then leave the never-expiring progress bar on
+        # screen at 60% for ever, with "editor-ready" sitting beside it.
+        notifier, sender = make(stdout="not a number")
+        notifier.start(2)
+        notifier.working(snapshot(percent=50, total=2))
+        notifier.finish(
+            [result(runner.TRANSCODED, output="/cards/A001/EditorReady/clip.mov")],
+            "1 transcoded, 0 failed",
+        )
+        self.assertGreaterEqual(len(sender.sent), 3)
+        for call in sender.sent:
+            self.assertEqual(
+                sender.hint(call, notify.SYNCHRONOUS_HINT),
+                notify.SYNCHRONOUS_TAG,
+                call,
+            )
+
+    def test_only_the_working_messages_carry_a_bar(self):
+        notifier, sender = make(stdout="7\n")
+        notifier.start(1)
+        notifier.finish(
+            [result(runner.TRANSCODED, output="/cards/A001/EditorReady/clip.mov")],
+            "1 transcoded, 0 failed",
+        )
+        # The final message is news, not a job in progress: no bar on it.
+        self.assertIsNone(sender.hint(sender.sent[-1], notify.VALUE_HINT))
+
     def test_a_notify_send_with_no_hint_support_still_gets_the_message_out(self):
         # Losing the whole notification to gain a bar would be a bad trade, so the hint is
         # dropped and the percentage survives in the words.

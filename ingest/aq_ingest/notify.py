@@ -530,11 +530,24 @@ class Notifier:
         ]
         if expire is not None:
             argv += ["--expire-time", expire]
-        if progress is not None and self.supports_hints():
-            argv += [
-                f"--hint=int:{VALUE_HINT}:{max(0, min(100, int(progress)))}",
-                f"--hint=string:{SYNCHRONOUS_HINT}:{SYNCHRONOUS_TAG}",
-            ]
+        if self.supports_hints():
+            # THE TAG GOES ON EVERY MESSAGE, not just the ones with a bar, and that
+            # is what makes the fallback path correct.
+            #
+            # Normally --replace-id does the work and this is never needed. But
+            # --print-id gives us nothing if the notification daemon was not
+            # answering when the run started — right-click a card ten seconds after
+            # logging in and that is a real possibility. With no id, every redraw
+            # becomes a NEW notification, and a desktop that honours this tag still
+            # collapses them into one.
+            #
+            # Leaving the tag off the final message was a hole: the progress
+            # notification asks never to expire, so it would have sat there at 60%
+            # for ever with the "editor-ready" message beside it. Tagged, the last
+            # message replaces the bar, exactly as it does through --replace-id.
+            argv.append(f"--hint=string:{SYNCHRONOUS_HINT}:{SYNCHRONOUS_TAG}")
+            if progress is not None:
+                argv.append(f"--hint=int:{VALUE_HINT}:{max(0, min(100, int(progress)))}")
         if self._notification_id:
             argv += ["--replace-id", self._notification_id]
         argv += extra or []
