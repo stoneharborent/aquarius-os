@@ -505,12 +505,37 @@ if aq_have gsettings; then
     # silent: the icon simply does not appear. So the list is read back out of
     # GNOME and every entry is checked against the applications folder. This is
     # what keeps the dock honest as apps come and go between phases.
+    #
+    # ------------------------------------------------------------------------
+    # ⚠️ THE ONE DELIBERATE EXCEPTION, ADDED 2026-09-04
+    # ------------------------------------------------------------------------
+    # Aquarius Editor is pinned to this dock and is NOT in this image. That is
+    # not an oversight and it is not a hole in the check.
+    #
+    # It stopped being baked in on 2026-09-04 — it is four gigabytes, and it is
+    # now offered in the app chooser and installed into each person's own home
+    # folder. Its menu entry therefore lands in
+    # ~/.local/share/applications/aquarius-editor.desktop, which does not exist
+    # while this image is being built and never will.
+    #
+    # It stays pinned ON PURPOSE. A name GNOME cannot resolve is simply not
+    # drawn — no gap, no dead square, no error — and the moment somebody
+    # installs the app, the same name resolves in their own folder and the icon
+    # appears in the place it has always belonged, with no logging out. Taking
+    # it off this line would mean the flagship app arriving with no seat on the
+    # dock, which is worse for everybody who does install it.
+    #
+    # The exception is named, not a wildcard, so a genuine typo in any other
+    # name still fails the build exactly as it did before.
+    AQ_FAV_FROM_HOME="aquarius-editor.desktop"
     say "Checking every app pinned to the dock is really installed"
     GSETTINGS_BACKEND=memory gsettings get org.gnome.shell favorite-apps \
         | tr -d "[]' " | tr ',' '\n' | grep -v '^$' > /tmp/aq-favorites.txt || true
     while read -r fav; do
         if [ -r "/usr/share/applications/${fav}" ]; then
             ok "dock: ${fav}"
+        elif printf '%s\n' "${AQ_FAV_FROM_HOME}" | grep -qx "${fav}"; then
+            ok "dock: ${fav} (installed into each person's home folder on request — see the note above)"
         else
             bad "dock: ${fav} is pinned but /usr/share/applications/${fav} does not exist — the icon would just be missing"
         fi

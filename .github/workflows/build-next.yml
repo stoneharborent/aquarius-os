@@ -90,6 +90,11 @@ on:
       # Files had already loaded a newer one of, and stopped dead. Same
       # arrangement: builds and checks, never publishes.
       - restart/nautilus-fix
+      # Aquarius Editor stops being baked into the image and becomes a download
+      # offered by the chooser (ticked by default), installed into each
+      # person's own home folder. Roughly four gigabytes off every image. Same
+      # arrangement: builds and checks, never publishes.
+      - restart/editor-optional
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -181,7 +186,51 @@ jobs:
 
       - name: How big is it
         run: |
+          set -uo pipefail
           podman images --format '{{.Repository}}:{{.Tag}}  {{.Size}}'
+
+          # ------------------------------------------------------------------
+          # THE SIZE, SAID OUT LOUD AND MEASURED AGAINST WHAT IT USED TO BE
+          # ------------------------------------------------------------------
+          # ⚠️ THIS IS THE WHOLE POINT OF THE 2026-09-04 CHANGE, AND IT IS THE
+          # ONE THING THAT WOULD OTHERWISE GO UNNOTICED. Aquarius Editor coming
+          # back into the image produces no error and no red text: the build
+          # just takes ten minutes longer and every person downloading
+          # AquariusOS pays four gigabytes for an app they may never open.
+          #
+          # So the number is printed beside what it was before the change, and
+          # a ceiling is asserted. The ceiling is deliberately generous — this
+          # is a warning about one very large app, not a budget for the whole
+          # operating system — and it is expressed in bytes, from podman's own
+          # machine-readable field, because "11.1 GB" as text sorts wrongly and
+          # rounds differently on different days.
+          BYTES="$(podman image inspect "${IMAGE_NAME}:${DEFAULT_TAG}" \
+            --format '{{.Size}}' 2>/dev/null || echo 0)"
+          GB="$(awk -v b="${BYTES}" 'BEGIN { printf "%.1f", b / 1000000000 }')"
+
+          if [ "${NVIDIA}" = "1" ]; then
+            WAS="14.2"; CEILING=12000000000
+          else
+            WAS="11.1"; CEILING=9000000000
+          fi
+
+          echo
+          echo "=== how big this image is ==="
+          echo "  now:    ${GB} GB"
+          echo "  before: ${WAS} GB  (with Aquarius Editor baked in, up to 2026-09-04)"
+          echo "  saved:  about $(awk -v w="${WAS}" -v g="${GB}" 'BEGIN { printf "%.1f", w - g }') GB"
+
+          if [ "${BYTES}" -eq 0 ]; then
+            echo "::warning::podman would not say how big the image is; skipping the size check"
+          elif [ "${BYTES}" -le "${CEILING}" ]; then
+            echo "  OK   under the ceiling of $(awk -v c="${CEILING}" 'BEGIN { printf "%.1f", c / 1000000000 }') GB"
+          else
+            echo "::error::this image is ${GB} GB, over the $(awk -v c="${CEILING}" 'BEGIN { printf "%.1f", c / 1000000000 }') GB ceiling."
+            echo "Something large has been added back. The usual suspect is Aquarius Editor,"
+            echo "which is 4.1 GB and stopped being baked in on 2026-09-04 — check"
+            echo "AQUARIUS_APPS in build_files/64-creator-apps.sh."
+            exit 1
+          fi
 
       # ------------------------------------------------------------------------
       # THE VERIFICATION
@@ -423,10 +472,20 @@ jobs:
           GSETTINGS_BACKEND=memory gsettings get org.gnome.shell enabled-extensions || true
 
           echo "== every pinned app really exists =="
+          # ⚠️ ONE NAMED EXCEPTION SINCE 2026-09-04, and it is the same one that
+          # build_files/50-aquarius-desktop.sh and the creator-apps check carry.
+          # Aquarius Editor is pinned here and is NOT in the image: it is a
+          # four-gigabyte download and its menu entry lands in each person's own
+          # ~/.local/share/applications/ when they install it. It stays pinned on
+          # purpose — GNOME does not draw a name it cannot resolve, so there is no
+          # dead square, and the icon appears in its usual seat the moment the app
+          # arrives. Named, never a wildcard, so a real typo still fails.
           GSETTINGS_BACKEND=memory gsettings get org.gnome.shell favorite-apps \
             | tr -d "[]' " | tr ',' '\n' | grep -v '^$' > /tmp/favs.txt || true
           while read -r fav; do
             if [ -r "/usr/share/applications/${fav}" ]; then ok "dock: ${fav}"
+            elif [ "${fav}" = "aquarius-editor.desktop" ]; then
+              ok "dock: ${fav} (installed into each person's home folder on request)"
             else bad "dock: ${fav} is pinned but not installed"; fi
           done < /tmp/favs.txt
 
@@ -2158,7 +2217,7 @@ jobs:
           # bug of 2026-08-28 was about file permissions. A permission that is
           # correct when it is set and wrong when it is shipped is exactly the
           # kind of thing this step exists to catch.
-          echo "== Aquarius Editor and Aquarius Writer =="
+          echo "== Aquarius Writer (baked in) and Aquarius Editor (a download) =="
 
           if [ -r /usr/share/aquarius/creator-apps.txt ]; then
             echo "-- what the build says it installed --"
@@ -2167,7 +2226,7 @@ jobs:
             bad "/usr/share/aquarius/creator-apps.txt is missing — the build did not record what it did"
           fi
 
-          for app in aquarius-editor aquarius-writer; do
+          for app in aquarius-writer; do
             dir="/usr/lib/aquarius/${app}"
 
             if [ -d "${dir}" ]; then ok "${app}: unpacked at ${dir} ($(du -sh "${dir}" | cut -f1))"
@@ -2225,26 +2284,86 @@ jobs:
             else bad "${app}: ${n} broken symlink(s)"; find "${dir}" -xtype l | head -5; fi
           done
 
-          # The Electron sandbox helper. Aquarius Editor refuses to start at
-          # all — instantly, with no window — if this file exists and is not
-          # root-owned with the setuid bit. Asked HERE, after packaging,
-          # because "does setuid survive being packaged" is the question.
-          SANDBOX=/usr/lib/aquarius/aquarius-editor/chrome-sandbox
-          if [ -e "${SANDBOX}" ]; then
-            mode="$(stat -c '%a' "${SANDBOX}")"; owner="$(stat -c '%U:%G' "${SANDBOX}")"
-            if [ "${mode}" = "4755" ] && [ "${owner}" = "root:root" ]; then
-              ok "chrome-sandbox survived packaging as root:root 4755"
+          # ====================================================================
+          # 1b. AQUARIUS EDITOR IS A DOWNLOAD NOW, AND MUST NOT BE IN HERE
+          # ====================================================================
+          # ⚠️ THE CHECK THE WHOLE 2026-09-04 CHANGE RESTS ON. Aquarius Editor
+          # is 4.1 GB unpacked. Baking it in made every AquariusOS download four
+          # gigabytes bigger for everybody, including the people who will never
+          # open it, so it moved out of the image and into the app chooser —
+          # ticked by default, installed into each person's own home folder.
+          #
+          # If it ever comes back, nothing goes red on its own: the build simply
+          # takes ten minutes longer and the image is twice the size it needs to
+          # be. So it is asserted here, on the FINISHED, PACKAGED image, in the
+          # plainest way there is.
+          echo
+          echo "== Aquarius Editor is NOT in the image (it is a download) =="
+          if [ -e /usr/lib/aquarius/aquarius-editor ]; then
+            bad "/usr/lib/aquarius/aquarius-editor is in the image — four gigabytes that should not be here"
+            du -sh /usr/lib/aquarius/aquarius-editor
+          else
+            ok "no /usr/lib/aquarius/aquarius-editor"
+          fi
+          if [ -e /usr/share/applications/aquarius-editor.desktop ]; then
+            bad "a system-wide aquarius-editor.desktop is in the image — every account would show a dead icon"
+          else
+            ok "no system-wide menu entry either — the installer writes a personal one"
+          fi
+          # And the pieces that DO have to be here, because they are what fetches
+          # it onto a real machine.
+          if [ -x /usr/libexec/aquarius-appimage-install ]; then
+            ok "the home-folder installer is here"
+          else
+            bad "/usr/libexec/aquarius-appimage-install is missing — the chooser would offer an app nobody can install"
+          fi
+          if [ -r /usr/share/aquarius/apps/aquarius-editor.desktop.in ]; then
+            # ⚠️ Validated through a copy with the right name.
+            # desktop-file-validate refuses any filename not ending in
+            # `.desktop`, before reading a line of it — and this one is a
+            # template on purpose. Checking the copy also asks the more honest
+            # question: is the file valid under the name it will really have?
+            cp /usr/share/aquarius/apps/aquarius-editor.desktop.in /tmp/aquarius-editor.desktop
+            if desktop-file-validate /tmp/aquarius-editor.desktop 2>/tmp/dfv.txt; then
+              ok "the menu-entry template it installs is valid"
             else
-              bad "chrome-sandbox is ${owner} mode ${mode} — Electron would abort silently"
+              bad "the menu-entry template is not valid — the app would install and never appear"
+              sed 's/^/       /' /tmp/dfv.txt
+            fi
+            rm -f /tmp/aquarius-editor.desktop
+          else
+            bad "/usr/share/aquarius/apps/aquarius-editor.desktop.in is missing"
+          fi
+          if [ -x /usr/bin/aquarius-editor ]; then
+            ok "/usr/bin/aquarius-editor is still the front door"
+            if grep -q '\.local/lib/aquarius' /usr/bin/aquarius-editor; then
+              ok "and it looks for the app in the person's own home folder"
+            else
+              bad "the launcher does not look in ~/.local/lib/aquarius — it would never find an installed copy"
             fi
           else
-            echo "  --   this Aquarius Editor has no chrome-sandbox (nothing to check)"
+            bad "/usr/bin/aquarius-editor is missing — the menu entry points at it"
           fi
+          # The rehearsal, on the packaged image: every step of an install,
+          # into a throwaway folder, with the two downloads stood in for.
+          echo "-- rehearsing an install, with no network --"
+          if /usr/libexec/aquarius-appimage-install --dry-run --progress-fd 2 \
+               install os.aquarius.editor >/tmp/reh.txt 2>&1; then
+            ok "the installer walked a whole install on this image"
+          else
+            bad "the installer could not walk an install on this image"
+          fi
+          sed 's/^/       /' /tmp/reh.txt
+          for want in 'STEP 1/1 Aquarius Editor' 'releases/download/v0.7.2/SHA256SUMS.txt' \
+                      'menu entry written to' 'is installed, and read back' 'PERCENT 100' 'DONE'; do
+            if grep -qF "${want}" /tmp/reh.txt; then ok "  it said: ${want}"
+            else bad "  the rehearsal never said: ${want}"; fi
+          done
 
           # The app-grid entries, judged by the freedesktop project's own
           # checker rather than by us reading them.
           echo "== are the app-grid entries well-formed? =="
-          for d in /usr/share/applications/aquarius-editor.desktop /usr/share/applications/aquarius-writer.desktop; do
+          for d in /usr/share/applications/aquarius-writer.desktop; do
             if desktop-file-validate "${d}" 2>/tmp/dfv.txt; then ok "$(basename "${d}") is valid"
             else bad "$(basename "${d}") is not valid — the app would never appear"; sed 's/^/       /' /tmp/dfv.txt; fi
           done
@@ -2448,14 +2567,40 @@ jobs:
           if [ "${CAT_RC}" -eq 0 ]; then ok "--catalog describes every app on the list"
           else bad "--catalog failed (exit ${CAT_RC}):"; sed 's/^/       /' /tmp/catalog.err; fi
 
+          # ⚠️ THE CATALOG IS BIGGER THAN THE FLATPAK LIST SINCE 2026-09-04.
+          # Aquarius Editor is not a Flatpak, so it has no block in Flatpak's
+          # file at all — it lives only in catalog.ini, marked Type=appimage.
+          # The catalog is the UNION, and that is what is checked.
+          OURS="$(/usr/libexec/aquarius-flatpak-preinstall --list-appimage 2>/dev/null | grep -c . || true)"
           CAT_LINES="$(wc -l < /tmp/catalog.txt)"
-          if [ "${CAT_LINES}" -eq "${blocks}" ]; then ok "${CAT_LINES} catalog lines for ${blocks} apps"
-          else bad "${CAT_LINES} catalog lines for ${blocks} apps — the chooser would show the wrong set"; fi
+          if [ "${CAT_LINES}" -eq "$(( blocks + OURS ))" ]; then
+            ok "${CAT_LINES} catalog lines for ${blocks} Flatpaks and ${OURS} app(s) of ours"
+          else
+            bad "${CAT_LINES} catalog lines for ${blocks} Flatpaks + ${OURS} of ours — the chooser would show the wrong set"
+          fi
+          if [ "${OURS}" -ge 1 ]; then
+            ok "${OURS} app(s) of ours are offered as downloads:"
+            /usr/libexec/aquarius-flatpak-preinstall --list-appimage | sed 's/^/       /'
+          else
+            bad "NO app of ours is offered as a download — Aquarius Editor is neither in the image nor in the catalog, so nobody could ever get it"
+          fi
 
-          # The contract other programs read: eight tab-separated fields.
-          FIELDS="$(awk -F'\t' '{print NF}' /tmp/catalog.txt | sort -u | tr '\n' ' ')"
-          if [ "${FIELDS}" = "8 " ]; then ok "every catalog line has the promised 8 fields"
-          else bad "catalog lines have ${FIELDS}fields — the chooser is written against exactly 8"; fi
+          # The contract other programs read. Eight fields for a Flatpak, plus
+          # the ninth (type:) that every line carries since 2026-09-04, and four
+          # more on one of ours: source:, pin:, asset:, sha256sums:.
+          FIELDS="$(awk -F'\t' '{print NF}' /tmp/catalog.txt | sort -un | tr '\n' ' ')"
+          if [ "${FIELDS}" = "9 13 " ] || [ "${FIELDS}" = "9 " ]; then
+            ok "every catalog line has the promised fields (${FIELDS}per line)"
+          else
+            bad "catalog lines have ${FIELDS}fields — a Flatpak line must have 9 and one of ours 13"
+          fi
+          # And the ninth field must really say which kind each one is.
+          if awk -F'\t' '$9 !~ /^type:(flatpak|appimage)$/' /tmp/catalog.txt | grep -q .; then
+            bad "a catalog line does not say what kind of app it is:"
+            awk -F'\t' '$9 !~ /^type:(flatpak|appimage)$/ {print "       " $1 " -> " $9}' /tmp/catalog.txt
+          else
+            ok "every line says whether it is a Flatpak or one of ours"
+          fi
 
           # Six shelves since R4, when Gaming was added (build_files/68-gaming.sh).
           SHELVES='^(Video|Audio|Design|Streaming|Utilities|Gaming)$'
@@ -2474,7 +2619,7 @@ jobs:
           # would satisfy "they agree" perfectly, still fails.
           VISIBLE="$(awk -F'\t' '$6=="runtime:no"' /tmp/catalog.txt | wc -l)"
           HIDDEN="$(awk -F'\t' '$6=="runtime:yes"' /tmp/catalog.txt | wc -l)"
-          EXPECT_VISIBLE=$(( blocks - runtimes ))
+          EXPECT_VISIBLE=$(( blocks - runtimes + OURS ))
           if [ "${VISIBLE}" -eq "${EXPECT_VISIBLE}" ] && [ "${HIDDEN}" -eq "${runtimes}" ] && [ "${VISIBLE}" -ge 10 ]; then
             ok "the chooser would offer ${VISIBLE} apps and quietly bring ${HIDDEN} plug-ins with OBS"
           else
@@ -2533,6 +2678,63 @@ jobs:
           fi
 
           # ------------------------------------------------------------------
+          # THE PASSWORD SPLIT — the point of the 2026-09-04 change
+          # ------------------------------------------------------------------
+          # Aquarius Editor goes into the person's OWN home folder, so nothing
+          # about installing it needs an administrator. Asking for a password to
+          # write inside somebody's home folder would be theatre — and worse
+          # than theatre, because the password prompt is the one part of this
+          # feature that has actually failed on the bench (2026-09-04, no polkit
+          # agent in the Aquarius session).
+          #
+          # Read with the chooser's own parser, in the finished image, because
+          # "does it ask for a password" is not something a screenshot answers.
+          echo
+          echo "== picking only Aquarius Editor asks for no password =="
+          "${CHOOSER}" --dry-run --select os.aquarius.editor > /tmp/ed.txt 2>&1 || true
+          sed 's/^/       /' /tmp/ed.txt
+          if grep -qx 'password prompts: 0' /tmp/ed.txt; then
+            ok "no password prompt at all when only our own app is chosen"
+          else
+            bad "choosing only Aquarius Editor would still ask for a password"
+          fi
+          if grep -q '^  appimage: 1 app(s), steps 1-1 of 1' /tmp/ed.txt; then
+            ok "and it goes to the home-folder installer"
+          else
+            bad "it does not go to the home-folder installer"
+          fi
+
+          echo "== picking both kinds runs two installers behind one bar =="
+          "${CHOOSER}" --dry-run --select os.aquarius.editor,org.kde.kdenlive > /tmp/mix.txt 2>&1 || true
+          sed 's/^/       /' /tmp/mix.txt
+          if grep -qx 'installer runs: 2' /tmp/mix.txt && grep -qx 'password prompts: 1' /tmp/mix.txt; then
+            ok "two installers, one password prompt, for the Flathub half only"
+          else
+            bad "the two-installer split is not what it should be"
+          fi
+          # Steps numbered straight through rather than restarting at one, which
+          # is what --step-offset is for. Without it the bar jumps backwards.
+          if grep -q 'steps 1-1 of 2' /tmp/mix.txt && grep -q 'steps 2-2 of 2' /tmp/mix.txt; then
+            ok "the steps are numbered 1 and 2 of 2 across both installers"
+          else
+            bad "the two installers do not share one numbering — the progress bar would jump back to the start"
+          fi
+
+          # And the Included group must NOT claim the Editor any more: it is a
+          # card now, and saying "Included" about an app that is not there is
+          # the worst of both arrangements.
+          if grep -q '"aquarius-editor.desktop"' "${CHOOSER}"; then
+            bad "the chooser still lists Aquarius Editor as Included with AquariusOS — it is a download now"
+          else
+            ok "the chooser no longer claims Aquarius Editor is already installed"
+          fi
+          if grep -q '"aquarius-writer.desktop"' "${CHOOSER}"; then
+            ok "Aquarius Writer is still shown as Included, because it really is"
+          else
+            bad "the chooser no longer shows Aquarius Writer as Included"
+          fi
+
+          # ------------------------------------------------------------------
           # `aq apps` — the same job in a terminal
           # ------------------------------------------------------------------
           # It must be discoverable (in `aq --help`) and it must agree with the
@@ -2560,6 +2762,37 @@ jobs:
             bad "'aq apps install' accepted a plug-in as though it were an app"
           else
             ok "'aq apps install' refuses a plug-in and points at the app it belongs to"
+          fi
+
+          # Aquarius Editor has to be findable from the terminal too — as
+          # available, not installed, because it is not in this image.
+          if aq apps list 2>/dev/null | grep -q 'os.aquarius.editor'; then
+            ok "'aq apps list' offers Aquarius Editor"
+          else
+            bad "'aq apps list' does not mention Aquarius Editor — nobody would find it from a terminal"
+          fi
+          if aq apps list 2>/dev/null | grep 'os.aquarius.editor' | grep -q 'installed'; then
+            bad "'aq apps list' says Aquarius Editor is installed, and it is not in this image"
+          else
+            ok "and says it is not installed yet, which is the truth on a fresh image"
+          fi
+          for sub in update remove; do
+            if aq apps 2>&1 | grep -q "aq apps ${sub}"; then
+              ok "'aq apps ${sub}' is in the help"
+            else
+              bad "'aq apps ${sub}' is not mentioned in 'aq apps' help"
+            fi
+          done
+          if aq apps update >/tmp/aqup.txt 2>&1; then
+            ok "'aq apps update' runs"
+          else
+            ok "'aq apps update' ran and reported (exit non-zero is fine with no network)"
+          fi
+          sed 's/^/       /' /tmp/aqup.txt
+          if grep -q 'not installed' /tmp/aqup.txt; then
+            ok "and says Aquarius Editor is not installed on this image, which is right"
+          else
+            bad "'aq apps update' did not say what it found"
           fi
 
           # ====================================================================
@@ -2633,9 +2866,21 @@ jobs:
           done
           # Every name on that line has to be a real file, or the icon is
           # simply missing with no error anywhere.
+          #
+          # ⚠️ ONE DELIBERATE EXCEPTION SINCE 2026-09-04. Aquarius Editor is
+          # pinned here and is NOT in the image: its menu entry lands in each
+          # person's own ~/.local/share/applications/ when they install it. It
+          # stays pinned on purpose — GNOME does not draw a name it cannot
+          # resolve (no gap, no dead square, no error), and the moment the app
+          # is installed the same name resolves and the icon takes the seat it
+          # has always had. Named explicitly, not a wildcard, so a real typo in
+          # any other name still fails. build_files/50-aquarius-desktop.sh
+          # carries the same exception and the same note.
           printf '%s' "${FAV}" | tr -d "[]' " | tr ',' '\n' | grep -v '^$' > /tmp/fav.txt
           while read -r fav; do
             if [ -r "/usr/share/applications/${fav}" ]; then ok "  dock: ${fav}"
+            elif [ "${fav}" = "aquarius-editor.desktop" ]; then
+              ok "  dock: ${fav} (installed into each person's home folder on request)"
             else bad "  dock: ${fav} is pinned but is not in this image"; fi
           done < /tmp/fav.txt
 

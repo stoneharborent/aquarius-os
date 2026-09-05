@@ -5,15 +5,34 @@
 # PLAIN ENGLISH: this is the step that makes AquariusOS a CREATOR'S operating
 # system rather than a nicely branded Fedora.
 #
-# There are exactly TWO ways an app reaches a person on this machine, and which
-# one an app gets is a real decision, not an implementation detail.
+# There are exactly THREE ways an app reaches a person on this machine, and
+# which one an app gets is a real decision, not an implementation detail.
 #
-#   BAKED IN       Aquarius Editor and Aquarius Writer. They are ours, they are
-#                  on no app store, so their Linux releases are downloaded HERE
-#                  during the build, checked against the fingerprints GitHub
-#                  published with them, and unpacked into the image. They are
-#                  as much a part of the operating system as the file manager,
-#                  and they work on a machine that has never seen the internet.
+#   BAKED IN       Aquarius Writer. It is ours, it is on no app store, so its
+#                  Linux release is downloaded HERE during the build, checked
+#                  against the fingerprints GitHub published with it, and
+#                  unpacked into the image. It is as much a part of the
+#                  operating system as the file manager, and it works on a
+#                  machine that has never seen the internet. It is about
+#                  260 MB, which is small enough not to be worth a question.
+#
+#   OFFERED AS A   Aquarius Editor. Also ours, also on no app store — but four
+#   DOWNLOAD       gigabytes, because since v0.5.0 it carries its speech and
+#                  footage-analysis models INSIDE the app so that a machine
+#                  with no internet can still transcribe.
+#
+#                  ⚠️ IT WAS BAKED IN UNTIL 2026-09-04, AND ROYCE'S CALL THAT
+#                  DAY IS WHY IT IS NOT. Four gigabytes on every image, for
+#                  everybody, including the people who will never open it, is
+#                  not a trade worth making for one app. It is now the first
+#                  card in the app chooser, TICKED when the window opens, and
+#                  it installs into the person's own home folder — which needs
+#                  no administrator password at all.
+#
+#                  Nothing about it is downloaded during THIS build. What the
+#                  build does instead is check that the machinery to install it
+#                  exists and works: the pin in the catalogue, the installer,
+#                  the menu-entry template and the launcher. See JOB 1b.
 #
 #   PREINSTALLED   OBS, Kdenlive, Krita, GIMP, Inkscape, Blender, Ardour,
 #                  Audacity, Obsidian, LocalSend, Chrome, and the OBS plug-ins.
@@ -67,17 +86,26 @@ CATALOG_FILE="/usr/share/aquarius/apps/catalog.ini"
 # It is meant to be a deliberate act with a build behind it, exactly like the
 # pinned commits at the top of the Containerfile.
 #
-# ⚠️ HOW BIG THESE ARE, AND WHY IT IS WRITTEN DOWN. Aquarius Editor is a large
-#    download and lands at roughly two and a half gigabytes unpacked, because
-#    since v0.5.0 it carries its speech-recognition and footage-analysis models
-#    INSIDE the app so that a machine with no internet can still transcribe.
-#    That is a deliberate trade and it is the reason this image is what it is.
+# ⚠️ AQUARIUS EDITOR IS DELIBERATELY NOT ON THIS LIST ANY MORE (2026-09-04).
+#    It was, and it landed at 4.1 GB unpacked, which is where roughly four of
+#    this image's gigabytes went. Its version is now pinned in the app
+#    catalogue instead — /usr/share/aquarius/apps/catalog.ini, the Pin= line of
+#    the [os.aquarius.editor] block — and a person installs it from the chooser
+#    when they want it. Putting it back here would undo the whole change.
+#
 #    The build log prints the free space either side of each bake, so an
 #    out-of-space failure reads as an out-of-space failure and not as a mystery.
 AQUARIUS_APPS=(
-    "aquarius-editor stoneharborent/aquarius-editor v0.7.2"
     "aquarius-writer stoneharborent/aquarius-writer v0.5.5"
 )
+
+# The apps that are offered as downloads rather than baked in. Named here only
+# so the checks below can be written; the facts about them all live in the
+# catalogue.
+AQUARIUS_DOWNLOAD_APPS=(
+    "os.aquarius.editor aquarius-editor"
+)
+APPIMAGE_INSTALLER="/usr/libexec/aquarius-appimage-install"
 
 die() {
     echo ""
@@ -433,7 +461,10 @@ say "Could an ordinary account really run these apps?"
 
 show_some() { printf '%s\n' "$1" | head -8 | xargs -r ls -ld 2> /dev/null || true; }
 
-for name in aquarius-editor aquarius-writer; do
+# shellcheck disable=SC2043  # one app today. It was two until 2026-09-04 and
+#                              this loop stays a loop so that adding a third is
+#                              one word rather than a rewrite.
+for name in aquarius-writer; do
     app="${APP_ROOT}/${name}"
 
     [ -x "/usr/bin/${name}" ] || die "Launcher /usr/bin/${name} is missing or not executable."
@@ -497,20 +528,35 @@ for name in aquarius-editor aquarius-writer; do
     ok "${name}: permissions verified for ordinary accounts"
 done
 
-# --- the Electron sandbox helper, checked on the way out ----------------------
-SANDBOX="${APP_ROOT}/aquarius-editor/chrome-sandbox"
-if [ -e "$SANDBOX" ]; then
-    mode="$(stat -c '%a' "$SANDBOX")"
-    owner="$(stat -c '%U:%G' "$SANDBOX")"
-    if [ "$mode" != "4755" ] || [ "$owner" != "root:root" ]; then
-        die "aquarius-editor: chrome-sandbox is ${owner} mode ${mode}, expected root:root 4755." \
-            "" \
-            "Electron aborts on startup with \"The SUID sandbox helper binary was found," \
-            "but is not configured correctly\" when this is wrong — and from the app grid" \
-            "that abort is completely silent."
-    fi
-    ok "aquarius-editor: chrome-sandbox is root:root 4755"
+# --- and Aquarius Editor must NOT be here ------------------------------------
+# ⚠️ THE CHECK THAT PROVES THE 2026-09-04 CHANGE ACTUALLY HAPPENED. Four
+# gigabytes coming back into the image would show up as a slow build and a big
+# download and nothing else — no error, no red text, just an operating system
+# that quietly went back to being twice the size it needs to be. So it is
+# asserted, in the plainest possible way: the folder must not exist.
+say "Aquarius Editor is NOT baked into this image (it is a download now)"
+if [ -e "${APP_ROOT}/aquarius-editor" ]; then
+    die "${APP_ROOT}/aquarius-editor exists, and it must not." \
+        "" \
+        "Aquarius Editor stopped being baked into the image on 2026-09-04. It is" \
+        "4.1 GB unpacked, and baking it in made every AquariusOS download four" \
+        "gigabytes bigger for everybody. It is offered in the app chooser now," \
+        "ticked by default, and installed into each person's own home folder." \
+        "" \
+        "If it is back, something has been added to AQUARIUS_APPS at the top of" \
+        "this file. Take it out and pin the version in catalog.ini instead."
 fi
+ok "no ${APP_ROOT}/aquarius-editor in the image"
+if [ -e /usr/share/applications/aquarius-editor.desktop ]; then
+    die "/usr/share/applications/aquarius-editor.desktop exists, and it must not." \
+        "" \
+        "The system-wide menu entry went with the app. The one a person sees is" \
+        "written into their own ~/.local/share/applications/ by the installer," \
+        "from the template at /usr/share/aquarius/apps/aquarius-editor.desktop.in." \
+        "A system-wide one as well would mean a dead icon in the app grid on every" \
+        "account that has not installed it."
+fi
+ok "no system-wide menu entry for it either (the installer writes a personal one)"
 
 # --- the update-overlay library, and the sums it does ------------------------
 # /usr/libexec/aquarius-app-overlay is the piece that decides, at every launch,
@@ -554,7 +600,9 @@ if ! aq_have desktop-file-validate; then
     echo "desktop-file-validate is not here yet; installing desktop-file-utils."
     aq_dnf install desktop-file-utils
 fi
-for d in /usr/share/applications/aquarius-editor.desktop /usr/share/applications/aquarius-writer.desktop; do
+# shellcheck disable=SC2043  # see the note above: one entry today, a list by
+#                              intent.
+for d in /usr/share/applications/aquarius-writer.desktop; do
     if desktop-file-validate "$d"; then
         ok "$(basename "$d") is valid"
     else
@@ -568,6 +616,138 @@ if aq_have update-desktop-database; then
     update-desktop-database /usr/share/applications || true
     ok "the app-grid index was rebuilt"
 fi
+
+# ==============================================================================
+# JOB 1b — the app that is a DOWNLOAD, and the machinery that fetches it
+# ==============================================================================
+# NEW 2026-09-04. Aquarius Editor is not in this image. Everything that fetches
+# it onto a real machine is, and this is where that is proved — because the
+# failure mode is unusually quiet: an image can ship a beautiful card in the
+# chooser offering an app that nothing on the machine knows how to install, and
+# nothing says so until somebody presses the button.
+#
+# ⚠️ NOTHING HERE TOUCHES THE NETWORK ON PURPOSE. The whole point of the change
+#    is that this build no longer spends four gigabytes and ten minutes on an
+#    app. So the rehearsal below stands in for the download and does every other
+#    step for real, into a throwaway folder, and reads back what it wrote.
+# ------------------------------------------------------------------------------
+say "The app that is offered as a download rather than baked in"
+
+[ -x "${APPIMAGE_INSTALLER}" ] \
+    || die "${APPIMAGE_INSTALLER} is missing or not executable." \
+        "" \
+        "It is the only thing on this machine that knows how to install Aquarius" \
+        "Editor. Without it the chooser offers an app nobody can install."
+
+bash -n "${APPIMAGE_INSTALLER}" \
+    || die "${APPIMAGE_INSTALLER} is not valid shell."
+
+# ⚠️ IT MUST NOT BE SETUID OR OWNED BY ANYONE BUT ROOT, and it must not be
+#    writable by others — not because it is privileged (it is the opposite: it
+#    refuses to run as root) but because it lives in /usr and everything in /usr
+#    follows that rule. A world-writable program in /usr is a way for one
+#    account to replace another account's program.
+aq_mode="$(stat -c '%a %U %G' "${APPIMAGE_INSTALLER}")"
+case "${aq_mode}" in
+    7[0-5][0-5]\ root\ root) ok "the installer is root-owned and not writable by others (${aq_mode})" ;;
+    *) bad "the installer is ${aq_mode}; it should be root-owned and 0755 or tighter" ;;
+esac
+
+# The menu entry it writes into a person's home folder. Checked with the
+# freedesktop project's own validator, exactly as the baked-in ones are: a
+# .desktop file with a mistake in it is IGNORED, silently, and the app never
+# appears in the app grid.
+for entry in "${AQUARIUS_DOWNLOAD_APPS[@]}"; do
+    read -r aq_id aq_short <<< "${entry}"
+    tpl="/usr/share/aquarius/apps/${aq_short}.desktop.in"
+    [ -r "${tpl}" ] || die "${tpl} is missing." \
+        "" \
+        "It is the menu entry ${aq_id} installs into each person's home folder." \
+        "Without it the app installs and never appears anywhere."
+    # ⚠️ VALIDATED THROUGH A COPY WITH THE RIGHT NAME, AND THAT IS NOT A DODGE.
+    #    desktop-file-validate refuses outright — before reading a single line —
+    #    any filename that does not end in `.desktop`:
+    #
+    #        error: filename does not have a .desktop extension
+    #
+    #    which is exactly what this file's name does not do, on purpose: it is a
+    #    template, and a real `.desktop` file sitting in /usr/share/aquarius
+    #    would be one more thing somebody could mistake for a menu entry. So the
+    #    copy is validated under the name it will really have on a machine,
+    #    which is also the more honest question to ask. (Found on the first CI
+    #    run of this branch, 2026-09-04.)
+    tpl_check="/tmp/${aq_short}.desktop"
+    cp "${tpl}" "${tpl_check}"
+    if desktop-file-validate "${tpl_check}"; then
+        ok "$(basename "${tpl}") is a valid menu entry"
+    else
+        bad "$(basename "${tpl}") is not a valid menu entry — the app would install and never appear"
+    fi
+    rm -f "${tpl_check}"
+    aq_file_has "${tpl}" "^Exec=/usr/bin/${aq_short}\$" \
+        "it starts the app through /usr/bin/${aq_short}, not by a path into the home folder"
+
+    # The launcher. It stays in the image even though the app does not, because
+    # it is the piece that finds the installed copy, handles the Electron
+    # sandbox and keeps the log — and because `${aq_short}` typed in a terminal
+    # should say something useful rather than "command not found".
+    [ -x "/usr/bin/${aq_short}" ] \
+        || die "/usr/bin/${aq_short} is missing — the menu entry points at it."
+    aq_file_has "/usr/bin/${aq_short}" '\.local/lib/aquarius' \
+        "the launcher looks for the app in the person's own home folder"
+    aq_file_has "/usr/bin/${aq_short}" 'aq apps install' \
+        "and says how to install it when it is not there yet"
+    aq_file_has "/usr/bin/${aq_short}" 'ELECTRON_OZONE_PLATFORM_HINT' \
+        "it still asks Electron to draw sharply on a scaled screen"
+done
+
+# --- the rehearsal: every step of an install, with the network stood in for ---
+# This is the check whose absence would let an image ship with an installer that
+# cannot install. It writes real files into a throwaway folder, verifies a real
+# checksum, unpacks, fixes permissions, moves the folder into place, re-points
+# the link, writes the menu entry, and READS BACK the version it claims to have
+# installed. Only the two downloads are stood in for.
+say "Rehearsing an install of the download, with no network"
+AQ_REH="$(mktemp)"
+if "${APPIMAGE_INSTALLER}" --dry-run --progress-fd 2 \
+    install os.aquarius.editor > "${AQ_REH}" 2>&1; then
+    ok "the installer walked the whole install"
+else
+    bad "the installer could not walk an install — the chooser would offer an app nobody can install"
+fi
+sed 's/^/       /' "${AQ_REH}"
+
+aq_file_has "${AQ_REH}" '^STEP 1/1 Aquarius Editor$' \
+    "it announces the app on the progress channel"
+aq_file_has "${AQ_REH}" 'releases/download/v0\.7\.2/SHA256SUMS\.txt' \
+    "it fetches the fingerprints first, from the pinned release"
+aq_file_has "${AQ_REH}" '^PERCENT 8[0-9]$' \
+    "it reports the download as most of the way through"
+aq_file_has "${AQ_REH}" 'menu entry written to' \
+    "it writes the menu entry"
+aq_file_has "${AQ_REH}" 'is installed, and read back' \
+    "and it READS BACK what it installed instead of trusting an exit code"
+aq_file_has "${AQ_REH}" '^PERCENT 100$' \
+    "it finishes at a hundred per cent"
+aq_file_has "${AQ_REH}" '^DONE$' \
+    "and says when it has finished"
+rm -f "${AQ_REH}"
+
+# --- it must refuse to be run by an administrator ----------------------------
+# ⚠️ NOT FUSSINESS, AND THE OPPOSITE OF THE FLATPAK INSTALLER NEXT DOOR. Under
+#    sudo, HOME is root's home folder, so a "successful" install would land
+#    where the person who asked can never see it. A refusal with a sentence is
+#    the only honest answer.
+say "It refuses to install as an administrator, and says why"
+AQ_ROOT_OUT="$(mktemp)"
+"${APPIMAGE_INSTALLER}" install os.aquarius.editor > "${AQ_ROOT_OUT}" 2>&1 || true
+if grep -q 'Do not run this with sudo' "${AQ_ROOT_OUT}"; then
+    ok "run as root it explains itself instead of installing into the wrong home folder"
+else
+    bad "run as root it does not refuse — it would install where nobody can find it"
+    sed 's/^/       /' "${AQ_ROOT_OUT}"
+fi
+rm -f "${AQ_ROOT_OUT}"
 
 # ==============================================================================
 # JOB 2 — the shopping list of Flatpaks, checked against reality
@@ -927,47 +1107,77 @@ say "The app catalog (the names and descriptions the chooser shows)"
 [ -r "${CATALOG_FILE}" ] \
     || die "${CATALOG_FILE} is missing — it ships in system_files/ and the chooser cannot be drawn without it."
 
+# ⚠️ THE CATALOG IS BIGGER THAN THE SHOPPING LIST SINCE 2026-09-04, AND THAT IS
+#    NOT DRIFT. The shopping list is Flatpak's file and holds only Flatpaks.
+#    Aquarius Editor is not a Flatpak, so it has no block there at all — its
+#    whole description lives in catalog.ini, marked Type=appimage. The catalog
+#    is therefore the UNION of the two, and the sum below is what keeps that
+#    honest: every Flatpak block, plus every app of ours, and nothing else.
+AQ_OURS="$(/usr/libexec/aquarius-flatpak-preinstall --list-appimage 2>/dev/null || true)"
+AQ_OURS_COUNT="$(printf '%s\n' "${AQ_OURS}" | grep -c . || true)"
+AQ_EXPECTED=$((AQ_BLOCKS + AQ_OURS_COUNT))
+echo "  the shopping list has ${AQ_BLOCKS} Flatpaks; ${AQ_OURS_COUNT} more app(s) are ours:"
+printf '%s\n' "${AQ_OURS}" | sed 's/^/    /'
+
 AQ_CATALOGUED="$(/usr/libexec/aquarius-flatpak-preinstall --catalog 2>/dev/null | wc -l || true)"
-if [ "${AQ_CATALOGUED}" -eq "${AQ_BLOCKS}" ]; then
+if [ "${AQ_CATALOGUED}" -eq "${AQ_EXPECTED}" ]; then
     ok "all ${AQ_CATALOGUED} apps have a name and a description"
 else
-    bad "only ${AQ_CATALOGUED} of ${AQ_BLOCKS} apps have a catalog entry — these are the ones with no name or description:"
+    bad "only ${AQ_CATALOGUED} of ${AQ_EXPECTED} apps have a catalog entry — these are the ones with no name or description:"
     /usr/libexec/aquarius-flatpak-preinstall --catalog 2>&1 >/dev/null | sed 's/^/       /' || true
 fi
 
-# The other direction: an entry describing an app that is not on the list.
+# There has to be at least one of ours, or the whole change of 2026-09-04 has
+# quietly undone itself and the flagship app is offered nowhere at all.
+if [ "${AQ_OURS_COUNT}" -ge 1 ]; then
+    ok "${AQ_OURS_COUNT} app(s) of ours are offered as downloads"
+else
+    bad "NO app of ours is offered as a download — Aquarius Editor is neither in the image nor in the catalog, so nobody could ever get it"
+fi
+
+# The other direction: an entry describing an app that is neither on the
+# shopping list nor one of ours.
 comm -13 \
-    <(printf '%s\n' "${AQ_IDS}") \
+    <(printf '%s\n%s\n' "${AQ_IDS}" "${AQ_OURS}" | grep -v '^$' | sort) \
     <(grep '^\[' "${CATALOG_FILE}" | tr -d '[]' | sort) > /tmp/aq-catalog-extra.txt
 if [ -s /tmp/aq-catalog-extra.txt ]; then
-    bad "the catalog describes apps that are not on the shopping list, so nobody can install them:"
+    bad "the catalog describes apps that are on neither list, so nobody can install them:"
     sed 's/^/       /' /tmp/aq-catalog-extra.txt
 else
-    ok "the catalog describes nothing that is not on the list"
+    ok "the catalog describes nothing that is on neither list"
 fi
 
-# Every entry must sit on one of the six shelves the chooser knows how to draw.
-# (Gaming was added in R4 — build_files/68-gaming.sh.)
-AQ_BAD_CATEGORY="$(/usr/libexec/aquarius-flatpak-preinstall --catalog 2>/dev/null \
-    | awk -F'\t' '$4 !~ /^(Video|Audio|Design|Streaming|Utilities|Gaming)$/ {print $1 " -> " $4}' || true)"
-if [ -z "${AQ_BAD_CATEGORY}" ]; then
-    ok "every app is on one of the six shelves the chooser draws"
-else
-    bad "these apps name a category the chooser does not know:"
-    printf '%s\n' "${AQ_BAD_CATEGORY}" | sed 's/^/       /'
-fi
-
-# The command the service depends on. Fedora 44 ships flatpak 1.18, which has
-# it; asked rather than assumed, because the fallback path in the service
-# cannot honour the "a removed app stays removed" rule and should never be the
-# one that runs.
-say "Does this image's Flatpak have the preinstall command?"
-flatpak --version
-if flatpak preinstall --help > /dev/null 2>&1; then
-    ok "'flatpak preinstall' is available — the proper mechanism will be used"
-else
-    bad "this Flatpak has no 'preinstall' command; the service would fall back to a loop that cannot tell an app you removed from one never installed"
-fi
+# Every app of ours must name a release that really exists and really publishes
+# fingerprints. ⚠️ THIS IS THE ONE PLACE THE BUILD TOUCHES THE NETWORK FOR THIS
+# APP, AND IT COSTS A FEW HUNDRED BYTES. A pin pointing at a release that was
+# never published is otherwise completely silent until somebody presses Install
+# on a real machine — the same class of fault as a typo in a Flatpak id, which
+# is why the check next door exists too. A build machine that cannot reach
+# GitHub gets a warning and carries on, for the same reason it does for Flathub:
+# a network problem here is not evidence about our file.
+say "Do the releases our own apps are pinned to actually exist?"
+# ⚠️ WRITTEN AS A `for` OVER A VARIABLE AND NOT AS `... | while read`, AND THAT
+#    IS NOT STYLE. Every part of a pipeline runs in its own subshell, so a
+#    `bad` called inside one would print its FAIL line, increment the counter in
+#    the subshell, and lose it the moment the pipeline ended — a build that says
+#    FAIL in the log and then passes. Read the counter in aq-lib.sh.
+AQ_OUR_LINES="$(/usr/libexec/aquarius-flatpak-preinstall --catalog 2>/dev/null \
+    | awk -F'\t' '$9 == "type:appimage"' || true)"
+while IFS= read -r aq_line; do
+    [ -n "${aq_line}" ] || continue
+    aq_id="$(printf '%s' "${aq_line}" | cut -f1)"
+    aq_src="$(printf '%s' "${aq_line}" | cut -f10)"; aq_src="${aq_src#source:}"
+    aq_pin="$(printf '%s' "${aq_line}" | cut -f11)"; aq_pin="${aq_pin#pin:}"
+    aq_sums="$(printf '%s' "${aq_line}" | cut -f13)"; aq_sums="${aq_sums#sha256sums:}"
+    aq_url="https://github.com/${aq_src}/releases/download/${aq_pin}/${aq_sums}"
+    aq_http="$(curl -sSL -o /dev/null -w '%{http_code}' --max-time 30 \
+        --retry 2 --retry-delay 3 "${aq_url}" 2>/dev/null || echo "000")"
+    case "${aq_http}" in
+        200) ok "${aq_id}: ${aq_src} ${aq_pin} publishes ${aq_sums}" ;;
+        404) bad "${aq_id}: ${aq_src} has no ${aq_pin} release with a ${aq_sums} in it — the Pin= line in catalog.ini names a release that does not exist" ;;
+        *)   echo "  ??   could not ask GitHub about ${aq_id} (it answered '${aq_http}'); carrying on" ;;
+    esac
+done <<< "${AQ_OUR_LINES}"
 
 # ==============================================================================
 # JOB 5 — the ingest helper, promoted
@@ -1085,7 +1295,15 @@ install -d -m 0755 /usr/share/aquarius
         echo "${aq_name} ${aq_tag}"
     done
     echo ""
-    echo "[installed from Flathub on first boot]"
+    echo "[offered as a download, installed into a person's own home folder]"
+    # Aquarius Editor lives here since 2026-09-04. The version is the Pin= line
+    # in the catalog, printed rather than repeated, so this file cannot disagree
+    # with what the machine would actually fetch.
+    /usr/libexec/aquarius-flatpak-preinstall --catalog 2>/dev/null \
+        | awk -F'\t' '$9 == "type:appimage" { pin = $11; sub(/^pin:/, "", pin); print $1 " " pin }' \
+        || true
+    echo ""
+    echo "[offered from Flathub, installed when a person picks them]"
     printf '%s\n' "${AQ_IDS}"
 } > /usr/share/aquarius/creator-apps.txt
 chmod 0644 /usr/share/aquarius/creator-apps.txt

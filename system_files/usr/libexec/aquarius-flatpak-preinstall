@@ -15,8 +15,12 @@
 # It has four ways in, and only one of them happens on its own:
 #
 #   --catalog          the app list with names and descriptions, for the
-#                      chooser window at first login. Reads only.
-#   --list             the same list, IDs alone. Reads only.
+#                      chooser window at first login. Reads only. Since
+#                      2026-09-04 this is the UNION of the Flatpak shopping
+#                      list and the apps of ours that are downloads rather than
+#                      Flatpaks — Aquarius Editor is the first of those.
+#   --list             the Flatpaks alone, IDs alone. Reads only.
+#   --list-appimage    our own downloadable apps alone, IDs alone. Reads only.
 #   --overrides-only   ONLY the extra permissions, none of the installing. This
 #                      is the one that happens by itself, at every boot, run by
 #                      aquarius-flatpak-overrides.service.
@@ -207,25 +211,57 @@ wanted_ids() { wanted_entries | cut -f 1; }
 # ------------------------------------------------------------------------------
 # THE OUTPUT OF `--catalog` IS A CONTRACT. Other programs read it — the app
 # chooser window is written against it. One line per app, fields separated by a
-# single TAB, always eight of them, always in this order:
+# single TAB, the first EIGHT always present, always in this order:
 #
 #   1  id            com.obsproject.Studio
 #   2  name          OBS Studio
 #   3  description   one sentence, no tabs
-#   4  category      Video | Audio | Design | Streaming | Utilities
+#   4  category      Video | Audio | Design | Streaming | Utilities | Gaming
 #   5  recommended:  recommended:yes or recommended:no
 #   6  runtime:      runtime:yes or runtime:no
 #   7  requires:     requires:<app id>, or requires:- when nothing
 #   8  branch:       branch:stable (or whatever the list says)
 #
-# Fields 5-8 carry their own name as a prefix so that a reader can check it is
-# reading what it thinks it is reading, and so an extra field added later
+# Fields 5 onward carry their own name as a prefix so that a reader can check it
+# is reading what it thinks it is reading, and so an extra field added later
 # cannot be mistaken for one of these.
 #
 # "runtime:yes" means IT IS NOT AN APPLICATION — it is a plug-in or a system
 # piece. A chooser must NOT show those as things to tick: they arrive with the
-# app named in "requires:". Of the sixteen entries, eleven are apps a person
-# picks and five are plug-ins that follow OBS Studio.
+# app named in "requires:". Of the sixteen Flatpak entries, eleven are apps a
+# person picks and five are plug-ins that follow OBS Studio.
+#
+# ------------------------------------------------------------------------------
+# THE NINTH FIELD, AND THE FOUR THAT MAY FOLLOW IT — added 2026-09-04
+# ------------------------------------------------------------------------------
+# Every line now also carries:
+#
+#   9  type:         type:flatpak or type:appimage
+#
+# and an appimage line carries four more after it, in this order:
+#
+#  10  source:       source:owner/repo         the GitHub repository
+#  11  pin:          pin:v0.7.2                the exact release tag
+#  12  asset:        asset:*.AppImage          which file in it is the app
+#  13  sha256sums:   sha256sums:SHA256SUMS.txt the fingerprint file beside it
+#
+# ⚠️ THE FIRST EIGHT FIELDS DID NOT MOVE, AND THAT IS THE POINT. A program
+#    written against the old contract keeps working: it reads eight fields,
+#    ignores what follows, and treats everything as a Flatpak — which is what
+#    every entry was until Aquarius Editor stopped being baked into the image.
+#    Nothing was renumbered and nothing was renamed.
+#
+# WHY AN "appimage" TYPE EXISTS AT ALL. Aquarius Editor is ours, is on no app
+# store, and is four gigabytes. Baking it into the image made every download of
+# AquariusOS four gigabytes bigger for everybody. It is now offered in the same
+# window as everything else, ticked by default, and installed into the person's
+# own home folder by /usr/libexec/aquarius-appimage-install — which needs no
+# administrator password, because nothing outside their own account is touched.
+#
+# An appimage entry has NO block in the Flatpak shopping list next door, because
+# Flatpak knows nothing about it. Its whole description lives in catalog.ini. So
+# THE CATALOG IS THE UNION of the two: every Flatpak on the shopping list, plus
+# every catalog.ini entry marked Type=appimage.
 # ------------------------------------------------------------------------------
 catalog() {
     local entries
@@ -273,11 +309,64 @@ catalog() {
             rec = (tolower(val[id, "Recommended"]) == "true") ? "yes" : "no"
             req = val[id, "Requires"]
             if (req == "") req = "-"
-            printf "%s\t%s\t%s\t%s\trecommended:%s\truntime:%s\trequires:%s\tbranch:%s\n",
+            printf "%s\t%s\t%s\t%s\trecommended:%s\truntime:%s\trequires:%s\tbranch:%s\ttype:flatpak\n",
                 id, name, desc, category, rec, rt, req, br
         }
         END { if (bad) exit 3 }
-    '
+    ' || return $?
+
+    # --- and now the apps of ours that are downloads, not Flatpaks -----------
+    # These have no block in the Flatpak shopping list, so they are read
+    # straight out of catalog.ini. An entry missing one of its five extra keys
+    # is skipped and complained about rather than half-offered: a card in the
+    # chooser that cannot say where to download from is worse than no card.
+    appimage_catalog
+}
+
+# ------------------------------------------------------------------------------
+# appimage_catalog — the catalog.ini entries marked Type=appimage
+# ------------------------------------------------------------------------------
+# Same output shape as above, with the four extra fields on the end. Written as
+# its own awk pass rather than folded into the one above because the two read
+# different things: that one starts from Flatpak's shopping list and looks words
+# up here, this one starts here and has no shopping list to consult at all.
+appimage_catalog() {
+    [ -r "${CATALOG_FILE}" ] || return 0
+    awk -v me="${LOG_TAG}" '
+        function flush(  rec, req) {
+            if (cur == "" || tolower(val["Type"]) != "appimage") return
+            if (val["Source"] == "" || val["Pin"] == "" \
+                || val["Asset"] == "" || val["Sha256sums"] == "") {
+                printf "%s %s is marked Type=appimage but is missing Source/Pin/Asset/Sha256sums\n",
+                    me, cur > "/dev/stderr"
+                bad = 1
+                return
+            }
+            rec = (tolower(val["Recommended"]) == "true") ? "yes" : "no"
+            req = (val["Requires"] == "") ? "-" : val["Requires"]
+            printf "%s\t%s\t%s\t%s\trecommended:%s\truntime:no\trequires:%s\tbranch:-\ttype:appimage\tsource:%s\tpin:%s\tasset:%s\tsha256sums:%s\n",
+                cur, val["Name"], val["Description"], val["Category"], rec, req,
+                val["Source"], val["Pin"], val["Asset"], val["Sha256sums"]
+        }
+        /^[[:space:]]*[#;]/ { next }
+        /^[[:space:]]*\[/ {
+            flush()
+            cur = $0
+            sub(/^[[:space:]]*\[/, "", cur); sub(/\][[:space:]]*$/, "", cur)
+            delete val
+            next
+        }
+        {
+            if (cur == "" || index($0, "=") == 0) next
+            k = substr($0, 1, index($0, "=") - 1)
+            v = substr($0, index($0, "=") + 1)
+            gsub(/^[[:space:]]+/, "", k); gsub(/[[:space:]]+$/, "", k)
+            gsub(/^[[:space:]]+/, "", v); gsub(/[[:space:]]+$/, "", v)
+            gsub(/\t/, " ", v)
+            val[k] = v
+        }
+        END { flush(); if (bad) exit 3 }
+    ' "${CATALOG_FILE}"
 }
 
 # Is there a shopping list in the image at all? Used to tell "this image ships
@@ -368,6 +457,13 @@ case "${1:-}" in
         catalog
         exit $?
         ;;
+    --list-appimage)
+        # The apps of ours that are downloads rather than Flatpaks — ids alone.
+        # Used by the build and by `aq apps`, so that neither has to know which
+        # of our apps is which; the catalogue is the one place that says.
+        appimage_catalog | cut -f 1
+        exit 0
+        ;;
     --overrides-only)
         # Just the permissions, none of the installing. This is what
         # aquarius-flatpak-overrides.service runs at every boot.
@@ -375,10 +471,11 @@ case "${1:-}" in
         exit 0
         ;;
     -h | --help)
-        say "usage: $0 [--list | --catalog | --overrides-only]"
-        say "  no arguments   install every app on the list (needs root)"
-        say "  --list         print the app IDs on the list, one per line, and stop"
-        say "  --catalog      print the list with names and descriptions, and stop"
+        say "usage: $0 [--list | --list-appimage | --catalog | --overrides-only]"
+        say "  no arguments   install every Flatpak on the list (needs root)"
+        say "  --list         print the Flatpak IDs on the list, one per line, and stop"
+        say "  --list-appimage  print the IDs of our own apps that are downloads"
+        say "  --catalog      print the whole list with names and descriptions, and stop"
         say "  --overrides-only  only put the creator apps' extra permissions in place"
         exit 0
         ;;

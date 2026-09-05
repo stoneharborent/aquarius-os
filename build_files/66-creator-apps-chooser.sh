@@ -353,16 +353,25 @@ else
     fi
     sed 's/^/       /' "${FIX_OUT}"
 
-    aq_file_has "${FIX_OUT}" '^apps offered: 7$' \
-        "it found the seven apps in the test catalogue"
+    aq_file_has "${FIX_OUT}" '^apps offered: 8$' \
+        "it found the eight apps in the test catalogue"
     aq_file_has "${FIX_OUT}" '^plug-ins hidden: 2$' \
         "it kept the two plug-ins out of the choices"
     aq_file_has "${FIX_OUT}" '^unreadable lines: 1$' \
         "it skipped the one deliberately broken line instead of guessing at it"
-    aq_file_has "${FIX_OUT}" '^preselected by default: 5$' \
-        "it ticked the five recommended ones"
+    aq_file_has "${FIX_OUT}" '^preselected by default: 6$' \
+        "it ticked the six recommended ones"
     aq_file_has "${FIX_OUT}" '^orphaned plug-ins: 0$' \
         "every plug-in in the test catalogue belongs to an app somebody can pick"
+
+    # ⚠️ THE TWO KINDS OF APP, ADDED 2026-09-04. The test catalogue carries one
+    # entry of the new kind — thirteen fields instead of nine — so this is what
+    # proves the window reads the extra fields rather than skipping the line as
+    # unreadable, which is exactly what an older parser would do.
+    aq_file_has "${FIX_OUT}" '^flatpak entries: 9$' \
+        "it read the nine Flathub entries"
+    aq_file_has "${FIX_OUT}" '^appimage entries: 1$' \
+        "and the one app of ours, with its four extra fields"
     rm -f "${FIX_OUT}"
 
     # THE PLUG-IN RULE, PROVED. Choosing OBS Studio and nothing else must produce
@@ -382,8 +391,99 @@ else
         "its game-capture plug-in comes too"
     aq_file_has "${OBS_OUT}" '^  org\.freedesktop\.Platform\.VulkanLayer\.OBSVkCapture//25\.08$' \
         "and the Vulkan layer, at its own branch, which is the piece everyone forgets"
+    # Only Flatpaks were chosen, so only one installer runs and there is exactly
+    # one password prompt — the way it always worked.
+    aq_file_has "${OBS_OUT}" '^installer runs: 1$' \
+        "picking only Flathub apps runs one installer, as it always did"
+    aq_file_has "${OBS_OUT}" '^password prompts: 1$' \
+        "and asks for a password once"
     rm -f "${OBS_OUT}"
+
+    # ==========================================================================
+    # THE PASSWORD SPLIT — the design decision of 2026-09-04, proved
+    # ==========================================================================
+    # ⚠️ THIS IS THE CHECK THAT MATTERS MOST IN THIS FILE. Aquarius Editor goes
+    #    into the person's OWN HOME FOLDER, so installing it needs no
+    #    administrator permission at all — and asking for a password to write
+    #    inside somebody's home folder would be theatre. Worse than theatre: the
+    #    password prompt is the one part of this whole feature that has actually
+    #    failed on the bench (2026-09-04, no polkit agent in the Aquarius
+    #    session), so every route that avoids needing one is a route that
+    #    cannot fail that way.
+    #
+    #    Somebody who ticks ONLY our own app must therefore get NO prompt, and
+    #    that is not something a screenshot could ever tell us.
+    say "Picking only one of our own apps asks for no password at all"
+    OURS_OUT="$(mktemp)"
+    "${CHOOSER}" --dry-run --catalog-from "${FIXTURE}" \
+        --select os.example.testapp > "${OURS_OUT}" 2> /dev/null || true
+    sed 's/^/       /' "${OURS_OUT}"
+    aq_file_has "${OURS_OUT}" '^would install: 1$' \
+        "one app, and no plug-ins tagging along"
+    aq_file_has "${OURS_OUT}" '^installer runs: 1$' \
+        "one installer runs"
+    aq_file_has "${OURS_OUT}" '^password prompts: 0$' \
+        "and it asks for NO password, because nothing outside the home folder is touched"
+    aq_file_has "${OURS_OUT}" '^  appimage: 1 app\(s\), steps 1-1 of 1' \
+        "the app of ours goes to the home-folder installer"
+    rm -f "${OURS_OUT}"
+
+    # And the mixed case: two installers, one bar, steps numbered straight
+    # through. Without --step-offset the bar would jump back to the start half
+    # way through, which is the thing this arrangement exists to avoid.
+    say "Picking both kinds runs two installers behind ONE progress bar"
+    MIX_OUT="$(mktemp)"
+    "${CHOOSER}" --dry-run --catalog-from "${FIXTURE}" \
+        --select org.kde.kdenlive,os.example.testapp > "${MIX_OUT}" 2> /dev/null || true
+    sed 's/^/       /' "${MIX_OUT}"
+    aq_file_has "${MIX_OUT}" '^installer runs: 2$' \
+        "two installers, because the two kinds are installed in different ways"
+    aq_file_has "${MIX_OUT}" '^password prompts: 1$' \
+        "and still only one password prompt, for the Flathub half"
+    aq_file_has "${MIX_OUT}" '^  flatpak: 1 app\(s\), steps 1-1 of 2' \
+        "the Flathub app is step 1 of 2 — the password comes first, while the person is watching"
+    aq_file_has "${MIX_OUT}" '^  appimage: 1 app\(s\), steps 2-2 of 2' \
+        "and ours is step 2 of 2, counted on the same scale rather than starting again at one"
+    rm -f "${MIX_OUT}"
 fi
+
+# ==============================================================================
+# 6b. The other installer
+# ==============================================================================
+# The window now has two of them. The Flatpak one is checked above; this is the
+# one that installs our own apps into a home folder. Its own rehearsal is run by
+# build_files/64-creator-apps.sh, which is where the app it installs is
+# described — what is checked HERE is only that the window and it agree about
+# how they talk to each other.
+say "The window and the home-folder installer agree"
+AQ_APPIMAGE_INSTALLER=/usr/libexec/aquarius-appimage-install
+if [ -x "${AQ_APPIMAGE_INSTALLER}" ]; then
+    ok "$(basename "${AQ_APPIMAGE_INSTALLER}") is here and is runnable"
+else
+    bad "${AQ_APPIMAGE_INSTALLER} is missing — the window would offer an app nobody can install"
+fi
+aq_file_has "${CHOOSER}" "APPIMAGE_INSTALLER = \"${AQ_APPIMAGE_INSTALLER}\"" \
+    "the window knows where the home-folder installer is"
+# ⚠️ pkexec MUST NOT APPEAR ON THAT PATH. If it ever did, installing Aquarius
+#    Editor would ask for a password to write inside somebody's own home folder
+#    — and would fail outright in the Aquarius session on a machine with no
+#    polkit agent, which is the exact bench fault of 2026-09-04.
+if grep -n 'pkexec' "${CHOOSER}" | grep -q 'APPIMAGE_INSTALLER'; then
+    bad "the window sends the home-folder installer through pkexec — it must not"
+else
+    ok "the home-folder installer is never sent through pkexec"
+fi
+# The pattern is written [-]-step-offset rather than --step-offset because a
+# pattern that begins with two dashes is read by grep as an option, not as
+# something to look for. The square brackets are a character class of one.
+for opt in step-offset step-total; do
+    aq_file_has "${CHOOSER}" "[-]-${opt}" \
+        "the window tells each installer which part of the whole job it is (--${opt})"
+    aq_file_has "${HELPER}" "[-]-${opt}" \
+        "the Flatpak installer understands --${opt}"
+    aq_file_has "${AQ_APPIMAGE_INSTALLER}" "[-]-${opt}" \
+        "the home-folder installer understands --${opt}"
+done
 
 say "Reading the REAL list this image ships"
 REAL_OUT="$(mktemp)"

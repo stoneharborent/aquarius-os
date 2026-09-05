@@ -27,8 +27,22 @@
 # The eight, and why each earns a permanent slot:
 #
 #   Files           every job on this computer starts with footage on a card
-#   Aquarius Editor the flagship. Ours, built into the OS (Phase R3).
-#   Aquarius Writer the other one of ours, likewise built in.
+#   Aquarius Editor the flagship. Ours.
+#                   ⚠️ IT IS NOT IN THE IMAGE, AND IT IS PINNED HERE ANYWAY.
+#                   Since 2026-09-04 it is a four-gigabyte download offered in
+#                   the app chooser, installed into each person's own home
+#                   folder — so its menu entry lives in
+#                   ~/.local/share/applications/ and not in
+#                   /usr/share/applications/ where the rest of this line lives.
+#                   GNOME simply does not draw a name it cannot resolve: no
+#                   gap, no dead square, no error. The moment somebody installs
+#                   the app, the same name resolves in their own folder and the
+#                   icon appears in the seat it has always had. Taking it off
+#                   this line would mean the flagship app arriving with nowhere
+#                   to sit. build_files/50-aquarius-desktop.sh names this one
+#                   exception explicitly, so a real typo still fails the build.
+#   Aquarius Writer the other one of ours, and this one IS built in — it is
+#                   about 260 MB, small enough not to be worth a question.
 #   Firefox         the browser the OS ships, as an ordinary system package
 #   Terminal        Ptyxis, Fedora's terminal — and this machine is built
 #                   around containers, which is where a terminal earns its place

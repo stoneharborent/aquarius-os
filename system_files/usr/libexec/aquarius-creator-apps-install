@@ -76,6 +76,17 @@ set -uo pipefail
 PROGRESS_FD=""
 CANCEL_FILE=""
 DRY_RUN=0
+# ⚠️ --step-offset AND --step-total, ADDED 2026-09-04, ARE WHAT MAKE ONE
+#    PROGRESS BAR OUT OF TWO PROGRAMS. Since Aquarius Editor became a download
+#    rather than part of the image, a person who ticks OBS, Kdenlive and the
+#    Editor sets two installers going: this one, for the Flatpaks, through
+#    pkexec; and /usr/libexec/aquarius-appimage-install, for the Editor, as
+#    themselves with no password at all. Without these options each would count
+#    from one and the bar would jump back to the start half way through. With
+#    them this script is told "your two apps are steps 1 and 2 of 3" and says so.
+#    Left unset it behaves exactly as it always did.
+STEP_OFFSET=0
+STEP_TOTAL=0
 REFS=()
 
 say() { printf '%s\n' "$*"; }
@@ -114,6 +125,8 @@ aquarius-creator-apps-install — install creator apps, one at a time
                      as in  org.kde.kdenlive//stable
     --progress-fd N  also write short progress lines to file descriptor N
     --cancel-file F  stop cleanly, between apps, as soon as file F appears
+    --step-offset N  this run's first app is really step N+1 of a bigger job
+    --step-total N   ...out of N steps in total
     --dry-run        say what would happen and install nothing
 
 Needs root, because it installs for the whole computer. The app chooser window
@@ -137,6 +150,22 @@ while [ "$#" -gt 0 ]; do
             ;;
         --cancel-file=*)
             CANCEL_FILE="${1#*=}"
+            shift
+            ;;
+        --step-offset)
+            STEP_OFFSET="${2:-0}"
+            shift 2 || true
+            ;;
+        --step-offset=*)
+            STEP_OFFSET="${1#*=}"
+            shift
+            ;;
+        --step-total)
+            STEP_TOTAL="${2:-0}"
+            shift 2 || true
+            ;;
+        --step-total=*)
+            STEP_TOTAL="${1#*=}"
             shift
             ;;
         --dry-run)
@@ -201,6 +230,11 @@ if [ "${DRY_RUN}" -eq 0 ]; then
 fi
 
 TOTAL="${#REFS[@]}"
+
+# The scale the progress lines are on. Without --step-total it is simply this
+# run's own apps, which is what it always was.
+[ "${STEP_TOTAL}" -gt 0 ] 2> /dev/null || STEP_TOTAL="${TOTAL}"
+
 say "Installing ${TOTAL} $([ "${TOTAL}" -eq 1 ] && echo app || echo apps) for this computer."
 say ""
 
@@ -244,7 +278,7 @@ for i in "${!REFS[@]}"; do
     # sees and what `flatpak info` answers to.
     id="${ref%%/*}"
 
-    progress "STEP ${n}/${TOTAL} ${id}"
+    progress "STEP $((STEP_OFFSET + n))/${STEP_TOTAL} ${id}"
     say "──────────────────────────────────────────────────────────────────────"
     say "[${n}/${TOTAL}] ${id}"
     say "──────────────────────────────────────────────────────────────────────"
@@ -253,7 +287,7 @@ for i in "${!REFS[@]}"; do
         say "(rehearsal: would run  flatpak install --system -y --noninteractive flathub ${ref})"
         DONE_COUNT=$((DONE_COUNT + 1))
         progress "OK ${id}"
-        progress "PERCENT $((DONE_COUNT * 100 / TOTAL))"
+        progress "PERCENT $(((STEP_OFFSET + DONE_COUNT) * 100 / STEP_TOTAL))"
         continue
     fi
 
@@ -264,7 +298,7 @@ for i in "${!REFS[@]}"; do
         say "Already installed. Nothing to do."
         DONE_COUNT=$((DONE_COUNT + 1))
         progress "OK ${id}"
-        progress "PERCENT $((DONE_COUNT * 100 / TOTAL))"
+        progress "PERCENT $(((STEP_OFFSET + DONE_COUNT) * 100 / STEP_TOTAL))"
         continue
     fi
 
@@ -292,7 +326,7 @@ for i in "${!REFS[@]}"; do
             progress "FAILED ${id} Flatpak could not install it. Open Details to see why."
         fi
     fi
-    progress "PERCENT $((DONE_COUNT * 100 / TOTAL))"
+    progress "PERCENT $(((STEP_OFFSET + DONE_COUNT) * 100 / STEP_TOTAL))"
 done
 
 # ==============================================================================
