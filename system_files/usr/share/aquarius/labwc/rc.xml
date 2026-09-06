@@ -19,7 +19,17 @@
   <default /> below loads labwc's own key bindings: Alt+Tab to switch windows,
   Alt+F4 to close, Super+arrows to snap, the volume and brightness keys. Those
   are good and there is no reason to reinvent them, so this file adds three
-  bindings on top and otherwise gets out of the way.
+  bindings on top and otherwise gets out of the way. The same is true of the
+  mouse section at the bottom: its own <default /> keeps labwc's window
+  dragging, edge-resize, click-to-focus and alt-drag, and the section adds
+  exactly one thing on top, a right-click on the desktop.
+
+  (The mouse section's opening and closing tags are deliberately written on
+  lines of their own, with nothing else on them, and this comment deliberately
+  does not spell them out in prose. The build reads that section on its own to
+  check the <default /> is still inside it, and it finds the section by looking
+  for a line that is nothing but the tag. Prose that spelled the tag out would
+  be found first and the check would read the wrong lines.)
 
   =============================================================================
   TWO RULES THIS FILE OBEYS
@@ -41,6 +51,22 @@
     W-space     open or close the Aquarius search palette
     W-Return    a terminal
     W-S-e       leave the desktop and return to the login screen
+
+  =============================================================================
+  THE MOUSE BINDING ADDED BY US
+  =============================================================================
+    Right-click on the empty desktop     the Aquarius menu, from menu.xml
+
+  menu.xml sits next to this file and is what "root-menu" below contains.
+
+  Being exact about the bug the bench photographed on 6 September 2026, because
+  the obvious reading of it is wrong: labwc's OWN defaults already send a
+  right-click on the desktop to a menu called root-menu. What was missing was
+  menu.xml, so root-menu resolved to labwc's built-in fallback and the desktop
+  offered Terminal / Reconfigure / Exit. Adding menu.xml is the fix. The binding
+  below is written out anyway, for two reasons: it does not leave our desktop's
+  most visible gesture depending on a default that could change in a later labwc,
+  and it keeps this file line-for-line comparable with the shell's own copy.
 
   "W" is labwc's letter for Super (the Windows / Command key). Its other
   modifiers are S=shift, C=control, A=alt.
@@ -110,5 +136,40 @@
     </keybind>
 
   </keyboard>
+
+  <mouse>
+
+    <!--
+      labwc's own mouse bindings: dragging a title bar to move a window,
+      edge-resize, click to focus and raise, alt-drag to move. Keeping
+      <default /> here is the whole point of this line and it is easy to lose:
+      this section WITHOUT it replaces labwc's mouse behaviour entirely
+      rather than adding to it, and the desktop would keep its right-click menu
+      while losing the ability to drag a window by its title bar. So this
+      section only describes what is different about Aquarius.
+    -->
+    <default />
+
+    <!--
+      Right-click the empty desktop and get the Aquarius menu.
+
+      "Root" is labwc's name for the desktop itself, the part with no window on
+      it. "root-menu" is the menu id declared in menu.xml next to this file. If
+      that file is missing, or its id does not match, labwc silently falls back
+      to its own built-in menu (Terminal / Reconfigure / Exit) — which is what
+      the bench saw, and which is why menu.xml matters more than this binding
+      does.
+
+      Left-click on the root is deliberately left unbound. AquariusOS has no
+      desktop icons, by Royce's decision, so a left click on the wallpaper
+      should do nothing at all.
+    -->
+    <context name="Root">
+      <mousebind button="Right" action="Press">
+        <action name="ShowMenu" menu="root-menu" />
+      </mousebind>
+    </context>
+
+  </mouse>
 
 </labwc_config>

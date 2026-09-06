@@ -104,6 +104,98 @@ Clicking the status glyphs at the top-right opens **Quick Settings**: Wi-Fi,
 Bluetooth, volume, brightness, a Focus toggle. Clicking the clock opens the
 **notification panel**.
 
+**Right-clicking the empty desktop** opens the Aquarius menu: Search, System
+Settings, Change Wallpaper, Log Out, Sleep, Restart, Power Off. Left-clicking
+the desktop does nothing on purpose — AquariusOS has no desktop icons.
+
+If that right-click ever gives you a small menu saying *Terminal / Reconfigure /
+Exit*, that is labwc's own built-in menu and it means one of the two files
+described in the next section did not make it into the image. It is the bug the
+bench found on 6 September 2026.
+
+### The window manager's five files, and the change-one-change-both rule
+
+The Aquarius Desktop is the Aquarius Shell running on the labwc window manager,
+and labwc reads its own configuration out of one folder:
+`/usr/share/aquarius/labwc/`. There are five files in it:
+
+| File | What it does |
+| --- | --- |
+| `rc.xml` | The key bindings, and the one mouse binding: right-click the desktop opens the menu. |
+| `menu.xml` | What that menu contains. |
+| `autostart` | What runs once the window manager is up — the shell, the wallpaper, the screen size. |
+| `environment` | Variables labwc sets for itself before it starts. |
+| `shutdown` | What runs on the way out. |
+
+**All five are AquariusOS's own copies of files that also live in the
+aquarius-shell repository, under `session/labwc/`. Change one, change both.**
+
+This is worth spelling out because it is exactly how the right-click menu went
+missing. AquariusOS does **not** copy the shell's `session/labwc/` folder into
+the image — it keeps its own hand-maintained versions, because the OS settled
+the two-compositors question differently (it runs labwc) and because the OS
+copies carry corrections that only apply here. So when the shell repository grew
+a `menu.xml` and a right-click binding, the image did not get either one, and
+nothing anywhere said so.
+
+The exact mechanism is worth a sentence, because the obvious reading is wrong.
+labwc's own defaults already send a right-click on the desktop to a menu called
+`root-menu`. Nothing in the image declared such a menu, so labwc fell back to
+its built-in one. Shipping `menu.xml` is the fix; the binding in `rc.xml` is
+written out as well so the gesture does not quietly depend on a labwc default.
+
+The build now refuses to produce an image where that has happened again. It
+checks that all five files are present, that both XML files parse, that
+`menu.xml` really declares a menu called `root-menu`, and that `rc.xml` really
+binds a right-click on the desktop to it — reading the finished image, not the
+recipe.
+
+### Why Settings is launched with `env XDG_CURRENT_DESKTOP=GNOME`
+
+If you look in `menu.xml`, or at the Settings entry the dock uses, you will see
+the Settings app started an odd way:
+
+```
+env XDG_CURRENT_DESKTOP=GNOME gnome-control-center
+```
+
+That prefix is not decoration. GNOME's Settings app reads the
+`XDG_CURRENT_DESKTOP` variable when it starts, and unless one of the
+colon-separated parts of it is exactly `GNOME` or `Unity` it prints
+
+```
+Running gnome-control-center is only supported under GNOME and Unity, exiting
+```
+
+and quits immediately. The Aquarius session sets
+`XDG_CURRENT_DESKTOP="Aquarius:wlroots"`, so Settings quit before drawing
+anything — and launched from a dock icon there is no terminal for that sentence
+to appear in, so it looked like the icon simply did nothing. That was the second
+bug the bench found on 6 September 2026.
+
+**We do not rename the session to GNOME to fix it.** That one line is
+load-bearing: the desktop portals — screen recording, screenshots, file dialogs,
+light/dark — pick their back end by matching `XDG_CURRENT_DESKTOP` against
+`/usr/share/xdg-desktop-portal/aquarius-portals.conf`. Calling ourselves GNOME
+would send every one of those to GNOME's back ends, which cannot record a labwc
+screen, and OBS would show no screens again.
+
+So the lie is told **per launch, to one program**. `env VAR=value program` runs
+that one program with that one variable changed and touches nothing else. Three
+places need it, and they are fixed in three places:
+
+- the shell's own menus (the Aquarius mark menu, the Quick Settings chevrons) —
+  fixed in the aquarius-shell repository;
+- the desktop right-click menu — fixed in `menu.xml` here;
+- the dock's Settings icon — fixed in the image, because the dock runs the
+  `Exec=` line out of `/usr/share/applications/org.gnome.Settings.desktop`
+  exactly as written, with nowhere to put a variable in between. The build
+  rewrites that line, and the matching D-Bus service file with it, and CI reads
+  both back out of the finished image.
+
+Under the GNOME fallback session the prefix does nothing at all, because
+`XDG_CURRENT_DESKTOP` is already `GNOME` there.
+
 ### How big it all is
 
 The bar and the dock ship at the size Royce approved on the bench on 3 September
@@ -604,7 +696,8 @@ of its own, it must not also start this one — it should write `agent=none` int
 | `/usr/bin/aquarius-session` | The launcher the login screen runs. Sets the environment, starts labwc, and cleans up after it. Heavily commented — worth reading. |
 | `/usr/libexec/aquarius-session-lib` | The list of settings the session uses, and the clean-up that removes them again at logout. **Read this before changing anything about logging in or out.** |
 | `/usr/libexec/aquarius-session-portals` | Run once at login: stops the portals the last desktop left behind, so ours start fresh. |
-| `/usr/share/aquarius/labwc/` | The window manager's configuration: `rc.xml` (key bindings), `autostart`, `shutdown`, `environment`. |
+| `/usr/share/aquarius/labwc/` | The window manager's configuration, five files: `rc.xml` (key bindings and the desktop right-click), `menu.xml` (what that right-click menu contains), `autostart`, `shutdown`, `environment`. Each one is AquariusOS's own copy of a file in the aquarius-shell repository — change one, change both. |
+| `/usr/share/applications/org.gnome.Settings.desktop` | Fedora's Settings menu entry, with its `Exec=` line rewritten at build time to start Settings with `XDG_CURRENT_DESKTOP=GNOME`. Without that it exits at once on this desktop. Same for `/usr/share/dbus-1/services/org.gnome.Settings.service`. |
 | `/usr/share/aquarius/shell/` | The Aquarius Shell's QML. |
 | `/usr/libexec/aquarius-shell-start` | Runs the shell, and puts a dialog on screen if it fails. |
 | `/usr/libexec/aquarius-polkit-agent` | Starts the thing that asks you for your password. See the section above. |
@@ -699,6 +792,17 @@ In order. Stop at the first failure and read the log.
 4. **Press Super + Space.** The search palette should appear. Type a few letters
    of an application's name; it should be first in the list. Type `12*12`; it
    should answer 144. Escape closes it.
+4b. **Right-click the empty desktop.** The Aquarius menu should appear: Search,
+    System Settings, Change Wallpaper, Log Out, Sleep, Restart, Power Off. If you
+    get *Terminal / Reconfigure / Exit* instead, that is labwc's built-in menu and
+    the 6 September 2026 bug is back. Left-clicking the desktop should do nothing.
+4c. **Open Settings three ways, and all three must open a window.** Click the
+    Settings icon in the dock; pick **System Settings** from the right-click menu;
+    and pick **Change Wallpaper** from the same menu, which should open Settings on
+    its wallpaper page. If any of them does nothing, run `gnome-control-center` in
+    a terminal (Super + Return) and read what it prints — *only supported under
+    GNOME and Unity* means the `env XDG_CURRENT_DESKTOP=GNOME` prefix is missing
+    from that one launch route.
 5. **Click the status glyphs.** Quick Settings should open: Wi-Fi, Bluetooth,
    volume, Focus.
 6. **Make a notification.** In a terminal (Super + Return):

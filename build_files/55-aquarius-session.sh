@@ -827,7 +827,12 @@ if [ "${AQ_SESSION_UNIT_FAILS}" -eq 0 ]; then
 fi
 
 say "The window manager's configuration"
-for aq_f in rc.xml autostart shutdown environment; do
+# FIVE files now. menu.xml joined the list on 2026-09-06, and the reason it was
+# missing is the reason this loop matters: AquariusOS does not stage the shell's
+# session/labwc folder, it ships its own hand-maintained copies here. A file the
+# shell repository adds does NOT appear in this image until somebody adds it
+# here by hand, and nothing complains in the meantime.
+for aq_f in rc.xml menu.xml autostart shutdown environment; do
     if [ -s "${AQ_LABWC_DIR}/${aq_f}" ]; then
         ok "${AQ_LABWC_DIR}/${aq_f}"
     else
@@ -835,16 +840,19 @@ for aq_f in rc.xml autostart shutdown environment; do
     fi
 done
 
-# rc.xml is XML, and labwc will not tell you politely if it is malformed — it
-# starts with no key bindings at all, which looks like a shell problem.
+# rc.xml and menu.xml are XML, and labwc will not tell you politely if either is
+# malformed — it starts with no key bindings at all, or with its own built-in
+# menu, which both look like a shell problem.
 if aq_have xmllint; then
-    if xmllint --noout "${AQ_LABWC_DIR}/rc.xml"; then
-        ok "rc.xml is well-formed XML"
-    else
-        bad "rc.xml is not valid XML — labwc would start with no key bindings"
-    fi
+    for aq_x in rc.xml menu.xml; do
+        if xmllint --noout "${AQ_LABWC_DIR}/${aq_x}"; then
+            ok "${aq_x} is well-formed XML"
+        else
+            bad "${aq_x} is not valid XML — labwc would ignore it silently"
+        fi
+    done
 else
-    echo "  note   xmllint is not in this image; rc.xml is checked in CI instead"
+    echo "  note   xmllint is not in this image; the XML is checked in CI instead"
 fi
 
 aq_file_has "${AQ_LABWC_DIR}/rc.xml" 'qs ipc call search toggle' \
@@ -853,6 +861,182 @@ aq_file_has "${AQ_LABWC_DIR}/rc.xml" '<action name="Exit" />' \
     "Super+Shift+E leaves the session"
 aq_file_has "${AQ_LABWC_DIR}/autostart" 'aquarius-shell-start' \
     "the window manager starts the shell through the helper that reports failures"
+
+# ------------------------------------------------------------------------------
+# THE DESKTOP RIGHT-CLICK MENU — the 2026-09-06 bench photograph
+# ------------------------------------------------------------------------------
+# Right-clicking the wallpaper showed labwc's OWN menu: Terminal, Reconfigure,
+# Exit. Not ours. The shell repository had grown a menu.xml and a Root
+# mousebind, AquariusOS ships its own copies of the labwc files, and nobody
+# copied either one across.
+#
+# Being exact about the mechanism, because it is not what it looks like: labwc's
+# own defaults ALREADY send a desktop right-click to a menu called root-menu.
+# Nothing in this image declared such a menu, so labwc used its built-in
+# fallback. menu.xml is therefore the fix, and rc.xml's binding is written out
+# so the gesture does not depend on a labwc default and so the file stays
+# comparable with the shell's copy. Both halves are read back here.
+aq_file_has "${AQ_LABWC_DIR}/menu.xml" 'id="root-menu"' \
+    "menu.xml declares the root-menu the desktop right-click opens"
+aq_file_has "${AQ_LABWC_DIR}/rc.xml" '<action name="ShowMenu" menu="root-menu" />' \
+    "right-clicking the desktop opens OUR menu rather than labwc's built-in one"
+
+# Every Settings line in the menu has to carry the XDG_CURRENT_DESKTOP=GNOME
+# prefix, or the menu item is there and does nothing — see the whole section
+# below for why. Checked as a count, so adding a third Settings item without the
+# prefix fails the build rather than shipping one dead menu entry.
+#
+# ⚠️ COUNT THE <command> LINES, NOT EVERY MENTION. The first version of this
+# counted every line containing "gnome-control-center", which includes the six
+# lines of the header comment that EXPLAIN the prefix — so a correct menu.xml
+# failed the build (2026-09-06, the first run of this branch). A menu item's
+# command is always inside a <command> element, and that is the only thing being
+# asked about here.
+AQ_MENU_CC_TOTAL="$(grep -c '<command>.*gnome-control-center' "${AQ_LABWC_DIR}/menu.xml" || true)"
+AQ_MENU_CC_FIXED="$(grep -c '<command>env XDG_CURRENT_DESKTOP=GNOME gnome-control-center' "${AQ_LABWC_DIR}/menu.xml" || true)"
+echo "  menu.xml Settings commands: ${AQ_MENU_CC_FIXED} of ${AQ_MENU_CC_TOTAL} carry the GNOME prefix"
+if [ "${AQ_MENU_CC_TOTAL}" -ge 2 ] && [ "${AQ_MENU_CC_FIXED}" -eq "${AQ_MENU_CC_TOTAL}" ]; then
+    ok "every Settings command in the menu says 'env XDG_CURRENT_DESKTOP=GNOME' first"
+else
+    bad "menu.xml has a gnome-control-center command without 'env XDG_CURRENT_DESKTOP=GNOME' — that menu item would do nothing at all. See the Settings section further down this script."
+fi
+
+# ⚠️ AND THE <mouse> SECTION MUST KEEP <default />.
+# A <mouse> section REPLACES labwc's mouse behaviour rather than adding to it.
+# Without <default /> inside it the right-click menu would work and dragging a
+# window by its title bar, edge-resize, click-to-focus and alt-drag would all
+# stop — a far worse desktop than the one we set out to fix. This reads the
+# mouse section on its own and looks for <default /> inside THAT, because the
+# <default /> in the keyboard section is a different thing and would make a
+# whole-file grep pass while the mouse was broken.
+#
+# The section is found by looking for a line that is NOTHING BUT the tag, which
+# is why rc.xml writes those two tags on lines of their own and its comments
+# avoid spelling them out: a mention in prose would be matched first and this
+# would read the wrong range.
+if sed -n '/^ *<mouse>$/,/^ *<\/mouse>$/p' "${AQ_LABWC_DIR}/rc.xml" | grep -q '<default />'; then
+    ok "the <mouse> section keeps labwc's own bindings (window dragging, resize, click to focus)"
+else
+    bad "rc.xml's <mouse> section has no <default /> — adding the right-click menu would have thrown away window dragging and resizing"
+fi
+
+# ==============================================================================
+# 5c. THE SETTINGS APP — why it refused to open, and the one-word fix
+# ==============================================================================
+# THE BUG, from the bench on 2026-09-06: the Settings icon in the Aquarius dock
+# did nothing. No window, no error, nothing on screen. Same for every other way
+# of opening Settings from our desktop.
+#
+# THE CAUSE, and it is in gnome-control-center's own source code
+# (shell/cc-application.c, the function is_supported_desktop()). At start-up it
+# reads the XDG_CURRENT_DESKTOP environment variable, splits it on colons, and
+# unless one of the parts is exactly "GNOME" or "Unity" it prints
+#
+#     Running gnome-control-center is only supported under GNOME and Unity,
+#     exiting
+#
+# and exits with status 1. Our session exports
+#
+#     XDG_CURRENT_DESKTOP="Aquarius:wlroots"
+#
+# so neither part matches and Settings quits before it draws a pixel. Launched
+# from a dock icon there is no terminal to print that sentence into, which is
+# why it looked like nothing happened at all.
+#
+# WHY WE DO NOT SIMPLY RENAME THE SESSION TO GNOME. That one line in
+# /usr/bin/aquarius-session is load-bearing far beyond Settings. The desktop
+# portals — screen recording, screenshots, file dialogs, the light/dark setting
+# — choose their back end by reading XDG_CURRENT_DESKTOP and matching it against
+# /usr/share/xdg-desktop-portal/aquarius-portals.conf. Calling ourselves GNOME
+# would route every one of those requests to GNOME's back ends, which cannot
+# record a labwc screen. OBS would show no screens again, which is the exact
+# fault the portals section of this script exists to prevent. The name stays.
+#
+# SO THE LIE IS TOLD PER LAUNCH, TO ONE PROGRAM. `env VAR=value program` runs
+# `program` with that one variable changed and changes nothing else on the
+# machine. Three places need it and they are launched three different ways:
+#
+#   the shell's own menus       fixed in the aquarius-shell repository
+#   our labwc right-click menu  fixed in menu.xml, above
+#   the dock icon               fixed HERE, because the dock launches the
+#                               Exec= line out of the .desktop file
+#
+# The dock pins org.gnome.Settings.desktop (see
+# /etc/skel/.config/aquarius-shell/dock.json) and Quickshell's
+# DesktopEntry.execute() runs that file's Exec= line as written. There is no
+# hook, no wrapper and no place to put an environment variable in between — so
+# the Exec= line itself is what has to carry it.
+#
+# The D-Bus service file gets the same treatment. org.gnome.Settings.desktop
+# says DBusActivatable=true, so a launcher may ask D-Bus to start Settings
+# rather than running the command, and the D-Bus/systemd activation environment
+# on this desktop carries XDG_CURRENT_DESKTOP=Aquarius:wlroots — the same check,
+# the same silent exit, by a different road.
+#
+# HARMLESS UNDER GNOME. In the GNOME fallback session XDG_CURRENT_DESKTOP is
+# already GNOME, so the prefix sets it to the value it already had.
+#
+# WHY THIS IS IN STEP 5.5 AND NOT IN STEP 4 WHERE gnome-control-center IS
+# INSTALLED: the reason for the change is entirely about the Aquarius session,
+# it belongs beside the identical fix in menu.xml a few lines up, and this step
+# runs later — so a package transaction in step 4 cannot undo it. What it does
+# NOT protect against is a LATER build step upgrading gnome-control-center and
+# restoring Fedora's stock file. That is why build.yml reads both files back out
+# of the FINISHED image; this check here only proves the edit happened at the
+# moment it ran.
+#
+# `env` is written as a path, /usr/bin/env, in the D-Bus file because D-Bus
+# wants an absolute program there, and as a bare `env` in the .desktop file
+# because that is how .desktop Exec lines are normally written and PATH always
+# has /usr/bin on it.
+# ==============================================================================
+say "The Settings app opens from our desktop (the XDG_CURRENT_DESKTOP check)"
+
+AQ_CC_DESKTOP="/usr/share/applications/org.gnome.Settings.desktop"
+AQ_CC_DBUS="/usr/share/dbus-1/services/org.gnome.Settings.service"
+
+if [ -w "${AQ_CC_DESKTOP}" ]; then
+    # Rewrites EVERY Exec= line in the file, including the ones in the
+    # [Desktop Action ...] blocks at the bottom (Fedora ships a couple), and
+    # keeps whatever comes after the program name — %U and any panel argument.
+    # The (/usr/bin/)? is optional because Fedora has spelled this line both
+    # ways over the years.
+    sed -i -E 's|^Exec=(/usr/bin/)?gnome-control-center|Exec=env XDG_CURRENT_DESKTOP=GNOME \1gnome-control-center|' \
+        "${AQ_CC_DESKTOP}"
+    echo "  ${AQ_CC_DESKTOP} now says:"
+    grep -E '^Exec=' "${AQ_CC_DESKTOP}" | sed 's/^/       /'
+    # Read it back. Two questions, because either can be wrong on its own:
+    # did the prefix land, and is there any bare line left that missed it?
+    aq_file_has "${AQ_CC_DESKTOP}" '^Exec=env XDG_CURRENT_DESKTOP=GNOME .*gnome-control-center' \
+        "the Settings menu entry launches Settings with XDG_CURRENT_DESKTOP=GNOME"
+    if grep -Eq '^Exec=(/usr/bin/)?gnome-control-center' "${AQ_CC_DESKTOP}"; then
+        bad "${AQ_CC_DESKTOP} still has an Exec= line without the prefix — that way of opening Settings would still do nothing"
+    else
+        ok "no Exec= line in the Settings menu entry was missed"
+    fi
+else
+    bad "${AQ_CC_DESKTOP} is missing or not writable — the dock's Settings icon could not be fixed, and it would do nothing on the Aquarius Desktop"
+fi
+
+# The D-Bus service file is optional: not every gnome-control-center build ships
+# one. Absent is fine and is said out loud; present and unfixed is not.
+if [ -w "${AQ_CC_DBUS}" ]; then
+    sed -i -E 's|^Exec=(/usr/bin/)?gnome-control-center|Exec=/usr/bin/env XDG_CURRENT_DESKTOP=GNOME /usr/bin/gnome-control-center|' \
+        "${AQ_CC_DBUS}"
+    echo "  ${AQ_CC_DBUS} now says:"
+    grep -E '^Exec=' "${AQ_CC_DBUS}" | sed 's/^/       /'
+    aq_file_has "${AQ_CC_DBUS}" '^Exec=/usr/bin/env XDG_CURRENT_DESKTOP=GNOME /usr/bin/gnome-control-center' \
+        "D-Bus starts Settings with XDG_CURRENT_DESKTOP=GNOME too"
+    if grep -Eq '^Exec=(/usr/bin/)?gnome-control-center' "${AQ_CC_DBUS}"; then
+        bad "${AQ_CC_DBUS} still has an Exec= line without the prefix — a D-Bus-activated Settings would still exit at once"
+    else
+        ok "no Exec= line in the Settings D-Bus service file was missed"
+    fi
+elif [ -e "${AQ_CC_DBUS}" ]; then
+    bad "${AQ_CC_DBUS} exists but could not be written to"
+else
+    echo "  note   ${AQ_CC_DBUS} does not exist in this image; nothing to fix there"
+fi
 
 # ==============================================================================
 # 6b. SCREEN SIZE — the 2026-09-03 "everything is tiny" fix
