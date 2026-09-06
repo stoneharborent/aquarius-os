@@ -160,6 +160,15 @@ on:
       # CI on both sides. Same arrangement as every side branch: builds and
       # checks, never publishes.
       - restart/gdm-copy-off
+      # The black login screen, take three. The two images that black-screened
+      # on their FIRST start after boot both carried a login-screen setting
+      # called experimental-features, and the one image that did not carry it
+      # came up fine. GNOME's own window manager printed "Unknown experimental
+      # feature" about one of the two values we set. So the setting is removed,
+      # and CI now refuses to build any image that sets a login-screen key
+      # GNOME does not have. Same arrangement as every side branch: builds and
+      # checks, never publishes.
+      - restart/gdm-no-experimental
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -894,15 +903,82 @@ jobs:
               prefer-light \
               'Inter 11' \
               'JetBrains Mono 10' \
-              blue \
-              scale-monitor-framebuffer \
-              xwayland-native-scaling
+              blue
             do
               if grep -a -q "${want}" /etc/dconf/db/gdm; then
                 ok "the login screen carries '${want}'"
               else
                 bad "the login screen database has no '${want}' in it"
               fi
+            done
+
+            # ⚠️ AND WHAT MUST *NOT* BE IN IT — the 2026-09-05 removal.
+            # The image used to ship a login-screen file setting
+            #   [org/gnome/mutter] experimental-features=
+            #     ['scale-monitor-framebuffer', 'xwayland-native-scaling']
+            # and GNOME's own window manager answered, in the greeter's journal:
+            #   Unknown experimental feature 'xwayland-native-scaling'
+            # Both names were DELETED from GNOME in mutter merge request 4877
+            # (merged 2026-02-03, GNOME 50) when both behaviours became
+            # unconditional, and GNOME 51 deletes the experimental-features key
+            # itself (merge request 4893). Read out of the BUILT database, not
+            # the keyfiles: a keyfile being gone does not prove the database is.
+            for never in \
+              experimental-features \
+              scale-monitor-framebuffer \
+              xwayland-native-scaling
+            do
+              if grep -a -q "${never}" /etc/dconf/db/gdm; then
+                bad "the login screen database still sets '${never}' — removed 2026-09-05, see docs/restart/login.md"
+              else
+                ok "the login screen database has no '${never}' in it"
+              fi
+            done
+          fi
+
+          # ------------------------------------------------------------------
+          # ⚠️ EVERY LOGIN-SCREEN KEY WE SET MUST BE A KEY GNOME ACTUALLY HAS
+          # ------------------------------------------------------------------
+          # This is the general form of the 2026-09-05 bug, and the reason this
+          # check exists at all. `dconf update` bakes ANY name into the database
+          # without a word of complaint. Nothing between a typo in a build script
+          # and a login screen on Royce's desk was checking that the setting was
+          # real — so an invented value shipped, twice.
+          #
+          # The group name in a dconf keyfile is the GSettings schema with
+          # slashes instead of dots: [org/gnome/mutter] is org.gnome.mutter. So
+          # the check is: does that schema exist in THIS image, and does it list
+          # that key? Asked of the schemas compiled into the image, which is the
+          # only opinion that counts at runtime.
+          echo "== every key we set is a key GNOME has =="
+          if ! command -v gsettings > /dev/null 2>&1; then
+            bad "'gsettings' is not in this image — login-screen keys cannot be checked"
+          else
+            for f in /etc/dconf/db/gdm.d/*; do
+              [ -f "${f}" ] || continue
+              schema=""
+              while IFS= read -r line; do
+                case "${line}" in
+                  \[*\])
+                    schema="${line#[}"; schema="${schema%]}"
+                    schema="$(printf '%s' "${schema}" | tr '/' '.')"
+                    ;;
+                  ''|\#*) : ;;
+                  *=*)
+                    key="$(printf '%s' "${line%%=*}" | tr -d '[:space:]')"
+                    [ -n "${key}" ] || continue
+                    if [ -z "${schema}" ]; then
+                      bad "$(basename "${f}"): '${key}' is not under any [group] — dconf ignores it"
+                    elif ! gsettings list-keys "${schema}" > /dev/null 2>&1; then
+                      bad "$(basename "${f}"): schema ${schema} is not in this image"
+                    elif gsettings list-keys "${schema}" 2>/dev/null | grep -qx "${key}"; then
+                      ok "${schema} really has a key called '${key}'"
+                    else
+                      bad "${schema} has NO key called '${key}' — this is the 2026-09-05 class of bug"
+                    fi
+                    ;;
+                esac
+              done < "${f}"
             done
           fi
 

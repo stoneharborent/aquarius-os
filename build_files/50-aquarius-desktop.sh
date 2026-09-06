@@ -298,45 +298,162 @@ icon-theme='Adwaita'
 EOF
 
 # ------------------------------------------------------------------------------
-# The login screen and PART SIZES (125%, 150%) — the 2026-09-05 black screen
+# ⛔ THE FILE THAT USED TO BE HERE — 03-aquarius-scale — AND WHY IT IS GONE
 # ------------------------------------------------------------------------------
-# WHAT HAPPENED. The bench booted to a black screen with a mouse pointer and no
-# login screen. Removing the display arrangement AquariusOS had copied for the
-# login screen, and restarting it, brought it straight back. Royce's monitor is
-# set to 125% — a PART SIZE.
+# There used to be a third file here. It set ONE login-screen key:
 #
-# WHAT THIS FILE IS. Part sizes on GNOME used to be hidden behind a switch
-# called experimental-features, and nobody ever set that switch for the login
-# screen's own user, which is the classic reason a copied 125% does nothing.
+#     [org/gnome/mutter]
+#     experimental-features=['scale-monitor-framebuffer', 'xwayland-native-scaling']
 #
-# ⚠️ HONEST NOTE, so nobody re-does the research: on THIS image the switch is
-# probably not needed. Fedora 44 is GNOME 50, and GNOME 50 made part sizes and
-# native Xwayland scaling non-experimental — on by default for everybody
-# (mutter merge request 4877, merged 2026-02-02; GNOME 50 release notes call it
-# the "initial stable implementation"). So this file is a belt: it costs one
-# dconf key, it changes nothing while the upstream default holds, and it keeps
-# part sizes working on the login screen if Fedora ever patches that default
-# back off.
+# It was added on the theory that part sizes (125%, 150%) needed switching on
+# for the login screen's own user. It is removed, 2026-09-05, and nothing
+# replaces it. Do not put it back.
 #
-# ⚠️ AND SINCE 2026-09-05 IT DOES NOTHING AT ALL ON A DEFAULT MACHINE, because
-# the login screen is no longer given any display arrangement to apply a size
-# from. It only starts to matter on a machine where somebody has run
-# `sudo aq login scale on`. It is kept because that is exactly the machine where
-# a part size might work or might not, and this key is the difference on a
-# Fedora that ever patches GNOME 50's default back off.
+# WHY IT IS GONE — reason one: BOTH VALUES WERE DELETED FROM GNOME.
+# Not "deprecated". Deleted. mutter merge request 4877, "Make framebuffer and
+# Xwayland native scaling non-experimental", merged 3 February 2026, milestone
+# GNOME 50 — https://gitlab.gnome.org/GNOME/mutter/-/merge_requests/4877 . It
+# removed BOTH scale-monitor-framebuffer AND xwayland-native-scaling from
+# mutter's list of experimental features, because both behaviours became
+# unconditional. In its own words: "Unmark these as experimental. This is
+# already done in various downstreams, so it has been extensively tested, and
+# generally provides a better experience."
 #
-# It is NOT what makes anything safe. The key says "this might work"; the marker
-# file /var/lib/aquarius/gdm-fractional-ok says "a person watched it work"; and
-# /var/lib/aquarius/gdm-display-optin says "give the login screen anything at
-# all". Three deliberately separate things.
+# On GNOME 50 the whole list of experimental features is exactly two names, and
+# neither of them is ours:
 #
-# The value has two entries because GNOME 47's own release notes document them
-# as a pair: scale-monitor-framebuffer is the screen itself, and
-# xwayland-native-scaling is for older X11 apps drawn inside Wayland.
-cat > /etc/dconf/db/gdm.d/03-aquarius-scale << 'EOF'
-[org/gnome/mutter]
-experimental-features=['scale-monitor-framebuffer', 'xwayland-native-scaling']
-EOF
+#     kms-modifiers        autoclose-xwayland
+#
+# (https://gitlab.gnome.org/GNOME/mutter/-/raw/gnome-50/data/org.gnome.mutter.gschema.xml.in)
+#
+# ⚠️ A TRAP FOR WHOEVER CHECKS THIS. That same schema file still contains an
+# unused <flags> block near the top listing all four old names, including both
+# of ours. It is vestigial — no key refers to it. Reading it and concluding the
+# names are still valid is the wrong answer, and it is an easy wrong answer.
+#
+# WHY IT IS GONE — reason two: GNOME SAID SO OUT LOUD, ON THE BENCH.
+# The login screen's own GNOME Shell printed this into the journal:
+#
+#     gnome-shell[2542]: Unknown experimental feature 'xwayland-native-scaling'
+#
+# That is mutter's own words for "you gave me a name I do not have".
+#
+# WHY IT IS GONE — reason three: IT BREAKS ON THE NEXT FEDORA.
+# GNOME 51 deletes the experimental-features KEY itself (merge request 4893,
+# merged 1 August 2026), replacing it with individual booleans under a new
+# schema, org.gnome.mutter.experimental. On Fedora 45 this file would be naming
+# a key that does not exist at all.
+#
+# ------------------------------------------------------------------------------
+# ⚠️ WHAT THIS FILE IS *NOT*: THE PROVEN CAUSE OF THE BLACK SCREEN
+# ------------------------------------------------------------------------------
+# READ THIS BEFORE YOU TELL ANYONE THE BLACK SCREEN IS FIXED.
+#
+# There is a real correlation. On the night of 2026-09-05 Royce booted three
+# images, and the first login screen after each boot went:
+#
+#     image 6fa7062   did NOT have this file   FINE
+#     image 11e90fa   ADDED this file          BLACK
+#     image 7068874   still had this file      BLACK
+#
+# On both black boots `systemctl restart gdm` brought the login screen straight
+# back, and the copied display files that were blamed for two days were provably
+# not on the machine — the boot-time cleanup had already removed them and said
+# "No such file".
+#
+# AND THE CORRELATION IS PROBABLY A COINCIDENCE. Here is the evidence against
+# our own theory, which matters more than the evidence for it:
+#
+#   mutter WARNS AND CARRIES ON. An unrecognised name in this list does not stop
+#   anything. Its code reads the list, fails to match the name, prints "Unknown
+#   experimental feature", ORs zero into the feature flags and moves to the next
+#   entry — src/backends/meta-settings.c, experimental_features_handler().
+#   There is no path from an unknown name to a screen that does not draw.
+#
+# So: this file is removed because it was junk — two names GNOME deleted, a key
+# the next Fedora will not have, warned about in the journal on every start. That
+# is reason enough on its own and needs no black screen to justify it.
+#
+# ⚠️ IF THE NEXT IMAGE STILL BLACK-SCREENS ON ITS FIRST START, THAT IS NOT A
+# FAILURE OF THIS CHANGE. It is the answer to a question, and a useful one: it
+# clears this file and leaves the driver-and-timing explanation, which is written
+# out with the commands to prove it in docs/restart/login.md, section "Black
+# screen with a cursor at boot". Write down which way it went, either way.
+#
+# WHAT REPLACES IT: nothing here, plus a check below and one in CI that refuse to
+# build an image setting ANY login-screen key GNOME does not have. Because the
+# real bug is not this one key. It is that we could invent a setting, ship it to
+# a machine nobody could log in to, and have every build pass.
+#
+# ------------------------------------------------------------------------------
+# ⚠️ NO LOGIN-SCREEN KEY WE SET MAY BE ONE GNOME DOES NOT HAVE
+# ------------------------------------------------------------------------------
+# Every key written above is read back against the schemas actually compiled
+# into THIS image. `dconf update` does not do this for you: it will bake any
+# name at all into the database without a word, which is exactly how
+# 'xwayland-native-scaling' reached Royce's bench.
+#
+# The group name is the schema with slashes instead of dots — [org/gnome/mutter]
+# is the schema org.gnome.mutter — so the check is: does that schema exist, and
+# does it list that key?
+#
+# It reports through bad(), like every other check in this file, so one build
+# tells you about every wrong key at once instead of only the first.
+aq_check_gdm_keys_are_real() {
+    local aq_file aq_schema aq_key aq_line
+
+    if ! aq_have gsettings; then
+        bad "the 'gsettings' command is not in this image — login-screen keys cannot be checked"
+        return
+    fi
+
+    for aq_file in /etc/dconf/db/gdm.d/*; do
+        [ -f "${aq_file}" ] || continue
+        aq_schema=""
+        while IFS= read -r aq_line; do
+            case "${aq_line}" in
+                # [org/gnome/mutter] -> org.gnome.mutter
+                \[*\])
+                    aq_schema="${aq_line#[}"
+                    aq_schema="${aq_schema%]}"
+                    aq_schema="$(printf '%s' "${aq_schema}" | tr '/' '.')"
+                    ;;
+                '' | \#*) : ;;
+                *=*)
+                    aq_key="${aq_line%%=*}"
+                    # trim spaces around the key name
+                    aq_key="$(printf '%s' "${aq_key}" | tr -d '[:space:]')"
+                    [ -n "${aq_key}" ] || continue
+                    if [ -z "${aq_schema}" ]; then
+                        bad "$(basename "${aq_file}"): '${aq_key}' is not under any [group] — dconf would ignore it"
+                        continue
+                    fi
+                    if ! gsettings list-keys "${aq_schema}" > /dev/null 2>&1; then
+                        bad "$(basename "${aq_file}"): the schema ${aq_schema} is not in this image"
+                        continue
+                    fi
+                    if gsettings list-keys "${aq_schema}" 2> /dev/null \
+                        | grep -qx "${aq_key}"; then
+                        ok "${aq_schema} really has a key called '${aq_key}'"
+                    else
+                        bad "${aq_schema} has NO key called '${aq_key}' — this is the 2026-09-05 class of bug"
+                    fi
+                    ;;
+            esac
+        done < "${aq_file}"
+    done
+
+    # ⚠️ AND THE ONE KEY WE WILL NOT SET AGAIN, BY NAME. The generic check above
+    # would pass experimental-features happily: it IS a real mutter key. What
+    # made it harmful is that its VALUE is a list of names nothing validates.
+    # Removed 2026-09-05; if it ever comes back it comes back deliberately, with
+    # this line deleted by the person who decided that.
+    if grep -rq 'experimental-features' /etc/dconf/db/gdm.d/ 2> /dev/null; then
+        bad "a login-screen file sets experimental-features — removed 2026-09-05, see docs/restart/login.md"
+    else
+        ok "no login-screen file sets experimental-features (removed 2026-09-05)"
+    fi
+}
 
 if ! aq_have dconf; then
     echo "AQUARIUS ERROR: the 'dconf' command is not in this image." >&2
@@ -358,14 +475,27 @@ fi
 # The appearance keys, read back out of the BUILT database rather than out of
 # the file we just wrote. dconf update can skip a file it dislikes without
 # saying anything, so "the file exists" proves nothing at all.
-for aq_want in prefer-light 'Inter 11' 'JetBrains Mono 10' Adwaita \
-    scale-monitor-framebuffer xwayland-native-scaling; do
+for aq_want in prefer-light 'Inter 11' 'JetBrains Mono 10' Adwaita; do
     if grep -a -q "${aq_want}" /etc/dconf/db/gdm 2> /dev/null; then
         ok "the login screen database carries '${aq_want}'"
     else
         bad "/etc/dconf/db/gdm does not contain '${aq_want}' — the login screen would keep GNOME's own value"
     fi
 done
+
+# ⚠️ AND THE THINGS THAT MUST NOT BE IN IT. Read out of the BUILT database, for
+# the same reason as above: the keyfile being gone does not prove the database
+# is. This is the 2026-09-05 removal, checked by looking.
+for aq_never in experimental-features scale-monitor-framebuffer xwayland-native-scaling; do
+    if grep -a -q "${aq_never}" /etc/dconf/db/gdm 2> /dev/null; then
+        bad "/etc/dconf/db/gdm still contains '${aq_never}' — removed 2026-09-05, see docs/restart/login.md"
+    else
+        ok "the login screen database has no '${aq_never}' in it"
+    fi
+done
+
+# Every key we DO set has to be a key GNOME actually has.
+aq_check_gdm_keys_are_real
 
 # ------------------------------------------------------------------------------
 # The login screen's SIZE — the messenger, and the two things that run it

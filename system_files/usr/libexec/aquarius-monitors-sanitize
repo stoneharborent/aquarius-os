@@ -69,10 +69,16 @@
 # -----------------------------------------------------------------------------
 # THE OTHER MODE: LETTING PART SIZES THROUGH
 # -----------------------------------------------------------------------------
-# On GNOME 50 the login screen almost certainly CAN do part sizes already, and
-# AquariusOS also writes the old switch that used to be needed into the login
-# screen's own settings database (/etc/dconf/db/gdm.d/03-aquarius-scale) so that
-# it keeps working if Fedora ever turns the default back off.
+# On GNOME 50 the login screen can do part sizes already, with nothing switched
+# on. That is not a guess: mutter merge request 4877 (merged 3 February 2026,
+# GNOME 50) made framebuffer scaling unconditional and DELETED the old
+# experimental switch for it.
+#
+# ⚠️ AquariusOS used to write that old switch into the login screen's settings
+# database as a belt, at /etc/dconf/db/gdm.d/03-aquarius-scale. That file was
+# removed on 2026-09-05: the names in it no longer exist, so GNOME logged
+# "Unknown experimental feature" at every start and did nothing. There is no
+# switch to write any more. Do not add one back — the build fails if you do.
 #
 # We still do not USE part sizes by default, and the reasoning is about cost
 # rather than about GNOME: being wrong costs a machine nobody can log in to,

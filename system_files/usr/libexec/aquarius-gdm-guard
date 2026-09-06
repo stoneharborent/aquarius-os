@@ -151,6 +151,33 @@ AQ_MUTTER_COMPLAINTS='failed to apply.*monitor|could not apply.*monitor|monitors
 
 say() { echo "aquarius-gdm-guard: $*"; }
 
+# -----------------------------------------------------------------------------
+# stand_aside "<reason>" — leave, loudly, having changed nothing
+# -----------------------------------------------------------------------------
+# ⚠️ THIS EXISTS BECAUSE OF 2026-09-05, AND IT IS ABOUT READING THE JOURNAL, NOT
+# ABOUT BEHAVIOUR. It changes nothing this program does.
+#
+# On that night the bench black-screened, and the greeter's journal showed the
+# compositor losing Xwayland about sixty seconds in. The first thing anybody
+# asked was: "did our own guard restart the login screen, and is that what we are
+# looking at?" Answering it meant reading this program's source to work out which
+# of its five quiet exits it had taken.
+#
+# So every exit that touches nothing now says so in one line, in the same words,
+# with a phrase you can grep for. Next time the question takes one command:
+#
+#     journalctl -b -u aquarius-gdm-guard.service
+#
+# and the answer is either "DID NOT TOUCH THE LOGIN SCREEN" or "REPAIRING THE
+# LOGIN SCREEN". There is no third possibility and no source-reading.
+stand_aside() {
+    say "DID NOT TOUCH THE LOGIN SCREEN — $*"
+    say "Nothing was deleted and the login screen was not restarted. If you are"
+    say "reading this beside a black screen, this program is not the cause of it:"
+    say "see docs/restart/login.md, 'Black screen with a cursor at boot'."
+    exit 0
+}
+
 # Everything this program decides is written down, because the whole point is
 # that a person finds out afterwards why their login screen is a different size
 # than they left it. The log is best-effort: a full disk must not turn a repair
@@ -391,24 +418,30 @@ esac
 # the rest of its life because nothing went wrong.
 
 if [ -e "${AQ_STAMP}" ]; then
-    say "already acted once during this boot — doing nothing."
-    exit 0
+    stand_aside "it already acted once during this boot (${AQ_STAMP})"
 fi
 
 # greetd is the other login screen (see `aq login`). This guard knows how to
 # repair GDM and nothing else, and quietly standing aside is much better than
 # restarting a login screen it does not understand.
 if ! systemctl is-enabled gdm.service > /dev/null 2>&1; then
-    say "GDM is not the login screen on this computer — nothing to watch."
-    exit 0
+    stand_aside "GDM is not the login screen on this computer, and this guard knows how to repair nothing else"
 fi
 
 # If neither copy exists there is nothing this guard could take away, so its
 # repair would be a login-screen restart for no reason. A machine where nobody
 # has ever set a display scale is in exactly this state.
+# ⚠️ THIS IS THE EXIT A DEFAULT AQUARIUSOS MACHINE TAKES, EVERY BOOT, AND IT
+# TAKES IT IMMEDIATELY. Since 2026-09-05 the login screen is given no copied
+# display arrangement at all, so on a normal machine there is nothing here to
+# remove, and this program stops right now — before the 45-second watch, before
+# it looks at a single session, and without ever restarting anything.
+#
+# Say that plainly, because it is the answer to "could the guard have caused
+# this?" on any machine that has not run `sudo aq login scale on`. It could not.
+# It was already finished.
 if ! aq_copies_exist; then
-    say "no copied display arrangement to take away — nothing to watch."
-    exit 0
+    stand_aside "there is no copied display arrangement to take away, so there is nothing it could repair (this is the normal state of an AquariusOS machine)"
 fi
 
 say "watching for the login screen (${AQ_TOTAL_WAIT}s)."
@@ -488,10 +521,7 @@ if [ -z "${AQ_LAST_IDS}" ]; then
     # Nothing graphical, but the greeter user is there — an automatic login, or
     # a session type logind names something we do not recognise. Not enough to
     # act on: a needless login-screen restart is its own kind of harm.
-    say "no graphical session, but the 'gdm' user has one. Assuming that is fine"
-    say "and doing nothing — see --status."
-    exit 0
+    stand_aside "nothing graphical is running, but the 'gdm' user has a session — that is what an automatic login looks like, and restarting it would throw somebody out"
 fi
 
-say "the login screen came up and stayed up (${AQ_LAST_IDS}). Nothing to do."
-exit 0
+stand_aside "the login screen came up and stayed up in one session (${AQ_LAST_IDS}) for the whole ${AQ_TOTAL_WAIT}-second watch"
