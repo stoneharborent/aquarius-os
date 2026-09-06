@@ -437,9 +437,16 @@ On a default AquariusOS machine it is always the first one.
 ⚠️ **Be suspicious of this one, because it is the tidy answer and tidy answers
 have been wrong twice on this page already.**
 
-The correlation is real: black, black, fine — matching the presence of that
-setting exactly. But the evidence against it being the *cause* is stronger than
-the evidence for it:
+The correlation is real, and it is exact — three images in one evening:
+
+| Image | Carried the setting? | First login screen after boot |
+| --- | --- | --- |
+| `6fa7062` | no | **fine** |
+| `11e90fa` | yes — this image added it | **black** |
+| `7068874` | yes | **black** |
+
+But the evidence against it being the *cause* is stronger than the evidence for
+it:
 
 **GNOME warns about a name it does not know and carries straight on.** Its window
 manager reads the list, fails to match the name, prints `Unknown experimental
@@ -462,12 +469,38 @@ entirely. That needed no black screen to justify it.
 need to see: this fault only shows itself on the first start after a boot, so
 once you have restarted, that boot's evidence is spent.
 
-Press **Ctrl+Alt+F3**, log in, and run these five, in order. Photograph the
-screen or, better, save them to a file you can send back:
+Press **Ctrl+Alt+F3** and log in.
+
+### The one command to run first
 
 ```bash
-# Save everything to one file (easiest — then just send the file)
+journalctl -b -u gdm | grep -i "primary GPU"
+```
+
+**If that prints anything, we have the answer.** The line to look for is:
+
+```
+It appears that your system does not have a primary GPU! Proceeding with any GPU
+```
+
+That message is GDM's, word for word, and it means exactly this: GDM looked for
+the real graphics card, did not find it, waited **ten seconds**, gave up, and
+started the login screen on whatever it could find instead. A login screen
+started on the wrong graphics device draws nothing — a black screen with a
+working mouse pointer. And restarting it once the driver has finally arrived
+works every time, which is precisely what Royce sees.
+
+See "the ten-second window" below for why this can happen and what we would do
+about it.
+
+### Then collect everything
+
+Save it all to one file you can send back:
+
+```bash
 sudo sh -c '{
+  echo "=== 0. did GDM give up waiting for the graphics card? ==="
+  journalctl -b -u gdm | grep -i "primary GPU"
   echo "=== 1. the login screen service ==="
   journalctl -b -u gdm -o short-precise
   echo "=== 2. the greeter itself, first 60 lines ==="
@@ -478,15 +511,18 @@ sudo sh -c '{
   systemd-analyze critical-chain gdm.service
   echo "=== 5. did our guard touch anything? ==="
   journalctl -b -u aquarius-gdm-guard.service
+  echo "=== 6. is the driver in the boot ramdisk, as we intend? ==="
+  lsinitrd | grep -c nvidia
 } > /var/log/aquarius-blackscreen.txt 2>&1'
 ```
 
-Then: `sudo systemctl restart gdm`, log in normally, and the file is at
+Then `sudo systemctl restart gdm`, log in normally, and send
 `/var/log/aquarius-blackscreen.txt`.
 
-If you would rather just read them one at a time on the text screen:
+Or read them one at a time on the text screen:
 
 ```bash
+journalctl -b -u gdm | grep -i "primary GPU"
 journalctl -b -u gdm -o short-precise
 journalctl -b _COMM=gnome-shell -o short-precise | head -60
 journalctl -b -k | grep -iE "nvidia|drm" | head -40
@@ -498,11 +534,25 @@ journalctl -b -u aquarius-gdm-guard.service
 
 | # | Command | The question it settles |
 | --- | --- | --- |
+| 0 | `journalctl -b -u gdm \| grep -i "primary GPU"` | **Did GDM give up waiting for the graphics card?** The highest-value line on this page. Present = almost certainly the cause. |
 | 1 | `journalctl -b -u gdm -o short-precise` | **When did the login screen start, and did it restart itself?** `-o short-precise` gives millisecond timestamps, which is the whole point — this fault is about ordering. |
 | 2 | `journalctl -b _COMM=gnome-shell …` | **What did the greeter say, in order?** Specifically: how many seconds after it started does `Connection to xwayland lost` appear, and what came immediately before it. |
-| 3 | `journalctl -b -k \| grep -iE "nvidia\|drm"` | **When did the graphics driver take the screen?** If the driver binds *after* the login screen started, that is the race, and it is visible right here. |
-| 4 | `systemd-analyze critical-chain gdm.service` | **What was the login screen waiting for, and for how long?** It prints the chain of things that had to finish first, with the time each took. |
+| 3 | `journalctl -b -k \| grep -iE "nvidia\|drm"` | **When did the graphics driver take the screen?** If the driver binds *after* GDM started, that is the race, visible right here. |
+| 4 | `systemd-analyze critical-chain gdm.service` | **What was the login screen waiting for, and for how long?** The chain of things that had to finish first, with timings. |
 | 5 | `journalctl -b -u aquarius-gdm-guard.service` | **Was it us?** One of the two phrases in the table above. |
+
+### If you want much more detail
+
+GDM will explain its own decision if asked. Put this in `/etc/gdm/custom.conf`:
+
+```ini
+[debug]
+Enable=true
+```
+
+then reboot and read `journalctl -b -u gdm`. Look for lines beginning
+`GdmLocalDisplayFactory:` — they say which graphics devices GDM saw and which it
+rejected. Turn it off again afterwards; it is noisy.
 
 ### The single most useful comparison
 
@@ -511,45 +561,99 @@ From files 1 and 2, line up two timestamps:
 - the moment `Connection to xwayland lost` appears (file 2), and
 - the moment `gdm.service` was stopped or restarted (file 1).
 
-**If they are the same moment, the Xwayland line is the fix, not the fault** —
-it is what the greeter says as it is torn down by the restart Royce typed. That
-would mean the ~60 seconds is simply how long Royce sat looking at a black screen
-before reaching for the keyboard, and the message is a red herring in the same
-way the copied files were.
+**If they are the same moment, that Xwayland line is the fix, not the fault** —
+it is what the greeter says as it is torn down by the restart Royce typed. The
+"about sixty seconds" would then simply be how long Royce sat looking at a black
+screen before reaching for the keyboard.
 
-**If the Xwayland line comes first, with nothing restarting anything,** then the
-greeter really did lose Xwayland on its own while the screen was black, and that
-is a genuine lead worth chasing.
+That reading is strongly supported by what the message actually is. It comes
+from mutter's handler for "the X server went away unexpectedly"
+([`meta-xwayland.c`](https://gitlab.gnome.org/GNOME/mutter/-/blob/main/src/wayland/meta-xwayland.c)),
+and in the greeter it is **not fatal** — the greeter's Xwayland runs in on-demand
+mode, so mutter tears the X display down and carries on. It is also **not** the
+"shut Xwayland down when nothing is using it" feature: that feature is switched
+off by default, and its timer is ten seconds, not sixty. Nobody has found a
+sixty-second timer anywhere in GDM, mutter or gnome-session.
 
-Nobody can tell those two apart from the log excerpt we have. The timestamps can.
+**So treat the sixty seconds as unexplained, not as a clue.** If it turns out to
+be a symptom rather than a consequence, it is most likely Xwayland dying because
+the display underneath it was already broken — which points back at the graphics
+device, not at Xwayland.
 
-## What is already ruled in, and what is already done about it
+## The ten-second window — the leading theory
 
-### The driver-timing theory, and why the obvious fix is already applied
+This is the best-supported explanation we have. It is a theory, and the commands
+above are what would confirm or kill it.
 
-The standard shape of "NVIDIA + Wayland + black GDM on first boot" is a race: the
-login screen starts before the graphics driver has taken the screen, so the
-greeter comes up with nothing to draw on.
+**How GDM used to handle NVIDIA.** For years GDM shipped a udev rules file,
+`/usr/lib/udev/rules.d/61-gdm.rules`, and in 2022 it gained a deliberate fix for
+exactly this race — a flag file and a `.path` unit that made GDM *wait* while the
+NVIDIA modules were still loading. The bug report that caused it
+([GDM issue #763](https://gitlab.gnome.org/GNOME/gdm/-/issues/763)) describes a
+machine that black-screened about a quarter of the time on boot.
 
-**The standard fix for that is to load the driver from the initial ramdisk,
-before anything graphical starts — and AquariusOS already does it.**
-`build_files/60-nvidia.sh` rewrites the driver's dracut configuration from
-`omit_drivers` to `force_drivers`, and adds the built-in Intel and AMD graphics
-alongside, so the NVIDIA module is in the boot ramdisk rather than loaded late.
-The image also ships `nvidia-drm.modeset=1` and `nvidia-drm.fbdev=1` as kernel
-options.
+**That file no longer exists.** GDM deleted the whole rules file in 2025
+([commit 56bf0d707ad8](https://gitlab.gnome.org/GNOME/gdm/-/commit/56bf0d707ad8)),
+because everything else in it had already been removed. Fedora 44 ships GDM 50.3
+and does not add it back — there is no `61-gdm.rules` on this machine at all, and
+`gdm.service` has **no ordering against udev, DRM or the graphics driver of any
+kind**.
 
-That does not prove the race is impossible — it proves the usual remedy is
-already in place, which makes the plain form of this theory less likely, and
-makes command 3 above the one that would show it if it is happening anyway.
+**What GDM does instead.** The waiting moved inside the daemon, and it is capped:
 
-### Nothing of ours delays the login screen
+> `#define SEAT0_GRAPHICS_CHECK_TIMEOUT 10 /* seconds */`
+> — [`daemon/gdm-local-display-factory.c`, GDM 50.3](https://gitlab.gnome.org/GNOME/gdm/-/blob/50.3/daemon/gdm-local-display-factory.c)
+
+GDM looks for a DRM device that is the machine's *primary* one (the one the
+firmware booted on). If it does not find one it waits, and after ten seconds it
+gives up with the warning in command 0 above and starts the login screen anyway.
+
+**So the shape of the theory is:** the NVIDIA driver takes longer than ten
+seconds to bind on a cold boot, GDM gives up and starts on the wrong device, and
+the greeter draws nothing. Once the driver has settled, restarting GDM works —
+every time, which is the signature Royce reports.
+
+### Why it is only a theory
+
+**The standard remedy is already in this image.** The usual fix is to put the
+NVIDIA modules in the boot ramdisk so they are loaded before anything graphical
+starts. RPM Fusion deliberately does *not* do that — it ships
+`omit_drivers+=" nvidia nvidia-drm nvidia-modeset nvidia-uvm "` — but
+`build_files/60-nvidia.sh` rewrites that to `force_drivers` (and adds the
+built-in Intel and AMD graphics beside it), and `build_files/80-boot-branding.sh`
+rebuilds the ramdisk afterwards, so on AquariusOS the modules *are* in it.
+
+That is why command 6 above counts them. If that count is zero, the mitigation we
+think we have is not actually there, and this theory becomes very likely indeed.
+
+### The one change we would try, and why we have not yet
+
+⚠️ **RPM Fusion now says the kernel option we set should be removed.** From
+[their NVIDIA guide](https://rpmfusion.org/Howto/NVIDIA):
+
+> The parameter `nvidia-drm.modeset=1` should be removed from existing
+> installations, as it conflicts with Fedora's early boot display patch using
+> simpledrm.
+
+AquariusOS sets `nvidia-drm.modeset=1` and `nvidia-drm.fbdev=1` in
+`/usr/lib/bootc/kargs.d/10-aquarius-nvidia.toml`. The driver turns modeset on by
+itself now, so the option is at best redundant — and RPM Fusion says it actively
+conflicts with the way Fedora hands the screen over early in boot, which is
+exactly the part of boot where this fault lives.
+
+**This has not been changed, on purpose.** It is a one-line change to how every
+AquariusOS machine boots its graphics, and the last two one-line changes made
+here both shipped a machine Royce could not log in to. It wants Royce's decision
+and a bench boot, not an agent's afternoon. It is written down here as candidate
+fix number one.
+
+## Nothing of ours delays the login screen
 
 Exactly one AquariusOS service is ordered `Before=display-manager.service`:
 `aquarius-gdm-display.service`. It is a `Type=oneshot` shell script that, with
 the copy switched off (the default), deletes a leftover file if there is one,
-prints one line, and exits. It holds nothing up. Everything else of ours —
-the Flatpak overrides, the graphics-card description for containers — is ordered
+prints one line, and exits. It holds nothing up. Everything else of ours — the
+Flatpak overrides, the graphics-card description for containers — is ordered
 against `local-fs.target` or `multi-user.target` and has no relationship to the
 login screen at all.
 
@@ -563,14 +667,14 @@ because each of these looks obviously right and is not.
 
 | Tempting fix | Why we did not do it |
 | --- | --- |
-| Add `After=systemd-udev-settle.service` to `gdm.service` | `systemd-udev-settle` is deprecated upstream and does not do what people think — it cannot know that a driver which has not appeared *yet* is not coming. Editing a Fedora unit to wait on it trades a rare black screen for a slower boot on every machine and a unit we then own forever. |
-| Add a `ConditionPathExists=/dev/dri/card0` wait to `gdm.service` | Same objection, plus a worse failure: on a machine where that device genuinely never appears, the login screen would not start **at all**, which is strictly worse than a black screen a restart fixes. |
-| Have the guard restart GDM on every boot "just in case" | A restart that fires when nothing is wrong throws people out of a login they are half way through. The guard's whole design rule is that acting wrongly is its own fault. |
+| Add `After=systemd-udev-settle.service` to `gdm.service` | systemd's own manual says, in as many words, *"Using this service is not recommended"*, and that waiting for it *"usually slows boot significantly, because it means waiting for all unrelated events too"* ([systemd docs](https://www.freedesktop.org/software/systemd/man/systemd-udev-settle.service.html)). It also would not work here: it drains the queue very early in boot, before the NVIDIA module has even been asked for. We would pay a slower boot on every machine and still lose the race. |
+| Add a `ConditionPathExists=/dev/dri/card0` wait to `gdm.service` | Same objection, plus a worse failure: on a machine where that device genuinely never appears, the login screen would not start **at all** — strictly worse than a black screen a restart fixes. GDM already does its own version of this wait internally, capped at ten seconds. |
+| Have the guard restart GDM on every boot "just in case" | A restart that fires when nothing is wrong throws people out of a login they are half way through. The guard's design rule is that acting wrongly is its own kind of fault. |
+| Put back GDM's old `61-gdm.rules` udev file | It is gone from GDM upstream because the logic inside it was removed piece by piece until nothing was left. Reviving a deleted file from an older GDM against a GDM that no longer expects it is how you get a fault nobody else on earth can help you debug. |
 | Ship a second experimental-features value to "fix" the first | This is how we got here. |
 
 **The rule this leaves us with:** we change Fedora's own login-screen unit only
-with evidence from the five commands above, and not before.
-
+with evidence from the commands above, and not before.
 
 ---
 
