@@ -8,15 +8,17 @@
       bash branding/render-wallpaper.sh gnome
   Edit this file, re-render, commit both. Never hand-edit the PNG.
 
-  WHY THIS IS NOT THE SAME AS the-pour.svg, WHICH IS ALSO DARK
-  the-pour.svg is the KDE line's wallpaper and belongs to the older "Flow State"
-  identity: a near-black void (#06070C) with Starlight blue (#8AB4FF) and a
-  purple nebula. Midnight is Ice's designed dark twin from the Aquarius Writer
-  palette, and it is a different dark: deep-ocean NAVY (#0B1220) rather than
-  near-black, with the electric aquas reading like light under water. They are
-  two different colour identities, not two renders of one.
+  HOW THIS DIFFERS FROM the-pour.svg, WHICH IS ALSO DARK
+  the-pour.svg is the older KDE line's wallpaper. Until 2026-09-06 it was also
+  in an older colour identity — a near-black ground with the retired Starlight
+  blue and a purple nebula — and it was left frozen at that. On that date it was
+  moved onto the Midnight palette along with everything else, so the two files
+  now use the same colours and differ only in how strongly the ribbons are
+  drawn: the KDE file's are the heavier, more saturated originals.
 
-  The KDE file is deliberately left exactly as it was. That line is frozen.
+  Neither file is rendered into the image for the KDE line any more — that line
+  is history, and system_files no longer carries a KDE wallpaper package. This
+  file and the Ice one are the two the OS actually ships.
 
   WHAT MOVED, RELATIVE TO Ice
   Same composition again — same canvas, same three ribbons, same watermark.
@@ -29,8 +31,9 @@
       here.
     * The accents swap to their dark halves: Deep Sky Blue #00BFFF for Aquarius
       Blue, Turquoise #40E0D0 for its Ice-side #0E9AA0.
-    * The warm thread goes back to ancient gold #E6DDB8, which is lighter than
-      this ground and therefore visible again.
+    * The warm thread is `starred` at its Midnight value, #E6B947 — brighter
+      than Ice's #C28B22, because a gold that reads on paper goes muddy on navy.
+      (It was ancient gold #E6DDB8 until 2026-09-06; that palette is retired.)
     * The watermark goes back to ice-blue ink (#DCE9F4) — one step lighter than
       its ground, the mirror of what the Ice version does with navy.
 
@@ -63,12 +66,12 @@
       <stop offset="1"    stop-color="#00BFFF" stop-opacity="0"/>
     </linearGradient>
 
-    <!-- Ribbon 2 — the thin "ancient" gold thread. Rare by design. -->
+    <!-- Ribbon 2 — the thin `starred` gold thread. Rare by design. -->
     <linearGradient id="r2" gradientUnits="objectBoundingBox" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0"    stop-color="#E6DDB8" stop-opacity="0"/>
-      <stop offset="0.45" stop-color="#E6DDB8" stop-opacity="0.2"/>
-      <stop offset="0.85" stop-color="#E6DDB8" stop-opacity="0"/>
-      <stop offset="1"    stop-color="#E6DDB8" stop-opacity="0"/>
+      <stop offset="0"    stop-color="#E6B947" stop-opacity="0"/>
+      <stop offset="0.45" stop-color="#E6B947" stop-opacity="0.2"/>
+      <stop offset="0.85" stop-color="#E6B947" stop-opacity="0"/>
+      <stop offset="1"    stop-color="#E6B947" stop-opacity="0"/>
     </linearGradient>
 
     <!-- Ribbon 3 — a deep undertow, low and quiet. Turquoise, well under. -->
@@ -111,7 +114,7 @@
        #DCE9F4 is Midnight's ink — ice blue, not white. -->
   <g transform="translate(1688 892) scale(1.5)" opacity="0.4" fill="none"
      stroke="#DCE9F4" stroke-width="5" stroke-linecap="round">
-    <path d="M14 54 30 12q1.4-3.6 4 0L50 54"/>
+    <path d="M14 54L32 12L50 54"/>
     <path d="M20 40q6-6 12 0t12 0"/>
   </g>
 </svg>

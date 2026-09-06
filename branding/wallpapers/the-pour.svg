@@ -14,38 +14,41 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080"
      viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
   <defs>
-    <!-- Base: a faint indigo glow off the top-right corner, falling into void. -->
+    <!-- Base: a faint indigo lift off the top-right corner, falling into
+         Midnight's ground. The #0B0E22 at offset 0 is NOT a palette token — it
+         never was — so the 2026-09-06 recolour left it where it was and moved
+         only the two ground stops. -->
     <radialGradient id="sky" gradientUnits="userSpaceOnUse"
                     cx="1497.6" cy="-108" r="2688"
                     gradientTransform="translate(1497.6,-108) scale(1,0.401786) translate(-1497.6,108)">
       <stop offset="0"    stop-color="#0B0E22"/>
-      <stop offset="0.55" stop-color="#06070C"/>
-      <stop offset="1"    stop-color="#06070C"/>
+      <stop offset="0.55" stop-color="#0B1220"/>
+      <stop offset="1"    stop-color="#0B1220"/>
     </radialGradient>
 
-    <!-- Ribbon 1 — the main pour. Starlight over nebula. -->
+    <!-- Ribbon 1 — the main pour. aquariusBlue over indigo (Midnight). -->
     <linearGradient id="r1" gradientUnits="objectBoundingBox" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0"    stop-color="#8AB4FF" stop-opacity="0"/>
-      <stop offset="0.25" stop-color="#5B4BE0" stop-opacity="0.42"/>
-      <stop offset="0.55" stop-color="#8AB4FF" stop-opacity="0.5"/>
-      <stop offset="0.80" stop-color="#8AB4FF" stop-opacity="0.14"/>
-      <stop offset="1"    stop-color="#8AB4FF" stop-opacity="0"/>
+      <stop offset="0"    stop-color="#00BFFF" stop-opacity="0"/>
+      <stop offset="0.25" stop-color="#9B82FF" stop-opacity="0.42"/>
+      <stop offset="0.55" stop-color="#00BFFF" stop-opacity="0.5"/>
+      <stop offset="0.80" stop-color="#00BFFF" stop-opacity="0.14"/>
+      <stop offset="1"    stop-color="#00BFFF" stop-opacity="0"/>
     </linearGradient>
 
-    <!-- Ribbon 2 — the thin "ancient" gold thread. Rare by design. -->
+    <!-- Ribbon 2 — the thin `starred` gold thread. Rare by design. -->
     <linearGradient id="r2" gradientUnits="objectBoundingBox" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0"    stop-color="#E6DDB8" stop-opacity="0"/>
-      <stop offset="0.45" stop-color="#E6DDB8" stop-opacity="0.2"/>
-      <stop offset="0.85" stop-color="#E6DDB8" stop-opacity="0"/>
-      <stop offset="1"    stop-color="#E6DDB8" stop-opacity="0"/>
+      <stop offset="0"    stop-color="#E6B947" stop-opacity="0"/>
+      <stop offset="0.45" stop-color="#E6B947" stop-opacity="0.2"/>
+      <stop offset="0.85" stop-color="#E6B947" stop-opacity="0"/>
+      <stop offset="1"    stop-color="#E6B947" stop-opacity="0"/>
     </linearGradient>
 
-    <!-- Ribbon 3 — a deep nebula undertow, low and quiet. -->
+    <!-- Ribbon 3 — a deep indigo undertow, low and quiet. -->
     <linearGradient id="r3" gradientUnits="objectBoundingBox" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0"    stop-color="#5B4BE0" stop-opacity="0"/>
-      <stop offset="0.15" stop-color="#5B4BE0" stop-opacity="0"/>
-      <stop offset="0.50" stop-color="#5B4BE0" stop-opacity="0.16"/>
-      <stop offset="1"    stop-color="#5B4BE0" stop-opacity="0"/>
+      <stop offset="0"    stop-color="#9B82FF" stop-opacity="0"/>
+      <stop offset="0.15" stop-color="#9B82FF" stop-opacity="0"/>
+      <stop offset="0.50" stop-color="#9B82FF" stop-opacity="0.16"/>
+      <stop offset="1"    stop-color="#9B82FF" stop-opacity="0"/>
     </linearGradient>
 
     <!-- Blur amounts are stdDeviation in these 1920x1080 units, so they scale
@@ -85,7 +88,7 @@
        so if you are sweeping the repo for old text colours, skip this one. -->
   <g transform="translate(1688 892) scale(1.5)" opacity="0.4" fill="none"
      stroke="#EDEFF7" stroke-width="5" stroke-linecap="round">
-    <path d="M14 54 30 12q1.4-3.6 4 0L50 54"/>
+    <path d="M14 54L32 12L50 54"/>
     <path d="M20 40q6-6 12 0t12 0"/>
   </g>
 </svg>
