@@ -3,9 +3,10 @@
 # Re-render the two AquariusOS "About" logos
 # ==============================================================================
 # WHEN YOU NEED THIS
-#   Only when you have changed branding/logo.svg, the wordmark text, or the
-#   colours below. The finished PNGs are already committed, so a normal OS build
-#   never runs this.
+#   Only when you have changed branding/logo-ice.svg or branding/logo-midnight.svg
+#   (the two drawings this uses), the wordmark text, or the ink colours below.
+#   The finished PNGs are already committed, so a normal OS build never runs
+#   this.
 #
 # HOW TO RUN IT (on the Mac, from anywhere):
 #   bash branding/render-about-logo.sh

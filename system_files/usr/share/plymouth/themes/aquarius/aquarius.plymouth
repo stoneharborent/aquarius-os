@@ -24,9 +24,11 @@
 # ------------------------------------------------------------------------------
 # HOW TO CHANGE IT
 # ------------------------------------------------------------------------------
-# To change the picture: edit branding/logo.svg or the sizes at the top of
-# branding/render-plymouth-assets.sh, run that script on the Mac, and commit the
-# PNGs it writes. Do not edit the PNGs by hand — they are output, not source.
+# To change the picture: edit branding/logo-midnight.svg — the boot screen is a
+# dark screen, so it carries the Midnight drawing of the mark, not the plain one
+# — or the sizes at the top of branding/render-plymouth-assets.sh. Then run that
+# script on the Mac and commit the PNGs it writes. Do not edit the PNGs by hand
+# — they are output, not source.
 #
 # To change where things sit: the numbers below are FRACTIONS OF THE SCREEN, not
 # pixels. `.5` is the middle, `0` is the very top or left edge, `1` is the very

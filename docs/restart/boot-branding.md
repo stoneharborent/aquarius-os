@@ -63,7 +63,8 @@ Three steps, on the Mac:
 
 ```bash
 # 1. Change something. Either the mark itself…
-#      branding/logo.svg
+#      branding/logo-midnight.svg   (the boot screen is a dark screen, so it
+#                                    uses the Midnight drawing of the mark)
 #    …or the sizes and colours at the top of the render script.
 
 # 2. Re-draw the pictures.
