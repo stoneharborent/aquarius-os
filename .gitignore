@@ -14,3 +14,9 @@ _build-*/**
 # build.sh rebuilds them inside the image and deletes ours.
 __pycache__/
 *.pyc
+
+# The one library the app-icon drawings need (branding/icons/package.json asks
+# for it). Downloaded with `npm --prefix branding/icons install`, never
+# committed — see branding/icons/README.md.
+branding/icons/node_modules/
+branding/icons/package-lock.json
