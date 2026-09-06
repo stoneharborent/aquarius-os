@@ -5155,12 +5155,14 @@ jobs:
           grep -q 'org\.freedesktop\.udisks2\.filesystem-mount' "${RULE}" && ok "allows mounting a removable filesystem" || bad "the rule does not allow filesystem-mount"
           grep -q 'org\.freedesktop\.udisks2\.eject-media'      "${RULE}" && ok "allows ejecting removable media"       || bad "the rule does not allow eject-media"
           grep -q 'polkit\.Result\.YES' "${RULE}" && ok "the rule actually grants something" || bad "the rule grants nothing"
-          # ⚠️ The safety line: it must NEVER name the internal-disk action, or it
-          # would let an internal disk mount with no password.
-          if grep -q 'filesystem-mount-system' "${RULE}"; then
-            bad "the rule names filesystem-mount-system — internal disks would mount with no password"
+          # ⚠️ The safety line: the CODE must NEVER name the internal-disk action,
+          # or it would let an internal disk mount with no password. The comments
+          # do mention it (to explain it is deliberately absent), so strip the
+          # `//` comments before checking.
+          if sed 's://.*::' "${RULE}" | grep -q 'filesystem-mount-system'; then
+            bad "the rule grants filesystem-mount-system — internal disks would mount with no password"
           else
-            ok "the rule says nothing about internal disks — they still need a password"
+            ok "the rule's code says nothing about internal disks — they still need a password"
           fi
 
           echo "== the auto-mount service, switched on for both desktops =="

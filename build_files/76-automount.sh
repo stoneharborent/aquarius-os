@@ -132,15 +132,19 @@ aq_file_has "${RULE}" 'polkit\.Result\.YES' \
 
 # ⚠️ What it must NEVER say. The whole safety of this feature is that mounting a
 # SYSTEM-INTERNAL disk still needs a password — udisks2 checks a different
-# action for those (filesystem-mount-system), and this rule must stay silent
-# about it so the request falls through to the default that asks for auth.
-# If that action name ever appears here, someone has widened a narrow rule into
-# a blanket "mount anything with no password", and the build must stop.
-if grep -q 'filesystem-mount-system' "${RULE}"; then
-    bad "${RULE} names filesystem-mount-system — that would let an INTERNAL disk"
-    bad "be mounted with no password. Remove it: internal disks must keep asking."
+# action for those (filesystem-mount-system), and this rule's CODE must stay
+# silent about it so the request falls through to the default that asks for auth.
+# If that action name ever appears in the code, someone has widened a narrow
+# rule into a blanket "mount anything with no password", and the build must stop.
+#
+# The comments in the rule DO mention filesystem-mount-system — they explain why
+# it is deliberately absent — so we strip the `//` comments before checking, or
+# the explanation would trip the alarm it is describing.
+if sed 's://.*::' "${RULE}" | grep -q 'filesystem-mount-system'; then
+    bad "${RULE} grants filesystem-mount-system in its code — that would let an"
+    bad "INTERNAL disk be mounted with no password. Remove it: internal disks must ask."
 else
-    ok "the rule says nothing about internal disks (filesystem-mount-system) — so they still need a password"
+    ok "the rule's code says nothing about internal disks (filesystem-mount-system) — so they still need a password"
 fi
 
 # polkit refuses to load a rule file it cannot parse, silently, at runtime. If
