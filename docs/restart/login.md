@@ -744,9 +744,19 @@ it names **in**. `build_files/30-session.sh` puts it in — it installs `fprintd
 CI does two things on the finished image (in the "Check no login rule names a PAM
 module that is missing" step): it proves `fprintd-pam` is installed and that the
 exact file the journal named is present, and — the part that matters for the long
-run — it reads **every** `/etc/pam.d` file and fails the build if any of them
-names a PAM module that is not installed. A dangling PAM reference of any kind
-can never ship again.
+run — it reads **every** `/etc/pam.d` file and fails the build if any rule
+**requires** a PAM module that is not installed.
+
+The word "requires" is doing real work there. PAM lets a rule mark a module as
+silent-optional by putting a `-` in front of its type — for example
+`-session optional pam_kwallet5.so`. That tells PAM to skip the module quietly
+when it is absent and log **nothing**; keyring, wallet and the old ConsoleKit
+lines are all written this way, and they were in these files the whole time
+without ever making a sound. The fprintd line was **not** written that way — it
+was a plain `auth ... pam_fprintd.so` — which is precisely why it was the one
+that logged. The check honours the `-` prefix, so it ignores the silent-optional
+lines and fails only on the noisy kind. A *required* dangling PAM reference can
+never ship again.
 
 ## A second, related line in the journal — left alone on purpose
 
