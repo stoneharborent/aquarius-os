@@ -169,6 +169,14 @@ on:
       # GNOME does not have. Same arrangement as every side branch: builds and
       # checks, never publishes.
       - restart/gdm-no-experimental
+      # The greeter failsafe — the confirmed root cause of the multi-day
+      # "black screen with a cursor" saga. `aq login use greetd` (the R5 greeter
+      # test) had switched the machine to greetd, whose Quickshell greeter never
+      # drew, and the marker persisted across every reboot. Two fixes: the switch
+      # now warns and must be confirmed, and a watchdog switches the machine back
+      # to GDM by itself after two failed greetd boots in a row. Same arrangement
+      # as every side branch: builds and checks, never publishes.
+      - restart/greeter-failsafe
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -263,6 +271,15 @@ jobs:
       # it is not.
       - name: Check the login-screen guard actually fires
         run: ./tests/test-gdm-guard.sh
+
+      # The other login-screen net: the one that catches OUR own greeter never
+      # drawing (the 2026-09-05 saga — greetd was switched on, its greeter never
+      # rendered, and the marker persisted across every reboot). This runs the
+      # watchdog against fake system commands, both branches: a greeter that
+      # comes up resets the counter and it never reverts; two failed greetd boots
+      # in a row switch the machine back to GDM.
+      - name: Check the greeter watchdog reverts to GDM when the greeter never draws
+        run: ./tests/test-greeter-watchdog.sh
 
       - name: Work out what this image is called
         run: |
@@ -1336,6 +1353,21 @@ jobs:
               bash /tmp/t/tests/test-gdm-guard.sh /usr/libexec/aquarius-gdm-guard
             '
 
+      # The greeter watchdog, run against the copy actually installed in the
+      # finished image, exactly as the guard test above is. Same reason: the net
+      # that rescues a machine stuck behind our experimental greeter must be
+      # proven to fire in the thing that ships, not only in the repository.
+      - name: Check the greeter watchdog fires in the finished image
+        run: |
+          set -euo pipefail
+          podman run --rm --pull=never \
+            -v "${GITHUB_WORKSPACE}/tests/test-greeter-watchdog.sh:/tmp/t/tests/test-greeter-watchdog.sh:ro" \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" -c '
+              set -e
+              bash /tmp/t/tests/test-greeter-watchdog.sh /usr/libexec/aquarius-greeter-watchdog
+            '
+
       # Part B of the same photograph: our OWN login screen, drawn by the
       # Aquarius Shell on top of greetd. It ships fully configured and SWITCHED
       # OFF — Royce turns it on with one command once he has seen it work — so
@@ -1522,6 +1554,76 @@ jobs:
             ok "it agrees that this image boots to GDM"
           else
             bad "'aq login status' does not report GDM as the login screen"
+          fi
+
+          echo "== the greeter safety net is present, armed, and warns before switching =="
+          # ⚠️ THE LOAD-BEARING RULE FROM 2026-09-05. `aq login use greetd`
+          # trapped the bench on a black screen for days; nothing can be allowed
+          # to get permanently stuck behind the experimental greeter again.
+          if [ -x /usr/libexec/aquarius-greeter-watchdog ]; then
+            ok "the greeter watchdog is installed and executable"
+          else
+            bad "/usr/libexec/aquarius-greeter-watchdog is missing — a broken greeter could trap the machine"
+          fi
+          if bash -n /usr/libexec/aquarius-greeter-watchdog 2>/dev/null; then
+            ok "the greeter watchdog is valid shell"
+          else
+            bad "the greeter watchdog does not parse as shell"
+          fi
+          if [ -r /usr/lib/systemd/system/aquarius-greeter-watchdog.service ]; then
+            ok "the greeter watchdog's service file is in the image"
+          else
+            bad "aquarius-greeter-watchdog.service is missing — the watchdog would never run"
+          fi
+          # It MUST be switched on — the very first greetd boot is the one that
+          # trapped the bench — and switched on the /usr way, never through /etc.
+          if systemctl is-enabled aquarius-greeter-watchdog.service > /dev/null 2>&1; then
+            ok "the greeter watchdog is switched on"
+          else
+            bad "the greeter watchdog is not switched on — it would never fire"
+          fi
+          if [ -L /usr/lib/systemd/system/graphical.target.wants/aquarius-greeter-watchdog.service ]; then
+            ok "it is switched on the /usr way (a symlink in the image, not through /etc)"
+          else
+            bad "the greeter watchdog is not switched on through /usr — see aq-lib.sh"
+          fi
+          # No safety-net STATE may be baked into the image: the counter and the
+          # probation marker belong to the machine, written at runtime under /var.
+          if [ -e /var/lib/aquarius/greeter-fails ] || [ -e /var/lib/aquarius/greeter-probation ]; then
+            bad "a greeter safety-net state file is baked into the image — it belongs on the machine, under /var"
+          else
+            ok "no greeter safety-net state is baked into the image (correct)"
+          fi
+          # 'aq login use greetd --help' MUST carry the experimental warning, so a
+          # person reads it before they switch, not after they are black-screened.
+          if /usr/bin/aq login use greetd --help 2>&1 | grep -qi "EXPERIMENTAL"; then
+            ok "'aq login use greetd --help' warns that the greeter is experimental"
+          else
+            bad "'aq login use greetd --help' does not carry the experimental warning"
+          fi
+          if /usr/bin/aq login use greetd --help 2>&1 | grep -q "Terminal / Reconfigure / Exit"; then
+            ok "the help names the exact black-screen symptom (the labwc root menu)"
+          else
+            bad "the greetd help does not describe the black-screen symptom"
+          fi
+          # And the confirmation gate must actually refuse to switch without a
+          # confirmation. With no terminal and no --yes it must NOT switch — this
+          # runs it with stdin closed and checks it declined.
+          if /usr/bin/aq login use greetd < /dev/null > /tmp/greetd-noyes.txt 2>&1; then
+            bad "'aq login use greetd' switched with no confirmation and no --yes"
+            sed 's/^/       /' /tmp/greetd-noyes.txt
+          elif grep -q -- "--yes" /tmp/greetd-noyes.txt; then
+            ok "'aq login use greetd' refuses without confirmation and points at --yes"
+          else
+            bad "'aq login use greetd' failed but not for the confirmation reason"
+            sed 's/^/       /' /tmp/greetd-noyes.txt
+          fi
+          # ⚠️ AND IT MUST NOT HAVE ACTUALLY SWITCHED. The refuse path above runs
+          # as root in the container; prove greetd is still switched off after it.
+          if systemctl is-enabled greetd.service > /dev/null 2>&1; then
+            bad "the refused switch enabled greetd anyway — the confirmation gate is not gating"
+          else
+            ok "after the refused switch, greetd is still switched off"
           fi
 
           if [ "$fails" -ne 0 ]; then

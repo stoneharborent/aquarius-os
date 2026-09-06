@@ -1,0 +1,59 @@
+# =============================================================================
+# aquarius-greeter-watchdog.service — if the AquariusOS greeter never draws,
+#                                     switch back to GDM on its own
+# =============================================================================
+# WHAT THIS IS FOR
+#
+# AquariusOS has its own EXPERIMENTAL login screen (greetd + labwc + the Aquarius
+# Shell greeter), switched on by hand with `aq login use greetd`. On 2026-09-05
+# that switch trapped the bench machine on a black screen for days: greetd
+# started labwc, the Quickshell greeter never drew, and every reboot came back to
+# the same bare labwc desktop. The way out was a text console and a manual switch
+# back to GDM.
+#
+# This service makes that impossible to get stuck on. It runs once at boot,
+# watches whether the greeter comes up, and — after two failed greetd boots in a
+# row — switches the login screen back to GNOME's GDM and reboots. The program it
+# runs, /usr/libexec/aquarius-greeter-watchdog, has the whole story in its header
+# and in docs/restart/login.md.
+#
+# ⚠️ IT SHIPS ENABLED AND IS HARMLESS ON A DEFAULT MACHINE. A default AquariusOS
+# machine boots to GDM, and the program's first act is to check whether greetd is
+# the login screen. It is not, so the program exits immediately, touching
+# nothing. It only does any real watching on a machine where somebody ran
+# `aq login use greetd`.
+#
+# WHY After= AND NOT Requires=
+#   After=display-manager.service means "start me after the login screen is
+#   started, if it is going to be". It creates no dependency: this service can
+#   never be the reason a login screen does not start — which, for a thing whose
+#   whole job is to rescue a login screen, is the first rule.
+#
+# IT CANNOT LOOP. Type=oneshot, once per boot; a stamp under /run stops it acting
+# twice in one boot; and when it reverts it makes the next boot a GDM boot, on
+# which it stands aside. The full reasoning is in the program's header.
+# =============================================================================
+[Unit]
+Description=Switch back to GDM if the experimental Aquarius login screen never draws
+Documentation=https://github.com/stoneharborent/aquarius-os/blob/main/docs/restart/login.md
+After=display-manager.service systemd-logind.service
+Wants=systemd-logind.service
+# Only worth running on a machine trying to be graphical at all.
+ConditionPathExists=/usr/libexec/aquarius-greeter-watchdog
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/aquarius-greeter-watchdog
+RemainAfterExit=no
+# It waits up to 30 seconds by design, and may switch the login screen and
+# reboot. 180 seconds is a generous outer bound that still guarantees it can
+# never sit there forever holding a slot.
+TimeoutStartSec=180
+# A safety net must never itself be a fault. If this program breaks, the machine
+# should carry on exactly as it would have without it.
+SuccessExitStatus=0 1
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical.target
