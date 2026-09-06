@@ -2279,11 +2279,17 @@ jobs:
           check "the progress colour is the Midnight accent" '^ProgressBarForegroundColor=0x00BFFF$' "${THEME}/aquarius.plymouth"
           # And the retired palette really is gone from this file, rather than
           # just absent from the two lines above.
-          if grep -Eq '0x(8AB4FF|5B4BE0|E6DDB8|06070C)' "${THEME}/aquarius.plymouth"; then
-            bad "the boot theme still carries a retired Starlight colour"
-            grep -nE '0x(8AB4FF|5B4BE0|E6DDB8|06070C)' "${THEME}/aquarius.plymouth"
+          #
+          # Comment lines are skipped. The file's own notes NAME the retired
+          # colours to explain what they were replaced with, which is the point
+          # of writing them down — only the settings themselves are read here.
+          if grep -vE '^[[:space:]]*#' "${THEME}/aquarius.plymouth" \
+               | grep -Eq '0x(8AB4FF|5B4BE0|E6DDB8|06070C)'; then
+            bad "the boot theme still SETS a retired Starlight colour"
+            grep -nE '0x(8AB4FF|5B4BE0|E6DDB8|06070C)' "${THEME}/aquarius.plymouth" \
+              | grep -vE ':[[:space:]]*#'
           else
-            ok "no retired Starlight colour is left in the boot theme"
+            ok "no setting in the boot theme uses a retired Starlight colour"
           fi
 
           # THE SETTING THAT REMOVES THE MANUFACTURER'S BADGE. It is per-screen,
