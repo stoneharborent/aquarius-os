@@ -4,71 +4,235 @@
 asked why the screen he logs in at does not look like AquariusOS. Assumes you
 have never used Linux.*
 
-*Updated 2026-09-05, after the fix for that turned the login screen black. Start
-with the incident below — it is the most important thing on this page.*
+*Updated 2026-09-05 (twice). The first fix turned the login screen black. The
+second fix did not catch it. What ships now is the third answer, and it is to
+stop doing the thing. Start with the incident below — it is the most important
+thing on this page.*
 
 ---
 
-# The black login screen of 5 September 2026
+# The black login screen — twice, 4 and 5 September 2026
 
-## What happened
+## If you are looking at a black screen right now
 
-The bench machine booted and showed **a black screen with a mouse pointer on it
-and nothing else.** No login screen. No error. The pointer moved when the mouse
-moved, so the computer was alive — there was just no way in.
-
-Deleting two files and restarting the login screen brought it straight back:
+Press **Ctrl+Alt+F3** for a text login screen, log in, and run:
 
 ```bash
 sudo rm -f /etc/xdg/monitors.xml /var/lib/gdm/.config/monitors.xml
 sudo systemctl restart gdm
 ```
 
+That is the whole recovery, and it has worked both times. If you would rather
+undo the setting properly at the same time:
+
+```bash
+sudo aq login scale off
+sudo systemctl restart gdm
+```
+
+And underneath all of it, AquariusOS keeps the previous version of itself:
+holding the boot menu and picking the older entry undoes an update entirely.
+
+## What happened
+
+**Twice, on two consecutive days**, the bench machine booted and showed a black
+screen with a mouse pointer on it and nothing else. No login screen. No error.
+The pointer moved when the mouse moved, so the computer was alive — there was
+just no way in.
+
+Both times the two files above were the cause, and deleting them fixed it.
+
+| | 4 → 5 September | 5 September |
+| --- | --- | --- |
+| What was on the machine | the copy, made exactly as your own settings had it (125%) | the copy, "made safe" first — part sizes rounded to whole ones — plus a guard that was supposed to undo it automatically |
+| What happened | black screen | black screen **again** |
+| What the guard did | it did not exist yet | **nothing.** It was enabled, it ran, and it decided the login screen was fine |
+| How it was fixed | by hand, the commands above | by hand, the same commands |
+
 ## What those two files were
 
-They were **this project's own fix from the day before**. Part A below explains
-it: the login screen runs as a different user and cannot see the display size
-you chose in Settings, so AquariusOS copies that setting somewhere the login
-screen can read. Those two files are the copies.
+They were **this project's own idea**. Part A below explains it: the login
+screen runs as a different user and cannot see the display size you chose in
+Settings, so AquariusOS copied that setting somewhere the login screen could
+read it. Those two files were the copies.
 
 Royce's monitor is set to **125%**.
 
-## Why 125% is the suspect
+## Why we still do not know the cause
 
 125% is a **part size** — not a whole number of times bigger. 100% and 200% are
-whole sizes; 125%, 150% and 175% are not.
+whole sizes; 125%, 150% and 175% are not. Part sizes on GNOME have a long
+history of quietly not working, so that was the first suspect.
 
-Part sizes on GNOME have a long history of quietly not working, because until
-recently they were hidden behind a switch that nobody ever turned on for the
-login screen's own user. That is the obvious explanation, and it is the one this
-fix is built around.
+**It is a suspect, not a conviction.** AquariusOS is built on Fedora 44, which
+is GNOME 50, and GNOME 50 turned part sizes on by default for everybody (a
+change to GNOME's window manager merged in February 2026). And the second black
+screen happened on an image that had already rounded 125% down to 100% — which
+is evidence against the part-size theory, though not proof, because the file
+that broke that boot was probably written by the OLD logout hook at the previous
+shutdown (see the trap below) and so was never rounded at all.
 
-**But it is a suspect, not a conviction, and it is worth being straight about
-that.** AquariusOS is built on Fedora 44, which is GNOME 50, and GNOME 50 turned
-part sizes on by default for everybody (a change to GNOME's window manager
-merged in February 2026). So "the login screen cannot do 125%" is a weaker
-explanation here than it would have been a year ago. There is at least one other
-documented possibility — that the arrangement did not match the monitors
-actually plugged in, and GNOME threw the whole file away.
+Other documented possibilities: the arrangement did not match the monitors
+actually plugged in and GNOME threw the whole file away; or something about the
+file's ownership or security label under a GDM that no longer keeps a permanent
+`gdm` home folder. We could not find anybody else reporting this exact symptom
+from this exact cause.
 
-We could not find anybody else reporting this exact symptom from this exact
-cause. So the honest summary is:
+So the honest summary has not changed:
 
-- **Certain:** those two files caused it. Removing them fixed it.
-- **Not certain:** exactly why.
+- **Certain:** those two files cause it. Removing them fixes it.
+- **Not certain:** why. Two attempts to fix the *why* both shipped a machine
+  that would not let Royce in.
 
-## What ships now — two defences, not one
+## What ships now: the login screen is given nothing
 
-Because the *why* is uncertain, there are two fixes, and the second one is the
-one that actually saves the machine.
+**Royce's decision, 5 September 2026, and the whole of the change:**
 
-### 1. The size is made safe before it is handed over
+> The login screen gets **no copied display file** by default.
 
-A new program, `/usr/libexec/aquarius-monitors-sanitize`, sits between your file
-and the login screen's copy. It reads the arrangement and rounds any part size
-to the nearest whole one that still leaves a usable screen. Everything else —
-which monitors, where they sit, which is the main one, the resolution, the
-refresh rate — is passed through untouched.
+It runs at GNOME's own 100%. On the 55-inch 4K bench monitor that means small
+name tiles on a big screen — the exact complaint that started this work on
+4 September. That is the deliberate trade, and it is not a close call:
+
+**A login screen that is too small is annoying. A login screen that is black is
+a computer nobody can get into.** Twice.
+
+### The machine repairs itself on the first boot of this image
+
+**You do not have to type anything.** If this computer already has one of those
+copies — and Royce's does, left over from the older AquariusOS — the boot-time
+program removes it. On the first boot after updating, the leftover is gone and
+the login screen comes up.
+
+That clean-up is the part that matters most, because it is the part that runs
+with nobody watching:
+
+- at every boot, `aquarius-gdm-display.service` runs
+  `/usr/libexec/aquarius-gdm-display`
+- with the switch off (the default) it deletes `/etc/xdg/monitors.xml` and
+  `/var/lib/gdm/.config/monitors.xml` if either exists, writes one line saying
+  so, and stops.
+
+### The logout hook no longer copies either
+
+`/etc/gdm/PostSession/Default` — the script GDM runs when you log out — now does
+nothing at all unless the switch is on. It is back to being the two-line
+do-nothing script Fedora ships.
+
+> **The trap this closes, and it is worth understanding.** An update's new files
+> do not take effect until you restart. So the **last** thing a machine does
+> before its first boot on a new image is run the **old** logout hook. That is
+> almost certainly what wrote the file that black-screened the bench on
+> 5 September — an unsanitised 125% copy, written by yesterday's code, minutes
+> before today's code first ran. A defence that only starts working after the
+> next update is not a defence. A hook that copies by default copies once more
+> after you have stopped wanting it to.
+
+## The guard, and why it did not save the bench
+
+`aquarius-gdm-guard.service` is the net underneath: if a login screen does not
+appear and one of those copies is lying around, it takes the copy away and
+restarts the login screen once.
+
+**On 5 September it did nothing, and the reason is worth writing down.** It was
+enabled. It ran. It was not broken in any way a build log could show. It asked
+the wrong question:
+
+> *"Is there a graphical session on this machine?"*
+
+In a black-screen boot the answer is **yes**. The mouse pointer you are looking
+at is drawn by the compositor — a pointer on the screen is proof that GNOME's
+greeter started and has a session. What was wrong was one step further in: the
+compositor came up and drew nothing, and the part of Linux that tracks sessions
+cannot see that. So the guard was told "the login screen is up", twenty seconds
+into the boot, and exited reporting success while Royce sat in front of a black
+screen.
+
+**What it asks now.** It watches for the full 45 seconds and acts if **any one**
+of these is true — any one, not all:
+
+| | What it looks at |
+| --- | --- |
+| **A** | No graphical session by the end — either nothing ever started, or one started and then went away. |
+| **B** | The login screen keeps restarting — either systemd's restart count for GDM went up while we watched, or the session kept being replaced by a different one. A healthy login screen starts once and stays. |
+| **C** | The compositor said in the system log that it could not use the display arrangement. That names our file as the problem directly, so it acts **even though a session exists** — which is exactly the case that beat it. |
+
+It still stands aside completely when GDM is not the login screen in use, when
+there is no copied file to take away, or when it has already acted once this
+boot.
+
+**And the case it still cannot see.** If the compositor comes up, keeps one
+steady session, complains about nothing, and draws a black screen anyway, this
+program has no way to know. It cannot read pixels. **That is the honest reason
+the copy is off by default rather than "the guard has it covered."** The guard
+is a net, not a fix.
+
+The trigger is now executed on every build, against fake system commands, on
+both sides — it must act on all four shapes of broken and stand aside on a
+healthy machine (`tests/test-gdm-guard.sh`). A safety net whose trigger has
+never been run is not a safety net; it is a comment. That is the lesson of
+5 September.
+
+> **Why not just make systemd notice GDM has failed?** Because GDM never fails.
+> It restarts itself forever, so from systemd's point of view a login screen
+> that draws nothing is a service in perfect health.
+
+## How these services are switched on, and what that means for you
+
+This is worth knowing because it bit Royce.
+
+On an ordinary Linux machine, `systemctl enable` writes a link into `/etc`. On
+AquariusOS that is a trap: **every update merges the current machine's `/etc`
+onto the new image's, and anything you changed locally wins forever — including
+deletions.** So one `sudo systemctl disable aquarius-gdm-display`, typed once
+while trying something, would turn that service off *on that machine, for ever*,
+and no future image could switch it back on. It would look exactly like a bug.
+
+So AquariusOS switches its own services on from `/usr` instead —
+`/usr/lib/systemd/system/graphical.target.wants/` — which is replaced whole at
+every update and which nothing local can edit. An update always restores them.
+
+**The honest cost:** `systemctl disable` no longer turns these two off, because
+there is nothing in `/etc` for it to remove.
+
+- To turn the display copy off, use its own switch: **`sudo aq login scale off`**.
+  That is the one to reach for, and it is what this page tells you to use.
+- To force a unit off regardless: `sudo systemctl mask aquarius-gdm-guard`. That
+  writes to `/etc` and beats everything, including updates. Only do this if you
+  have a reason; the guard costs nothing and covers leftovers.
+
+## Trying it anyway, on one machine
+
+The switch exists so the idea can be tested by somebody who is watching. It is
+worth doing on the bench, and it is not worth doing on a machine you need.
+
+```bash
+sudo aq login scale on          # give the login screen your display settings
+sudo systemctl reboot
+```
+
+**Watch the restart.**
+
+- **A login screen appears, the right size** — it worked. Leave it on, and tell
+  the rest of us.
+- **A black screen with a pointer** — wait about a minute. The guard should
+  remove the copy and restart the login screen, and you get in at 100%. *This is
+  the thing most worth confirming*, because it did not happen on 5 September.
+- **Still nothing after two minutes** — press **Ctrl+Alt+F3** for a text login
+  screen, log in there, and run:
+  ```bash
+  sudo aq login scale off
+  sudo systemctl restart gdm
+  ```
+
+While it is on, there is one more choice — what sizes may be passed through:
+
+```bash
+sudo aq login scale integer      # whole sizes only: 125% becomes 100%. The default.
+sudo aq login scale fractional   # part sizes too: the login screen gets your real 125%
+```
+
+`integer` rounds with a rule table, in `/usr/libexec/aquarius-monitors-sanitize`:
 
 | Your setting | What the login screen is given |
 | --- | --- |
@@ -80,122 +244,52 @@ refresh rate — is passed through untouched.
 | nonsense (0%, 900%, not a number) | 100% |
 
 And if it cannot understand your file at all — half-written, not XML, not a
-display arrangement — **nothing is copied.** The login screen keeps whatever it
-had. That is always better than a black screen.
+display arrangement — **nothing is copied.**
 
-**Your own desktop is not affected by any of this,** and neither is the
-AquariusOS login screen in Part B. Your file is never modified. Only the copy
-made for GNOME's login screen is rounded.
+**Your own desktop is never affected by any of this,** and neither is the
+AquariusOS login screen in Part B. Your file is never modified.
 
-### 2. The computer repairs itself
+To go back at any time: `sudo aq login scale off`.
 
-`aquarius-gdm-guard.service` watches every boot. **If no login screen has
-appeared 45 seconds after it should have, the guard removes those two files and
-restarts the login screen once.** The machine comes back — smaller than you
-wanted, perhaps, but usable — and writes down what it did.
+## The real fix, and it is not on this page yet
 
-This is the half that would have saved the bench, because it does not care what
-the cause was.
+The proper answer to "the login screen is the wrong size" is not to smuggle a
+file to GNOME's login screen. It is **our own login screen** — greetd plus the
+Aquarius Shell, Part B below — which runs in our own compositor, reads the
+session's scale itself, and needs nothing copied anywhere.
 
-**It acts only when all of these are true**, so it cannot surprise you:
-
-1. GDM is the login screen this computer is using (not greetd, not none)
-2. at least one of the two copied files actually exists — there is something to
-   take away
-3. 45 seconds after the login screen started, there is still no graphical
-   session at all: no login screen, and nobody logged in
-4. it has not already acted once during this boot
-
-**It cannot loop.** It runs once per boot, it acts at most once, and it leaves a
-marker in `/run` (a folder that is emptied at every restart) so it will not act
-twice. Restarting the login screen does not start the guard again.
-
-> **Why not just make systemd notice GDM has failed?** Because GDM never fails.
-> It restarts itself forever, so from systemd's point of view a login screen
-> that draws nothing is a service in perfect health. The guard asks a different
-> question — *did a login screen ever appear?* — which is the same question you
-> ask by looking at the monitor.
-
-## The trade-off, stated plainly
-
-**By default the login screen is now given 100% on the bench, not 125%.** On a
-55-inch 4K monitor that means it will look small again — the exact complaint
-that started this work on 4 September.
-
-That is a deliberate trade: **a login screen that is too small is annoying; a
-login screen that is black is a machine you cannot use.** Until somebody has
-watched a real machine boot with part sizes allowed, the safe answer is the
-default.
-
-## Try the other mode — it is now safe to
-
-Now that the computer repairs itself, trying part sizes costs a 45-second wait
-in the worst case. It is worth doing on the bench:
-
-```bash
-sudo aq login scale fractional     # let part sizes through
-sudo systemctl reboot
-```
-
-**Watch the restart.**
-
-- **A login screen appears, the right size** — it works. Leave it on. This is
-  the outcome we expect on GNOME 50 and it gives you the login screen you
-  actually wanted.
-- **A black screen with a pointer** — wait. After about 45 seconds the guard
-  removes the files and restarts the login screen, and you get in at 100%.
-- **Still nothing after two minutes** — press **Ctrl+Alt+F3** for a text login
-  screen, log in there, and run:
-  ```bash
-  sudo aq login scale integer
-  sudo systemctl restart gdm
-  ```
-
-To go back at any time:
-
-```bash
-sudo aq login scale integer
-```
+That is the **R5** job. Until it lands, the login screen is GNOME's, at 100%,
+and that is a known and accepted state rather than an outstanding bug.
 
 ## Checking it, and reading what happened
 
 ```bash
-sudo aq login scale status                        # which mode, and what was copied
+sudo aq login scale status                        # on or off, and what happened
 sudo /usr/libexec/aquarius-gdm-display --status   # the same, in more detail
+sudo /usr/libexec/aquarius-gdm-display --dry-run  # what it would do, changing nothing
 cat /var/lib/aquarius/gdm-display.log             # everything it has ever done
-sudo /usr/libexec/aquarius-gdm-guard --status     # what the guard would look at
+sudo /usr/libexec/aquarius-gdm-guard --status     # the three things the guard looks at
 ```
 
 The log is written in the same plain English as this page. If your login screen
-is ever a different size than your desktop, it says why.
-
-## Recovering by hand, if you ever need to
-
-The three commands at the top of this section, and then:
-
-```bash
-sudo aq login scale integer         # make sure whole sizes are the default
-sudo systemctl restart gdm
-```
-
-If you cannot get a graphical screen at all, **Ctrl+Alt+F3** gives you a text
-login. Everything above works from there. And underneath all of it, AquariusOS
-keeps the previous version of itself: holding the boot menu and picking the
-older entry undoes an update entirely.
+is ever a different size than you left it, it says why.
 
 ## The bench list for this fix
 
-1. Update and restart. **Does a login screen appear?** That is the whole point.
-2. `sudo aq login scale status` — does it say whole sizes only?
-3. Is the login screen at 100%, i.e. small on the 55-inch? **Expected.** See the
-   trade-off above.
-4. `cat /var/lib/aquarius/gdm-display.log` — does it say it turned 125% into
-   100%, in words?
-5. `sudo aq login scale fractional`, restart, and watch. Does the login screen
-   come up at 125%?
-6. If it went black instead: did it come back by itself after ~45 seconds? That
-   is the guard, and it is the thing most worth confirming.
-7. `sudo aq login scale integer` to put it back, whichever way it went.
+1. `sudo bootc upgrade`, then restart.
+2. **Does a login screen appear?** That is the whole point. It should, on the
+   first boot, with nothing typed.
+3. `sudo aq login scale status` — does it say the login screen is **not** given
+   anything?
+4. `ls /etc/xdg/monitors.xml /var/lib/gdm/.config/monitors.xml` — both should say
+   **No such file**. They were removed by the boot-time clean-up.
+5. `cat /var/lib/aquarius/gdm-display.log` — does it say a leftover copy was
+   removed, in words?
+6. Is the login screen small on the 55-inch? **Expected.** See the trade above.
+7. Optional, and only if you want to test it: `sudo aq login scale on`, restart,
+   and watch. If it goes black, does it come back by itself within a minute?
+   That is the repaired guard, and it is the thing most worth confirming.
+   `sudo aq login scale off` to put it back, whichever way it went.
 
 ---
 
@@ -225,20 +319,21 @@ redesigned.
 So there are two answers to "make the login screen look like that", and this
 document is both of them:
 
-- **Part A — make GDM as good as GDM gets.** Right size, Ice light, our
-  typefaces, our logo. Shipped and switched on. This is what you will see the
-  next time you update.
+- **Part A — make GDM as good as GDM gets.** Ice light, our typefaces, our logo.
+  Shipped and switched on. **Not the right size** — see below; that is the one
+  thing we tried and gave up on.
 - **Part B — replace it with our own.** A login screen drawn by the Aquarius
   Shell itself, on the Ice wallpaper, with the Aquarius mark. Shipped and
-  switched **off**, waiting for you to try it on the bench.
+  switched **off**, waiting for you to try it on the bench. This is where the
+  size problem actually gets solved.
 
 ---
 
-# Part A — the GDM you already have, fixed
+# Part A — the GDM you already have
 
-## 1. It is now the right size
+## 1. The size: we tried, and we stopped
 
-### Why it was tiny
+### Why it is tiny
 
 The size of everything on a screen is a number called the **scale**. On a 4K
 monitor, 100% makes text physically small, so GNOME lets you set 125%, 150% and
@@ -247,17 +342,24 @@ ago.
 
 That answer is written into a file inside your home folder
 (`~/.config/monitors.xml`). The login screen runs as the `gdm` user, and the
-`gdm` user is not allowed to look inside your home folder. So it never saw the
-answer and did what it always does with no answer: 100%.
+`gdm` user is not allowed to look inside your home folder. So it never sees the
+answer and does what it always does with no answer: **100%**.
 
-### What now happens
+### What now happens: nothing, on purpose
 
-AquariusOS ships a small program whose entire job is to carry that answer
-across: `/usr/libexec/aquarius-gdm-display`. It runs as an administrator, finds
-the display arrangement the people who use this computer have chosen, **makes it
-safe** (see the incident above — this is the step that was missing on 4
-September and is why the login screen went black on the 5th), and puts a copy in
-two places the login screen *can* read:
+AquariusOS ships a program that can carry that answer across —
+`/usr/libexec/aquarius-gdm-display` — and **it is switched off.** Handing the
+login screen that file black-screened this computer on 4 September and again on
+5 September, and nobody has worked out why. The incident section at the top of
+this page is the full story.
+
+So the login screen stays at 100%, and looks small on a big monitor. The program
+still runs at every boot, but with the switch off its only job is to **take
+away** a copy an older AquariusOS left behind — which is what makes a machine
+that is updating come up at all.
+
+For the record, when it *is* switched on it writes two files, because there are
+two places GNOME might look:
 
 - `/etc/xdg/monitors.xml` — the system-wide answer. **This is the one that
   works** on current versions of GNOME.
@@ -268,31 +370,20 @@ two places the login screen *can* read:
   longer a reliable home folder to put this in. It stays as a belt, not because
   we expect it to be read.
 
-It runs at **two** moments:
+### What you have to do — nothing
 
-1. **Every boot**, before the login screen appears
-   (`aquarius-gdm-display.service`).
-2. **Every logout**, because GDM runs a script as an administrator at that
-   moment and we put a line in it (`/etc/gdm/PostSession/Default`).
+Update, restart, and the login screen appears. If this machine had one of those
+copies left over, it is removed on the way past, with nothing typed.
 
-Between the two, the login screen is never more than one logout behind your
-desktop.
+If you want the login screen to match your desktop, there are two roads and
+neither is "do nothing":
 
-### What you have to do — once
-
-If you have already set a Scale in Settings → Displays (you have, on the bench),
-**nothing**. Update, reboot, and the login screen will be the right size — with
-the caveat from the incident above: a part size like 125% is rounded to 100% for
-the login screen unless you run `sudo aq login scale fractional`.
-
-If a brand-new machine has never had a scale chosen, the login screen stays at
-100% and this program says so in the system log rather than guessing. Guessing
-would mean writing a file that names a monitor and a video mode we cannot see
-from outside a running session, and a wrong one of those files can leave a
-screen blank. So:
-
-> Open **Settings → Displays**, set **Scale**, then log out. The login screen
-> matches from then on.
+1. **Test the switch on this machine** — `sudo aq login scale on`, restart, and
+   watch. See "Trying it anyway" at the top of this page. It may work; it may
+   black-screen; that is the state of our knowledge.
+2. **Wait for Part B**, our own login screen, which gets the size right by
+   construction because it is our own compositor. That is the R5 job and it is
+   the answer we actually want.
 
 ### Checking it by hand
 
@@ -467,13 +558,22 @@ program to keep working.
 
 ### Where it gets its size
 
-The same place GDM now does: `/etc/xdg/monitors.xml`, written by
-`/usr/libexec/aquarius-gdm-display` (Part A). The login screen runs as its own
-user with no home folder worth reading, so it is pointed at the system-wide copy
-instead. One answer, three places that need it, one program that carries it.
+⚠️ **This is the part that has to change before Part B ships, and it is the
+reason Part B is the real fix.**
 
-If you ever want the *login screen* at a different size from the desktop, put a
-single line in `/var/lib/aquarius/greeter-display.conf`:
+It currently reads `/etc/xdg/monitors.xml` — the system-wide copy that Part A
+used to write. **That copy no longer exists**, because writing it black-screened
+GNOME's login screen twice and the whole mechanism is switched off. So as
+written, this greeter would come up at 100% too.
+
+The fix is genuinely easier here than it was for GDM, and it is why this is the
+R5 job rather than another attempt at Part A: **this login screen runs in our
+own compositor.** labwc does part sizes properly, and the greeter can be told
+its scale directly instead of having a file smuggled to it — no copying, no
+`gdm` user, no file that a compositor might silently reject.
+
+Until that is done, you can set the login screen's size by hand with a single
+line in `/var/lib/aquarius/greeter-display.conf`:
 
 ```
 scale=1.5
@@ -527,9 +627,10 @@ In order, and stop at the first one that is wrong:
 3. **Does a login screen appear at all?** If it is a plain blue-and-grey text
    screen, the graphical one failed and fell back — that is the safety net
    working. `journalctl -u greetd -b` says why.
-4. **Is it the right size on the 55" monitor?** This is the whole reason for the
-   work. If it is tiny, `sudo /usr/libexec/aquarius-gdm-display --status` says
-   what it thinks the answer is.
+4. **Is it the right size on the 55" monitor?** **Expect tiny** — see "Where it
+   gets its size" above: it reads a file that AquariusOS no longer writes, and
+   fixing that properly is the R5 job. To make it the right size today, put
+   `scale=1.5` in `/var/lib/aquarius/greeter-display.conf` and restart greetd.
 5. **Does typing work?** The password box should have the cursor without you
    clicking anything.
 6. **Does a wrong password say so** and let you try again, rather than going
@@ -551,19 +652,23 @@ In order, and stop at the first one that is wrong:
 | `/etc/dconf/db/gdm.d/02-aquarius-look` | its colours, typefaces and pointer |
 | `/etc/dconf/db/gdm.d/03-aquarius-scale` | the old switch that used to be needed for part sizes. Belt only — GNOME 50 turns them on by itself. It does **not** decide whether part sizes are used; `aq login scale` does. |
 | `/etc/dconf/db/gdm` | the built database. **This** is what GDM reads; the three files above do nothing until `dconf update` bakes them into it. |
-| `/usr/libexec/aquarius-gdm-display` | the messenger that carries your screen size to the login screen |
-| `/usr/libexec/aquarius-monitors-sanitize` | **makes that copy safe first** — rounds part sizes, refuses files it cannot understand. Read its header for the full rule table. |
+| `/usr/libexec/aquarius-gdm-display` | the messenger. **Switched off by default**, and with the switch off its job is to REMOVE a copy an older AquariusOS left behind. |
+| `/usr/libexec/aquarius-monitors-sanitize` | when it is switched on, **makes that copy safe first** — rounds part sizes, refuses files it cannot understand. Read its header for the full rule table. |
 | `/usr/lib/systemd/system/aquarius-gdm-display.service` | runs the messenger at every boot, before the login screen |
-| `/usr/libexec/aquarius-gdm-guard` | the rescue: removes the copies and restarts the login screen if none appears |
+| `/usr/libexec/aquarius-gdm-guard` | the rescue: removes the copies and restarts the login screen if it never appeared. Its trigger is three questions, not one — see "why it did not save the bench". |
 | `/usr/lib/systemd/system/aquarius-gdm-guard.service` | runs the rescue once per boot, after the login screen starts |
-| `/etc/gdm/PostSession/Default` | runs the messenger again at every logout |
+| `/usr/lib/systemd/system/graphical.target.wants/` | the two links that switch those services on. **Under `/usr`, not `/etc`** — see "How these services are switched on". |
+| `/etc/gdm/PostSession/Default` | runs the messenger again at every logout — **but only if the switch is on**. Otherwise it does nothing, like Fedora's. |
 | `/usr/share/aquarius/gdm-PostSession-Default.orig` | Fedora's version of that file, kept so the difference is a fact and not a memory |
-| `/etc/xdg/monitors.xml` | the copy of your display arrangement the login screen reads |
-| `/var/lib/gdm/.config/monitors.xml` | the older second copy. Probably dead on GDM 49+ — see Part A. |
-| `/var/lib/aquarius/display-scale` | one number: the scale, for our own greeter to read. Part sizes are fine here. |
+| `/etc/xdg/monitors.xml` | the copy of your display arrangement the login screen reads. **Should not exist** on a default machine. |
+| `/var/lib/gdm/.config/monitors.xml` | the older second copy. Also should not exist. Probably dead on GDM 49+ anyway — see Part A. |
+| `/var/lib/aquarius/display-scale` | one number: the scale, for our own greeter to read. Only written while the copy is switched on. |
 | `/var/lib/aquarius/gdm-display.log` | **what happened, in plain English.** The first thing to read when the login screen is the wrong size. |
-| `/var/lib/aquarius/gdm-fractional-ok` | present only if somebody ran `sudo aq login scale fractional`. Never shipped in the image. |
-| `tests/test-gdm-scale-sanitize.sh` | the rule table, executed. Runs on every build, before and inside the image. |
+| `/var/lib/aquarius/gdm-display-optin` | **the master switch.** Present only if somebody ran `sudo aq login scale on`. Never shipped in the image. |
+| `/var/lib/aquarius/gdm-fractional-ok` | the sub-mode, and only means anything alongside the switch above. Present only after `sudo aq login scale fractional`. Never shipped. |
+| `/run/aquarius/gdm-guard-acted` | the guard's "already tried this boot" stamp. Under `/run`, so it clears at every restart. |
+| `tests/test-gdm-scale-sanitize.sh` | the rule table and the off-by-default behaviour, executed. Runs on every build, before and inside the image. |
+| `tests/test-gdm-guard.sh` | **the guard's trigger, executed** against fake system commands — both "act" and "stand aside". It exists because on 5 September a trigger that had never been run turned out not to work. |
 
 And Part B's:
 

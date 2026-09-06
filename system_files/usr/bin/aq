@@ -132,16 +132,17 @@ USAGE
                         a text console (Ctrl+Alt+F3) too.
 
     aq login scale status
-                        What size GNOME's login screen is allowed to be, and
-                        what it was actually given last time.
+                        Is GNOME's login screen given your display settings,
+                        and what happened last time.
 
-    aq login scale fractional
-                        Let the login screen use part sizes (125%, 150%) so it
-                        matches your desktop exactly. Try it once and watch the
-                        machine restart — see 'aq login scale --help'.
+    aq login scale on   Give it your display settings, so it is the same size
+                        as your desktop. ⚠️ This black-screened this computer
+                        twice in September 2026 — restart and watch. See
+                        'aq login scale --help'.
 
-    aq login scale integer
-                        Whole sizes only (100%, 200%). The safe default.
+    aq login scale off  Do not (the default). The login screen runs at 100%,
+                        which looks small on a big monitor, and cannot black
+                        out. Any copy already made is removed.
 
     aq --help           This message.
     aq --version        Which AquariusOS this is.
@@ -1418,6 +1419,10 @@ apps_remove() {
 AQ_GREETER_LAUNCHER="/usr/libexec/aquarius-greeter"
 AQ_GREETD_CONF="/etc/greetd/config.toml"
 AQ_GDM_DISPLAY="/usr/libexec/aquarius-gdm-display"
+# The master switch: does the login screen get a copy of your display settings
+# at all? Off unless this file exists, and it is never shipped in an image.
+AQ_OPTIN_MARKER="/var/lib/aquarius/gdm-display-optin"
+# The sub-mode, which only means anything while the master switch is on.
 AQ_FRACTIONAL_MARKER="/var/lib/aquarius/gdm-fractional-ok"
 
 login_usage() {
@@ -1428,7 +1433,8 @@ USAGE
     aq login status        Which one is switched on, and is the other ready.
     aq login use greetd    Switch to the AquariusOS login screen.
     aq login use gdm       Switch back to GNOME's.
-    aq login scale ...     What SIZE GNOME's login screen may be. See below.
+    aq login scale ...     Is GNOME's login screen given your display settings?
+                           Off by default. See 'aq login scale --help'.
 
 Either 'use' command needs an administrator, so put 'sudo' in front of it, and
 neither takes effect until you restart.
@@ -1441,88 +1447,116 @@ EOF
 }
 
 # -----------------------------------------------------------------------------
-# aq login scale — whole sizes or part sizes on GNOME's login screen
+# aq login scale — should the login screen be told your screen size at all?
 # -----------------------------------------------------------------------------
 # THE STORY, because this command only makes sense if you know it.
 #
-# 2026-09-05, the bench: the machine booted to a black screen with a mouse
-# pointer and no login screen at all.
+# GNOME's login screen runs as a different user and cannot read your settings,
+# so on a big 4K monitor it comes up at 100% and looks tiny. AquariusOS tried to
+# fix that by copying your display settings somewhere the login screen could
+# read them.
 #
-# AquariusOS copies your display size across to the login screen so that the two
-# match. Removing that copy and restarting the login screen fixed the black
-# screen, so the copy was the cause — but WHY is a guess, and worth saying so:
-# Royce's monitor is at 125%, a PART SIZE, and part sizes on GNOME's login
-# screen have a long history of quietly not working. (Against that: this is
-# GNOME 50, which turned part sizes on by default for everybody. It may have
-# been something else entirely.)
+# It black-screened the bench TWICE, on two consecutive days:
 #
-# AquariusOS now does two things about that, and this command is the second:
+#   4 -> 5 September   a black screen with a mouse pointer and no login screen.
+#                      Deleting the copies and restarting the login screen fixed
+#                      it. So the copies were the cause.
+#   5 September        a defence was added: the copy was made "safe" first, and
+#                      a guard was supposed to undo it automatically if the
+#                      login screen never appeared. The machine black-screened
+#                      AGAIN on the next boot and the guard did not act. (The
+#                      guard's bug is fixed and tested now — but by then two
+#                      black boots had happened.)
 #
-#   1. ALWAYS: the copy handed to the login screen is made safe first. A part
-#      size becomes the nearest whole size (125% -> 100%). That happens with no
-#      settings and no commands and cannot be turned off.
-#   2. OPTIONALLY: part sizes can be let through, and this command is the
-#      switch. The setting that used to be needed to make them work is also
-#      shipped in the login screen's own settings, in case Fedora ever turns
-#      GNOME 50's new default back off.
+# WHY is still a guess. Royce's monitor is at 125%, a PART SIZE, and part sizes
+# on GNOME's login screen have a history of quietly not working. Against that:
+# this is GNOME 50, which turned part sizes on by default for everybody. It may
+# be something else entirely.
 #
-# WHY IT IS OFF BY DEFAULT. Nobody has yet watched a machine boot with part
-# sizes allowed on the login screen. Being wrong costs a machine nobody can log
-# in to; being careful costs a login screen that looks small for ninety seconds.
-# That is not a close call — but it IS worth trying on the bench now that the
-# computer repairs itself, because part sizes are what make the login screen
-# match a 4K desktop.
+# SO ROYCE'S DECISION, 5 September 2026: the login screen gets NO copied display
+# file by default. It runs at GNOME's own 100%. That is small on a 55" 4K screen
+# and it is the deliberate trade — a small login screen is annoying, a black one
+# is a computer nobody can get into.
+#
+# This command is the switch, for anybody who wants to test it on one machine:
+#
+#     off          the default. No copy. Any copy already there is removed.
+#     on           copy it — and then RESTART AND WATCH.
+#       integer      while on: whole sizes only (the default sub-mode)
+#       fractional   while on: let part sizes through (125%)
+#
+# THE REAL FIX IS NOT HERE. It is our own login screen (greetd + the Aquarius
+# Shell, Part B of docs/restart/login.md), which reads the session's scale
+# itself and does not need anything copied anywhere. That is the R5 job.
 login_scale_usage() {
     cat << 'EOF'
-aq login scale — what size GNOME's login screen is allowed to be
+aq login scale — is GNOME's login screen given your display settings?
 
 USAGE
-    aq login scale status       Which setting is on, and what the login screen
-                                was actually given last time.
-    sudo aq login scale fractional
-                                Allow part sizes (125%, 150%). The login screen
-                                then matches your desktop exactly.
-    sudo aq login scale integer
-                                Whole sizes only (100%, 200%). The default.
+    aq login scale status       Which way it is set, and what happened last time.
+    sudo aq login scale on      Give the login screen a copy of your display
+                                settings, so it matches your desktop.
+                                ⚠️ RESTART AND WATCH — see below.
+    sudo aq login scale off     Do not (the default). Any copy already on this
+                                computer is removed.
 
-WHY THIS EXISTS
-    On 2026-09-05 this computer booted to a black screen with only a mouse
-    pointer. GNOME's login screen had been given a size of 125% — a part size —
-    and drew nothing at all. Taking the size away fixed it.
+    While it is ON, one more choice — what sizes may be passed through:
+    sudo aq login scale integer     whole sizes only, 100%/200% (the default)
+    sudo aq login scale fractional  part sizes too, 125%/150%
 
-    So AquariusOS now rounds the size to a whole number for the login screen,
-    and this command is how you ask it not to.
+WHY IT IS OFF
+    This computer booted to a black screen with only a mouse pointer TWICE, on
+    4 and 5 September 2026. Both times the cause was the copied display file,
+    and both times deleting it fixed the machine. Nobody yet knows exactly why
+    GNOME's login screen cannot cope with it.
 
-IF YOU TURN PART SIZES ON
-    Restart, and watch. If a login screen appears, it worked and you can leave
-    it on. If you get a black screen with a pointer, the computer repairs itself
-    after about 45 seconds and comes back at 100% — and if it does not:
+    So the login screen now runs at GNOME's own 100%. On a big 4K monitor it
+    looks small. That is on purpose: a small login screen is annoying, a black
+    one is a computer you cannot get into.
 
-        press Ctrl+Alt+F3 for a text login, then
-        sudo aq login scale integer
-        sudo systemctl restart gdm
+IF YOU TURN IT ON
+    Restart, and watch the screen.
 
-    This does not affect the AquariusOS login screen (greetd), which does part
-    sizes properly, or your desktop, which is not involved at all.
+    - A login screen appears: it worked. Leave it on.
+    - A black screen with a pointer: wait about a minute. This computer tries to
+      repair itself — it removes the copy and restarts the login screen once.
+    - Still nothing: press Ctrl+Alt+F3 for a text login screen, log in, and run
+          sudo aq login scale off
+          sudo systemctl restart gdm
+
+    None of this affects your desktop, or the AquariusOS login screen (Part B of
+    docs/restart/login.md), which handles sizes properly by itself.
 EOF
 }
 
 login_scale_status() {
-    if [ -e "${AQ_FRACTIONAL_MARKER}" ]; then
-        echo "GNOME's login screen is allowed to use PART SIZES (125%, 150%)."
-        echo "Somebody switched that on with 'sudo aq login scale fractional'."
+    if [ -e "${AQ_OPTIN_MARKER}" ]; then
+        echo "GNOME's login screen IS given a copy of your display settings."
+        echo "Somebody switched that on with 'sudo aq login scale on'."
         echo
-        echo "If this computer ever boots to a black screen with only a mouse"
-        echo "pointer, that is the setting to undo:"
-        echo "    sudo aq login scale integer"
+        echo "⚠️ This is the setting that black-screened this computer on 4 and 5"
+        echo "September 2026. If it ever boots to a black screen with only a"
+        echo "mouse pointer: press Ctrl+Alt+F3 for a text login and run"
+        echo "    sudo aq login scale off"
+        echo "    sudo systemctl restart gdm"
+        echo
+        if [ -e "${AQ_FRACTIONAL_MARKER}" ]; then
+            echo "Part sizes (125%, 150%) are allowed through."
+            echo "To go back to whole sizes only:  sudo aq login scale integer"
+        else
+            echo "Whole sizes only (100%, 200%) — the safer sub-mode. A desktop at"
+            echo "125% gives the login screen 100%."
+            echo "To pass part sizes through:  sudo aq login scale fractional"
+        fi
     else
-        echo "GNOME's login screen uses WHOLE SIZES only (100%, 200%). This is"
-        echo "the default, and it is the setting that cannot give you a black"
-        echo "screen."
+        echo "GNOME's login screen is NOT given anything. This is the default and"
+        echo "it is the setting that cannot black-screen this computer."
         echo
-        echo "If your desktop is at 125%, the login screen is given 100% — so it"
-        echo "will look smaller than your desktop. To make them match exactly:"
-        echo "    sudo aq login scale fractional"
+        echo "It means the login screen runs at 100%, which on a big 4K monitor"
+        echo "looks small — smaller than your desktop. That is a deliberate trade"
+        echo "after two black screens in two days. See docs/restart/login.md."
+        echo
+        echo "To try it anyway (then restart and watch):  sudo aq login scale on"
     fi
     echo
     # The messenger knows what it actually wrote and why, and it keeps a log.
@@ -1536,59 +1570,91 @@ login_scale_status() {
     fi
 }
 
+# Write a marker file with a note inside it saying what it is for. Whoever finds
+# one of these in six months, while working out why their login screen is a
+# funny size, should not have to look anything up.
+login_scale_marker_write() {
+    local path="$1"
+    shift
+    install -d -m 0755 "$(dirname "${path}")"
+    printf '%s\n' "$@" > "${path}"
+    chmod 0644 "${path}"
+}
+
 login_scale_set() {
     local wanted="${1:-}"
 
     case "${wanted}" in
-        fractional | integer) : ;;
+        on | off | fractional | integer) : ;;
         *)
-            echo "aq: 'aq login scale' takes 'status', 'fractional' or 'integer'." >&2
+            echo "aq: 'aq login scale' takes 'status', 'on', 'off', 'integer' or" >&2
+            echo "    'fractional'." >&2
             echo "    Try:  aq login scale --help" >&2
             return 1
             ;;
     esac
 
     if [ "$(id -u)" -ne 0 ]; then
-        echo "aq: changing the login screen's size needs an administrator." >&2
+        echo "aq: changing the login screen needs an administrator." >&2
         echo "    Try:  sudo aq login scale ${wanted}" >&2
         return 1
     fi
 
-    if [ "${wanted}" = "fractional" ]; then
-        install -d -m 0755 "$(dirname "${AQ_FRACTIONAL_MARKER}")"
-        printf '%s\n' \
-            "Written by 'aq login scale fractional'." \
-            "While this file exists, GNOME's login screen is given part sizes" \
-            "(125%, 150%) instead of the nearest whole one." \
-            "Delete it, or run 'sudo aq login scale integer', to go back." \
-            > "${AQ_FRACTIONAL_MARKER}"
-        chmod 0644 "${AQ_FRACTIONAL_MARKER}"
-        echo "Part sizes are now allowed on GNOME's login screen."
-    else
-        rm -f "${AQ_FRACTIONAL_MARKER}"
-        echo "GNOME's login screen is back to whole sizes only."
-    fi
+    case "${wanted}" in
+        on)
+            login_scale_marker_write "${AQ_OPTIN_MARKER}" \
+                "Written by 'aq login scale on'." \
+                "While this file exists, AquariusOS copies this computer's display" \
+                "settings to GNOME's login screen so the two match in size." \
+                "" \
+                "⚠️ That copy black-screened this computer on 4 and 5 September 2026." \
+                "Delete this file, or run 'sudo aq login scale off', to stop it."
+            echo "GNOME's login screen will now be given your display settings."
+            ;;
+        off)
+            rm -f "${AQ_OPTIN_MARKER}"
+            echo "GNOME's login screen will not be given anything. Any copy already"
+            echo "on this computer is being removed now."
+            ;;
+        fractional)
+            login_scale_marker_write "${AQ_FRACTIONAL_MARKER}" \
+                "Written by 'aq login scale fractional'." \
+                "While this file exists, GNOME's login screen is given part sizes" \
+                "(125%, 150%) instead of the nearest whole one." \
+                "Delete it, or run 'sudo aq login scale integer', to go back."
+            echo "Part sizes are now allowed on GNOME's login screen."
+            if [ ! -e "${AQ_OPTIN_MARKER}" ]; then
+                echo
+                echo "NOTE: this changes nothing on its own, because the login screen"
+                echo "is not being given anything at all at the moment. To switch"
+                echo "that on as well:  sudo aq login scale on"
+            fi
+            ;;
+        integer)
+            rm -f "${AQ_FRACTIONAL_MARKER}"
+            echo "GNOME's login screen is back to whole sizes only."
+            ;;
+    esac
 
-    # Re-copy straight away, so that the answer changes now rather than at the
-    # next logout. Without this the command would appear to do nothing, and the
-    # person would restart to find out — which is the worst moment to discover
-    # that part sizes do not work on this machine.
+    # Do it straight away, so that the answer changes now rather than at the
+    # next restart. This is also what REMOVES the copies when switching off:
+    # the program does that itself whenever the switch is not on.
     echo
     if [ -x "${AQ_GDM_DISPLAY}" ]; then
         "${AQ_GDM_DISPLAY}"
     else
-        echo "aq: ${AQ_GDM_DISPLAY} is missing, so nothing was re-copied." >&2
+        echo "aq: ${AQ_GDM_DISPLAY} is missing, so nothing was changed." >&2
     fi
 
     echo
     echo "Restart to see it:  sudo systemctl reboot"
-    if [ "${wanted}" = "fractional" ]; then
+    if [ "${wanted}" = "on" ] || { [ "${wanted}" = "fractional" ] && [ -e "${AQ_OPTIN_MARKER}" ]; }; then
         echo
-        echo "WATCH THE RESTART. If you get a black screen with only a mouse"
-        echo "pointer, wait — this computer removes the setting and restarts the"
-        echo "login screen by itself after about 45 seconds. If it does not come"
+        echo "⚠️ WATCH THE RESTART. If you get a black screen with only a mouse"
+        echo "pointer, wait about a minute — this computer tries to remove the"
+        echo "copy and restart the login screen by itself. If it does not come"
         echo "back, press Ctrl+Alt+F3 for a text login and run:"
-        echo "    sudo aq login scale integer"
+        echo "    sudo aq login scale off"
         echo "    sudo systemctl restart gdm"
     fi
 }

@@ -146,6 +146,82 @@ aq_output_has() { # aq_output_has <pattern> <command> [args...]
 }
 
 # ------------------------------------------------------------------------------
+# aq_unit_is_on_from_usr <unit> "<what it does>"
+# ------------------------------------------------------------------------------
+# "Is this service switched on, in a way an update cannot lose?"
+#
+# ⚠️ WHY THIS IS NOT `systemctl enable`, AND WHY IT MATTERS ON THIS KIND OF
+# OPERATING SYSTEM. Read this before changing how any AquariusOS unit is
+# switched on.
+#
+# `systemctl enable foo.service` writes a symlink into /etc:
+#
+#     /etc/systemd/system/graphical.target.wants/foo.service
+#
+# On an ordinary Linux machine that is exactly right. On AquariusOS it is a
+# trap, because /etc is not ours. Every update takes the /etc from the new image
+# and MERGES the current machine's /etc onto it: anything the person changed
+# locally wins, forever. That includes DELETIONS. So:
+#
+#   * somebody runs `sudo systemctl disable aquarius-gdm-display` once, in 2026,
+#     to try something;
+#   * that deletes the /etc symlink, which the merge records as "this machine
+#     does not want that file";
+#   * every update from then on carefully preserves the absence. The service is
+#     off on that one machine, forever, and no image can switch it back on. It
+#     looks exactly like a bug in the image.
+#
+# Royce hit this on the bench. So AquariusOS switches its own services on the
+# other way: the symlink is SHIPPED IN THE IMAGE, under /usr, which is replaced
+# whole at every update and which nothing local can edit:
+#
+#     /usr/lib/systemd/system/graphical.target.wants/foo.service
+#
+# systemd reads .wants folders from every unit directory, /usr included, so this
+# starts the service exactly the same way. The difference is that an update
+# always restores it and no local change can silently lose it.
+#
+# THE HONEST COST, which belongs in the docs of anything switched on this way:
+# `systemctl disable` no longer turns it off, because there is nothing in /etc
+# to remove. `sudo systemctl mask <unit>` does — that writes to /etc and beats
+# everything — and each of our units has its own plain-English off switch
+# (`aq login scale off`, and so on) which is the one to reach for first.
+#
+# This helper checks the shipped link CONTENTS, in the finished image. It also
+# prints what `systemctl is-enabled` thinks, as information — that command's
+# answer for a /usr-shipped link differs between systemd versions, so it is
+# never what a build passes or fails on.
+aq_unit_is_on_from_usr() {
+    local unit="$1" what="${2:-}"
+    local link="/usr/lib/systemd/system/graphical.target.wants/${unit}"
+
+    if [ ! -L "${link}" ]; then
+        bad "${link} is missing — ${unit} would be installed but never start"
+        return
+    fi
+    echo "  ${link} -> $(readlink "${link}")"
+    if [ -e "${link}" ]; then
+        ok "${unit} is switched on from /usr, so an update always restores it${what:+ (${what})}"
+    else
+        bad "the 'switched on' link for ${unit} is dangling — it points at nothing"
+    fi
+
+    # ⚠️ NOTHING OF OURS MAY BE SWITCHED ON THROUGH /etc. If a `systemctl enable`
+    # ever creeps back into a build script, this is what catches it — a machine
+    # would then have the same unit wanted from two places and a `disable` that
+    # half-works.
+    if [ -e "/etc/systemd/system/graphical.target.wants/${unit}" ]; then
+        bad "${unit} is ALSO switched on through /etc — a build step ran 'systemctl enable'. See the note in aq-lib.sh."
+    else
+        ok "nothing switches ${unit} on through /etc (an update could lose that)"
+    fi
+
+    if aq_have systemctl; then
+        echo "  (for information) systemctl is-enabled ${unit}: $(systemctl is-enabled "${unit}" 2> /dev/null || echo "no answer")"
+    fi
+}
+
+# ------------------------------------------------------------------------------
 # aq_dnf <arguments...>  — install things
 # ------------------------------------------------------------------------------
 # On Fedora 44 the `dnf` command IS dnf5, but some images also ship it under the

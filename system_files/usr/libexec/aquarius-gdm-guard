@@ -7,39 +7,75 @@
 #
 # On 2026-09-05 the bench machine booted to a black screen with a mouse pointer
 # on it and nothing else. No login screen. The cause was a display arrangement
-# that AquariusOS had helpfully copied to the login screen, containing a size
-# the login screen could not do (see aquarius-monitors-sanitize for the whole
-# story). The fix, once someone worked it out, was to delete two files and
-# restart the login screen.
+# that AquariusOS had helpfully copied to the login screen (see
+# aquarius-gdm-display for the whole story). The fix, once someone worked it
+# out, was to delete two files and restart the login screen.
 #
-# The sanitiser now makes sure that particular file is never wrong again. This
-# is the SECOND line of defence: the one that runs when something we did not
-# predict goes wrong in the same place. It watches the boot, and if no login
-# screen has appeared after a short while, it undoes the only thing AquariusOS
-# added to the login screen — the copied display arrangement — and restarts it.
+# AquariusOS no longer makes that copy at all unless somebody switches it on for
+# one machine. This program is the net underneath: if a login screen does not
+# come up and one of those copies is lying about — left over from an older
+# version, or written on purpose by somebody testing — it takes the copy away
+# and restarts the login screen once.
 #
-# Nobody has to know any of this. The machine either comes up, or it comes up
-# forty-five seconds later looking slightly small, and there is a line in the
-# log saying exactly what happened and why.
+# -----------------------------------------------------------------------------
+# ⚠️ IT DID NOT WORK ON 2026-09-05, AND HERE IS EXACTLY WHY
+# -----------------------------------------------------------------------------
+# The bench black-screened a SECOND time, on the very image that added this
+# guard, and the guard sat there and did nothing. The bug was not in the wiring.
+# It was in the question this program asked.
+#
+# It asked logind: "is there a graphical session on this machine?" — and in a
+# black-screen boot the answer is YES. The mouse pointer is drawn by the
+# compositor; a pointer on the screen is proof that GNOME's greeter started, is
+# alive, and has a session. What went wrong is one step further in: the
+# compositor came up and drew nothing. logind cannot see that. It only knows a
+# session exists, and it did.
+#
+# So the guard looked once, twenty seconds in, was told "the login screen is up",
+# said "nothing to do" and exited 0 — while Royce was staring at a black screen.
+#
+# THE LESSON, WRITTEN DOWN SO IT IS NOT RE-LEARNED: a session existing is not the
+# same as a login screen appearing, and no program that cannot see the screen can
+# tell those two apart with certainty. This one now asks three questions instead
+# of one, and is honest below about the case it still cannot see.
 #
 # -----------------------------------------------------------------------------
 # WHEN IT DECIDES SOMETHING IS WRONG — the exact trigger, so it cannot surprise
 # -----------------------------------------------------------------------------
-# It gives up and acts when ALL of these are true:
+# It only looks at all when ALL of these are true:
 #
 #   1. GDM is the login screen this computer is using       (not greetd, not none)
 #   2. at least one of the two copied files actually exists  (there is something
 #                                                             to take away)
-#   3. 45 seconds after the login screen was started, there is still NO
-#      graphical session on this machine — no greeter, and nobody logged in
-#   4. it has not already acted once during this boot
+#   3. it has not already acted once during this boot
 #
-# If ANY of those is false it does nothing at all and exits successfully. In
-# particular: it does not care whether GDM is "running". GDM restarts itself
-# forever, so "running" is true even in the broken case; that is exactly why a
-# systemd OnFailure= hook on gdm.service cannot catch this and why this program
-# exists at all. What it looks at instead is whether a SESSION appeared, which
-# is the thing a person would call "the login screen came up".
+# It then watches for 45 seconds, sampling, and acts if ANY ONE of these is true
+# at the end. Any one, not all — each is independent evidence:
+#
+#   A. NO GRAPHICAL SESSION AT THE END. Either nothing ever started, or one
+#      started and then went away. The plainest failure.
+#
+#   B. THE GREETER KEEPS RESTARTING. Either gdm.service's restart count went up
+#      while we watched, or the graphical session ids changed — a healthy login
+#      screen sits in one session and stays there. A greeter crash-looping is
+#      what a bad display arrangement usually produces, and it is invisible to
+#      question A because at any instant there IS a session.
+#
+#   C. THE COMPOSITOR SAID IT COULD NOT USE THE DISPLAY ARRANGEMENT. mutter
+#      writes a line into the journal when it rejects or fails to apply a stored
+#      monitor configuration. That line names our copied file as the problem
+#      directly, so it is worth acting on even while a session exists — which is
+#      precisely the case that beat the guard on 2026-09-05.
+#
+# ⚠️ AND THE CASE IT STILL CANNOT SEE. If the compositor comes up, keeps one
+# stable session, complains about nothing, and draws a black screen anyway, this
+# program has no way to know. It cannot read pixels. THAT is the honest reason
+# the copy is switched off by default rather than "the guard has it covered" —
+# the guard is a net, not a fix. See docs/restart/login.md.
+#
+# It does not care whether GDM is "running". GDM restarts itself forever, so
+# "running" is true even in the broken case; that is why a systemd OnFailure=
+# hook on gdm.service cannot catch this and why this program exists at all.
 #
 # -----------------------------------------------------------------------------
 # WHY IT CANNOT LOOP
@@ -67,8 +103,9 @@
 # Neither is anybody's own file, neither holds anything that is not also in the
 # home folder it was copied from, and losing both costs exactly one thing: the
 # login screen goes back to 100%, which is what every stock Fedora machine
-# does. They are re-made at the next logout or the next boot — by which time
-# the sanitiser will have made them safe.
+# does. Since 2026-09-05 they are NOT re-made afterwards unless somebody has run
+# `sudo aq login scale on` — so on a default machine this repair is permanent,
+# and that is the intended outcome, not a side effect.
 #
 # RUNNING IT BY HAND
 #   sudo /usr/libexec/aquarius-gdm-guard --status    what it would look at
@@ -77,22 +114,40 @@
 
 set -uo pipefail
 
-AQ_SYSTEM_XML="/etc/xdg/monitors.xml"
-AQ_GDM_XML="/var/lib/gdm/.config/monitors.xml"
-AQ_STATE_DIR="/var/lib/aquarius"
+# ⚠️ THE TWO PATHS BELOW ARE THE ONLY FILES THIS PROGRAM WILL EVER DELETE, and
+# AQ_GDM_GUARD_ROOT exists for ONE reason: so tests/test-gdm-guard.sh can run
+# this program for real, against a temporary folder, without being root and
+# without touching the machine it runs on. It is never set in normal use, and
+# unset every path is exactly what it always was.
+AQ_ROOT="${AQ_GDM_GUARD_ROOT:-}"
+
+AQ_SYSTEM_XML="${AQ_ROOT}/etc/xdg/monitors.xml"
+AQ_GDM_XML="${AQ_ROOT}/var/lib/gdm/.config/monitors.xml"
+AQ_STATE_DIR="${AQ_ROOT}/var/lib/aquarius"
 AQ_LOG="${AQ_STATE_DIR}/gdm-display.log"
 AQ_STAMP_DIR="/run/aquarius"
+[ -n "${AQ_ROOT}" ] && AQ_STAMP_DIR="${AQ_ROOT}/run/aquarius"
 AQ_STAMP="${AQ_STAMP_DIR}/gdm-guard-acted"
 
 # How long to give the login screen before deciding it is not coming. 45
 # seconds is the number in the header and the number here; if it ever changes,
 # it changes in both places and in docs/restart/login.md.
-AQ_TOTAL_WAIT=45
+AQ_TOTAL_WAIT="${AQ_GDM_GUARD_TOTAL_WAIT:-45}"
 # How long to wait before looking at all. A login screen that has not appeared
 # in the first twenty seconds is not necessarily broken — a slow disk, a slow
 # graphics driver — so the first look is deliberately late.
-AQ_FIRST_LOOK=20
-AQ_POLL_EVERY=5
+AQ_FIRST_LOOK="${AQ_GDM_GUARD_FIRST_LOOK:-20}"
+AQ_POLL_EVERY="${AQ_GDM_GUARD_POLL_EVERY:-5}"
+
+# ⚠️ WHAT THE COMPOSITOR SAYS WHEN IT WILL NOT USE OUR FILE. These are mutter's
+# own words, and they are the only direct evidence this program can get that the
+# copied display arrangement is the problem. They are matched case-insensitively
+# against the login screen's journal for this boot.
+#
+# Being generous here is the right kind of wrong: acting on a message that meant
+# something else costs a login-screen restart and a smaller login screen. NOT
+# acting costs a computer nobody can get into. That is not a close call.
+AQ_MUTTER_COMPLAINTS='failed to apply.*monitor|could not apply.*monitor|monitors config|logical monitors not adjacent|failed to use stored monitor configuration|stored monitor configuration|invalid monitor config'
 
 say() { echo "aquarius-gdm-guard: $*"; }
 
@@ -108,33 +163,39 @@ note() {
 }
 
 # -----------------------------------------------------------------------------
-# Is there a graphical session on this machine?
+# QUESTION A — which graphical sessions are on this machine right now?
 # -----------------------------------------------------------------------------
-# "The login screen came up" and "somebody is already logged in" are both fine,
-# and both are the same question to logind: is there a session whose type is a
-# graphical one?
+# It answers with the LIST of session ids, not yes-or-no, and that change is the
+# 2026-09-05 fix. Yes-or-no could not tell a login screen that came up and
+# stayed from one that is crashing and being restarted several times a minute:
+# both answer "yes" at every instant. The list can — the ids change.
 #
 # It is asked this roundabout way — list the session ids, then ask about each
 # one — because the COLUMNS of `loginctl list-sessions` have changed between
 # systemd versions and the first column has not, while `show-session -p Type
 # --value` has meant the same thing for a decade. Parsing the table would be a
 # check that quietly stops working at some future Fedora.
-aq_graphical_session_exists() {
+#
+# Sorted, so that two sessions listed in a different order are not mistaken for
+# a session having been replaced.
+aq_graphical_session_ids() {
     local session type
     for session in $(loginctl list-sessions --no-legend 2> /dev/null | awk '{print $1}'); do
         type="$(loginctl show-session "${session}" -p Type --value 2> /dev/null)"
         case "${type}" in
-            wayland | x11 | mir) return 0 ;;
+            wayland | x11 | mir) echo "${session}" ;;
         esac
-    done
-    return 1
+    done | sort | tr '\n' ' '
 }
 
-# A second, independent signal: does the "gdm" user have a session? That is the
-# greeter itself. Checked as well as the above rather than instead of it,
-# because on a machine set to log somebody in automatically there is never a
-# greeter session at all, and the guard must not treat a successful automatic
+# The "gdm" user having a session is the greeter itself. It counts as a session
+# too, because on a machine set to log somebody in automatically there is never
+# a greeter session at all and the guard must not treat a successful automatic
 # login as a failure.
+#
+# ⚠️ IT IS NOT PROOF OF ANYTHING BEING ON SCREEN. This was half of the check
+# that failed on 2026-09-05. It is kept only as a way of saying "something
+# started", never as a way of saying "the login screen appeared".
 aq_greeter_user_session_exists() {
     local state
     state="$(loginctl show-user gdm -p State --value 2> /dev/null)"
@@ -144,8 +205,33 @@ aq_greeter_user_session_exists() {
     return 1
 }
 
-aq_login_screen_is_up() {
-    aq_graphical_session_exists || aq_greeter_user_session_exists
+aq_something_is_running() {
+    [ -n "$(aq_graphical_session_ids)" ] || aq_greeter_user_session_exists
+}
+
+# -----------------------------------------------------------------------------
+# QUESTION B — has the login screen restarted while we watched?
+# -----------------------------------------------------------------------------
+# A healthy greeter starts once. A greeter that cannot draw is killed and
+# restarted, over and over, and systemd counts that for us. An empty or
+# unreadable answer becomes 0 so that a missing systemctl can never be mistaken
+# for a restart.
+aq_gdm_restart_count() {
+    local n
+    n="$(systemctl show gdm.service -p NRestarts --value 2> /dev/null | tr -cd '0-9')"
+    printf '%s' "${n:-0}"
+}
+
+# -----------------------------------------------------------------------------
+# QUESTION C — did the compositor say it could not use our file?
+# -----------------------------------------------------------------------------
+# The one signal that points straight at the copied display arrangement. It is
+# worth acting on even when a session exists, because "a session exists and the
+# screen is black" is exactly the shape of the failure that beat this guard.
+aq_compositor_rejected_the_display_config() {
+    command -v journalctl > /dev/null 2>&1 || return 1
+    journalctl -b -u gdm.service --no-pager -n 500 2> /dev/null \
+        | grep -Eiq "${AQ_MUTTER_COMPLAINTS}"
 }
 
 aq_copies_exist() {
@@ -182,14 +268,6 @@ aq_status() {
         blockers=$((blockers + 1))
     fi
 
-    echo "Is there a graphical session right now?"
-    if aq_login_screen_is_up; then
-        echo "  yes — the login screen is up"
-        blockers=$((blockers + 1))
-    else
-        echo "  no"
-    fi
-
     echo "Has the guard already acted during this boot?"
     if [ -e "${AQ_STAMP}" ]; then
         echo "  yes  ${AQ_STAMP} — it will not act again until the next boot"
@@ -198,26 +276,62 @@ aq_status() {
         echo "  no"
     fi
 
+    # ⚠️ THE THREE QUESTIONS, REPORTED SEPARATELY. The old version of this
+    # command asked one — "is there a graphical session?" — and that one
+    # question is what let a black screen through on 2026-09-05.
+    echo
+    echo "The three things it watches for (any ONE of them means it acts):"
+
+    local ids
+    ids="$(aq_graphical_session_ids)"
+    echo "  A. no graphical session at all"
+    if [ -n "${ids}" ]; then
+        echo "     no — there are sessions: ${ids}"
+    elif aq_greeter_user_session_exists; then
+        echo "     no — the 'gdm' user has a session, though none is graphical yet"
+    else
+        echo "     YES — nothing graphical is running"
+    fi
+
+    echo "  B. the login screen keeps restarting"
+    echo "     gdm.service has restarted $(aq_gdm_restart_count) time(s) this boot."
+    echo "     (the guard compares this before and after its 45-second watch, and"
+    echo "     also watches whether the session ids change)"
+
+    echo "  C. the compositor said it could not use the display arrangement"
+    if aq_compositor_rejected_the_display_config; then
+        echo "     YES — the login screen's journal has such a line in it"
+    else
+        echo "     no — nothing like that in the login screen's journal"
+    fi
+
     echo
     if [ "${blockers}" -eq 0 ]; then
-        echo "So: 45 seconds into a boot, the guard WOULD remove those files and"
-        echo "restart the login screen."
+        echo "So: this machine is one the guard would watch. It removes those files"
+        echo "and restarts the login screen only if A, B or C is true at the end of"
+        echo "its ${AQ_TOTAL_WAIT}-second watch."
     else
-        echo "So: the guard would do nothing. See the 'no' answers above."
+        echo "So: the guard would do nothing at all. See the 'no' answers above."
     fi
+    echo
+    echo "⚠️ It cannot see the screen. A login screen that starts, stays in one"
+    echo "session, complains about nothing and draws black is invisible to it."
+    echo "That is why the display copy is off by default: aq login scale status"
 }
 
 # -----------------------------------------------------------------------------
 # The repair itself
 # -----------------------------------------------------------------------------
 aq_repair() {
+    local why="${1:-the login screen did not come up}"
+
     mkdir -p "${AQ_STAMP_DIR}" 2> /dev/null || true
     : > "${AQ_STAMP}" 2> /dev/null || true
 
-    note "no login screen appeared within ${AQ_TOTAL_WAIT} seconds of the login"
-    note "screen starting. The most likely cause is the display arrangement"
-    note "AquariusOS copied for it, so both copies are being removed and the"
-    note "login screen restarted once. It will come back at 100%."
+    note "REPAIRING THE LOGIN SCREEN. What was seen: ${why}."
+    note "The most likely cause is the display arrangement AquariusOS copied for"
+    note "the login screen, so both copies are being removed and the login screen"
+    note "restarted once. It will come back at 100%."
 
     rm -f "${AQ_SYSTEM_XML}" "${AQ_GDM_XML}" 2> /dev/null || true
     note "removed ${AQ_SYSTEM_XML} and ${AQ_GDM_XML}"
@@ -254,11 +368,11 @@ case "${1:-}" in
         exit 0
         ;;
     --now)
-        if [ "$(id -u)" -ne 0 ]; then
+        if [ "$(id -u)" -ne 0 ] && [ -z "${AQ_ROOT}" ]; then
             echo "aquarius-gdm-guard: this has to be run as root." >&2
             exit 1
         fi
-        aq_repair
+        aq_repair "somebody asked for the repair by hand (--now)"
         exit 0
         ;;
     "") : ;;
@@ -297,25 +411,87 @@ if ! aq_copies_exist; then
     exit 0
 fi
 
-say "watching for the login screen (up to ${AQ_TOTAL_WAIT}s)."
+say "watching for the login screen (${AQ_TOTAL_WAIT}s)."
+
+# ⚠️ IT WATCHES THE WHOLE TIME AND DECIDES ONCE, AT THE END. The version that
+# failed on 2026-09-05 stopped watching the moment it saw a session — twenty
+# seconds in, while the screen was black — and reported success. A login screen
+# that is crashing and restarting looks perfectly healthy at any single instant;
+# the only way to see it is to keep looking. Forty-five seconds of a oneshot
+# service costs nothing: nothing waits for this unit.
+
+# The restart count BEFORE we start. Anything above this by the end means the
+# greeter died and was restarted while we were watching.
+AQ_RESTARTS_AT_START="$(aq_gdm_restart_count)"
+
+AQ_FIRST_IDS=""   # the first set of graphical sessions we saw, if any
+AQ_LAST_IDS=""    # the set we saw at the last look
+AQ_IDS_CHANGED=0  # did the set ever change after we first saw one?
+AQ_EVER_SAW_ONE=0
+
+aq_look() {
+    local ids
+    ids="$(aq_graphical_session_ids)"
+    AQ_LAST_IDS="${ids}"
+    [ -z "${ids}" ] && return 0
+    AQ_EVER_SAW_ONE=1
+    if [ -z "${AQ_FIRST_IDS}" ]; then
+        AQ_FIRST_IDS="${ids}"
+    elif [ "${ids}" != "${AQ_FIRST_IDS}" ]; then
+        AQ_IDS_CHANGED=1
+    fi
+}
 
 aq_waited=0
 sleep "${AQ_FIRST_LOOK}"
 aq_waited="${AQ_FIRST_LOOK}"
+aq_look
 
 while [ "${aq_waited}" -lt "${AQ_TOTAL_WAIT}" ]; do
-    if aq_login_screen_is_up; then
-        say "the login screen is up after ${aq_waited}s. Nothing to do."
-        exit 0
-    fi
     sleep "${AQ_POLL_EVERY}"
     aq_waited=$((aq_waited + AQ_POLL_EVERY))
+    aq_look
 done
 
-if aq_login_screen_is_up; then
-    say "the login screen is up after ${aq_waited}s. Nothing to do."
+AQ_RESTARTS_AT_END="$(aq_gdm_restart_count)"
+
+# -----------------------------------------------------------------------------
+# The verdict — the three questions from the header, in order of how sure we are
+# -----------------------------------------------------------------------------
+if aq_compositor_rejected_the_display_config; then
+    aq_repair "the login screen's own journal says it could not use the display arrangement"
     exit 0
 fi
 
-aq_repair
+if [ "${AQ_RESTARTS_AT_END}" -gt "${AQ_RESTARTS_AT_START}" ] 2> /dev/null; then
+    aq_repair "the login screen restarted while we watched (${AQ_RESTARTS_AT_START} -> ${AQ_RESTARTS_AT_END}) — a healthy one starts once"
+    exit 0
+fi
+
+if [ "${AQ_IDS_CHANGED}" -eq 1 ]; then
+    aq_repair "the graphical session kept being replaced (${AQ_FIRST_IDS}-> ${AQ_LAST_IDS}) — the login screen is crashing and restarting"
+    exit 0
+fi
+
+if [ -z "${AQ_LAST_IDS}" ]; then
+    # A session that appeared and then went away is the same failure as one that
+    # never appeared, and it is worth naming separately because the message is
+    # the difference between "it never started" and "it will not stay up".
+    if [ "${AQ_EVER_SAW_ONE}" -eq 1 ]; then
+        aq_repair "a graphical session appeared and then vanished — the login screen is not staying up"
+        exit 0
+    fi
+    if ! aq_greeter_user_session_exists; then
+        aq_repair "no graphical session appeared in ${AQ_TOTAL_WAIT} seconds"
+        exit 0
+    fi
+    # Nothing graphical, but the greeter user is there — an automatic login, or
+    # a session type logind names something we do not recognise. Not enough to
+    # act on: a needless login-screen restart is its own kind of harm.
+    say "no graphical session, but the 'gdm' user has one. Assuming that is fine"
+    say "and doing nothing — see --status."
+    exit 0
+fi
+
+say "the login screen came up and stayed up (${AQ_LAST_IDS}). Nothing to do."
 exit 0

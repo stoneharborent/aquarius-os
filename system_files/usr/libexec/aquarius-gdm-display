@@ -29,54 +29,68 @@
 # copy somewhere the login screen can read it.
 #
 # -----------------------------------------------------------------------------
-# ⚠️ IT MAKES THE COPY SAFE FIRST. READ THIS BEFORE CHANGING ANYTHING HERE.
+# ⚠️ AND IT IS SWITCHED OFF. READ THIS BEFORE CHANGING ANYTHING HERE.
 # -----------------------------------------------------------------------------
-# 2026-09-05, the bench: the machine booted to a black screen with a mouse
-# pointer on it and no login screen at all. Removing the two files this program
-# writes, and restarting the login screen, brought it straight back.
+# THE LOGIN SCREEN GETS NO COPIED DISPLAY FILE BY DEFAULT. Royce's decision,
+# 2026-09-05, after this program's output black-screened the bench TWICE:
 #
-# So THIS PROGRAM'S OUTPUT WAS THE CAUSE. That much is certain, because taking
-# it away is what fixed it.
+#   4 -> 5 Sept   the machine booted to a black screen with a mouse pointer and
+#                 no login screen. Deleting the two files this program writes,
+#                 and restarting the login screen, brought it straight back.
+#   5 Sept        a sanitiser was added (part sizes rounded to whole ones) and a
+#                 guard that was supposed to undo the damage by itself. The
+#                 machine black-screened AGAIN on the next boot, and the guard
+#                 did not act. Royce recovered by hand, the same way as before.
 #
-# WHAT IS NOT CERTAIN IS WHY, and it is worth being straight about that rather
-# than writing a confident story into a comment. The most obvious suspect is
-# the size: Royce's monitor is set to 125%, which is a PART SIZE, and part sizes
-# on GNOME's login screen have a long history of quietly not working. But this
-# image is Fedora 44, which is GNOME 50, and GNOME 50 turned part sizes on by
-# default for everybody (mutter merge request 4877, February 2026) — so "the
-# login screen cannot do 125%" is a weaker explanation here than it would have
-# been a year ago. A second documented possibility is that mutter rejected the
-# whole arrangement because it did not match the monitors actually plugged in
-# (its own validator says "Logical monitors not adjacent" and throws the file
-# away). We could not confirm either from upstream bug reports.
+# So the certain facts are: THESE FILES CAUSE IT, and REMOVING THEM FIXES IT.
+# What is still not known is WHY, and it is worth being straight about that
+# rather than writing a confident story into a comment:
 #
-# THAT UNCERTAINTY IS WHY THERE ARE TWO DEFENCES AND NOT ONE:
+#   * Part sizes were the first suspect — Royce's monitor is at 125% and part
+#     sizes on GNOME's login screen have a history of quietly not working. But
+#     this image is Fedora 44, which is GNOME 50, and GNOME 50 turned part sizes
+#     on by default for everybody (mutter merge request 4877, February 2026), so
+#     that explanation is weaker here than it would have been a year ago.
+#   * mutter also throws a whole arrangement away if it does not match the
+#     monitors actually plugged in ("Logical monitors not adjacent").
+#   * The file that broke the SECOND boot was most likely written by the OLD
+#     logout hook at the previous shutdown — an unsanitised 125% file — because
+#     an update's new /etc does not exist yet at the moment you log out of the
+#     old one. Which is its own lesson: a defence that only works after the next
+#     update is not a defence.
 #
-#   * this program only ever hands over a SANITISED file, which removes the most
-#     plausible specific cause; and
-#   * aquarius-gdm-guard.service watches the boot and takes these files away by
-#     itself if no login screen appears — which works no matter what the cause
-#     turns out to be. That is the one that would have saved the bench.
+# Two black boots is enough. A login screen that is too small is annoying; a
+# login screen that is black is a computer nobody can get into. So:
 #
-# So this program no longer copies the file. It copies a SANITISED file:
+#   NOTHING IS COPIED unless /var/lib/aquarius/gdm-display-optin exists, and
+#   that file is never shipped in the image. It is created on one machine, by
+#   hand, by somebody who intends to watch the next restart.
+#
+#   AND, ON EVERY BOOT, IF THE OPT-IN IS NOT THERE AND A COPY IS, THE COPY IS
+#   REMOVED. That is not tidiness — it is the repair. A machine updating from an
+#   older AquariusOS still has yesterday's copy sitting in /etc, written before
+#   any of this existed, and it would black-screen on the first boot of this
+#   image if nothing took it away. This is what takes it away, with nobody
+#   typing anything.
+#
+# THE SWITCH, AND THE SIZE MODE UNDERNEATH IT
+#     sudo aq login scale off       no copy at all (the default)
+#     sudo aq login scale on        copy it, sanitised — then RESTART AND WATCH
+#     sudo aq login scale status    which one is on, and what happened
+#
+#     sudo aq login scale integer   while ON: whole sizes only (the default)
+#     sudo aq login scale fractional  while ON: let part sizes through (125%)
+#
+# `on` writes /var/lib/aquarius/gdm-display-optin; `fractional` writes
+# /var/lib/aquarius/gdm-fractional-ok. See docs/restart/login.md.
+#
+# WHEN IT IS ON, IT STILL ONLY HANDS OVER A SANITISED FILE.
 # /usr/libexec/aquarius-monitors-sanitize reads the arrangement, replaces any
 # part size with the nearest whole size that still leaves a usable screen
 # (125% -> 100%), passes everything else through untouched, and refuses to
 # produce anything at all out of a file it cannot understand. Its own header has
-# the full rule table.
-#
-# THE ONE RULE THIS PROGRAM NOW OBEYS: the login screen is never handed a file
-# that has not been through the sanitiser. If the sanitiser will not produce
-# one, nothing is copied and the login screen keeps whatever it had — which is
-# always better than a black screen.
-#
-# PART SIZES CAN BE TURNED BACK ON, once somebody has watched a real machine
-# boot with them:
-#     sudo aq login scale fractional     let part sizes through
-#     sudo aq login scale integer        whole sizes only (the default)
-#     sudo aq login scale status         which one is on, and what happened
-# That writes /var/lib/aquarius/gdm-fractional-ok, and this program then runs
-# the sanitiser in pass-through mode. See docs/restart/login.md.
+# the full rule table. If the sanitiser will not produce a file, nothing is
+# copied and the login screen keeps whatever it had.
 #
 # OUR OWN GREETER IS NOT AFFECTED BY ANY OF THIS. The part-size problem belongs
 # to GNOME's login screen specifically. The AquariusOS greeter draws on labwc,
@@ -112,12 +126,16 @@
 # -----------------------------------------------------------------------------
 #   1. At every boot, before the login screen starts
 #      (aquarius-gdm-display.service, ordered Before=display-manager.service).
+#      This is the run that removes an old copy on a machine that is switched
+#      off, so it matters most on the machines where nothing is switched on.
 #   2. Every time somebody logs OUT of a session
-#      (/etc/gdm/PostSession/Default, which GDM runs as root at that moment).
+#      (/etc/gdm/PostSession/Default, which GDM runs as root at that moment) —
+#      but ONLY while the opt-in is on. With it off, that hook does nothing at
+#      all, exactly like the two-line script Fedora ships.
 #
-# Between the two, the login screen is never more than one logout behind the
-# desktop. The first covers "I changed the scale, then rebooted"; the second
-# covers "I changed the scale, then logged out to switch sessions".
+# Between the two, a machine that has opted in is never more than one logout
+# behind the desktop. The first covers "I changed the scale, then rebooted"; the
+# second covers "I changed the scale, then logged out to switch sessions".
 #
 # -----------------------------------------------------------------------------
 # WHAT IT WILL NOT DO
@@ -160,8 +178,14 @@ AQ_GDM_XML="${AQ_GDM_DIR}/monitors.xml"
 AQ_STATE_DIR="${AQ_ROOT}/var/lib/aquarius"
 AQ_SCALE_FILE="${AQ_STATE_DIR}/display-scale"
 AQ_LOG="${AQ_STATE_DIR}/gdm-display.log"
+# ⚠️ THE MASTER SWITCH. Without this file NOTHING is copied to the login screen,
+# and any copy already there is removed. It is never shipped in the image; it is
+# written by `sudo aq login scale on`, on one machine, by somebody who intends to
+# watch the next restart. See this program's header for why.
+AQ_OPTIN_MARKER="${AQ_STATE_DIR}/gdm-display-optin"
 # The marker that says "a human has watched this machine boot with part sizes on
 # the login screen, and it worked". Written by `aq login scale fractional`.
+# It only means anything while the master switch above is on.
 AQ_FRACTIONAL_MARKER="${AQ_STATE_DIR}/gdm-fractional-ok"
 AQ_HOMES="${AQ_ROOT}/home"
 AQ_SCALE_HELPER="${AQ_SCALE_HELPER_OVERRIDE:-/usr/libexec/aquarius-display-scale}"
@@ -191,6 +215,13 @@ aq_fractional_allowed() {
     [ -e "${AQ_FRACTIONAL_MARKER}" ]
 }
 
+# Is this machine allowed to hand the login screen a display file at all?
+# This is the master switch and it is OFF unless somebody switched it on. See
+# the header: the alternative has black-screened the bench twice.
+aq_copy_allowed() {
+    [ -e "${AQ_OPTIN_MARKER}" ]
+}
+
 usage() {
     # Print the header comment — however long it is — and stop at the first line
     # that is not a comment. A fixed line range was here before and went stale
@@ -207,16 +238,30 @@ case "${1:-}" in
         AQ_DRY_RUN=1
         ;;
     --status)
-        echo "What size can GNOME's login screen be?"
-        if aq_fractional_allowed; then
-            echo "  PART SIZES ARE ALLOWED (125%, 150%) — somebody switched them on"
-            echo "  with 'sudo aq login scale fractional'. If the login screen ever"
-            echo "  comes up black, switch them off: sudo aq login scale integer"
+        echo "Is the login screen given a copy of your display settings at all?"
+        if aq_copy_allowed; then
+            echo "  ON — somebody switched this on with 'sudo aq login scale on'"
+            echo "  (${AQ_OPTIN_MARKER})."
+            echo "  ⚠️ This has black-screened the bench twice. If this computer"
+            echo "  comes up to a black screen with only a mouse pointer, press"
+            echo "  Ctrl+Alt+F3 for a text login and run:  sudo aq login scale off"
+            echo
+            echo "  What size may it be given?"
+            if aq_fractional_allowed; then
+                echo "    PART SIZES ARE ALLOWED (125%, 150%) — switched on with"
+                echo "    'sudo aq login scale fractional'."
+            else
+                echo "    whole sizes only (100%, 200%) — the safe sub-mode."
+                echo "    A part size in your own settings is rounded to the nearest"
+                echo "    whole one. Your desktop is unaffected."
+            fi
         else
-            echo "  whole sizes only (100%, 200%) — the safe default."
-            echo "  A part size in your own settings is rounded to the nearest whole"
-            echo "  one for the login screen, and your desktop is unaffected."
-            echo "  To try part sizes:  sudo aq login scale fractional"
+            echo "  OFF — the default, and the setting that cannot black-screen"
+            echo "  this computer. The login screen uses GNOME's own defaults,"
+            echo "  which means 100%: on a big 4K monitor it looks small. That is"
+            echo "  a deliberate trade — see docs/restart/login.md."
+            echo "  To try it anyway (and then RESTART AND WATCH):"
+            echo "      sudo aq login scale on"
         fi
         echo
         echo "The login screen's copy:"
@@ -257,6 +302,54 @@ if [ "$(id -u)" -ne 0 ] && [ "${AQ_DRY_RUN}" -eq 0 ] && [ -z "${AQ_ROOT}" ]; the
     exit 1
 fi
 
+# =============================================================================
+# 0. THE MASTER SWITCH — and, when it is off, the repair
+# =============================================================================
+# ⚠️ NOTHING BELOW THIS BLOCK RUNS ON A DEFAULT MACHINE. That is the point. Two
+# black boots on the bench (4->5 and 5 September 2026) were caused by the copy
+# this program makes, and the cause is still not understood, so the copy is off
+# until somebody switches it on for one machine.
+#
+# The clean-up in here is the half that matters most, because it is the half
+# that runs with nobody watching. A machine coming from an older AquariusOS
+# already HAS a copy — written by the old logout hook at its last shutdown,
+# before this image existed — and that copy is exactly what black-screens it. So
+# on every boot, if the switch is off and a copy is there, the copy goes. The
+# machine heals itself on the first boot of this image, without anyone typing
+# anything.
+#
+# It is deliberately unconditional and deliberately silent about failure: the
+# files are OUR copies, they contain nothing that is not also in a home folder,
+# and being unable to delete one must never turn a boot into an error.
+if ! aq_copy_allowed; then
+    aq_removed=0
+    for aq_leftover in "${AQ_SYSTEM_XML}" "${AQ_GDM_XML}"; do
+        [ -e "${aq_leftover}" ] || continue
+        if [ "${AQ_DRY_RUN}" -eq 1 ]; then
+            say "--dry-run: would remove ${aq_leftover} (left over from an older AquariusOS)"
+            aq_removed=1
+            continue
+        fi
+        if rm -f "${aq_leftover}" 2> /dev/null; then
+            note "removed ${aq_leftover} — a leftover copy from an older AquariusOS,"
+            note "which is the file that black-screened this computer. It is gone."
+            aq_removed=1
+        else
+            note "could not remove ${aq_leftover}. If the login screen does not"
+            note "appear, delete it by hand and restart the login screen:"
+            note "  sudo rm -f ${aq_leftover} && sudo systemctl restart gdm"
+        fi
+    done
+
+    if [ "${aq_removed}" -eq 0 ]; then
+        # ONE line, and only one. This runs at every boot on every machine, and
+        # a paragraph in the journal every time a program correctly did nothing
+        # is how logs stop being read.
+        say "login-screen display copy is off; the login screen uses GDM's own defaults"
+    fi
+    exit 0
+fi
+
 # -----------------------------------------------------------------------------
 # 1. Find the display arrangement to copy
 # -----------------------------------------------------------------------------
@@ -291,6 +384,7 @@ if [ -z "${AQ_NEWEST}" ]; then
     exit 0
 fi
 
+note "the login-screen display copy is switched ON (${AQ_OPTIN_MARKER})"
 say "using ${AQ_NEWEST}"
 
 AQ_SCALES="$(sed -n 's/.*<scale>\(.*\)<\/scale>.*/\1/p' "${AQ_NEWEST}" | sort -u | tr '\n' ' ')"

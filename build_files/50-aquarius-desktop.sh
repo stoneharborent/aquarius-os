@@ -185,18 +185,32 @@ fi
 #         thing entirely: our own greeter, drawn by the Aquarius Shell, shipped
 #         alongside greetd. That is Part B, in docs/restart/login.md.
 #
-# THE SIZE PROBLEM AND WHY IT IS NOT A SETTING
+# THE SIZE PROBLEM, AND WHY WE STOPPED TRYING TO FIX IT HERE
 #   GDM had no idea the bench monitor runs at 125%, so it drew everything at
 #   100% on a 55" 4K screen. The scale of a monitor is not a dconf key; it
 #   lives in a file called monitors.xml, and the copy that has the answer is
 #   inside a home folder that the "gdm" user is not allowed to read.
 #
-#   The fix is a messenger, not a setting: /usr/libexec/aquarius-gdm-display
-#   copies that file somewhere GDM can read it, at boot and at every logout.
-#   Its header explains all of it. What we deliberately do NOT do is set
-#   text-scaling-factor here as well — that would make the text bigger a second
-#   time on top of the monitor scale, and the login screen would end up too
-#   big instead of too small.
+#   ⚠️ THE OBVIOUS FIX — copy that file somewhere GDM can read it — BLACK-
+#   SCREENED THE BENCH TWICE, on 4 and 5 September 2026, and nobody worked out
+#   why. So as of 2026-09-05 (Royce's call) THE LOGIN SCREEN IS GIVEN NO COPIED
+#   DISPLAY FILE. It runs at GNOME's own 100% and looks small on a 4K screen,
+#   which is the deliberate trade: a small login screen is annoying, a black one
+#   is a computer nobody can get into.
+#
+#   The messenger below still ships, switched off, for two reasons. It is the
+#   thing that REMOVES a copy left behind by an older AquariusOS — which is what
+#   heals Royce's bench on its first boot of this image — and it is how somebody
+#   tests the idea again on one machine (`sudo aq login scale on`).
+#
+#   The real answer is our own login screen, which reads the session's scale
+#   itself and needs nothing copied anywhere. That is Part B of
+#   docs/restart/login.md and it is the R5 job.
+#
+#   What we deliberately do NOT do is set text-scaling-factor here instead —
+#   that makes GNOME's text bigger without fixing the monitor scale, so the
+#   login screen would end up wrong in a different direction, and it would be
+#   wrong on every machine rather than only the 4K ones.
 # ==============================================================================
 # GDM reads its settings from its own dconf database, which is separate from
 # every user's. Two files are needed and neither does anything on its own:
@@ -304,12 +318,17 @@ EOF
 # part sizes working on the login screen if Fedora ever patches that default
 # back off.
 #
-# ⚠️ AND IT IS NOT WHAT MAKES THE MACHINE SAFE. Writing this key does not let
-# the login screen be handed a part size — that decision belongs to
-# /usr/libexec/aquarius-monitors-sanitize, which rounds part sizes to whole ones
-# unless somebody has run `sudo aq login scale fractional`. The key and the
-# permission are deliberately two different things: the key says "this might
-# work", the marker file says "a person watched it work".
+# ⚠️ AND SINCE 2026-09-05 IT DOES NOTHING AT ALL ON A DEFAULT MACHINE, because
+# the login screen is no longer given any display arrangement to apply a size
+# from. It only starts to matter on a machine where somebody has run
+# `sudo aq login scale on`. It is kept because that is exactly the machine where
+# a part size might work or might not, and this key is the difference on a
+# Fedora that ever patches GNOME 50's default back off.
+#
+# It is NOT what makes anything safe. The key says "this might work"; the marker
+# file /var/lib/aquarius/gdm-fractional-ok says "a person watched it work"; and
+# /var/lib/aquarius/gdm-display-optin says "give the login screen anything at
+# all". Three deliberately separate things.
 #
 # The value has two entries because GNOME 47's own release notes document them
 # as a pair: scale-monitor-framebuffer is the screen itself, and
@@ -369,12 +388,28 @@ else
     bad "${AQ_GDM_DISPLAY} does not parse as shell"
 fi
 
-systemctl enable aquarius-gdm-display.service
-if systemctl is-enabled aquarius-gdm-display.service > /dev/null 2>&1; then
-    ok "it will run at every boot, before the login screen starts"
-else
-    bad "aquarius-gdm-display.service is not switched on — the login screen would never be told the screen size"
-fi
+aq_unit_is_on_from_usr aquarius-gdm-display.service \
+    "it runs at every boot, before the login screen starts"
+
+# ⚠️ THE SWITCH IS OFF IN EVERY IMAGE WE PUBLISH, AND THAT IS A BUILD RULE.
+# Shipping either marker would push a behaviour that has black-screened a real
+# machine twice onto every computer that installs AquariusOS, with nobody having
+# chosen it. They are created by hand, on one machine, by `aq login scale on`.
+for aq_marker in /var/lib/aquarius/gdm-display-optin \
+    /var/lib/aquarius/gdm-fractional-ok; do
+    if [ -e "${aq_marker}" ]; then
+        bad "${aq_marker} is baked into the image — this must be opt-in, per machine"
+    else
+        ok "$(basename "${aq_marker}") is not in the image (the copy stays off by default)"
+    fi
+done
+
+# And the program itself has to AGREE that it is off. A messenger that copies
+# regardless of the marker would make the marker decoration.
+aq_file_has "${AQ_GDM_DISPLAY}" 'gdm-display-optin' \
+    "the messenger checks the switch before copying anything"
+aq_file_has "${AQ_GDM_DISPLAY}" 'rm -f "\$\{aq_leftover\}"' \
+    "and it removes a copy left behind by an older AquariusOS"
 
 # ------------------------------------------------------------------------------
 # The safety check that stands between that file and the login screen
@@ -467,12 +502,8 @@ else
     bad "${AQ_GDM_GUARD} does not parse as shell"
 fi
 
-systemctl enable aquarius-gdm-guard.service
-if systemctl is-enabled aquarius-gdm-guard.service > /dev/null 2>&1; then
-    ok "it will watch every boot"
-else
-    bad "aquarius-gdm-guard.service is not switched on — nothing would rescue a black login screen"
-fi
+aq_unit_is_on_from_usr aquarius-gdm-guard.service \
+    "it watches every boot"
 
 AQ_GUARD_UNIT="/usr/lib/systemd/system/aquarius-gdm-guard.service"
 
@@ -544,16 +575,28 @@ cat > /etc/gdm/PostSession/Default << 'EOF'
 # did nothing. The original is kept at
 # /usr/share/aquarius/gdm-PostSession-Default.orig if you ever want to compare.
 #
-# The one thing added is the login screen's screen size. When you change the
-# Scale in Settings > Displays and then log out, this is what carries that
-# answer across to the login screen you are about to be looking at. Without it
-# the change would not show up until the next reboot.
+# ⚠️ BY DEFAULT THIS SCRIPT ALSO DOES NOTHING, and that is deliberate. It only
+# has an effect on a machine where somebody has run `sudo aq login scale on`.
+#
+# WHY THE TEST IS HERE AND NOT ONLY INSIDE THE PROGRAM. On 2026-09-05 the bench
+# black-screened a second time, and the file that did it was almost certainly
+# written by THIS HOOK at the previous shutdown — the old version of it, from
+# the old image, because an update's new /etc does not exist yet at the moment
+# you log out of the old one. So the last thing a machine does before its first
+# boot on a new image is run the OLD logout hook. The lesson: a hook that copies
+# by default is a hook that copies once more after you have stopped wanting it
+# to. This one copies only when asked.
+#
+# What it is for when it IS switched on: you change Scale in Settings >
+# Displays, you log out, and this carries the answer across to the login screen
+# you are about to be looking at, rather than making you reboot for it.
 #
 # THE RULE: this script must always finish, and always succeed. A logout that
 # hangs or fails here is a computer that will not let go of your session, so
 # every line is fenced with `|| true` and the last line is `exit 0`.
 # =============================================================================
-if [ -x /usr/libexec/aquarius-gdm-display ]; then
+if [ -e /var/lib/aquarius/gdm-display-optin ] \
+    && [ -x /usr/libexec/aquarius-gdm-display ]; then
     /usr/libexec/aquarius-gdm-display || true
 fi
 
@@ -563,6 +606,10 @@ chmod 0755 /etc/gdm/PostSession/Default
 
 aq_file_has /etc/gdm/PostSession/Default '/usr/libexec/aquarius-gdm-display' \
     "the logout hook runs the login-screen size messenger"
+# ⚠️ AND ONLY WHEN ASKED. An unguarded call here is how the bench got a second
+# black screen: the OLD hook ran at the shutdown before the fix arrived.
+aq_file_has /etc/gdm/PostSession/Default 'gdm-display-optin' \
+    "the logout hook does nothing unless somebody switched the copy on"
 aq_file_has /etc/gdm/PostSession/Default '^exit 0$' \
     "the logout hook always succeeds (a failing one would trap a session)"
 if bash -n /etc/gdm/PostSession/Default; then
