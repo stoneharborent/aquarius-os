@@ -232,3 +232,97 @@ After rebasing the bench to an image built from this branch:
 Nothing here should look dramatic — that is the point. It should look
 *intentional and finished* rather than like leftover Fedora defaults, and it
 should match the login screen you just came through.
+
+---
+
+# The lock screen
+
+*Added 2026-09-06.*
+
+The last piece of identity a person sees every day, and the one with teeth: the
+screen you get when you press **Super+L**, pick **Lock Screen** from the
+Aquarius menu, or walk away from the machine.
+
+**The whole design of it lives in the shell repository, at
+[`docs/lock-screen.md`](https://github.com/stoneharborent/aquarius-shell/blob/main/docs/lock-screen.md).**
+Read that page for what it looks like, the three states it moves through, what
+it deliberately never shows, and what is not built yet. This section is only the
+operating system's half.
+
+## What this image provides
+
+| What | Where | Why it matters |
+| --- | --- | --- |
+| The PAM rules | `/etc/pam.d/aquarius-lock` | **Without this file nobody can unlock the machine.** One line: `auth include login`. |
+| Locking before sleep | `aquarius-lock-on-sleep.service` + `/usr/libexec/aquarius-lock-on-sleep` | A closed laptop lid, the Sleep row, or an automatic suspend all lock the screen on the way past. |
+| `wlopm` | a package | Turns the monitor off after fifteen minutes. Not `wlr-randr --off`, which re-arranges your windows. |
+| Super+L | `/usr/share/aquarius/labwc/rc.xml` | Runs `qs ipc call lock lock` — a message to the shell that is already running, which is why it is instant. |
+
+All of it is installed and read back by
+[`build_files/57-lock-screen.sh`](../../build_files/57-lock-screen.sh), and
+checked again on the finished image by the *"Check the lock screen can actually
+let somebody back in"* step in CI.
+
+## The one thing to understand about it
+
+**The shell never checks your password, and it must not be able to.** It hands
+the typed text to PAM — the part of Linux whose job is answering "is this really
+you" — through a small separate process that Quickshell forks for the purpose.
+That process asks PAM using the rules named `aquarius-lock`, and those rules say
+"use this machine's ordinary login rules". So a fingerprint reader or a password
+policy added to the machine reaches the lock screen for free, and nothing
+AquariusOS ships needs any special powers: the only privileged step in the whole
+chain is Fedora's own `/usr/bin/unix_chkpwd`, which will only ever check the
+password of the person who ran it.
+
+That is exactly how `swaylock`, `hyprlock` and `gtklock` work on Fedora, down to
+the one-line file in `/etc/pam.d/`.
+
+⚠️ **Two repositories have to agree on one word.** The shell asks PAM for
+`aquarius-lock`; this image installs a file by that name. Rename either on its
+own and nobody gets into the machine — so both the build step and the CI check
+read both sides and compare them.
+
+## Bench check for Royce
+
+Do these in order. Two of them are the ones that would be expensive to get
+wrong, and they are marked.
+
+1. **Lock with the keyboard.** Press **Super+L** (or **⌘L** in Mac mode). The
+   screen should be covered *immediately* — no pause, no flash of desktop. You
+   should see the clock, big, in the middle, on a frosted version of the
+   wallpaper.
+2. **Lock from the menu.** Unlock, then click the Aquarius mark → **Lock
+   Screen**. It should lock straight away, with no "Confirm?" step.
+3. **Lock by walking away.** Leave the machine alone. At five minutes the screen
+   should go dark but come straight back when you move the mouse — nothing
+   locked. At ten minutes it should lock. At fifteen the monitor should switch
+   off, and come back into the lock screen when you touch anything.
+4. **Wake, then wait.** Touch a key so the card appears, then do nothing for
+   thirty seconds. The card should put itself away and go back to the clock.
+5. **⚠️ Type before the card appears.** Lock the screen, then immediately start
+   typing your password without pausing. **Every character should be in the box
+   when the card appears** — the first three should not be missing. Press Enter.
+   The desktop should come back exactly as you left it: same windows, same
+   places, nothing restarted.
+6. **⚠️ Get it wrong three times.** Type a wrong password and press Enter. The
+   box should shake once, grow a red ring, and say so. Do it twice more; after
+   the third the line should count down from ten seconds and the box should
+   refuse to be typed into until it reaches zero. Then unlock properly.
+7. **Flip the theme while locked.** With the machine locked, from another
+   machine or a text console, switch the system between light and dark. The lock
+   screen should change with it — Ice to Midnight — without being restarted.
+8. **Two monitors.** Plug in a second screen and lock. **Both** should show the
+   veil and the clock. The card should be on whichever screen the mouse pointer
+   is on. Then — and this is the part worth checking — **type on the other one**.
+   The dots should still appear in the box, and Enter should still unlock. (The
+   compositor decides which screen gets the keyboard and it is not always the
+   one with the card; the shell is built for that.)
+9. **Sleep and come back.** Pick Sleep from the Aquarius menu, wake the machine,
+   and check it asks for a password. On a laptop, close and open the lid and
+   check the same.
+10. **Do not get locked out.** Before any of this, know the way out: **Ctrl+Alt+F3**
+    gives a text login on another console, and from there `loginctl` and
+    `loginctl terminate-session <id>` end the graphical session. You lose
+    whatever was open, and it is a last resort — but a session lock is a promise
+    the compositor keeps even if the shell dies, so it is worth knowing.
