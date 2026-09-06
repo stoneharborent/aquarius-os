@@ -471,8 +471,23 @@ chmod 0755 "${AQ_LAUNCHER}" /usr/libexec/aquarius-shell-start \
 # reads it.
 chmod 0644 /usr/libexec/aquarius-session-lib
 chmod 0644 "${AQ_SESSION_ENTRY}" "${AQ_PORTAL_CONF}"
-chmod 0644 "${AQ_LABWC_DIR}"/*
+# ⚠️ NOT EVERY FILE IN THE labwc FOLDER IS A SETTINGS FILE, and this line used
+# to assume they all were. `chmod 0644` over the whole folder took the
+# executable bit off generate-theme — the program that builds the window frame
+# out of the shell's palette — and the build then failed one step later saying
+# it was "missing or not executable". That is the right failure to have had: it
+# is exactly the fault the check below was written for. Five files in this
+# folder are READ by labwc; one is RUN, and it needs the bit.
+chmod 0644 "${AQ_LABWC_DIR}"/rc.xml "${AQ_LABWC_DIR}"/menu.xml \
+    "${AQ_LABWC_DIR}"/autostart "${AQ_LABWC_DIR}"/shutdown \
+    "${AQ_LABWC_DIR}"/environment
+chmod 0755 "${AQ_LABWC_DIR}"/generate-theme
 chmod 0755 "${AQ_LABWC_DIR}"
+
+# Printed, because "0644 on everything in the folder" is the obvious thing for
+# somebody to write here again, and a listing in the build log is how the next
+# person sees at a glance that one file is deliberately different.
+ls -l "${AQ_LABWC_DIR}" | sed 's/^/  /'
 
 # ==============================================================================
 # 5. Checking it — by running things, not by assuming
