@@ -13,13 +13,14 @@
 //   branding/icons/midnight/<name>.svg    the dark set
 //   branding/icons/ice/<name>.svg         the light set
 //
-// TEN FILES IN EACH, NOT EIGHT. There are eight icons; two of them are filed
-// under two names each, because GNOME's Files and GNOME's Settings look their
-// own icons up by their own identifiers (org.gnome.Nautilus, org.gnome.Settings)
-// and nothing will make them ask for "aquarius-files". So the same drawing is
-// written twice: once under the GNOME name, so the icon actually appears, and
-// once under ours, so our own windows, docs and the Aquarius Shell can name it
-// without knowing anything about GNOME. See ALIASES below.
+// TWELVE FILES IN EACH, NOT NINE. There are nine icons; three of them are filed
+// under two names each, because GNOME's Files, GNOME's Settings and the terminal
+// look their own icons up by their own identifiers (org.gnome.Nautilus,
+// org.gnome.Settings, org.gnome.Ptyxis) and nothing will make them ask for
+// "aquarius-files". So the same drawing is written twice: once under the GNOME
+// name, so the icon actually appears, and once under ours, so our own windows,
+// docs and the Aquarius Shell can name it without knowing anything about GNOME.
+// See ALIASES below.
 //
 // OPTIONS (used by branding/render-app-icons.sh, not normally by a person)
 //   --size N      draw at N pixels instead of 1024
@@ -37,16 +38,19 @@ import { SET } from './icons.mjs';
 // list is every file name it is written out as.
 //
 // ⚠️ THE GNOME NAMES ARE NOT DECORATION. `org.gnome.Nautilus` is how the Files
-// app asks for its own icon and `org.gnome.Settings` is how the Settings app
-// asks for its own. Because our themes say `Inherits=Adwaita`, a name we do not
-// provide falls through to GNOME's own artwork — so dropping either of these
-// lines does not produce an error anywhere. It produces two GNOME icons sitting
-// in a dock full of Aquarius ones, which is the kind of thing that ships.
+// app asks for its own icon, `org.gnome.Settings` is how the Settings app asks
+// for its own, and `org.gnome.Ptyxis` is how the terminal asks for its own —
+// Ptyxis is Fedora's terminal and it is the Console this image ships. Because
+// our themes say `Inherits=Adwaita`, a name we do not provide falls through to
+// GNOME's own artwork — so dropping any of these lines does not produce an error
+// anywhere. It produces GNOME icons sitting in a dock full of Aquarius ones,
+// which is the kind of thing that ships.
 const ALIASES = {
   'aquarius-editor': ['aquarius-editor'],
   'aquarius-writer': ['aquarius-writer'],
   'aquarius-files': ['org.gnome.Nautilus', 'aquarius-files'],
   'aquarius-settings': ['org.gnome.Settings', 'aquarius-settings'],
+  'aquarius-console': ['org.gnome.Ptyxis', 'aquarius-console'],
   'aquarius-apps': ['aquarius-apps'],
   'aquarius-welcome': ['aquarius-welcome'],
   'aquarius-install-resolve': ['aquarius-install-resolve'],

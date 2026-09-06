@@ -13,8 +13,10 @@ export const T = {
 
 // ---------- the two palettes (Royce, 2026-09-06: one slate plate for all; an Ice twin for the light theme) ----------
 export const PALETTES = {
-  midnight: { plate:[T.s3, T.s2], ring:T.ring, line:[T.starlight, T.nebula], gold:T.ancient, tool:T.text1, grey:T.text2, shadow:T.onAccent, shadowAlpha:.38 },
-  ice:      { plate:[T.L.s2, T.L.s1], ring:T.ringL, line:[T.L.starlight, T.L.nebula], gold:T.L.ancient, tool:T.L.text1, grey:T.L.text2, shadow:T.L.text1, shadowAlpha:.22 },
+  // Royce, 2026-09-06: the SHELL's palettes are the truth (theme/Ice.qml, theme/Midnight.qml, approved on the bench).
+  // tokens.md was rewritten to match the same day. The working line is aquariusBlue→indigo; the gold is `starred`.
+  midnight: { plate:['#1B2940','#121C2E'], ring:'rgba(220,243,255,.16)', line:['#00BFFF','#9B82FF'], gold:'#E6B947', tool:'#DCE9F4', grey:'#93A7BC', shadow:'#08121E', shadowAlpha:.38 },
+  ice:      { plate:['#F7FBFE','#E4EDF6'], ring:'rgba(22,39,58,.18)', line:['#2C8FC4','#6E2BE0'], gold:'#C28B22', tool:'#16273A', grey:'#47586B', shadow:'#16273A', shadowAlpha:.22 },
 };
 const pal=(theme)=>PALETTES[theme]||PALETTES.midnight;
 
@@ -104,6 +106,18 @@ export function resolve(size, verb='install', variant='dr', shadow=true, theme='
     return `<path d="${DR.d}" fill="${line}"/>` + badge;
   });
 }
+// CONSOLE — the terminal (Ptyxis, overridden by name). Candidates (2026-09-06):
+//   'prompt'  a prompt chevron in the Aquarius line, a gold block cursor beside it — the cursor is the thing that moves
+//   'under'   the same chevron with a gold underscore cursor — CHOSEN 2026-09-06 (the default)
+//   'lines'   a chevron and two lines of "text", the gold cursor at the end of the second
+export function console_(size, variant='under', shadow=true, theme='midnight'){
+  return icon(size,'co'+variant,theme,shadow,({P,line})=>{
+    if (variant==='under') return `<path d="M16 22l10 10-10 10" stroke="${line}" ${S}/><path d="M32 42h14" stroke="${P.gold}" ${S}/>`;
+    if (variant==='lines') return `<path d="M15 20l8 8-8 8" stroke="${line}" ${S}/><path d="M29 36h8M15 46h18" stroke="${line}" ${S}/><rect x="37" y="42.5" width="9" height="7" rx="2" fill="${P.gold}"/>`;
+    return `<path d="M17 21l11 11-11 11" stroke="${line}" ${S}/><rect x="33" y="35" width="13" height="7" rx="2" fill="${P.gold}"/>`;
+  });
+}
+export { console_ as console };
 // Third-party stand-in — their own mark ships; never redrawn.
 export function own(label,size,dark){
   return `<div style="width:${size}px;height:${size}px;border-radius:25%;display:flex;align-items:center;justify-content:center;border:1px dashed ${dark?'rgba(237,239,247,.3)':'rgba(20,23,38,.3)'};color:${dark?T.text3:T.L.text3};font:600 ${Math.max(9,Math.round(size*0.28))}px Sora,system-ui,sans-serif">${label}</div>`;
@@ -113,4 +127,5 @@ export const SET = {
   'aquarius-editor':(s,t)=>editor(s,'simple',true,t), 'aquarius-writer':(s,t)=>writer(s,true,t), 'aquarius-files':(s,t)=>files(s,'outline',true,t),
   'aquarius-settings':(s,t)=>settings(s,'two',true,t), 'aquarius-apps':(s,t)=>apps(s,'color',true,t), 'aquarius-welcome':(s,t)=>welcome(s,'sun',true,t),
   'aquarius-install-resolve':(s,t)=>resolve(s,'install','dr',true,t), 'aquarius-remove-resolve':(s,t)=>resolve(s,'remove','dr',true,t),
+  'aquarius-console':(s,t)=>console_(s,'under',true,t),   // ships as org.gnome.Ptyxis too
 };
