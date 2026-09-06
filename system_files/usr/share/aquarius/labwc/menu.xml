@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!--
+  =============================================================================
+  The Aquarius desktop's right-click menu (labwc)
+  =============================================================================
+  (An XML comment may not contain two hyphens in a row, which is why the rules
+  in this file are drawn with = signs. It is a quirk of XML, not a change of
+  style.)
+
+  Right-clicking the empty desktop opens this menu. rc.xml, next to this file,
+  binds a right-click on the root to "ShowMenu root-menu"; this file is what
+  root-menu contains.
+
+  THIS FILE IS THE FIX FOR THE 6 SEPTEMBER 2026 BENCH BUG, where right-clicking
+  the desktop offered Terminal / Reconfigure / Exit. It is worth being exact
+  about why, because the obvious explanation is wrong: labwc's own defaults
+  ALREADY send a right-click on the desktop to a menu called root-menu. Nothing
+  declared one, so labwc used its built-in fallback. Declaring it here is what
+  makes the desktop's menu ours.
+
+  =============================================================================
+  CHANGE ONE, CHANGE BOTH
+  =============================================================================
+  This is the AquariusOS copy of session/labwc/menu.xml in the aquarius-shell
+  repository, the same rule the `autostart` file next to it already states.
+  AquariusOS does NOT stage the shell's session/labwc folder: it ships its own
+  hand-maintained copies here, because the two-compositors question is settled
+  differently in the OS (labwc, standing decision 2b) and the OS copies carry
+  OS-only corrections. So a change to the menu in one repository has to be made
+  in the other by hand, or the desktop and the shell drift apart.
+
+  =============================================================================
+  THE ONE OS-ONLY DIFFERENCE: `env XDG_CURRENT_DESKTOP=GNOME` ON SETTINGS
+  =============================================================================
+  Every gnome-control-center line below is prefixed with
+  `env XDG_CURRENT_DESKTOP=GNOME`. The shell's copy is not, and it must be here.
+
+  gnome-control-center refuses to start unless it believes it is running under
+  GNOME. Its own code (shell/cc-application.c, is_supported_desktop()) reads
+  XDG_CURRENT_DESKTOP, splits it on colons, and unless one of the parts is
+  exactly "GNOME" or "Unity" it prints
+
+      Running gnome-control-center is only supported under GNOME and Unity,
+      exiting
+
+  and exits 1. The Aquarius session exports XDG_CURRENT_DESKTOP="Aquarius:wlroots"
+  and that line MUST stay as it is: the portals key off it, and renaming the whole
+  session to GNOME would send every portal request to GNOME's back ends and break
+  screen recording. So the lie is told PER LAUNCH, to one program, and nothing
+  else in the session sees it.
+
+  `env` is a real program at /usr/bin/env, so this works whether labwc runs the
+  command through a shell or hands the words straight to execvp. A bare
+  `XDG_CURRENT_DESKTOP=GNOME gnome-control-center` would only work in the first
+  case, which is why it is not written that way.
+
+  The same fix is applied to org.gnome.Settings.desktop and to the D-Bus
+  service file in build_files/55-aquarius-session.sh, so that the dock icon and
+  D-Bus activation get it too. See that script for the full reasoning.
+
+  =============================================================================
+  WHY THIS IS A labwc MENU AND NOT A SHELL-DRAWN ONE
+  =============================================================================
+  The shell draws its OWN menu off the Aquarius mark (components/bar/LogoMenu.qml)
+  because that one hangs off a bar item the shell owns. The DESKTOP root is the
+  compositor's, not the shell's, and there is no standard way for a layer-shell
+  client to be told "the user right-clicked the wallpaper here" and to place a
+  popup there. labwc's own menu is the right tool for a right-click on labwc's
+  own root.
+
+  =============================================================================
+  WHAT IS DELIBERATELY NOT HERE
+  =============================================================================
+  Desktop icons. Royce chose a clean desktop; this is only a context menu.
+  Left-clicking the desktop still does nothing, on purpose.
+
+  NO COLOURS. Same rule as rc.xml: labwc draws this menu with its own
+  Openbox-style theme, and it would be easy to tint it here. Colour in the
+  Aquarius Desktop lives in the shell's theme/Ice.qml and theme/Midnight.qml and
+  nowhere else.
+
+  Format reference: labwc-menu(5), installed on this machine.
+  =============================================================================
+-->
+
+<openbox_menu>
+  <menu id="root-menu" label="Aquarius">
+
+    <!-- The Aquarius search palette, the same message Super+Space sends. -->
+    <item label="Search">
+      <action name="Execute">
+        <command>qs ipc call search toggle</command>
+      </action>
+    </item>
+
+    <separator />
+
+    <!-- The full Settings app, and its wallpaper page directly. `background` is
+         a stable gnome-control-center panel id. The `env` prefix is explained
+         at the top of this file and is NOT optional in AquariusOS. -->
+    <item label="System Settings">
+      <action name="Execute">
+        <command>env XDG_CURRENT_DESKTOP=GNOME gnome-control-center</command>
+      </action>
+    </item>
+
+    <item label="Change Wallpaper">
+      <action name="Execute">
+        <command>env XDG_CURRENT_DESKTOP=GNOME gnome-control-center background</command>
+      </action>
+    </item>
+
+    <separator />
+
+    <!-- Leave the session. This is labwc's own Exit, the SAME teardown
+         Super+Shift+E runs (see rc.xml) and not a second way out. That matters:
+         the launcher outlives labwc precisely so it can clean up afterwards, and
+         a different exit route would skip the clean-up and bounce the next
+         login off the login screen. -->
+    <item label="Log Out">
+      <action name="Exit" />
+    </item>
+
+    <item label="Sleep">
+      <action name="Execute">
+        <command>systemctl suspend</command>
+      </action>
+    </item>
+
+    <item label="Restart">
+      <action name="Execute">
+        <command>systemctl reboot</command>
+      </action>
+    </item>
+
+    <item label="Power Off">
+      <action name="Execute">
+        <command>systemctl poweroff</command>
+      </action>
+    </item>
+
+  </menu>
+</openbox_menu>

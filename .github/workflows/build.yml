@@ -223,6 +223,15 @@ on:
       # structural checks. Same arrangement as every side branch: builds and
       # checks, never publishes.
       - restart/r6-shell-pin
+      # The two faults from the 2026-09-06 bench test of the R6 shell: a
+      # right-click on the desktop showed labwc's own built-in menu instead of
+      # the Aquarius one (the OS ships its own copies of the labwc files and
+      # nobody copied the shell's new menu.xml or its Root mousebind across),
+      # and the dock's Settings icon did nothing (gnome-control-center exits
+      # unless XDG_CURRENT_DESKTOP names GNOME, and ours says Aquarius:wlroots).
+      # Same arrangement as every side branch: builds and checks, never
+      # publishes.
+      - restart/r6-bench-fixes
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -2520,7 +2529,9 @@ jobs:
             || bad "the launcher does not use AQ_SESSION_ENV_PUSH — the start-up list and the logout list can drift apart"
 
           echo "== the window manager's configuration =="
-          for f in rc.xml autostart shutdown environment; do
+          # FIVE files. menu.xml joined on 2026-09-06 — see the desktop
+          # right-click block just below for what happens without it.
+          for f in rc.xml menu.xml autostart shutdown environment; do
             if [ -s "/usr/share/aquarius/labwc/${f}" ]; then ok "labwc/${f}"; else bad "labwc/${f} is missing"; fi
           done
           # The corrected form of the summon command. Passing a configuration
@@ -2533,6 +2544,86 @@ jobs:
           fi
           grep -q '<action name="Exit" />' /usr/share/aquarius/labwc/rc.xml \
             && ok "Super+Shift+E leaves the session" || bad "there is no way to leave the session by keyboard"
+
+          # ⚠️ THE 2026-09-06 BENCH PHOTOGRAPH: right-clicking the wallpaper
+          # opened labwc's OWN menu — Terminal, Reconfigure, Exit. The shell
+          # repository had grown a menu.xml and a Root mousebind and this image,
+          # which keeps its own copies of the labwc files, had neither.
+          #
+          # labwc's defaults already point a desktop right-click at a menu called
+          # root-menu; nothing declared one, so labwc drew its built-in fallback.
+          # menu.xml is the fix and rc.xml's binding makes it explicit, so both
+          # are read out of the finished image here.
+          echo "== right-clicking the desktop =="
+          grep -q 'id="root-menu"' /usr/share/aquarius/labwc/menu.xml \
+            && ok "menu.xml declares the root-menu" \
+            || bad "menu.xml has no menu with id=\"root-menu\" — labwc would fall back to its own built-in menu"
+          grep -q '<action name="ShowMenu" menu="root-menu" />' /usr/share/aquarius/labwc/rc.xml \
+            && ok "a right-click on the desktop opens it" \
+            || bad "rc.xml does not bind the desktop right-click to root-menu — this is the bench bug of 2026-09-06 exactly"
+          # A <mouse> section REPLACES labwc's mouse behaviour rather than adding
+          # to it. Without <default /> inside it, the menu would work and window
+          # dragging, edge-resize and click-to-focus would all stop. Read the
+          # <mouse> section on its own: the <default /> in <keyboard> is a
+          # different thing and would make a whole-file grep pass over a broken
+          # mouse.
+          if sed -n '/<mouse>/,/<\/mouse>/p' /usr/share/aquarius/labwc/rc.xml | grep -q '<default />'; then
+            ok "the <mouse> section keeps labwc's own bindings (dragging, resizing, click to focus)"
+          else
+            bad "rc.xml's <mouse> section has no <default /> — the right-click menu would have cost us window dragging and resizing"
+          fi
+          # Every Settings command in the menu has to carry the GNOME prefix, or
+          # that menu item is drawn and does nothing. Counted, so a third Settings
+          # item added without it fails the build. Why the prefix exists at all:
+          # the Settings block further down.
+          CC_TOTAL="$(grep -c 'gnome-control-center' /usr/share/aquarius/labwc/menu.xml || true)"
+          CC_FIXED="$(grep -c 'env XDG_CURRENT_DESKTOP=GNOME gnome-control-center' /usr/share/aquarius/labwc/menu.xml || true)"
+          echo "       ${CC_FIXED} of ${CC_TOTAL} Settings commands carry the GNOME prefix"
+          if [ "${CC_TOTAL}" -ge 2 ] && [ "${CC_FIXED}" -eq "${CC_TOTAL}" ]; then
+            ok "every Settings item in the desktop menu says 'env XDG_CURRENT_DESKTOP=GNOME' first"
+          else
+            bad "a gnome-control-center command in menu.xml has no 'env XDG_CURRENT_DESKTOP=GNOME' prefix — that menu item would do nothing"
+          fi
+
+          # ⚠️ THE OTHER 2026-09-06 BENCH BUG: the dock's Settings icon did
+          # nothing. gnome-control-center reads XDG_CURRENT_DESKTOP at start-up
+          # (shell/cc-application.c, is_supported_desktop()) and unless a
+          # colon-separated part of it is "GNOME" or "Unity" it prints
+          # "Running gnome-control-center is only supported under GNOME and
+          # Unity, exiting" and exits 1. Our session says "Aquarius:wlroots",
+          # and that line has to stay as it is because the portals choose their
+          # back end from it. So the fix is per launch, and for the dock icon it
+          # has to live in the Exec= line itself: the dock runs the .desktop
+          # file's command as written, with nowhere to put a variable in
+          # between. build_files/55-aquarius-session.sh makes the edit; this
+          # reads it back out of the finished image, which is the check that
+          # would also catch a later package upgrade quietly restoring Fedora's
+          # stock file.
+          echo "== the Settings app can actually open =="
+          CCD=/usr/share/applications/org.gnome.Settings.desktop
+          if [ -r "${CCD}" ]; then
+            grep -E '^Exec=' "${CCD}" | sed 's/^/       /'
+            grep -Eq '^Exec=env XDG_CURRENT_DESKTOP=GNOME .*gnome-control-center' "${CCD}" \
+              && ok "the Settings menu entry launches it with XDG_CURRENT_DESKTOP=GNOME" \
+              || bad "${CCD} does not set XDG_CURRENT_DESKTOP=GNOME — the dock's Settings icon would do nothing at all"
+            grep -Eq '^Exec=(/usr/bin/)?gnome-control-center' "${CCD}" \
+              && bad "${CCD} still has an Exec= line without the prefix — that way of opening Settings would still do nothing" \
+              || ok "no Exec= line in the Settings menu entry was missed"
+          else
+            bad "${CCD} is missing — the dock pins org.gnome.Settings.desktop and the icon would be dead"
+          fi
+          CCS=/usr/share/dbus-1/services/org.gnome.Settings.service
+          if [ -r "${CCS}" ]; then
+            grep -E '^Exec=' "${CCS}" | sed 's/^/       /'
+            grep -Eq '^Exec=/usr/bin/env XDG_CURRENT_DESKTOP=GNOME /usr/bin/gnome-control-center' "${CCS}" \
+              && ok "D-Bus starts Settings with XDG_CURRENT_DESKTOP=GNOME too" \
+              || bad "${CCS} does not set XDG_CURRENT_DESKTOP=GNOME — a D-Bus-activated Settings would exit at once"
+            grep -Eq '^Exec=(/usr/bin/)?gnome-control-center' "${CCS}" \
+              && bad "${CCS} still has an Exec= line without the prefix" \
+              || ok "no Exec= line in the Settings D-Bus service file was missed"
+          else
+            echo "       note: ${CCS} is not in this image; nothing to check there"
+          fi
 
           echo "== portals =="
           PC=/usr/share/xdg-desktop-portal/aquarius-portals.conf
