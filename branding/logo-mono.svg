@@ -1,1 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none"><path d="M14 54 30 12q1.4-3.6 4 0L50 54" stroke="currentColor" stroke-width="5" stroke-linecap="round"></path><path d="M20 40q6-6 12 0t12 0" stroke="currentColor" stroke-width="5" stroke-linecap="round"></path></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none">
+  <!-- AquariusOS mark · mono · takes the surrounding text colour (2026-09-06) -->
+  <path d="M14 54L32 12L50 54" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M20 40q6-6 12 0t12 0" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

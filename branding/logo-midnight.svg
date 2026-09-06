@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none">
+  <!-- AquariusOS mark · midnight · clean apex, the logo wave as the crossbar (2026-09-06). Colours: the shell's theme/Midnight.qml -->
+  <path d="M14 54L32 12L50 54" stroke="url(#aqA)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M20 40q6-6 12 0t12 0" stroke="url(#aqW)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <defs>
+    <linearGradient id="aqA" x1="14" y1="54" x2="50" y2="12" gradientUnits="userSpaceOnUse"><stop stop-color="#00BFFF"/><stop offset="1" stop-color="#9B82FF"/></linearGradient>
+    <linearGradient id="aqW" x1="20" y1="40" x2="44" y2="40" gradientUnits="userSpaceOnUse"><stop stop-color="#E6B947"/><stop offset="1" stop-color="#00BFFF"/></linearGradient>
+  </defs>
+</svg>
