@@ -1,0 +1,370 @@
+#!/usr/bin/bash
+# =============================================================================
+# aquarius-greeter-watchdog — if the AquariusOS login screen does not draw,
+#                             switch back to GNOME's on its own
+# =============================================================================
+# WHAT THIS IS FOR, IN PLAIN ENGLISH
+#
+# AquariusOS has its own login screen (greetd + labwc + the Aquarius Shell's
+# greeter). It is EXPERIMENTAL and switched on by hand with `aq login use
+# greetd`. On 2026-09-05 that switch turned out to be the cause of a multi-day
+# "black screen with a cursor" saga: greetd started labwc, but the Quickshell
+# greeter never drew, so the machine sat on a bare labwc desktop — the one that
+# shows a Terminal / Reconfigure / Exit menu on right-click and does nothing
+# useful. The marker that `aq login use greetd` writes persisted across every
+# reboot, so every boot landed on the same broken screen. The only way out was a
+# text console and `sudo systemctl restart gdm`.
+#
+# The lesson: it must be IMPOSSIBLE to get stuck on a login screen that does not
+# draw. This program is that promise kept. It watches each greetd boot, and if
+# the greeter does not come up, it counts the failure. Two failed greetd boots
+# in a row and it switches the machine back to GDM — GNOME's plain, reliable
+# login screen — and reboots. A machine can no longer trap itself behind our own
+# experimental greeter.
+#
+# ⚠️ /usr/libexec/aquarius-greeter (the launcher) ALREADY falls through to a
+# text login (tuigreet) when labwc or the greeter script fails to *start*. That
+# net catches "the program would not run at all". This program catches the
+# harder case that net cannot see: the program ran, labwc came up, and the
+# screen still never drew a login box. The launcher cannot tell that from the
+# inside; only something watching from the outside, over more than one boot, can.
+#
+# -----------------------------------------------------------------------------
+# HOW IT DECIDES THE GREETER "CAME UP" — and the honest limit of that
+# -----------------------------------------------------------------------------
+# The one thing that would settle it beyond doubt is "did a Wayland client
+# actually commit a frame". This program cannot read that (it cannot see the
+# screen, the same wall the GDM guard hit on 2026-09-05). So it uses the best
+# signals it can get, in order of strength:
+#
+#   1. A READY STAMP. If the greeter QML touches /run/aquarius-greeter-ready
+#      when it finishes loading (Component.onCompleted), that file is proof the
+#      greeter drew. This is the signal we WANT the greeter to grow — see
+#      docs/restart/greeter-debug.md — and this program prefers it when present.
+#
+#   2. QUICKSHELL IS RUNNING. If `qs` (Quickshell) is alive during the watch,
+#      the greeter at least launched. In the reported failure labwc's OWN root
+#      menu is what shows — which means qs is NOT covering the screen, i.e. it
+#      crashed or never launched — so "qs is not running" is a reliable read of
+#      that exact fault.
+#
+#   3. THE CONSECUTIVE-BOOT COUNTER. The load-bearing net underneath both. Even
+#      if qs is alive but frozen (signal 2 fooled), a greeter that never lets
+#      anybody log in produces boot after greetd boot with no success. Two in a
+#      row and this program reverts, whatever the finer signals said.
+#
+# -----------------------------------------------------------------------------
+# THE COUNTER, AND WHY IT IS INCREMENTED AT THE START OF THE WATCH
+# -----------------------------------------------------------------------------
+# /var/lib/aquarius/greeter-fails holds a count of greetd boots in a row that
+# did not reach a working greeter. It lives under /var/lib, NOT /run, because it
+# has to SURVIVE a reboot — the whole point is to notice the SECOND bad boot.
+#
+# The count is bumped at the START of the watch, then set back to 0 the moment
+# the greeter proves healthy. That order matters: a person staring at a black
+# screen power-cycles the machine, and if the failure were only recorded at the
+# END of a 30-second watch, a fast power-cycle would record nothing and the
+# counter would never climb. Incremented first, a power-cycle still counts.
+#
+#   healthy boot        : 0 -> 1 (at start) -> 0 (reset on success). Net 0.
+#   1st broken boot     : 0 -> 1, stays 1. A warning is logged.
+#   2nd broken boot     : 1 -> 2, >= 2 -> REVERT to GDM and reboot.
+#
+# A successful graphical login is what a healthy greeter leads to, and a healthy
+# greeter is what this resets on, so a real login resets the counter.
+#
+# -----------------------------------------------------------------------------
+# WHY IT CANNOT LOOP, AND CANNOT HURT A HEALTHY MACHINE
+# -----------------------------------------------------------------------------
+#   * It does nothing at all unless greetd is the login screen in use. On a
+#     default AquariusOS machine GDM is the login screen, and this program sees
+#     that and exits immediately, every boot, touching nothing.
+#   * It is a Type=oneshot service ordered After=display-manager.service. It runs
+#     once per boot. A stamp under /run stops it acting twice in one boot.
+#   * When it reverts it sets the counter back to 0 and disables greetd, so the
+#     next boot is a GDM boot, and on a GDM boot this program stands aside. There
+#     is no path from a revert to another revert.
+#
+# RUNNING IT BY HAND
+#   sudo /usr/libexec/aquarius-greeter-watchdog --status   what it would look at
+#   sudo /usr/libexec/aquarius-greeter-watchdog --now      revert to GDM now
+# =============================================================================
+
+set -uo pipefail
+
+# ⚠️ AQ_GREETER_WATCHDOG_ROOT exists for ONE reason: so
+# tests/test-greeter-watchdog.sh can run this program for real, against a
+# temporary folder, without being root and without touching the machine it runs
+# on. It is never set in normal use, and unset every path below is exactly what
+# it always was.
+AQ_ROOT="${AQ_GREETER_WATCHDOG_ROOT:-}"
+
+# The persistent consecutive-failure counter and the one-shot probation marker.
+# Both under /var/lib so they survive a reboot — the counter has to, and the
+# probation marker records "we only just switched to greetd" across the reboot
+# that switch needs.
+AQ_STATE_DIR="${AQ_ROOT}/var/lib/aquarius"
+AQ_FAILS="${AQ_STATE_DIR}/greeter-fails"
+AQ_PROBATION="${AQ_STATE_DIR}/greeter-probation"
+AQ_LOG="${AQ_STATE_DIR}/greeter-watchdog.log"
+
+# The greeter's own "I drew" stamp, if it grows one. See the header.
+AQ_READY_STAMP="${AQ_ROOT}/run/aquarius-greeter-ready"
+
+# The once-per-boot stamp. Under /run, which is emptied at every boot.
+AQ_STAMP_DIR="/run/aquarius"
+[ -n "${AQ_ROOT}" ] && AQ_STAMP_DIR="${AQ_ROOT}/run/aquarius"
+AQ_STAMP="${AQ_STAMP_DIR}/greeter-watchdog-acted"
+
+# Two failed greetd boots in a row is the trigger. One is not enough — a single
+# odd boot (a slow driver, a one-time hiccup) should not throw away a login
+# screen somebody chose. Two in a row is a pattern.
+AQ_THRESHOLD="${AQ_GREETER_FAIL_THRESHOLD:-2}"
+
+# How long to give the greeter to draw before deciding it did not. 30 seconds is
+# generous: labwc and qs are up within a few seconds on real hardware.
+AQ_TOTAL_WAIT="${AQ_GREETER_WATCHDOG_TOTAL_WAIT:-30}"
+# The first look is early, because we want to CATCH a healthy greeter (and reset
+# the counter) as soon as it appears, so a person logging in quickly is never
+# misread as a failure.
+AQ_FIRST_LOOK="${AQ_GREETER_WATCHDOG_FIRST_LOOK:-3}"
+AQ_POLL_EVERY="${AQ_GREETER_WATCHDOG_POLL_EVERY:-2}"
+
+say() { echo "aquarius-greeter-watchdog: $*"; }
+
+# Everything this program decides is written down, best-effort, so a person can
+# find out afterwards why their login screen changed.
+note() {
+    say "$*"
+    mkdir -p "${AQ_STATE_DIR}" 2> /dev/null || true
+    printf '%s  aquarius-greeter-watchdog: %s\n' \
+        "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "${AQ_LOG}" 2> /dev/null || true
+}
+
+# -----------------------------------------------------------------------------
+# stand_aside "<reason>" — leave, loudly, having changed nothing
+# -----------------------------------------------------------------------------
+# The same idea as the GDM guard: every exit that touches nothing says so in one
+# greppable line, so "did the watchdog switch me back to GDM?" is answered by
+#     journalctl -b -u aquarius-greeter-watchdog.service
+# and never by reading this file.
+stand_aside() {
+    say "DID NOT CHANGE THE LOGIN SCREEN — $*"
+    exit 0
+}
+
+# -----------------------------------------------------------------------------
+# Which login screen is switched on
+# -----------------------------------------------------------------------------
+# Asked of systemd, the same way `aq login status` and the GDM guard ask. "greetd
+# is enabled" means greetd is the login screen this machine boots — which is what
+# it booted this boot, barring somebody switching it mid-boot.
+aq_greetd_is_the_login_screen() {
+    systemctl is-enabled greetd.service > /dev/null 2>&1
+}
+
+# -----------------------------------------------------------------------------
+# Did the greeter draw? The three signals from the header, strongest first.
+# -----------------------------------------------------------------------------
+aq_greeter_is_healthy() {
+    # 1. The greeter said so.
+    if [ -e "${AQ_READY_STAMP}" ]; then
+        return 0
+    fi
+    # 2. Quickshell is alive. In the reported failure labwc's own root menu is
+    #    what shows, which means qs is NOT up — so this reliably reads that case.
+    #    /usr/bin/qs is a symlink to /usr/bin/quickshell, so the process name can
+    #    come out as either "qs" or "quickshell"; and the surest signal of all is
+    #    the greeter QML on its command line, which no naming quirk can hide. All
+    #    three are tried.
+    if command -v pgrep > /dev/null 2>&1; then
+        if pgrep -x qs > /dev/null 2>&1 \
+            || pgrep -x quickshell > /dev/null 2>&1 \
+            || pgrep -f 'greeter/greeter\.qml' > /dev/null 2>&1; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
+aq_read_counter() {
+    local n
+    n="$(cat "${AQ_FAILS}" 2> /dev/null | tr -cd '0-9')"
+    printf '%s' "${n:-0}"
+}
+
+aq_write_counter() {
+    mkdir -p "${AQ_STATE_DIR}" 2> /dev/null || true
+    printf '%s\n' "$1" > "${AQ_FAILS}" 2> /dev/null || true
+}
+
+# -----------------------------------------------------------------------------
+# The revert itself — switch the login screen back to GDM and reboot
+# -----------------------------------------------------------------------------
+# This is the same "off first, then on" order `aq login use` uses, for the same
+# reason: two login managers both switched on is its own black screen.
+aq_revert_to_gdm() {
+    local why="${1:-the Aquarius greeter did not come up}"
+
+    mkdir -p "${AQ_STAMP_DIR}" 2> /dev/null || true
+    : > "${AQ_STAMP}" 2> /dev/null || true
+
+    note "SWITCHING BACK TO GDM. What was seen: ${why}."
+    note "The Aquarius greeter is experimental. It failed to draw a login screen,"
+    note "so this computer is switching back to GNOME's standard login screen and"
+    note "restarting. To try the Aquarius greeter again once it is fixed:"
+    note "    sudo aq login use greetd"
+
+    systemctl disable greetd.service > /dev/null 2>&1 || true
+    if systemctl enable gdm.service > /dev/null 2>&1; then
+        note "GDM is now the login screen."
+    else
+        note "could not switch GDM on. From a text console (Ctrl+Alt+F3):"
+        note "    sudo aq login use gdm  &&  sudo systemctl reboot"
+    fi
+
+    # The greeter is no longer on probation and the count is spent: the next
+    # boot is a GDM boot, on which this program stands aside.
+    rm -f "${AQ_PROBATION}" 2> /dev/null || true
+    aq_write_counter 0
+
+    note "restarting now."
+    if ! systemctl reboot > /dev/null 2>&1; then
+        note "could not reboot automatically. Please restart the computer."
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# --status — what it would look at, without acting
+# -----------------------------------------------------------------------------
+aq_status() {
+    echo "Is the AquariusOS greeter (greetd) the login screen in use?"
+    if aq_greetd_is_the_login_screen; then
+        echo "  yes — this watchdog is watching this boot"
+    else
+        echo "  no — GDM (or nothing) is in use, so this watchdog does nothing"
+    fi
+
+    echo "Consecutive greetd boots with no working greeter:"
+    echo "  $(aq_read_counter) (it switches back to GDM at ${AQ_THRESHOLD})"
+
+    echo "Is greetd on probation (only just switched on)?"
+    if [ -e "${AQ_PROBATION}" ]; then
+        echo "  yes  ${AQ_PROBATION}"
+    else
+        echo "  no"
+    fi
+
+    echo "Has this watchdog already acted this boot?"
+    if [ -e "${AQ_STAMP}" ]; then
+        echo "  yes  ${AQ_STAMP}"
+    else
+        echo "  no"
+    fi
+
+    echo "Does the greeter look healthy right now?"
+    if aq_greeter_is_healthy; then
+        echo "  yes — the ready stamp is present, or Quickshell is running"
+    else
+        echo "  no — no ready stamp and no Quickshell process"
+    fi
+
+    echo
+    echo "⚠️ It cannot read pixels. A greeter that runs, keeps Quickshell alive,"
+    echo "and still draws nothing is caught by the consecutive-boot counter, not"
+    echo "by looking once. See docs/restart/greeter-debug.md."
+}
+
+case "${1:-}" in
+    -h | --help | help)
+        awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
+        exit 0
+        ;;
+    --status)
+        aq_status
+        exit 0
+        ;;
+    --now)
+        if [ "$(id -u)" -ne 0 ] && [ -z "${AQ_ROOT}" ]; then
+            echo "aquarius-greeter-watchdog: this has to be run as root." >&2
+            exit 1
+        fi
+        aq_revert_to_gdm "somebody asked for the switch back by hand (--now)"
+        exit 0
+        ;;
+    "") : ;;
+    *)
+        echo "aquarius-greeter-watchdog: '$1' is not something this understands." >&2
+        echo "                           Try --help, --status or --now." >&2
+        exit 1
+        ;;
+esac
+
+# =============================================================================
+# The watch
+# =============================================================================
+# Every early exit below is a SUCCESS. This program is a safety net; a safety net
+# that reports failures gives a machine a red line in `systemctl status` for the
+# rest of its life because nothing went wrong.
+
+if [ -e "${AQ_STAMP}" ]; then
+    stand_aside "it already acted once during this boot (${AQ_STAMP})"
+fi
+
+# The one gate that matters: only watch when OUR greeter is the login screen.
+if ! aq_greetd_is_the_login_screen; then
+    stand_aside "GDM (or nothing) is the login screen on this computer, so there is nothing for this watchdog to guard"
+fi
+
+AQ_ON_PROBATION="no"
+[ -e "${AQ_PROBATION}" ] && AQ_ON_PROBATION="yes"
+
+# ⚠️ COUNT THIS BOOT AS A FAILURE UP FRONT. It is set back to 0 the instant the
+# greeter proves healthy. See the header for why this order is not optional.
+AQ_COUNT="$(aq_read_counter)"
+AQ_COUNT=$((AQ_COUNT + 1))
+aq_write_counter "${AQ_COUNT}"
+note "greetd boot under watch (consecutive-failure count is now ${AQ_COUNT}; on probation: ${AQ_ON_PROBATION})."
+
+# -----------------------------------------------------------------------------
+# Watch for the greeter, and reset the moment it appears
+# -----------------------------------------------------------------------------
+# We break on the FIRST sight of a healthy greeter, so that somebody who logs in
+# quickly (and takes qs away with them) is never misread as a failure.
+AQ_HEALTHY=0
+aq_waited=0
+sleep "${AQ_FIRST_LOOK}"
+aq_waited="${AQ_FIRST_LOOK}"
+if aq_greeter_is_healthy; then AQ_HEALTHY=1; fi
+
+while [ "${AQ_HEALTHY}" -eq 0 ] && [ "${aq_waited}" -lt "${AQ_TOTAL_WAIT}" ]; do
+    sleep "${AQ_POLL_EVERY}"
+    aq_waited=$((aq_waited + AQ_POLL_EVERY))
+    if aq_greeter_is_healthy; then AQ_HEALTHY=1; fi
+done
+
+# -----------------------------------------------------------------------------
+# The verdict
+# -----------------------------------------------------------------------------
+if [ "${AQ_HEALTHY}" -eq 1 ]; then
+    aq_write_counter 0
+    rm -f "${AQ_PROBATION}" 2> /dev/null || true
+    stand_aside "the greeter came up (counter reset to 0, probation cleared)"
+fi
+
+# The greeter did not come up. The count is already recorded. Stamp this boot so
+# nothing tries again until the next one (aq_revert_to_gdm writes it too, but the
+# warn-only path below must set it as well).
+mkdir -p "${AQ_STAMP_DIR}" 2> /dev/null || true
+: > "${AQ_STAMP}" 2> /dev/null || true
+
+if [ "${AQ_COUNT}" -ge "${AQ_THRESHOLD}" ]; then
+    note "the Aquarius greeter failed ${AQ_COUNT} greetd boots in a row."
+    aq_revert_to_gdm "the greeter did not draw a login screen in ${AQ_TOTAL_WAIT}s, ${AQ_COUNT} boots in a row"
+    exit 0
+fi
+
+note "the greeter did not come up this boot. One more failed greetd boot will"
+note "switch this computer back to GNOME's login screen automatically. To do it"
+note "now, from a text console (Ctrl+Alt+F3): sudo aq login use gdm && sudo systemctl reboot"
+exit 0

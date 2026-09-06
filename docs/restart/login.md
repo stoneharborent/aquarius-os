@@ -11,6 +11,100 @@ provably not on the machine. So there is a second, separate fault, and it has
 its own section: **[Black screen with a cursor at boot](#black-screen-with-a-cursor-at-boot)**.
 Start there. The rest of this page is the first fault, which is closed.*
 
+> **CONFIRMED ROOT CAUSE, 2026-09-05 (evening).** The multi-day black-screen
+> saga was **our own greeter (greetd), not GDM.** `aq login use greetd` — the R5
+> greeter test — had switched the machine to greetd, whose Quickshell greeter
+> never drew, and the switch persisted across every reboot. `systemctl restart
+> gdm` "fixed" it each time only by starting GDM *over the top*. The full,
+> confirmed account is the next section:
+> **[The real root cause: our own greeter, switched on and not drawing](#the-real-root-cause-our-own-greeter-switched-on-and-not-drawing)**.
+> **If you are black-screened right now and see a small Terminal / Reconfigure /
+> Exit menu, that is this fault — jump there.**
+
+---
+
+# The real root cause: our own greeter, switched on and not drawing
+
+*Added 2026-09-05 (evening), after reading the bench journal. This is the answer
+the two sections below it were circling.*
+
+## If you are looking at a black screen right now — and there is a menu
+
+If right-clicking the empty screen shows a small menu that says
+**Terminal / Reconfigure / Exit** (and its items do nothing useful), you are
+looking at the **experimental Aquarius greeter (greetd)** having failed to draw,
+sitting on a bare labwc desktop. The fix:
+
+```bash
+# Ctrl+Alt+F3 for a text login, log in, then:
+sudo aq login use gdm
+sudo systemctl reboot
+```
+
+That switches the login screen back to GNOME's GDM permanently. You are done.
+
+> **You should not even have to do this any more.** Since this fix, a watchdog
+> switches the machine back to GDM by itself after two failed greetd boots in a
+> row — see "The automatic safety net" below.
+
+## What actually happened
+
+The bench journal from the black-screen boots shows, plainly:
+
+- `Started greetd.service` — **greetd**, not GDM, was the login manager.
+- `greetd[1787]: session opened for user greetd (uid=965)` and
+  `systemd-logind: New session 'c1' of user 'greetd' class 'greeter'` — greetd
+  opened its greeter session and started our launcher.
+- Our launcher started **labwc**, but the **Quickshell greeter never rendered**,
+  leaving a bare labwc desktop. The tell is labwc's own default root menu
+  (Terminal / Reconfigure / Exit), which our greeter config
+  (`greeter-labwc/rc.xml`) deliberately removes — so its presence means the
+  greeter was not on the screen.
+
+greetd had been switched on by **`aq login use greetd`** (the R5 greeter test),
+and the `display-manager.service` symlink pointing at greetd **persisted across
+every reboot**. That is why the black screen returned on every single boot: it
+was the configured state, not a race. And `sudo systemctl restart gdm` brought
+the screen back each time only because it started GDM *on top of* the failed
+greetd session — a different login screen entirely, masking the real cause.
+
+This reframes the two sections below. They chased a GDM/mutter theory (copied
+`monitors.xml`, `experimental-features`, a ten-second driver window) because
+everyone assumed GDM was the login screen. It was not. Those notes are kept as
+honest history, and there may yet be a smaller GDM-specific sub-fault, but the
+thing that black-screened the bench for days was the greeter.
+
+## The two things fixed now
+
+1. **`aq login use greetd` warns and must be confirmed.** It prints what the
+   greeter is, that it is experimental, and exactly how to get back
+   (Ctrl+Alt+F3 → `sudo aq login use gdm` → reboot), then asks you to type `YES`
+   (or pass `--yes`). Nobody switches to it by accident again.
+
+2. **The automatic safety net.** A new watchdog,
+   `/usr/libexec/aquarius-greeter-watchdog` (service:
+   `aquarius-greeter-watchdog.service`, shipped enabled), watches each greetd
+   boot. If the greeter does not draw, it counts the failure; **two failed
+   greetd boots in a row and it switches the machine back to GDM and reboots.**
+   A successful login resets the count. It does nothing at all on a default
+   (GDM) machine. It cannot loop: after it reverts, the next boot is a GDM boot,
+   on which it stands aside.
+
+   How it decides the greeter "came up", strongest signal first: a ready stamp
+   the greeter can post at `/run/aquarius-greeter-ready`; else Quickshell (`qs`)
+   being alive; and underneath both, the consecutive-boot counter that catches
+   even a frozen `qs`. The honest limit — it cannot read pixels — is why the
+   consecutive-boot counter is the load-bearing part.
+
+## The greeter itself is still R6 and off by default
+
+The greeter *not drawing* is a deeper fault, scoped but not fixed here. It is
+**R6 / experimental** and stays **off by default**. The leading hypotheses (is
+labwc applying our `rc.xml`? did `qs` crash on a QML import? did the layer-shell
+surface never attach? does labwc `-s` exit when its command does?) and the exact
+bench commands to capture the greeter's own log next time someone opts in are in
+**[greeter-debug.md](greeter-debug.md)**. Do not rewrite the greeter blind.
+
 ---
 
 # The black login screen — 4 and 5 September 2026
@@ -949,6 +1043,12 @@ sudo aq login use greetd
 sudo systemctl reboot
 ```
 
+`aq login use greetd` will **warn you that the greeter is experimental and ask
+you to type `YES`** before it switches (add `--yes` to skip the question in a
+script). This is deliberate: on 2026-09-05 an unguarded switch to this greeter
+black-screened the bench for days. See the confirmed-root-cause section at the
+top of this page.
+
 ## How to go back
 
 ```bash
@@ -968,18 +1068,30 @@ managers is the classic way to lock yourself out of a Linux computer: the new
 one fails to start, the login manager restarts it, and you are looking at a
 flickering black screen with no way to type anything.
 
-**Three things stop that here.**
+**Four things stop that here.**
 
 1. **If the graphical login screen fails to start, it falls through to a plain
    text one by itself.** `/usr/libexec/aquarius-greeter` runs the graphical
    screen and, if that comes back with an error, runs `tuigreet` instead — the
    text login screen that has been in the image since R2. Ugly, and completely
    usable. You log in, you type `sudo aq login use gdm`, you restart.
-2. **GNOME is one keypress away at the login screen itself.** The pill under the
+2. **If the greeter STARTS but never DRAWS, the machine switches itself back to
+   GDM.** This is the case that trapped the bench on 2026-09-05: labwc came up,
+   the greeter did not, and the text-login fallback in point 1 could not see it
+   because from the inside nothing had "failed". A watchdog
+   (`aquarius-greeter-watchdog`, shipped enabled) watches from the outside and,
+   after **two failed greetd boots in a row**, switches the login screen back to
+   GDM and reboots. A successful login resets the count. You do not have to do
+   anything.
+3. **GNOME is one keypress away at the login screen itself.** The pill under the
    password box says which desktop is about to start; ← and → change it. So even
    if the Aquarius Desktop is the thing misbehaving, GNOME is right there.
-3. **GDM is still installed and is still the default.** Nothing was removed.
+4. **GDM is still installed and is still the default.** Nothing was removed.
    `aq login use gdm` puts everything back exactly as it was.
+
+`aq login status` also shows the watchdog's state — whether greetd is on
+probation (only just switched on) and how many greetd boots in a row have failed
+to draw a greeter.
 
 And underneath all three: AquariusOS keeps the previous version of itself.
 Holding the boot menu and picking the older entry undoes an update entirely.

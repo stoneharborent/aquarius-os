@@ -310,6 +310,54 @@ for aq_f in /usr/libexec/aquarius-greeter /usr/libexec/aquarius-greeter-shell; d
     fi
 done
 
+# ------------------------------------------------------------------------------
+# The greeter safety net — switch back to GDM if the greeter never draws
+# ------------------------------------------------------------------------------
+# ⚠️ THIS IS THE LOAD-BEARING RULE FROM THE 2026-09-05 SAGA. `aq login use
+# greetd` (the R5 greeter test) trapped the bench on a black screen for days:
+# greetd started labwc, the Quickshell greeter never drew, and every reboot came
+# back to the same bare labwc desktop. The launcher's own text-login fallback
+# (above) catches "the greeter would not START"; it cannot see "the greeter
+# started and drew nothing". This watchdog can, over more than one boot: two
+# failed greetd boots in a row and it switches the machine back to GDM by itself.
+#
+# It ships ENABLED (the symlink is in system_files) and is harmless on a default
+# machine, because a default machine boots to GDM and the watchdog's first act is
+# to check for that and exit. See the program's header and docs/restart/login.md.
+say "The greeter safety net (aquarius-greeter-watchdog)"
+chmod 0755 /usr/libexec/aquarius-greeter-watchdog
+if [ -x /usr/libexec/aquarius-greeter-watchdog ]; then
+    ok "aquarius-greeter-watchdog is installed and executable"
+else
+    bad "/usr/libexec/aquarius-greeter-watchdog is missing or not executable — a broken greeter could trap the machine"
+fi
+if bash -n /usr/libexec/aquarius-greeter-watchdog; then
+    ok "aquarius-greeter-watchdog is valid shell"
+else
+    bad "aquarius-greeter-watchdog does not parse as shell"
+fi
+# The service file, and that it is switched on the /usr way (never through /etc —
+# see aq-lib.sh). It must be enabled so that it runs on the very first greetd
+# boot after somebody switches, which is exactly the boot that trapped the bench.
+if [ -r /usr/lib/systemd/system/aquarius-greeter-watchdog.service ]; then
+    ok "the watchdog's service file is here"
+else
+    bad "aquarius-greeter-watchdog.service is missing — the watchdog would never run"
+fi
+if [ -L /usr/lib/systemd/system/graphical.target.wants/aquarius-greeter-watchdog.service ]; then
+    ok "the watchdog is switched on (the /usr way, not through /etc)"
+else
+    bad "the watchdog is not switched on — it would sit there and never run"
+fi
+# The counter must live under /var (per-machine, survives a reboot), not baked
+# into the image. It is created by the watchdog and by `aq login use greetd`; the
+# only thing to check here is that nothing shipped a stale copy in the image.
+if [ -e /var/lib/aquarius/greeter-fails ] || [ -e /var/lib/aquarius/greeter-probation ]; then
+    bad "a greeter safety-net state file is baked into the image — it belongs on the machine, under /var, written at runtime"
+else
+    ok "no greeter safety-net state is baked into the image (correct)"
+fi
+
 # ⚠️ The helper that lists the accounts and the desktops lives in the SHELL
 # repository, beside the login screen that reads it, and is copied out to
 # /usr/libexec here. That is on purpose: the QML and the program it runs are one
