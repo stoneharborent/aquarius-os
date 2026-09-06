@@ -1577,15 +1577,22 @@ jobs:
           fi
           # It MUST be switched on — the very first greetd boot is the one that
           # trapped the bench — and switched on the /usr way, never through /etc.
-          if systemctl is-enabled aquarius-greeter-watchdog.service > /dev/null 2>&1; then
-            ok "the greeter watchdog is switched on"
-          else
-            bad "the greeter watchdog is not switched on — it would never fire"
-          fi
+          # ⚠️ Verified by the symlink in the image, NOT by `systemctl is-enabled`:
+          # this project enables its own units with a /usr/lib .wants symlink (see
+          # aq-lib.sh — /etc enablement is forbidden for our units), and
+          # `systemctl is-enabled` does not report a /usr-only .wants link as
+          # "enabled" inside the offline build container. The symlink IS the
+          # enablement, the same way aquarius-gdm-guard ships enabled.
           if [ -L /usr/lib/systemd/system/graphical.target.wants/aquarius-greeter-watchdog.service ]; then
-            ok "it is switched on the /usr way (a symlink in the image, not through /etc)"
+            ok "the greeter watchdog is switched on the /usr way (a symlink in the image, not through /etc)"
           else
-            bad "the greeter watchdog is not switched on through /usr — see aq-lib.sh"
+            bad "the greeter watchdog is not switched on through /usr — it would never fire (see aq-lib.sh)"
+          fi
+          # And nothing switched it on through /etc, which our units must never be.
+          if [ -e /etc/systemd/system/graphical.target.wants/aquarius-greeter-watchdog.service ]; then
+            bad "the greeter watchdog is switched on through /etc — our units must be switched on through /usr only (aq-lib.sh)"
+          else
+            ok "it is not switched on through /etc (correct — our units use /usr)"
           fi
           # No safety-net STATE may be baked into the image: the counter and the
           # probation marker belong to the machine, written at runtime under /var.
