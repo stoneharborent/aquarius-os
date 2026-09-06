@@ -35,7 +35,7 @@ installed afterwards can overwrite it. It rewrites exactly six lines of `/usr/li
 | `VARIANT_ID` | `aquarius-os` — same for both images; NVIDIA is the same OS with different drivers |
 | `DEFAULT_HOSTNAME` | `"aquarius"` |
 | `LOGO` | `aquarius-logo` — the icon we already ship at `/usr/share/icons/hicolor/scalable/apps/` |
-| `ANSI_COLOR` | `"0;38;2;138;180;255"` — Starlight `#8AB4FF` as truecolor, Bazzite's exact format |
+| `ANSI_COLOR` | `"0;38;2;44;143;196"` — `aquariusBlue` `#2C8FC4` as truecolor, Bazzite's exact format. (It was Starlight `#8AB4FF` until 2026-09-06, when the desktop moved onto the shell's palette; `branding/tokens.md` is the record.) |
 
 It also rewrites `/usr/share/ublue-os/image-info.json`, which arrives from the base image
 still claiming the machine runs Bazzite. Same field names as Bazzite's, filled with our

@@ -71,10 +71,18 @@ plate, `#00BFFF` line, ice-blue ink). Nothing moves between them. Every colour c
 > was re-rendered in the new palette; **not one shape moved** — that was checked by comparing
 > the shape data of the old and new drawings, not assumed.
 >
-> The logo, the boot assets, the wallpaper and `../design-system/` are **still on the old
-> palette**, on purpose — re-colouring them is a separate job. Until it is done, the boot
-> mark and the icons' mark differ slightly in hue. If you are drawing anything new, take the
-> values from `../tokens.md` and nowhere else.
+> The logo, the boot assets and the wallpaper caught up later the same day, so the boot mark
+> and the icons' mark are now the same drawing in the same colours. Only `../design-system/`
+> is still on the old palette — it is a mirror of the design project and gets re-synced from
+> there, not edited here. If you are drawing anything new, take the values from
+> `../tokens.md` and nowhere else.
+
+> **The mark's apex changed on 2026-09-06 too.** The "A" is now three straight moves,
+> `M14 54 L32 12 L50 54`, with one clean point at the top — the little hand-drawn loop is
+> gone. Only one icon carries the mark (`aquarius-apps`), and it was re-rendered; the other
+> eight were byte-for-byte unchanged, which is how we know nothing else moved. The one
+> function that draws it is `markPaths()` in `icons.mjs`, and it is the same shape the logo
+> files use. See "The apex" in [`../tokens.md`](../tokens.md).
 
 ---
 

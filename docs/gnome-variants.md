@@ -354,10 +354,16 @@ not going to do.
 plus the word "AquariusOS" in Sora — in two versions, because the page picks a different
 file in dark mode:
 
-| Ships as | Ink | Shown when |
+| Ships as | What is on it | Shown when |
 |---|---|---|
-| `aquarius-about-logo.png` | near-black text, light-theme blues | light mode |
-| `aquarius-about-logo-white.png` | white text, dark-theme blues | dark mode |
+| `aquarius-about-logo.png` | the Ice mark, the word in Ice's ink `#16273A` | light mode |
+| `aquarius-about-logo-white.png` | the **Midnight** mark, the word in white | dark mode |
+
+The page picks one of the two by colour scheme and does nothing else to it — no tinting, no
+masking. So the `-white` file is just "the dark-mode picture", and since 2026-09-06 it
+carries the full-colour Midnight mark rather than a flat white silhouette. Midnight is the
+colourway the desktop itself uses in the dark, so the About page now shows the same logo the
+rest of the machine is showing. Only the word stays white, because Sora has no colourway.
 
 Both are **279 × 80 pixels, exactly matching the file being replaced**. That is deliberate
 and the script explains it at length: GNOME builds the About logo as

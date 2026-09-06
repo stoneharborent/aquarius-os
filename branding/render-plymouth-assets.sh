@@ -36,7 +36,7 @@
 #
 # The design this follows is the "Boot to desktop · one journey" strip in
 # branding/design-system/AquariusOS Core Identity.html, step 02: the mark
-# centred on near-black with a soft glow, and three dots below it. Royce also
+# centred on the Midnight ground with a soft glow, and three dots below it. Royce also
 # asked, in as many words, that the boot screen SAY Aquarius — so the word is
 # part of the picture rather than the mark on its own.
 #
@@ -75,7 +75,10 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MARK_SVG="$REPO_ROOT/branding/logo.svg"
+# The MIDNIGHT mark, not the plain one. The boot screen is a dark screen — it is
+# Midnight's ground (#0B1220) edge to edge — so it takes Midnight's drawing of
+# the mark, the same one the desktop shows in dark mode.
+MARK_SVG="$REPO_ROOT/branding/logo-midnight.svg"
 FONT_TTF="$REPO_ROOT/system_files/usr/share/fonts/sora-fonts/Sora[wght].ttf"
 OUT_DIR="$REPO_ROOT/system_files/usr/share/plymouth/themes/aquarius"
 
@@ -99,10 +102,13 @@ DOT_PX=12     # diameter of one dot
 DOT_GAP=44    # centre-to-centre distance between dots
 FRAMES=36     # how many pictures make one loop
 
-# Colours, copied out of branding/tokens.md. Never picked by eye.
-INK="#FFFFFF"        # text-1 — the word, on a near-black screen
-STARLIGHT="#8AB4FF"  # the accent, and the colour of the dots
-GLOW="rgba(138,180,255,.45)"
+# Colours, copied out of branding/tokens.md — the MIDNIGHT column, because the
+# boot screen is a dark screen. Never picked by eye.
+INK="#DCE9F4"     # Midnight `ink` — the word. Ice-blue, not white: Midnight is
+                  # navy rather than black, and its text is one step lighter
+                  # than its ground rather than the brightest thing available.
+ACCENT="#00BFFF"  # Midnight `aquariusBlue` — the colour of the three dots.
+GLOW="rgba(0,191,255,.45)"   # the same accent, as the glow behind the mark
 
 for f in "$MARK_SVG" "$FONT_TTF"; do
     if [ ! -f "$f" ]; then
@@ -172,7 +178,7 @@ cat > "$tmp/lockup.html" << HTML
     gap: 22px;
   }
   /* The glow is the "accent glow" token from branding/tokens.md, opened up a
-     little because it has to survive being drawn on a near-black screen rather
+     little because it has to survive being drawn on the deep navy boot screen rather
      than on a panel. */
   .stack img {
     width: ${MARK_PX}px; height: ${MARK_PX}px; display:block;
@@ -238,7 +244,7 @@ while read -r o1 o2 o3; do
   .row span {
     width: ${DOT_PX}px; height: ${DOT_PX}px;
     border-radius: 50%;
-    background: ${STARLIGHT};
+    background: ${ACCENT};
     display: block;
   }
 </style>

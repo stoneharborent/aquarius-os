@@ -141,11 +141,15 @@ should use the left-hand column:
 | `grad-play` | `line-gradient` |
 | `warning` | `warn` |
 
-> **Still on the old palette (2026-09-06):** `logo.svg` (the mark's own gradients),
-> the About-page logo PNGs, the Plymouth boot assets, the wallpaper "The Pour", and the
-> `design-system/` mirror's `tokens/colors.css`. Each is a deliberate re-colour job, not a
-> find-and-replace — the logo especially. Until they are redone, the boot mark and the
-> icon set's mark will differ slightly in hue. Tracked, not forgotten.
+> **Done, 2026-09-06 (later the same day).** Everything the note here used to list as
+> "still on the old palette" has been moved onto the shell's colours: the mark itself
+> (`logo.svg` and its three companions), the About-page logo PNGs, the Plymouth boot assets,
+> the wallpaper "The Pour", and `ANSI_COLOR` in `/etc/os-release`. The boot mark and the
+> icon set's mark are now the same drawing in the same colours.
+>
+> **One thing is still stale:** the `design-system/` mirror next to this file, including its
+> `tokens/colors.css`. That folder is re-synced from the Claude Design project, not edited
+> here — see its own README. Nothing in this repository should read colours out of it.
 
 ---
 
@@ -199,7 +203,7 @@ One scale, in pixels. Use these numbers and no others:
 |---|---|---|
 | card shadow | `0 12px 40px rgba(0,0,0,.45)` | Cards, raised panels |
 | pop shadow | `0 24px 80px rgba(0,0,0,.6)` | Modals, popovers, the floating dock |
-| accent glow | `0 0 24px rgba(138,180,255,.25)` | Focus, "this is live", the active item |
+| accent glow | `0 0 24px` of `aquariusBlue` at 25% — `rgba(44,143,196,.25)` on Ice, `rgba(0,191,255,.25)` on Midnight | Focus, "this is live", the active item |
 | panel blur | `18px` | The frosted-glass effect behind translucent panels |
 
 ---
@@ -219,14 +223,38 @@ The feeling is *quick and calm*, not bouncy.
 
 ## The logo
 
-Two files live in this folder:
+Four files live in this folder. All are 64×64 and scale to any size without going blurry.
 
 | File | Use it when |
 |---|---|
-| `logo.svg` | You want the real mark, in colour. Uses the `grad-play` gradient plus a gold-to-blue sweep on the wave. |
+| `logo.svg` | You want the real mark, in colour, on a light background. **Same drawing as `logo-ice.svg`** — this is just the name the rest of the repo already asks for. |
+| `logo-ice.svg` | The Ice colourway, under its honest name. The "A" runs `aquariusBlue → indigo` (`#2C8FC4 → #6E2BE0`, the `line-gradient`); the wave runs `starred → aquariusBlue` (`#C28B22 → #2C8FC4`). |
+| `logo-midnight.svg` | The Midnight colourway, for a dark background. Same two gradients at their Midnight values: `#00BFFF → #9B82FF` and `#E6B947 → #00BFFF`. |
 | `logo-mono.svg` | You need one flat colour — a taskbar icon, a stamp, a watermark. It is drawn with `currentColor`, meaning **it takes on whatever text colour surrounds it**. |
 
-Both are 64×64 and scale to any size without going blurry.
+**Pick by the background, not by the mood.** Ice on anything pale, Midnight on anything
+dark. Never put the Ice mark on a dark panel "because it is the default" — its blue is
+chosen to read against paper and it goes muddy on navy, and the reverse is true too.
+
+### The apex — one clean point
+
+**Royce's rule, set 2026-09-06.** The "A" is three straight moves and nothing else:
+
+```
+M14 54 L32 12 L50 54
+```
+
+Up the left leg, one point at the top, down the right leg. The point is at `x=32`, which is
+the exact middle of the 64-wide grid, so the letter is symmetrical.
+
+The drawing before this wrote the apex as a little curve — `M14 54 30 12 q1.4-3.6 4 0 L50 54`
+— which put the peak slightly left of centre and read as a wobble at small sizes. **That
+curve is retired.** If you find it anywhere, it is a stale copy. Nothing new draws it, and
+the one function that draws the mark in code (`markPaths()` in `branding/icons/icons.mjs`)
+was changed in the same sitting so the icons and the logo can never disagree about it.
+
+Everything else about the mark is unchanged — the same leg positions, the same 5-unit
+stroke, the same round caps, the same wave.
 
 ### The wave — one shape, everywhere
 
@@ -255,14 +283,19 @@ exactly this (the Editor and Writer icons carry the wave at 1.5× — humps 18 w
 
 ## The wallpaper — "The Pour"
 
-Source: `wallpapers/the-pour.svg`. Rendered copies ship at
-`system_files/usr/share/wallpapers/AquariusThePour/`.
+Two sources, one per theme: `wallpapers/the-pour-ice.svg` and
+`wallpapers/the-pour-midnight.svg`. The rendered copies ship at
+`system_files/usr/share/backgrounds/aquarius/`, one 4K picture each.
 
-Ribbons of `starlight` and `nebula` pouring diagonally across the `void`, with one thin
-`ancient` gold thread. Everything is heavily blurred; nothing has a hard edge.
+Ribbons of `aquariusBlue` and `indigo` pouring diagonally across the theme's `bg`, with one
+thin `starred` gold thread. Everything is heavily blurred; nothing has a hard edge. The two
+files are the same composition under two lights, not two different pictures.
 
-To change it: edit the SVG, then run `bash branding/render-wallpaper.sh`, then commit both
-the SVG and the PNGs it produced.
+`wallpapers/the-pour.svg` is the original, from the retired KDE line. Nothing installs it;
+it is kept because it is the parent of the two above.
+
+To change it: edit both SVGs, run `bash branding/render-wallpaper.sh gnome`, then commit the
+SVGs and the PNGs it produced.
 
 ---
 
@@ -343,7 +376,7 @@ For any web page, dashboard or HTML artifact about AquariusOS. Ice is the defaul
 | Inter | The desktop's general font |
 | JetBrains Mono | The desktop's fixed-width font |
 | Sora | The display face — headings, the wordmark, the "DR" letters in the Resolve icons |
-| The Pour | `/usr/share/backgrounds/aquarius/` and the default background (still in the old palette — see above) |
+| The Pour | `/usr/share/backgrounds/aquarius/` and the default background, one picture per theme |
 
 The files that do that live in `../system_files/`. See `README.md` in this folder for how
 that works.
