@@ -15,10 +15,21 @@
 # ⚠️ THE POSTURE, WHICH IS A DECISION AND NOT LAZINESS
 #
 # We work WITH GNOME's grain. Accent colour, wallpaper, fonts, a small set of
-# extensions, and then we stop. No GNOME Shell theme, no GTK theme, no icon
-# theme, no libadwaita patching. Every theme we do not ship is a theme that
-# cannot break on the next GNOME release, and chasing GNOME's internals is a
-# treadmill that has eaten entire distributions.
+# extensions, and then we stop. No GNOME Shell theme, no GTK theme, no
+# libadwaita patching. Every theme we do not ship is a theme that cannot break
+# on the next GNOME release, and chasing GNOME's internals is a treadmill that
+# has eaten entire distributions.
+#
+# ⚠️ ONE NAMED EXCEPTION SINCE 2026-09-06, AND IT IS NARROW ON PURPOSE.
+# This list used to say "no icon theme" as well, and now AquariusOS does ship
+# one — but it is not an icon theme in the sense that sentence meant. It is
+# EIGHT icons: the Editor, the Writer, Files, Settings, the app chooser, the
+# welcome window and the two DaVinci Resolve buttons. Both Aquarius themes say
+# Inherits=Adwaita,hicolor, so every other icon on the machine — the several
+# thousand of them — still comes from GNOME and still tracks GNOME. There is no
+# treadmill here, because there is nothing of GNOME's to keep up with: these are
+# our own apps' icons, and nobody else was ever going to draw them.
+# See build_files/56-aquarius-icons.sh and branding/icons/README.md.
 #
 # The one thing we would like and cannot have is the exact Aquarius Blue
 # (#2C8FC4) as the accent. GNOME accepts nine fixed words for that setting and
@@ -288,8 +299,14 @@ EOF
 #                     exists, this is the one login-screen line that changes and
 #                     it does not get forgotten. Full story + swap-in recipe:
 #                     docs/restart/desktop-identity.md.
-#   icon-theme        the app icons. Adwaita, matching the desktop session for
-#                     the same reason and with the same seam.
+#   icon-theme        the app icons. 'Aquarius-Ice' — OUR OWN, since
+#                     2026-09-06 — matching the desktop session exactly, which
+#                     is the whole point of this file. The same value is set for
+#                     a real account in zz1-aquarius-10-look.gschema.override,
+#                     and if the two ever differ the icons visibly change the
+#                     instant you log in. Only eight icons are ours; the theme
+#                     inherits Adwaita for everything else. See
+#                     build_files/56-aquarius-icons.sh and branding/icons/.
 #
 # NOT SET, ON PURPOSE: text-scaling-factor. See the long note above — the screen
 # size is fixed by monitors.xml, and doing it twice makes it wrong the other way.
@@ -301,7 +318,7 @@ font-name='Inter 11'
 document-font-name='Inter 11'
 monospace-font-name='JetBrains Mono 10'
 cursor-theme='Adwaita'
-icon-theme='Adwaita'
+icon-theme='Aquarius-Ice'
 EOF
 
 # ------------------------------------------------------------------------------
@@ -482,7 +499,10 @@ fi
 # The appearance keys, read back out of the BUILT database rather than out of
 # the file we just wrote. dconf update can skip a file it dislikes without
 # saying anything, so "the file exists" proves nothing at all.
-for aq_want in prefer-light 'Inter 11' 'JetBrains Mono 10' Adwaita; do
+#
+# 'Adwaita' here is the CURSOR theme; 'Aquarius-Ice' is the icon theme. Both are
+# in the file above, and both have to survive into the database.
+for aq_want in prefer-light 'Inter 11' 'JetBrains Mono 10' Adwaita Aquarius-Ice; do
     if grep -a -q "${aq_want}" /etc/dconf/db/gdm 2> /dev/null; then
         ok "the login screen database carries '${aq_want}'"
     else

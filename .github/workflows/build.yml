@@ -275,6 +275,14 @@ on:
       # Same arrangement as every side branch: builds and checks, never
       # publishes.
       - restart/r6-bench-pass-2
+      # The app icons — the nine AquariusOS icons from the 2026-09-06 design
+      # session (the Editor, the Writer, Files, Settings, the Console, the app
+      # chooser, the welcome window and the two DaVinci Resolve buttons), shipped
+      # as two icon themes, Aquarius-Ice and Aquarius-Midnight, with Ice as the
+      # default, both drawn in the shell's own palette.
+      # Same arrangement as every side branch: builds and checks, never
+      # publishes. See branding/icons/README.md.
+      - restart/icon-grammar
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -378,6 +386,22 @@ jobs:
       # in a row switch the machine back to GDM.
       - name: Check the greeter watchdog reverts to GDM when the greeter never draws
         run: ./tests/test-greeter-watchdog.sh
+
+      # ------------------------------------------------------------------------
+      # The app icons are all present, and are the sizes they claim
+      # ------------------------------------------------------------------------
+      # Before the build, because it takes a second and reads the same files the
+      # build will copy. The same test runs again INSIDE the finished image
+      # further down, which is the check that actually counts; this one is the
+      # fast warning.
+      #
+      # ⚠️ WHY IT IS CHECKED AT ALL. A missing icon is not an error anywhere.
+      # Both Aquarius themes say Inherits=Adwaita,hicolor, so anything we fail to
+      # ship falls silently through to GNOME's own artwork: the machine looks
+      # completely normal, it is just not AquariusOS, and no log anywhere says
+      # so. See branding/icons/README.md.
+      - name: Check the Aquarius app icons
+        run: ./tests/test-aquarius-icons.sh
 
       - name: Work out what this image is called
         run: |
@@ -953,13 +977,19 @@ jobs:
           want org.gnome.desktop.interface font-name "'Inter 11'"
           want org.gnome.desktop.interface monospace-font-name "'JetBrains Mono 10'"
           # Phase R5 desktop identity — the pointer, the app icons and the
-          # system sounds. All three are GNOME's own themes, named on purpose so
-          # they sit beside the fonts and accent and cannot drift; they must
-          # also match the login screen (build_files/50-aquarius-desktop.sh sets
-          # the same Adwaita cursor and icons). See docs/restart/desktop-identity.md.
+          # system sounds, named on purpose so they sit beside the fonts and the
+          # accent and cannot drift, and matching the login screen
+          # (build_files/50-aquarius-desktop.sh sets the same two values). See
+          # docs/restart/desktop-identity.md.
+          #
+          # The pointer and the sounds are still GNOME's and freedesktop's own.
+          # THE ICONS ARE OURS, since 2026-09-06: Aquarius-Ice, the light set,
+          # because AquariusOS is light-first. Aquarius-Midnight is built and
+          # installed beside it and nothing selects it yet — switching on the
+          # colour scheme is the shell's job, not the image's.
           want org.gnome.desktop.interface cursor-theme "'Adwaita'"
           want org.gnome.desktop.interface cursor-size "24"
-          want org.gnome.desktop.interface icon-theme "'Adwaita'"
+          want org.gnome.desktop.interface icon-theme "'Aquarius-Ice'"
           want org.gnome.desktop.sound theme-name "'freedesktop'"
           want org.gnome.desktop.sound event-sounds "true"
           want org.gnome.desktop.background picture-options "'zoom'"
@@ -1024,6 +1054,9 @@ jobs:
           # read-back above proves the setting is what we want; these prove the
           # thing it points at is actually in the image, so GNOME never has to
           # silently fall back. Package first, then folder.
+          # adwaita-icon-theme still matters even though the icon default is
+          # ours: both Aquarius themes say Inherits=Adwaita,hicolor, so it is
+          # where the several thousand icons we do NOT draw come from.
           echo "== the desktop-identity theme packages are installed =="
           for pkg in adwaita-cursor-theme adwaita-icon-theme sound-theme-freedesktop; do
             if rpm -q "${pkg}" > /dev/null 2>&1; then ok "${pkg} ($(rpm -q "${pkg}"))"
@@ -1034,6 +1067,8 @@ jobs:
           for dir in \
             /usr/share/icons/Adwaita \
             /usr/share/icons/Adwaita/cursors \
+            /usr/share/icons/Aquarius-Ice \
+            /usr/share/icons/Aquarius-Midnight \
             /usr/share/sounds/freedesktop; do
             if [ -d "${dir}" ]; then ok "${dir}"
             else bad "${dir} is missing — the matching desktop-identity default would fall back"; fi
@@ -1701,6 +1736,29 @@ jobs:
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" -c '
               set -e
               bash /tmp/t/tests/test-greeter-watchdog.sh /usr/libexec/aquarius-greeter-watchdog
+            '
+
+      # The app icons, read back out of the FINISHED image — every icon, in both
+      # themes, at all eight sizes, with each PNG's own stated width and height
+      # compared against the folder it sits in.
+      #
+      # The step before the build checked the repository's copies. This checks
+      # the ones that will actually be on Royce's machine, which is a different
+      # question: a mis-copied file, a folder that did not survive the image
+      # packaging, or a launcher entry that names an icon nothing provides would
+      # all pass there and fail here.
+      #
+      # Same test file, given "/" instead of the repository, so the two can
+      # never drift.
+      - name: Check the Aquarius app icons in the finished image
+        run: |
+          set -euo pipefail
+          podman run --rm --pull=never \
+            -v "${GITHUB_WORKSPACE}/tests/test-aquarius-icons.sh:/tmp/t/tests/test-aquarius-icons.sh:ro" \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" -c '
+              set -e
+              bash /tmp/t/tests/test-aquarius-icons.sh /
             '
 
       # Part B of the same photograph: our OWN login screen, drawn by the

@@ -1,6 +1,23 @@
 # Desktop identity — the pointer, the icons and the sounds
 
 *Phase R5 polish. Written 2026-09-05.*
+*Updated 2026-09-06: the app icons are now ours. Everything else stands.*
+
+> **⚠️ WHAT CHANGED ON 2026-09-06, BEFORE YOU READ THE REST.** This page was
+> written to explain why AquariusOS pointed at *other people's* themes for the
+> pointer, the icons and the sounds, and it left a marked seam for our own
+> artwork later. **The icon seam is now closed.** AquariusOS ships its own app
+> icons — `Aquarius-Ice` (the default) and `Aquarius-Midnight` — drawn in
+> `branding/icons/` and documented in
+> [`branding/icons/README.md`](../../branding/icons/README.md).
+>
+> It is a *narrow* set on purpose: **nine icons**, the ones Royce looks at every
+> day, and both themes say `Inherits=Adwaita,hicolor`, so every other icon on the
+> machine still comes from GNOME. So the reasoning below about not drawing a
+> whole icon set is still exactly right — we did not draw one.
+>
+> The pointer is still Adwaita and the sounds are still freedesktop. Those two
+> seams are still open, and everything this page says about them still holds.
 
 ## The one-paragraph version
 
@@ -38,7 +55,7 @@ set it as the default, and leave the door open for our own artwork later.
 | Piece | Theme | Package | Why this one |
 |---|---|---|---|
 | Mouse pointer | **Adwaita** | `adwaita-cursor-theme` | GNOME's own pointer: clean, neutral, already in the image, and already the pointer the **login screen** uses — so the pointer does not change shape the instant you log in. |
-| App icons | **Adwaita** | `adwaita-icon-theme` | GNOME 50's own icon set, so the icons match the desktop that draws them. It is Fedora's default anyway; we name it out loud so it lives beside the cursor and the sound and cannot drift. |
+| App icons | **`Aquarius-Ice`** (ours, since 2026-09-06) | built in this repo, from `branding/icons/` | Our own nine app icons, light set — AquariusOS is light-first. Everything we do not draw falls through to `adwaita-icon-theme`, which is still installed and still where the other several thousand icons come from. The dark twin `Aquarius-Midnight` is built and installed beside it; nothing selects it yet (see below). |
 | System sounds | **freedesktop** | `sound-theme-freedesktop` | The standard, complete cross-desktop sound set. Safe, familiar, nothing missing. |
 
 The pointer size is set to **24**, GNOME's own default (in "logical" pixels). On
@@ -69,8 +86,13 @@ Two places, on purpose kept in step with each other:
 2. **The login screen** (GDM, before you log in) —
    `build_files/50-aquarius-desktop.sh`, which writes
    `/etc/dconf/db/gdm.d/02-aquarius-look`. It sets the same Adwaita cursor and
-   icons so the login screen and the desktop match. (The greeter does not play
+   the same `Aquarius-Ice` icons, so the login screen and the desktop match and
+   nothing visibly changes the instant you log in. (The greeter does not play
    event sounds, so there is no sound line there.)
+
+The icons themselves are checked by their own build step,
+`build_files/56-aquarius-icons.sh`, and by `tests/test-aquarius-icons.sh` before
+a build even starts.
 
 Both are **defaults**, not locks. The moment a person picks a different pointer,
 icon set or sound theme, their choice is written into their own settings and
@@ -112,11 +134,35 @@ exists, it lands like this — and each is a **one-line** change:
    (search for `cursor-theme`) to expect `'Aquarius'` and
    `/usr/share/icons/Aquarius`.
 
-### A real Aquarius icon theme
+### A real Aquarius icon theme — ✅ **done, 2026-09-06**
 
-Same shape: ship `/usr/share/icons/Aquarius/` (an icon theme, which may
-*inherit* from Adwaita so it only has to draw the icons it wants to change),
-then set `icon-theme='Aquarius'` in the same two files and update CI.
+This is what actually happened, kept here as the worked example for the two
+seams still open above.
+
+Two themes ship at `/usr/share/icons/Aquarius-Ice/` and
+`/usr/share/icons/Aquarius-Midnight/`. Each has an `index.theme` saying
+`Inherits=Adwaita,hicolor`, so it only has to draw the icons it wants to change —
+which is nine (twelve files: Files, Settings and the Console are each filed under
+GNOME's name and ours). `icon-theme='Aquarius-Ice'` is set in the same two files as
+everything else on this page, and CI expects it.
+
+The drawings live in `branding/icons/` and are rebuilt with
+`bash branding/render-app-icons.sh`. Read
+[`branding/icons/README.md`](../../branding/icons/README.md) before touching any
+of it.
+
+**⚠️ TODO — not this repo's job: nothing switches to Midnight yet.** The dark
+set is built, installed and checked, and nothing ever selects it. Following the
+desktop's light/dark setting is the *shell's* job (the aquarius-shell repository
+already watches the colour scheme), so: **when the shell switches the colour
+scheme to dark it should set `org.gnome.desktop.interface icon-theme` to
+`'Aquarius-Midnight'`, and back to `'Aquarius-Ice'` when it goes light.** Both
+themes are already in the image, so that is a one-setting change with no image
+work behind it. Until it lands, a person switches by hand:
+
+```bash
+gsettings set org.gnome.desktop.interface icon-theme 'Aquarius-Midnight'
+```
 
 ### A real Aquarius sound theme
 
@@ -129,9 +175,10 @@ then set `icon-theme='Aquarius'` in the same two files and update CI.
 3. Update the CI read-back and folder checks in `.github/workflows/build.yml`
    (search for `theme-name` and `/usr/share/sounds/freedesktop`).
 
-### To switch the default to Papirus instead (no new artwork needed)
+### To fall back to Papirus instead (no new artwork needed)
 
-If Royce just wants fuller app-icon coverage before any bespoke set exists:
+Kept for the record. If Royce ever wants fuller *third-party* app-icon coverage
+and is willing to give up our own eight:
 
 1. Add `papirus-icon-theme` to the install list in
    `build_files/40-gnome-desktop.sh`.
@@ -140,19 +187,30 @@ If Royce just wants fuller app-icon coverage before any bespoke set exists:
 3. Update the CI checks in `.github/workflows/build.yml` to expect `'Papirus'`,
    the package `papirus-icon-theme`, and the folder `/usr/share/icons/Papirus`.
 
+A better answer, if this ever comes up, is to set `Inherits=Papirus,Adwaita,hicolor`
+in our own two `index.theme` files instead — that keeps the Aquarius icons and
+gets Papirus's coverage underneath them.
+
 ## How CI proves it
 
 The **"Check the desktop comes up as Ice-light AquariusOS"** step in
 `.github/workflows/build.yml` reads the *finished image* and checks:
 
 - `gsettings` reports `cursor-theme='Adwaita'`, `cursor-size=24`,
-  `icon-theme='Adwaita'`, `sound theme-name='freedesktop'` and
+  `icon-theme='Aquarius-Ice'`, `sound theme-name='freedesktop'` and
   `sound event-sounds=true` — the exact values a new account gets;
 - the packages `adwaita-cursor-theme`, `adwaita-icon-theme` and
-  `sound-theme-freedesktop` are installed (`rpm -q`);
+  `sound-theme-freedesktop` are installed (`rpm -q`) — Adwaita's icons still
+  matter, because our themes inherit from them;
 - the folders those settings point at really exist:
   `/usr/share/icons/Adwaita`, `/usr/share/icons/Adwaita/cursors`,
+  `/usr/share/icons/Aquarius-Ice`, `/usr/share/icons/Aquarius-Midnight`,
   `/usr/share/sounds/freedesktop`.
+
+The icons get a check of their own on top of that — every icon, in both themes,
+at all eight sizes, read back from the PNG's own header rather than assumed. See
+the **"Check the Aquarius app icons"** step, and
+`build_files/56-aquarius-icons.sh` which does the same inside the build.
 
 `build_files/40-gnome-desktop.sh` checks the same packages and folders at build
 time as well, so a missing theme fails the build before the image is even

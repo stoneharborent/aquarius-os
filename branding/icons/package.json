@@ -1,0 +1,11 @@
+{
+  "name": "aquarius-os-icons",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Source for the AquariusOS app icons. See README.md — run branding/render-app-icons.sh, not this.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "dependencies": {
+    "fontkit": "^2.0.4"
+  }
+}

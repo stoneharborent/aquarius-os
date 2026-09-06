@@ -543,8 +543,12 @@ else
     # instead of as "Install DaVinci Resolve" with the Aquarius mark on it.
     aq_file_has "${AQ_DESKTOP}" '^StartupWMClass=org\.aquariusos\.ResolveInstaller$' \
         "the desktop knows which window belongs to this entry"
-    aq_file_has "${AQ_DESKTOP}" '^Icon=aquarius-logo$' \
-        "it wears the Aquarius mark"
+    # Since 2026-09-06 this has its OWN icon — "DR" with a gold plus — instead
+    # of the general Aquarius mark. The icon itself, and the fact that both
+    # themes contain it, are checked in build_files/56-aquarius-icons.sh; this
+    # line only checks that the entry asks for the right name.
+    aq_file_has "${AQ_DESKTOP}" '^Icon=aquarius-install-resolve$' \
+        "it wears its own 'DR +' icon"
     # desktop-file-validate is the freedesktop project's own checker. A .desktop
     # file with a bad line is silently ignored by the app grid — the entry
     # simply never appears — so this is worth a package.

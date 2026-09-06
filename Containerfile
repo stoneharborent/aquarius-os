@@ -333,6 +333,27 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     /ctx/build_files/55-aquarius-session.sh
 
+# 5.6 The app icons — the eight pictures Royce looks at every day. Both Aquarius
+#     desktops, and the login screen, use them.
+#
+#     Nothing is DRAWN here. The two icon themes were drawn on the Mac by
+#     branding/render-app-icons.sh, committed, and copied in with everything
+#     else under system_files/ at step 5. This step reads every one of them
+#     back and refuses to build an image where an icon is missing, is the wrong
+#     size, or is filed under a name no program will ever ask for.
+#
+#     ⚠️ WHY THAT IS WORTH A STEP OF ITS OWN. A missing icon is not an error
+#     anywhere. Our themes say Inherits=Adwaita,hicolor, so anything we fail to
+#     provide falls silently through to GNOME's artwork and the machine looks
+#     perfectly fine — it just is not AquariusOS. There would be no red text to
+#     find. This step is the red text.
+#
+#     After 5.5, so that both the GNOME fallback and the Aquarius Session are
+#     fully in place — and after step 5, whose settings file names Aquarius-Ice
+#     as the default and whose dconf write does the same for the login screen.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    /ctx/build_files/56-aquarius-icons.sh
+
 # 5.8 The kernel pin. Runs on BOTH images, and must run before ANY step that
 #     installs a kernel module.
 #

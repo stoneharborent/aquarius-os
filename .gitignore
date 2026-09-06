@@ -14,3 +14,11 @@ _build-*/**
 # build.sh rebuilds them inside the image and deletes ours.
 __pycache__/
 *.pyc
+
+# The one library the app-icon drawings need (branding/icons/package.json asks
+# for it). Downloaded with `npm --prefix branding/icons install`, never
+# committed — see branding/icons/README.md. The LOCK FILE is committed, on
+# purpose: it pins the exact version of fontkit, and fontkit is what turns the
+# letters "DR" into a shape, so a different version could silently change the
+# drawing of two icons.
+branding/icons/node_modules/
