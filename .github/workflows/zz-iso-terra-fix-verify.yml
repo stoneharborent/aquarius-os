@@ -63,9 +63,33 @@ jobs:
         # This is the acceptance test. Before the Terra fix this step died in
         # depsolve with "Curl error (37): Could not read a file:// file for
         # file:///etc/pki/rpm-gpg/RPM-GPG-KEY-terra44". It must now go green.
+        #
+        # This mirrors the repository's own `_build-bib` recipe (bib reads the
+        # image straight from the mounted local container storage), but WITHOUT
+        # the recipe's `-it` flag — a CI runner has no TTY, and `podman run -it`
+        # can refuse to start there. The production ISO path (build-iso.yml) uses
+        # the osbuild action and is unaffected; this is only the local proof.
         run: |
           set -euo pipefail
-          just build-iso "localhost/${IMAGE_NAME}" "${DEFAULT_TAG}"
+          BIB_IMAGE="$(grep -E '^BIB_IMAGE=' aquarius-os.env | cut -d= -f2- | tr -d '"')"
+          echo "Using builder: ${BIB_IMAGE}"
+          echo "Wrapping local image: localhost/${IMAGE_NAME}:${DEFAULT_TAG}"
+          mkdir -p output
+          sudo podman run \
+            --rm \
+            --privileged \
+            --pull=newer \
+            --net=host \
+            --security-opt label=type:unconfined_t \
+            -v "$(pwd)/disk_config/iso.toml:/config.toml:ro" \
+            -v "$(pwd)/output:/output" \
+            -v /var/lib/containers/storage:/var/lib/containers/storage \
+            "${BIB_IMAGE}" \
+            --type anaconda-iso \
+            --use-librepo=True \
+            --rootfs=btrfs \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}"
+          sudo chown -R "$USER:$USER" output/
 
       - name: Report the ISO and add a checksum
         id: iso
