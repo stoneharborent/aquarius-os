@@ -621,10 +621,22 @@ starts. RPM Fusion deliberately does *not* do that — it ships
 `omit_drivers+=" nvidia nvidia-drm nvidia-modeset nvidia-uvm "` — but
 `build_files/60-nvidia.sh` rewrites that to `force_drivers` (and adds the
 built-in Intel and AMD graphics beside it), and `build_files/80-boot-branding.sh`
-rebuilds the ramdisk afterwards, so on AquariusOS the modules *are* in it.
+rebuilds the ramdisk afterwards — so on AquariusOS they *should* be in it.
 
-That is why command 6 above counts them. If that count is zero, the mitigation we
-think we have is not actually there, and this theory becomes very likely indeed.
+**Do not trust that paragraph — check it on the machine.** That is what command 6
+above is for. If `lsinitrd | grep -c nvidia` comes back **0**, the mitigation we
+believe we have is not actually there, and this theory goes from "leading" to
+"almost certainly it".
+
+**One other thing worth checking once, because it should come back empty:**
+
+```bash
+rpm -qf /usr/lib/udev/rules.d/61-gdm.rules
+```
+
+On Fedora 44 that file should not exist. If it does, something in our image
+layering has resurrected an old GDM's rules file, and it would be quietly
+turning Wayland off behind our backs.
 
 ### The one change we would try, and why we have not yet
 
