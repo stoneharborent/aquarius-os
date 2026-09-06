@@ -105,14 +105,15 @@ ARG LABWC_COMMIT=97f28877a343e062f3178d201f0248cd9c2610cf
 ARG QUICKSHELL_VERSION=v0.3.1
 ARG QUICKSHELL_COMMIT=1a4716cde794a59928d9d9fc15f2afc7a95de360
 ARG AQUARIUS_SHELL_REPO=https://github.com/stoneharborent/aquarius-shell.git
-# dd23a40 (2026-09-06, second bench pass): "About This PC" opens the About page
-# itself; a new session/labwc/themerc-override gives the desktop right-click menu
-# and the window title bars the Ice look; rc.xml gains a <theme> font block
-# (Inter, sizes in pixels) alongside the W-Return and W-Tab/W-S-Tab bindings; and
-# every app in the dock gets a right-click menu (Open / New Window, Keep in or
-# Remove from Dock, Quit). The reasoning is written out beside the same value in
-# aquarius-os.env, which is where a bump is made — this line must match it.
-ARG AQUARIUS_SHELL_REF=dd23a40fdd6e8902b5ba119ab73c8d9dc6afdfcd
+# 3930d1a (2026-09-06, the app switcher): hold Command and tap Tab and a panel of the
+# applications you have open appears in the middle of the screen; let go and you
+# are in the one you stopped on. Down opens that app's windows, Command+` walks
+# them with no panel, and on the Windows keyboard style Alt+Tab lists windows
+# instead. The shell's rc.xml gains the five bindings that drive it and switches
+# labwc's own switcher off; this image's copy matches. The reasoning is written
+# out beside the same value in aquarius-os.env, which is where a bump is made —
+# this line must match it.
+ARG AQUARIUS_SHELL_REF=3930d1ad47b07c61d28ea9478fa277f8701c06ad
 
 # ------------------------------------------------------------------------------
 # Our own files, gathered up so the build can reach them
