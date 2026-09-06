@@ -690,6 +690,93 @@ with evidence from the commands above, and not before.
 
 ---
 
+# The faulty PAM module at every login
+
+*Written 5 September 2026, from the same bench journal as the black-screen work
+above — but a different, and much smaller, fault.*
+
+## What it looked like
+
+Every time anybody logged in — at the text console, at GDM, or through `sudo` —
+the journal wrote two lines:
+
+```
+login: PAM unable to dlopen(/usr/lib64/security/pam_fprintd.so): cannot open shared object file: No such file or directory
+login: PAM adding faulty module: /usr/lib64/security/pam_fprintd.so
+```
+
+Nothing broke. The login still worked and the password prompt still appeared.
+But it was wrong, and it was in the journal at every single login.
+
+## Why it happened, and why it was not our mistake
+
+Fedora does not hand-write the rules that decide how you log in. A program
+called **authselect** generates two shared rule files —
+`/etc/pam.d/system-auth` and `/etc/pam.d/password-auth` — from a profile, and
+every way of logging in reads them. Fedora's stock profile lists a **fingerprint
+step** in those rules: a line that loads `pam_fprintd.so` and, if you have
+enrolled a fingerprint, lets you log in with it.
+
+The bare `fedora-bootc` base ships that rule but **not** the package that
+provides the module, because the bare base ships no fingerprint support at all.
+So the rule asked for a file that was not there, and PAM said so, out loud, every
+time. AquariusOS never runs authselect and never wrote a PAM rule, so we did not
+add this line — we inherited it from the base.
+
+## The fix, and why we chose to add rather than remove
+
+There were two honest fixes: take the fingerprint step **out**, or put the module
+it names **in**. `build_files/30-session.sh` puts it in — it installs `fprintd`
+(the daemon that talks to a fingerprint reader) and `fprintd-pam` (which *is*
+`/usr/lib64/security/pam_fprintd.so`). We chose to add it because:
+
+* AquariusOS is a creator's **laptop** operating system as much as a desktop one,
+  and fingerprint login is something people arriving from a MacBook expect.
+* It is exactly what **Fedora Workstation** ships, so we match the mainstream
+  desktop instead of diverging from it.
+* On a machine with **no reader** it costs nothing: `fprintd` is socket-activated
+  (its daemon only starts when something asks about a reader) and the PAM step
+  returns "ignore" when there is no enrolled print, so the password prompt
+  behaves exactly as before.
+
+## How it is kept fixed
+
+CI does two things on the finished image (in the "Check no login rule names a PAM
+module that is missing" step): it proves `fprintd-pam` is installed and that the
+exact file the journal named is present, and — the part that matters for the long
+run — it reads **every** `/etc/pam.d` file and fails the build if any of them
+names a PAM module that is not installed. A dangling PAM reference of any kind
+can never ship again.
+
+## A second, related line in the journal — left alone on purpose
+
+The same bench pass showed one more line, from a different program:
+
+```
+dbus-broker-launch: Ignoring duplicate name 'org.gnome.TextEditor' in service file '/usr/share//dbus-1/services/org.gnome.TextEditor.service'
+```
+
+It looks alarming (note the doubled slash, `//`), and it was worth checking that
+it was not ours. It is not:
+
+* AquariusOS ships **no** D-Bus service files at all, and no duplicate copy of
+  GNOME Text Editor's — the file named belongs to the `gnome-text-editor`
+  package, and there is exactly one of it.
+* We do not set `XDG_DATA_DIRS` anywhere, which is what the doubled slash comes
+  from: the GNOME session's own service-directory list contains `/usr/share`
+  once plainly and once with a trailing slash, so dbus-broker scans the same
+  directory twice and reports every service in it — Text Editor being only the
+  first alphabetically — as a "duplicate". It correctly ignores the second copy
+  and uses one.
+
+So it is a **cosmetic** log line from stock Fedora's own GNOME session, not a
+fault in AquariusOS, and it changes nothing about how anything runs. We leave it
+alone rather than paper over an upstream log message with a config file of our
+own that we would then have to maintain. If Fedora ever tidies it upstream, it
+goes away on its own.
+
+---
+
 # Part A — the GDM you already have
 
 ## 1. The size: we tried, and we stopped

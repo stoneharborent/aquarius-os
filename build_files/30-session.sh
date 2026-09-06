@@ -32,6 +32,48 @@ say "The login screen (GDM)"
 aq_dnf install gdm
 
 # ------------------------------------------------------------------------------
+# Fingerprint login — and the missing module the bare base leaves behind
+# ------------------------------------------------------------------------------
+# ⚠️ THIS FIXES A LINE WRITTEN AT EVERY SINGLE LOGIN. The bench journal, on
+# 2026-09-05:
+#
+#     login: PAM unable to dlopen(/usr/lib64/security/pam_fprintd.so):
+#            cannot open shared object file: No such file or directory
+#     login: PAM adding faulty module: /usr/lib64/security/pam_fprintd.so
+#
+# WHERE IT COMES FROM, AND WHY IT IS NOT OUR MISTAKE. Fedora does not hand-write
+# the shared login rules. A program called authselect generates
+# /etc/pam.d/system-auth and /etc/pam.d/password-auth from a profile, and that
+# stock profile lists a fingerprint step — pam_fprintd.so — in the auth stack.
+# Every login path includes those two files: the text `login` above, GDM, sudo.
+# The bare fedora-bootc base ships the profile that NAMES the module but NOT the
+# package that PROVIDES it, because the bare base ships no fingerprint support at
+# all. So the module is asked for and is not there, and PAM writes the two lines
+# above every time anybody logs in. It is not fatal — PAM marks the step faulty
+# and moves on to the password — but it is wrong, and it is noise in the journal
+# forever.
+#
+# We never call authselect, so we did not add this reference; we inherited it.
+# There are two honest fixes: take the fingerprint step out, or put the module
+# it names in. WE PUT THE MODULE IN, on purpose:
+#
+#   * AquariusOS is a creator's LAPTOP operating system as much as a desktop
+#     one, and fingerprint login is something people arriving from a MacBook
+#     expect to just work.
+#   * It is exactly what Fedora Workstation ships, so we are matching the
+#     mainstream desktop rather than diverging from it.
+#   * On a machine with NO reader it costs nothing: fprintd is socket-activated
+#     (the daemon only starts when something asks it about a reader) and the PAM
+#     step returns "ignore" when there is no enrolled print, so the password
+#     prompt appears exactly as before.
+#
+# fprintd     the daemon that talks to the fingerprint reader (libfprint).
+# fprintd-pam the piece that IS /usr/lib64/security/pam_fprintd.so — the file
+#             the login rules were already asking for.
+say "Fingerprint login (fprintd + the PAM module the base's login rules ask for)"
+aq_dnf install fprintd fprintd-pam
+
+# ------------------------------------------------------------------------------
 # Portals
 # ------------------------------------------------------------------------------
 # A "portal" is the doorway a sandboxed application uses to ask the desktop for
@@ -241,6 +283,8 @@ say "Checking the session floor"
 
 aq_installed \
     gdm \
+    fprintd \
+    fprintd-pam \
     glibc-langpack-en \
     xdg-desktop-portal \
     xdg-desktop-portal-gnome \
@@ -257,6 +301,18 @@ aq_installed \
     polkit \
     sudo \
     openssh-server
+
+# The fingerprint PAM module, read back by the exact path the login rules name.
+# Installing fprintd-pam was only half the job — the whole point was to make the
+# file that /etc/pam.d/system-auth loads actually exist, so check the file, not
+# just the package. When this is present the "PAM adding faulty module" line at
+# every login is gone. (The image-wide guard that NO shipped /etc/pam.d file may
+# name a missing module lives in CI, where it runs on the fully-built image.)
+if [ -e /usr/lib64/security/pam_fprintd.so ]; then
+    ok "the fingerprint PAM module is present at /usr/lib64/security/pam_fprintd.so"
+else
+    bad "/usr/lib64/security/pam_fprintd.so is missing — every login would log a faulty-module line"
+fi
 
 # The locale, read back rather than assumed. Two questions, because they fail
 # separately: does the file say what we wrote, and does the locale it names
