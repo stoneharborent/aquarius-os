@@ -196,6 +196,124 @@ places need it, and they are fixed in three places:
 Under the GNOME fallback session the prefix does nothing at all, because
 `XDG_CURRENT_DESKTOP` is already `GNOME` there.
 
+### Why the Bluetooth settings page said *No Bluetooth Found*
+
+**This is the third fault from the 6 September 2026 bench test, and it is the
+strangest of the three.**
+
+Open Quick Settings, click the little arrow beside **Bluetooth**, and the
+Settings app opens on its Bluetooth page. On the bench that page said
+
+```
+No Bluetooth Found
+Plug in a dongle to use Bluetooth.
+```
+
+while a Bluetooth mouse was working on the same machine at the same moment. The
+Bluetooth *tile* in Quick Settings was right — it listed the devices — so only
+the Settings page was wrong.
+
+#### The page never asks Bluetooth anything
+
+That is the part that makes this hard to guess at. You would expect the
+Bluetooth page to ask BlueZ — Linux's Bluetooth service — whether there is a
+Bluetooth adapter. It does not. Read gnome-control-center's own source,
+`panels/bluetooth/cc-bluetooth-panel.c`, and what the page actually reads is a
+single true/false value called **`BluetoothHasAirplaneMode`**, published on the
+message bus by a service named
+
+```
+org.gnome.SettingsDaemon.Rfkill
+```
+
+When that value is false, the page draws the "no devices" screen. It is really
+asking *"is there a radio kill switch for Bluetooth?"* and treating "I could not
+find out" as "no".
+
+"rfkill" is Linux's name for the radio kill switches — the aeroplane-mode
+machinery. Every radio in the machine registers a switch with the kernel, and
+the kernel offers the whole list through one file, `/dev/rfkill`. A small
+program reads that list and publishes it:
+
+```
+/usr/libexec/gsd-rfkill
+```
+
+It ships inside `gnome-settings-daemon`, which is in this image because GNOME is
+the fallback desktop and always will be.
+
+#### And nobody was running it
+
+In GNOME, gnome-session starts that program automatically, through
+`/usr/lib/systemd/user/org.gnome.SettingsDaemon.Rfkill.service`. The Aquarius
+Desktop is not GNOME and does not run gnome-session, so nothing started it. With
+nothing publishing the value, the Settings page read nothing, took nothing as
+false, and drew the empty screen. **The Bluetooth hardware was fine the whole
+time. The page was blind.**
+
+#### The fix
+
+A service of our own that starts the same program:
+`/usr/lib/systemd/user/aquarius-rfkill.service`. Its own header is the long
+version; the two decisions worth knowing here are:
+
+**It is our own file rather than GNOME's, because GNOME's forbids it.** Read
+`org.gnome.SettingsDaemon.Rfkill.service` and you find `RefuseManualStart=true`,
+plus `Requisite=` lines pointing at GNOME session targets that do not exist in
+our session and an `ExecStopPost=` that reports back to gnome-session. It is
+written to be startable by gnome-session and by nothing else.
+
+**It runs in the Aquarius Desktop only.** Every other user service of ours
+(`aquarius-keys`, `aquarius-automount`) hangs off `graphical-session.target`,
+which both desktops reach, because both desktops want them. This one must not:
+GNOME already runs its own copy, the program owns the bus name
+`org.gnome.SettingsDaemon.Rfkill`, and a bus name has exactly one owner. Two
+copies would mean one of them losing the race and quitting — differently on each
+boot, which is the worst kind of fault to chase. So this one hangs off
+`labwc-session.target` instead, which only our session ever starts:
+
+```
+/usr/lib/systemd/user/labwc-session.target.wants/aquarius-rfkill.service
+```
+
+Same "switched on from `/usr`" arrangement as the other two, and the same
+trade-off: `systemctl --user disable` has nothing in `/etc` to remove and will
+not turn it off, while `systemctl --user mask --now aquarius-rfkill` will.
+
+This does **not** touch the Bluetooth tile in Quick Settings — that talks to
+BlueZ directly and was always correct. And it needs nothing from
+NetworkManager: the aeroplane-mode side reads the kernel's switch list and
+nothing else.
+
+#### One more piece: being allowed to *switch* the radios
+
+`/dev/rfkill` is world-readable, so *detecting* Bluetooth works for anybody.
+Actually switching aeroplane mode means writing to that file, and an ordinary
+person cannot write to a root-owned device file unless something says so. That
+something is a udev rule that tags rfkill devices `uaccess` — "give read and
+write to whoever is logged in at the screen right now". systemd ships it in
+`70-uaccess.rules`, and gnome-settings-daemon ships an identical one of its own.
+The build reads the rules out of the finished image and prints what it found,
+because a missing rule is invisible: the page would look right and the switch
+would simply not move.
+
+#### What the build checks
+
+`build_files/78-rfkill.sh`, and a matching read-back in CI, prove out of the
+**finished image** that the helper is there, that our service runs it and takes
+the right bus name, that it hangs off `labwc-session.target` and *not* the
+both-desktops target, that none of GNOME's session gating was copied into it,
+and that the `uaccess` rule is present. GNOME's own service file is printed in
+the build log too, so a future Fedora changing it is visible here rather than on
+a bench.
+
+To see the values for yourself, in the Aquarius Desktop:
+
+```
+systemctl --user status aquarius-rfkill
+busctl --user introspect org.gnome.SettingsDaemon.Rfkill /org/gnome/SettingsDaemon/Rfkill
+```
+
 ### How big it all is
 
 The bar and the dock ship at the size Royce approved on the bench on 3 September
@@ -805,6 +923,16 @@ In order. Stop at the first failure and read the log.
     from that one launch route.
 5. **Click the status glyphs.** Quick Settings should open: Wi-Fi, Bluetooth,
    volume, Focus.
+5b. **Open Bluetooth from the arrow beside the tile.** With a Bluetooth device
+    paired and in use, click the little arrow next to Bluetooth in Quick
+    Settings. Settings should open on its Bluetooth page and **show the device
+    list**. If it says *No Bluetooth Found* while Bluetooth is plainly working,
+    the rfkill helper is not running — that is the 6 September 2026 bug. Check
+    with `systemctl --user status aquarius-rfkill`; the section "Why the
+    Bluetooth settings page said No Bluetooth Found" above is the full story.
+    While you are there, the airplane-mode switch on the Wi-Fi page should
+    actually move when you click it (that is the `uaccess` half of the same
+    section).
 6. **Make a notification.** In a terminal (Super + Return):
    `notify-send "Hello" "This is a test"`. A toast should appear. Click the
    clock; it should be listed in the panel.

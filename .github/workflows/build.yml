@@ -241,6 +241,24 @@ on:
       # Same arrangement as every side branch: builds and checks, never
       # publishes.
       - restart/r6-bench-fixes
+      # The second pass over the 2026-09-06 bench test. One real fault and one
+      # piece of drift:
+      #
+      #   * The Bluetooth arrow in Quick Settings opens GNOME's Settings on its
+      #     Bluetooth page, and that page said "No Bluetooth Found" while a
+      #     Bluetooth mouse was in use. The page never asks Bluetooth anything —
+      #     it reads a value published by /usr/libexec/gsd-rfkill, which GNOME's
+      #     session starts and ours did not. This branch adds
+      #     aquarius-rfkill.service, switched on for the Aquarius session only
+      #     (GNOME runs its own copy, and two would fight over one bus name),
+      #     plus build_files/78-rfkill.sh and the read-back below.
+      #   * Super+Tab / Super+Shift+Tab were in the aquarius-shell repository's
+      #     rc.xml and had never been copied into the image's own copy — the
+      #     same drift that lost the right-click menu last pass.
+      #
+      # Same arrangement as every side branch: builds and checks, never
+      # publishes.
+      - restart/r6-bench-pass-2
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -5337,6 +5355,137 @@ jobs:
           podman run --rm --pull=never -i \
             --entrypoint /usr/bin/bash \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-r6.sh
+
+      - name: Check the Settings app can see Bluetooth in the Aquarius Desktop
+        run: |
+          set -euo pipefail
+          cat > /tmp/verify-rfkill.sh <<'SCRIPT'
+          set -u
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+
+          # ⚠️ THE BENCH BUG OF 6 SEPTEMBER 2026. In the Aquarius Desktop, the
+          # arrow beside the Bluetooth tile in Quick Settings opens GNOME's
+          # Settings on its Bluetooth page, and that page said "No Bluetooth
+          # Found" while a Bluetooth mouse was working on the same machine.
+          #
+          # The page does not ask Bluetooth anything. gnome-control-center's
+          # panels/bluetooth/cc-bluetooth-panel.c reads one true/false value,
+          # BluetoothHasAirplaneMode, from the bus service
+          # org.gnome.SettingsDaemon.Rfkill — and draws the "no devices" screen
+          # when it is false. That service is /usr/libexec/gsd-rfkill, which
+          # ships with gnome-settings-daemon and which GNOME's session starts.
+          # Ours did not, so nothing published the value and the page was blind.
+          #
+          # The fix is aquarius-rfkill.service: the same helper, started in our
+          # session only. Everything below is read out of the FINISHED IMAGE.
+          HELPER=/usr/libexec/gsd-rfkill
+          UNIT=/usr/lib/systemd/user/aquarius-rfkill.service
+          LINK=/usr/lib/systemd/user/labwc-session.target.wants/aquarius-rfkill.service
+          GNOME_UNIT=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Rfkill.service
+
+          echo "== the helper the Settings page reads Bluetooth from =="
+          rpm -q gnome-settings-daemon > /dev/null 2>&1 \
+            && ok "gnome-settings-daemon $(rpm -q --queryformat '%{VERSION}-%{RELEASE}' gnome-settings-daemon)" \
+            || bad "gnome-settings-daemon is NOT installed — the helper comes in that package"
+          if [ -x "${HELPER}" ]; then ok "${HELPER} is present and runnable"
+          else bad "${HELPER} is missing — the Bluetooth page would say 'No Bluetooth Found'"; fi
+
+          echo "== our service, which starts it in the Aquarius session =="
+          if [ -r "${UNIT}" ]; then ok "the service file is installed"
+          else bad "${UNIT} is missing — nothing would start the helper"; fi
+          grep -q '^ExecStart=/usr/libexec/gsd-rfkill$' "${UNIT}" && ok "it runs the rfkill helper" || bad "the service does not run /usr/libexec/gsd-rfkill"
+          grep -q '^BusName=org\.gnome\.SettingsDaemon\.Rfkill$' "${UNIT}" && ok "it takes the bus name the Settings app looks for" || bad "the service declares no BusName"
+          grep -q '^Type=dbus$' "${UNIT}" && ok "it is 'ready' when that name is taken" || bad "the service is not Type=dbus"
+          grep -q '^PartOf=graphical-session\.target$' "${UNIT}" && ok "it stops when the desktop does" || bad "the service is not PartOf=graphical-session.target"
+          grep -q '^ConditionUser=!@system$' "${UNIT}" && ok "the login screen does not run it" || bad "the service is missing ConditionUser=!@system"
+
+          # ⚠️ THE SCOPE LINE. GNOME reaches graphical-session.target too, and
+          # GNOME already runs its own copy of this helper. Two copies would race
+          # for one bus name and one would lose, differently on each boot. So the
+          # service hangs off labwc-session.target — which only our session
+          # starts — and must never hang off the both-desktops one.
+          grep -q '^WantedBy=labwc-session\.target$' "${UNIT}" \
+            && ok "it is switched on for the Aquarius session" \
+            || bad "the service is not WantedBy=labwc-session.target"
+          if grep -qE '^(WantedBy|RequiredBy)=.*graphical-session\.target' "${UNIT}"; then
+            bad "the service asks to start with ANY graphical session, GNOME included — two copies would fight over org.gnome.SettingsDaemon.Rfkill"
+          else
+            ok "it does NOT start in GNOME, where a second copy would fight the first"
+          fi
+          [ -r /usr/lib/systemd/user/labwc-session.target ] \
+            && ok "labwc-session.target is in the image for it to hang off" \
+            || bad "labwc-session.target is missing — the service would never start"
+
+          echo "== the link that switches it on =="
+          if [ -L "${LINK}" ] && [ -e "${LINK}" ]; then
+            ok "switched on from /usr (an update always restores it): $(readlink "${LINK}")"
+          else
+            bad "${LINK} is missing or dangling — the service would never start"
+          fi
+          if [ -e /etc/systemd/user/labwc-session.target.wants/aquarius-rfkill.service ]; then
+            bad "it is ALSO switched on through /etc — an update could lose that"
+          else ok "nothing switches it on through /etc"; fi
+          if [ -e /usr/lib/systemd/user/graphical-session.target.wants/aquarius-rfkill.service ] \
+             || [ -e /etc/systemd/user/graphical-session.target.wants/aquarius-rfkill.service ]; then
+            bad "it is linked into graphical-session.target.wants — that starts it in GNOME too"
+          else ok "it is not linked into the both-desktops target"; fi
+
+          echo "== GNOME's own service for the same helper, for comparison =="
+          # Printed rather than asserted, so a future Fedora changing it is
+          # visible in a build log instead of on a bench. RefuseManualStart=true
+          # is why we ship a service of our own rather than starting GNOME's.
+          if [ -r "${GNOME_UNIT}" ]; then
+            ok "${GNOME_UNIT} is in the image"
+            sed 's/^/       /' "${GNOME_UNIT}"
+            grep -q '^RefuseManualStart=true$' "${GNOME_UNIT}" \
+              && ok "it refuses a manual start — hence our own service file" \
+              || echo "  note GNOME's unit no longer refuses a manual start; ours is still right, but worth a look"
+            if grep -q '^Environment=' "${GNOME_UNIT}"; then
+              echo "  note ⚠️ GNOME's unit now sets an environment variable — check whether ours needs it:"
+              grep '^Environment=' "${GNOME_UNIT}" | sed 's/^/       /'
+            else
+              ok "it sets no Environment= — nothing of that kind for ours to mirror"
+            fi
+          else
+            echo "  note ${GNOME_UNIT} is not in this image; ours does not depend on it"
+          fi
+          # None of GNOME's session gating may be in ours: Requisite= means
+          # "refuse to start unless that target is up", and those targets do not
+          # exist in our session. Read only the SETTING lines — our unit's header
+          # names all of these on purpose, to explain why they are absent.
+          grep -vE '^[[:space:]]*(#|$)' "${UNIT}" > /tmp/rf-settings.txt
+          gating=0
+          for line in 'Requisite=' 'ExecStopPost=' 'RefuseManualStart=' 'RefuseManualStop=' 'gnome-session'; do
+            if grep -qF "${line}" /tmp/rf-settings.txt; then
+              bad "ours has a live '${line}' setting copied from GNOME's unit — it would refuse to start in our session"
+              gating=1
+            fi
+          done
+          [ "${gating}" -eq 0 ] && ok "ours carries none of GNOME's session gating"
+
+          echo "== /dev/rfkill has to be writable by the person at the screen =="
+          # Reading the switch list is enough to DETECT Bluetooth (/dev/rfkill is
+          # world-readable), but switching aeroplane mode needs to write to it.
+          # systemd's 70-uaccess.rules tags rfkill devices 'uaccess', which gives
+          # read and write to whoever is logged in at the screen.
+          grep -rhE '^[^#]*rfkill' /usr/lib/udev/rules.d /etc/udev/rules.d 2>/dev/null | sed 's/^/       /' || true
+          if grep -rhE '^[^#]*KERNEL=="rfkill"' /usr/lib/udev/rules.d /etc/udev/rules.d 2>/dev/null | grep -q 'uaccess'; then
+            ok "a udev rule tags rfkill 'uaccess' — aeroplane mode can be switched, not only read"
+          else
+            bad "no udev rule tags rfkill 'uaccess' — Bluetooth would still be detected, but the aeroplane-mode switch would not move"
+          fi
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::The Settings app would not see Bluetooth in the Aquarius Desktop. See docs/restart/aquarius-session.md."
+            exit 1
+          fi
+          echo "All Bluetooth-in-Settings checks passed."
+          SCRIPT
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-rfkill.sh
 
       # ------------------------------------------------------------------------
       # PUBLISHING
