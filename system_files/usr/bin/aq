@@ -118,6 +118,15 @@ USAGE
                         a page of tips. Safe to run any time; it changes
                         nothing until you press something.
 
+    aq update           Open the "Check for Update" window: which version of
+                        AquariusOS you have, whether there is a newer one, and
+                        a button to install it. The same window the Aquarius
+                        logo menu opens.
+    aq update check     No window — just say whether an update is available.
+    aq update apply     Install the update now, asking for your password once.
+                        Your files are untouched and the old version stays on
+                        the disk, so you can always roll back.
+
     aq login status     Which login screen this computer starts with — GNOME's
                         (GDM) or the AquariusOS one (greetd) — and whether the
                         AquariusOS one is ready to be switched on.
@@ -2019,6 +2028,42 @@ welcome() {
     "${AQ_WELCOME}" "$@"
 }
 
+# =============================================================================
+# aq update — check for and install a newer AquariusOS
+# =============================================================================
+# A thin front door to /usr/libexec/aquarius-updater, which is also the "Check
+# for Update" window the Aquarius logo menu opens. There is one updater and two
+# ways to reach it, exactly like `aq resolve` and the Resolve window.
+#
+#   aq update            open the window
+#   aq update check      no window: is there an update? (aquarius-updater check)
+#   aq update apply      install it now, asking for a password once
+#
+# Everything is handed straight to the program, so its own --help and error
+# messages are the ones a person sees. Plain-English guide: docs/restart/updater.md
+# =============================================================================
+AQ_UPDATER="/usr/libexec/aquarius-updater"
+
+update() {
+    if [ ! -x "${AQ_UPDATER}" ]; then
+        echo "aq: this copy of AquariusOS has no updater at" >&2
+        echo "    ${AQ_UPDATER}. That is a fault in the operating system," >&2
+        echo "    not in anything you typed." >&2
+        return 1
+    fi
+    case "${1:-}" in
+        "" | --gui) "${AQ_UPDATER}" ;;
+        check | --check) "${AQ_UPDATER}" check ;;
+        apply | --apply | upgrade) "${AQ_UPDATER}" apply ;;
+        -h | --help | help) "${AQ_UPDATER}" --help ;;
+        *)
+            echo "aq: '${1}' is not something 'aq update' knows how to do." >&2
+            echo "    It understands: (nothing — opens the window), check, apply." >&2
+            return 1
+            ;;
+    esac
+}
+
 # -----------------------------------------------------------------------------
 # Which subcommand?
 # -----------------------------------------------------------------------------
@@ -2056,6 +2101,10 @@ case "${1:-}" in
     welcome)
         shift
         welcome "$@"
+        ;;
+    update)
+        shift
+        update "$@"
         ;;
     keys)
         case "${2:-}" in

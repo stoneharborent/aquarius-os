@@ -209,6 +209,12 @@ on:
       # that would break the ISO. Same arrangement as every side branch: builds
       # and checks, never publishes.
       - restart/iso-terra-fix
+      # Phase R6 OS-side pieces that back the shell work: external drives that
+      # mount automatically and passwordless when a user is logged in
+      # (unmountable without a password too), and a small "Check for Update"
+      # window the logo menu opens. Same arrangement as every side branch:
+      # builds and checks, never publishes.
+      - restart/r6-os
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -5105,6 +5111,118 @@ jobs:
           podman run --rm --pull=never -i \
             --entrypoint /usr/bin/bash \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-iso-repos.sh
+
+      - name: Check external drives automount and the updater window are really in there
+        run: |
+          set -euo pipefail
+          cat > /tmp/verify-r6.sh <<'SCRIPT'
+          set -u
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+
+          echo "== the drive-mounting machinery and the filesystems creators plug in =="
+          for pkg in udisks2 exfatprogs ntfs-3g polkit python3-gobject; do
+            if rpm -q "${pkg}" > /dev/null 2>&1; then
+              ok "${pkg} $(rpm -q --queryformat '%{VERSION}-%{RELEASE}' "${pkg}")"
+            else
+              bad "${pkg} is NOT installed"
+            fi
+          done
+
+          echo "== the auto-mount agent =="
+          AGENT=/usr/libexec/aquarius-automount
+          if [ -x "${AGENT}" ]; then ok "the agent is present and runnable"
+          else bad "${AGENT} is missing — nothing would mount a drive on insert"; fi
+          if python3 -c 'import py_compile,sys; py_compile.compile(sys.argv[1],cfile="/tmp/a.pyc",doraise=True)' "${AGENT}" 2>/tmp/a.txt; then
+            ok "the agent is valid Python"
+          else bad "the agent has a syntax error"; cat /tmp/a.txt; fi
+          # The rehearsal runs with no udisks2 and no screen — the finished image
+          # has both absent in this container, so this is the real test that it loads.
+          if "${AGENT}" --dry-run > /tmp/adry.txt 2>&1; then
+            ok "'aquarius-automount --dry-run' runs and changes nothing"
+          else bad "'aquarius-automount --dry-run' failed"; cat /tmp/adry.txt; fi
+          grep -q 'HintSystem = false' /tmp/adry.txt \
+            && ok "the agent states it leaves system-internal disks alone" \
+            || bad "the agent no longer states the system-disk guard"
+
+          echo "== the no-password polkit rule, and its limits =="
+          RULE=/usr/share/polkit-1/rules.d/49-aquarius-udisks.rules
+          if [ -r "${RULE}" ]; then ok "the rule is installed"
+          else bad "${RULE} is missing — mounting would ask for a password"; fi
+          grep -q 'subject\.local'  "${RULE}" && ok "scoped to the LOCAL session"  || bad "the rule is not scoped to subject.local"
+          grep -q 'subject\.active' "${RULE}" && ok "scoped to the ACTIVE session" || bad "the rule is not scoped to subject.active"
+          grep -q 'org\.freedesktop\.udisks2\.filesystem-mount' "${RULE}" && ok "allows mounting a removable filesystem" || bad "the rule does not allow filesystem-mount"
+          grep -q 'org\.freedesktop\.udisks2\.eject-media'      "${RULE}" && ok "allows ejecting removable media"       || bad "the rule does not allow eject-media"
+          grep -q 'polkit\.Result\.YES' "${RULE}" && ok "the rule actually grants something" || bad "the rule grants nothing"
+          # ⚠️ The safety line: the CODE must NEVER name the internal-disk action,
+          # or it would let an internal disk mount with no password. The comments
+          # do mention it (to explain it is deliberately absent), so strip the
+          # `//` comments before checking.
+          if sed 's://.*::' "${RULE}" | grep -q 'filesystem-mount-system'; then
+            bad "the rule grants filesystem-mount-system — internal disks would mount with no password"
+          else
+            ok "the rule's code says nothing about internal disks — they still need a password"
+          fi
+
+          echo "== the auto-mount service, switched on for both desktops =="
+          UNIT=/usr/lib/systemd/user/aquarius-automount.service
+          LINK=/usr/lib/systemd/user/graphical-session.target.wants/aquarius-automount.service
+          grep -q '^ExecStart=/usr/libexec/aquarius-automount$' "${UNIT}" && ok "the service runs the agent" || bad "the service does not run the agent"
+          grep -q '^ConditionUser=!@system$' "${UNIT}" && ok "the login screen does not run it" || bad "the service is missing ConditionUser=!@system"
+          if [ -L "${LINK}" ] && [ -e "${LINK}" ]; then ok "the service is switched on from /usr (an update always restores it)"
+          else bad "${LINK} is missing or dangling — the agent would never start"; fi
+          if [ -e /etc/systemd/user/graphical-session.target.wants/aquarius-automount.service ]; then
+            bad "the service is ALSO switched on through /etc — an update could lose that"
+          else ok "nothing switches it on through /etc"; fi
+
+          echo "== the 'Check for Update' window =="
+          UPD=/usr/libexec/aquarius-updater
+          if [ -x "${UPD}" ]; then ok "the updater is present and runnable"
+          else bad "${UPD} is missing — 'Check for Update' would do nothing"; fi
+          if python3 -c 'import py_compile,sys; py_compile.compile(sys.argv[1],cfile="/tmp/u.pyc",doraise=True)' "${UPD}" 2>/tmp/u.txt; then
+            ok "the updater is valid Python"
+          else bad "the updater has a syntax error"; cat /tmp/u.txt; fi
+          # GTK 4 + libadwaita, the toolkit the window is drawn with.
+          if python3 -c 'import gi; gi.require_version("Gtk","4.0"); gi.require_version("Adw","1"); from gi.repository import Gtk, Adw' 2>/tmp/gi.txt; then
+            ok "Python can reach GTK 4 and libadwaita"
+          else bad "Python cannot import GTK 4 and libadwaita — the window could not be drawn"; cat /tmp/gi.txt; fi
+          # The mark-on-every-page rule (2026-09-04).
+          if grep -q 'Adw\.StatusPage(' "${UPD}"; then bad "the updater builds an Adw.StatusPage — that page cannot show the mark"
+          else ok "the updater builds no Adw.StatusPage anywhere"; fi
+          grep -qF 'aquarius_ui.hero(' "${UPD}" && ok "it draws its pages with aquarius_ui.hero()" || bad "it does not use aquarius_ui.hero()"
+          # The rehearsal: prints the version and describes the check, no window.
+          if "${UPD}" --dry-run > /tmp/udry.txt 2>&1; then ok "'aquarius-updater --dry-run' runs"
+          else bad "'aquarius-updater --dry-run' failed"; cat /tmp/udry.txt; fi
+          grep -q 'Current version:'    /tmp/udry.txt && ok "the rehearsal prints the current version" || bad "the rehearsal does not print the version"
+          grep -q 'bootc upgrade --check' /tmp/udry.txt && ok "the rehearsal states the check it runs" || bad "the rehearsal does not state the check"
+          grep -q 'pkexec bootc upgrade' /tmp/udry.txt && ok "the rehearsal states how it elevates" || bad "the rehearsal does not state how it elevates"
+          # The launcher entry.
+          DESK=/usr/share/applications/aquarius-updater.desktop
+          grep -q '^Exec=/usr/libexec/aquarius-updater$' "${DESK}" && ok "the launcher runs the updater" || bad "the launcher does not run the updater"
+          grep -q '^NoDisplay=true$' "${DESK}" && ok "it is hidden from the app grid (the logo menu launches it)" || bad "the launcher is not NoDisplay=true"
+          if command -v desktop-file-validate >/dev/null 2>&1; then
+            if desktop-file-validate "${DESK}" 2>/tmp/dfv.txt; then ok "desktop-file-validate accepts the launcher"
+            else bad "desktop-file-validate rejects the launcher"; cat /tmp/dfv.txt; fi
+          else
+            echo "  note desktop-file-validate is not in this image; the build validated it"
+          fi
+          # bootc, and the version file the window reads.
+          [ -x /usr/bin/bootc ] && ok "bootc is present to do the update" || bad "bootc is missing"
+          grep -q '"version-pretty"' /usr/share/aquarius/image-info.json && ok "the image records a version for the window to show" || bad "image-info.json has no version-pretty"
+          # `aq update` is wired in.
+          if /usr/bin/aq update --help > /dev/null 2>&1; then ok "'aq update --help' works"
+          else bad "'aq update' is not wired up"; fi
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::The automount or updater pieces are missing or wrong."
+            exit 1
+          fi
+          echo "All automount and updater checks passed."
+          SCRIPT
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-r6.sh
 
       # ------------------------------------------------------------------------
       # PUBLISHING

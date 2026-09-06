@@ -1,0 +1,80 @@
+// ===========================================================================
+// 49-aquarius-udisks.rules — mount/unmount a removable drive with no password
+// ===========================================================================
+// PLAIN ENGLISH
+//
+// polkit is the part of Linux that decides "is this person allowed to do this,
+// and do they need to type a password first?". This file is one narrow rule:
+// the person actually sitting at this computer may mount, unmount and eject a
+// REMOVABLE drive — a USB stick, an SD card, an external SSD — without a
+// password, exactly like on a Mac.
+//
+// It is what makes two things work with no prompt:
+//   * a drive mounting by itself when you plug it in
+//     (/usr/libexec/aquarius-automount asks udisks2 to do it), and
+//   * the dock's right-click "Eject / Unmount"
+//     (the shell runs `udisksctl unmount` / `udisksctl power-off`).
+//
+// It is loaded before Fedora's own udisks rules because its filename sorts
+// before "50-" — so for the actions below, our answer is the one that stands.
+//
+// ---------------------------------------------------------------------------
+// WHY THIS IS SAFE — AND WHAT IT DELIBERATELY DOES NOT DO
+// ---------------------------------------------------------------------------
+// Two things keep this tight, and both matter:
+//
+// 1. WHO. `subject.local && subject.active` means "the login session that owns
+//    the screen and keyboard right now". Not someone connected over SSH
+//    (not local), not a session that has been switched away from (not active),
+//    and never the login screen (that is a system account, handled below).
+//    A password-free mount is only ever granted to the person physically here.
+//
+// 2. WHAT. udisks2 uses a DIFFERENT polkit action depending on the kind of
+//    device:
+//
+//        filesystem-mount          a REMOVABLE / hotplugged drive
+//        filesystem-mount-system   a SYSTEM-INTERNAL disk (the boot drive, an
+//                                  extra internal disk, anything in /etc/fstab)
+//
+//    This rule answers ONLY for the removable set — filesystem-mount,
+//    eject-media and power-off-drive. It says nothing about
+//    filesystem-mount-system, so a request to mount an internal disk falls
+//    through to Fedora's default, which still asks for an administrator
+//    password. That is the whole point: convenient for the drives you carry,
+//    unchanged for the disk the operating system lives on.
+//
+// It also does NOT grant filesystem-unmount-others. Unmounting a drive that
+// YOU mounted never needs a password in the first place, and the automount
+// agent mounts as you — so the dock's unmount is already password-free without
+// it. Granting the "others" variant would let you unmount a mount that belongs
+// to a different user with no password, which is not something we need.
+//
+// ---------------------------------------------------------------------------
+// CHECK IT DID WHAT IT SAYS
+// ---------------------------------------------------------------------------
+// The build (build_files/76-automount.sh) and CI both grep this file to prove
+// it still names subject.active and subject.local, still returns YES for
+// filesystem-mount, and still says NOTHING about filesystem-mount-system — so a
+// future edit cannot quietly turn this into a blanket "mount anything with no
+// password".
+// ===========================================================================
+
+polkit.addRule(function(action, subject) {
+    // Only the person sitting at this machine, in the session that owns the
+    // screen right now. Anything else is left to polkit's defaults.
+    if (!(subject.local && subject.active)) {
+        return polkit.Result.NOT_HANDLED;
+    }
+
+    // The removable-drive actions, and ONLY these. Note there is no
+    // "org.freedesktop.udisks2.filesystem-mount-system" here on purpose:
+    // mounting an internal/system disk must still ask for a password.
+    if (action.id == "org.freedesktop.udisks2.filesystem-mount" ||
+        action.id == "org.freedesktop.udisks2.eject-media" ||
+        action.id == "org.freedesktop.udisks2.power-off-drive") {
+        return polkit.Result.YES;
+    }
+
+    // Everything else: not our business, use the system default.
+    return polkit.Result.NOT_HANDLED;
+});
