@@ -128,10 +128,12 @@ else
     bad "Terra's signing key for Fedora ${FEDORA} is not there — installs from Terra would fail their signature check"
 fi
 
-# ⚠️ THE PART THAT MAKES TERRA SAFE. Off by default, on for one command at a
-# time. This setting travels with the image, so it is also how the finished
-# operating system behaves on a user's machine.
-say "Switching Terra off again, so it can only ever be used on purpose"
+# ⚠️ THE PART THAT MAKES TERRA SAFE DURING THE BUILD. Off by default, on for one
+# command at a time, so nothing in the rest of this build can take a Terra
+# package by accident. (On the FINISHED image Terra is safer still: step 3b below
+# removes it entirely, so it cannot be used on a user's machine at all — and so
+# that the installer ISO can be built. See the long note in 3b.)
+say "Switching Terra off again, so nothing in this build uses it by accident"
 aq_dnf config-manager setopt terra.enabled=0 terra-source.enabled=0
 
 aq_dnf repolist --enabled | awk 'NR > 1 { print $1 }' > /tmp/aq-enabled.txt
@@ -280,6 +282,126 @@ rpm -q --queryformat '       %{NAME}-%{VERSION}-%{RELEASE}  (packaged by: %{VEND
     steam umu-launcher 2>&1 || true
 
 aq_installed steam umu-launcher gamescope gamemode mangohud vkBasalt steam-devices
+
+# ==============================================================================
+# 3b. Terra is taken back out of the image — the installer ISO needs it GONE
+# ==============================================================================
+# Terra has done its one job: Steam and umu-launcher are installed and they stay
+# installed. From here on the finished operating system has no use for the Terra
+# repository at all — a bootc machine updates by downloading a whole new image we
+# build, never by reaching out to a repository on the user's own computer, and
+# the two gaming packages Terra provided are already baked in.
+#
+# Leaving Terra's repository file in the image is not merely untidy. It is a hard
+# blocker for the one thing Phase R5 is about: building an installer ISO so a
+# stranger can install AquariusOS from a USB stick.
+#
+# ⚠️ WHY, IN PLAIN ENGLISH. The tool that builds the ISO (osbuild's
+# image-builder) has to work out the installer's own set of packages. It does
+# that by reading THIS image's repository files and asking each repository for
+# its catalogue. Terra is the one repository here whose *catalogue itself* is
+# signed (`repo_gpgcheck=1`), so before image-builder can even read Terra's
+# catalogue it must load Terra's signing key. Terra's repository file names that
+# key by a local path — `gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-terra44` —
+# and the small throwaway environment image-builder does this work inside does
+# not have that file. So it fails, every time, with:
+#
+#     Errors during downloading metadata for repository 'terra':
+#       Curl error (37): Could not read a file:// file for
+#       file:///etc/pki/rpm-gpg/RPM-GPG-KEY-terra44
+#
+# and the whole ISO build stops before it starts. That is
+# osbuild/bootc-image-builder#1188 — the very bug that forced the old Bazzite
+# line onto Titanoboa. It bites us EVEN THOUGH Terra is switched off above,
+# because the ISO builder loads every repository file it finds regardless of
+# whether it is enabled (proven on 2026-09-06, run 34012037986: Terra was
+# `enabled=0` in the image and its metadata was fetched anyway).
+#
+# ⚠️ RPM FUSION IS NOT AFFECTED AND IS LEFT EXACTLY AS IT IS. Its catalogue is
+# NOT signed (`repo_gpgcheck=0`), so the ISO builder never has to read its key,
+# and its own `file://` key is only ever needed on the installed machine — where
+# the file really is present — when somebody layers a package by hand. RPM Fusion
+# therefore keeps its normal setup and its runtime usefulness. Only Terra, which
+# has no runtime purpose on this machine, is removed. The general rule this
+# section enforces is narrower and exact: no repository file may pair a signed
+# catalogue (`repo_gpgcheck=1`) with a local-path key (`gpgkey=file://`).
+#
+# Removing the whole `terra-release` package (rather than only deleting the file)
+# keeps the package database honest — nothing is left claiming to own files that
+# are gone — and makes "there is no Terra in the shipped image" a fact CI checks.
+say "Removing Terra now its packages are installed (the installer ISO needs it gone)"
+
+if rpm -q terra-release > /dev/null 2>&1; then
+    echo "  terra-release currently owns:"
+    rpm -ql terra-release | sed 's/^/       /'
+    if rpm -e terra-release 2> /tmp/aq-terra-rm.txt; then
+        ok "removed the terra-release package"
+    else
+        echo "  rpm could not remove terra-release cleanly:"
+        sed 's/^/       /' /tmp/aq-terra-rm.txt
+        echo "  Falling back to deleting its repository file and key directly."
+    fi
+    rm -f /tmp/aq-terra-rm.txt
+else
+    echo "  terra-release is not installed as a package (already gone, or added by file)."
+fi
+
+# Belt and braces: whatever the package removal did, make sure not one Terra
+# repository file or key is left behind to trip the ISO builder.
+rm -f /etc/yum.repos.d/terra*.repo /etc/pki/rpm-gpg/RPM-GPG-KEY-terra* 2> /dev/null || true
+
+# And prove it, because a Terra file that survives silently re-breaks the ISO.
+# Fail the build here rather than discover it four ISO attempts later.
+say "Proving Terra is gone and no repository can break the installer ISO"
+
+find /etc/yum.repos.d -maxdepth 1 -name 'terra*.repo' > /tmp/aq-terra-left.txt 2> /dev/null || true
+if [ -s /tmp/aq-terra-left.txt ]; then
+    echo "  still present:"
+    sed 's/^/       /' /tmp/aq-terra-left.txt
+    bad "a Terra repository file is still in the image — the installer ISO would fail to build (osbuild#1188)"
+else
+    ok "no Terra repository file remains in /etc/yum.repos.d"
+fi
+rm -f /tmp/aq-terra-left.txt
+
+find /etc/pki/rpm-gpg -maxdepth 1 -name 'RPM-GPG-KEY-terra*' > /tmp/aq-terra-key.txt 2> /dev/null || true
+if [ -s /tmp/aq-terra-key.txt ]; then
+    echo "  still present:"
+    sed 's/^/       /' /tmp/aq-terra-key.txt
+    bad "a Terra signing key file is still in the image"
+else
+    ok "no Terra signing key file remains"
+fi
+rm -f /tmp/aq-terra-key.txt
+
+# The general invariant this whole section exists to protect. RPM Fusion
+# (repo_gpgcheck=0 + file://) is safe and is expected to remain; only the signed-
+# catalogue-plus-local-key pair is the ISO trap.
+say "No repository file pairs a signed catalogue with a local-path key"
+AQ_ISO_TRAP=0
+for repo in /etc/yum.repos.d/*.repo; do
+    [ -e "${repo}" ] || continue
+    awk -v F="${repo}" '
+        function flush() {
+            if (sec != "" && rgc == 1 && filekey == 1)
+                printf "  TRAP  %s  section %s: repo_gpgcheck=1 with gpgkey=file://\n", F, sec
+        }
+        /^[[:space:]]*\[/                                                    { flush(); sec = $0; rgc = 0; filekey = 0; next }
+        /^[[:space:]]*repo_gpgcheck[[:space:]]*=[[:space:]]*1([[:space:]]|$)/ { rgc = 1 }
+        /^[[:space:]]*gpgkey[[:space:]]*=[[:space:]]*file:\/\//               { filekey = 1 }
+        END { flush() }
+    ' "${repo}" > /tmp/aq-iso-trap.txt || true
+    if [ -s /tmp/aq-iso-trap.txt ]; then
+        cat /tmp/aq-iso-trap.txt
+        AQ_ISO_TRAP=1
+    fi
+    rm -f /tmp/aq-iso-trap.txt
+done
+if [ "${AQ_ISO_TRAP}" -eq 0 ]; then
+    ok "no repository file would break the installer ISO's depsolve"
+else
+    bad "a repository file would break the installer ISO's depsolve (osbuild#1188) — see the TRAP line(s) above"
+fi
 
 # ==============================================================================
 # 4. THE MESA CHECK — the one that proves the Terra rule held

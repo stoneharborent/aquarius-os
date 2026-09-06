@@ -201,6 +201,14 @@ on:
       # to GDM by itself after two failed greetd boots in a row. Same arrangement
       # as every side branch: builds and checks, never publishes.
       - restart/greeter-failsafe
+      # The installer-ISO blocker — the 2026-09-06 failure (run 34012037986)
+      # where every ISO build died in depsolve because the Terra repository the
+      # gaming layer added carries a signed catalogue and a local-path GPG key
+      # (osbuild/bootc-image-builder#1188). Terra is now removed from the image
+      # after Steam and umu are installed, and a new check refuses any repository
+      # that would break the ISO. Same arrangement as every side branch: builds
+      # and checks, never publishes.
+      - restart/iso-terra-fix
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -4746,8 +4754,11 @@ jobs:
           bad() { echo "  FAIL $*"; fails=1; }
 
           echo "== the programs =="
+          # terra-release is deliberately NOT in this list: Terra is a build-time
+          # source only, removed once Steam and umu are installed so the
+          # installer ISO can be built (see build_files/68-gaming.sh step 3b).
           for pkg in steam gamescope gamemode mangohud vkBasalt umu-launcher \
-                     steam-devices terra-release; do
+                     steam-devices; do
             if rpm -q "${pkg}" > /dev/null 2>&1; then
               ok "${pkg} $(rpm -q --queryformat '%{VERSION}-%{RELEASE}' "${pkg}")"
             else
@@ -4779,19 +4790,26 @@ jobs:
             esac
           done
 
-          echo "== Terra is present but switched off =="
-          # So that nothing on a user's machine can take a Terra package by
-          # accident later. Read out of the repository file itself.
-          if [ -r /etc/yum.repos.d/terra.repo ]; then
-            ok "the Terra repository file is in the image"
-            sed 's/^/     /' /etc/yum.repos.d/terra.repo
-            if dnf repolist --enabled 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx 'terra'; then
-              bad "Terra is ENABLED — it could replace Fedora packages without anybody asking"
-            else
-              ok "Terra is disabled by default"
-            fi
+          echo "== Terra was removed once its packages were installed =="
+          # Terra's only job was to provide Steam and umu-launcher at build time;
+          # both are installed above and stay installed. The Terra repository is
+          # then taken out of the image, because the installer-ISO builder reads
+          # every repository file it finds — enabled or not — and Terra's signed
+          # catalogue (repo_gpgcheck=1) plus its local-path key (gpgkey=file://)
+          # is exactly what osbuild/bootc-image-builder#1188 chokes on. Terra has
+          # no runtime purpose here anyway (a bootc machine updates from whole
+          # images, not from repositories). See build_files/68-gaming.sh step 3b
+          # and docs/restart/installer.md.
+          if ls /etc/yum.repos.d/terra*.repo >/dev/null 2>&1; then
+            bad "a Terra repository file is still in the image — the installer ISO would fail to build (osbuild#1188)"
+            ls /etc/yum.repos.d/terra*.repo | sed 's/^/     /'
           else
-            bad "there is no /etc/yum.repos.d/terra.repo — Steam's source is not recorded in the image"
+            ok "no Terra repository file is in the image"
+          fi
+          if rpm -q terra-release > /dev/null 2>&1; then
+            bad "terra-release is still installed — it should have been removed after Steam and umu went in"
+          else
+            ok "terra-release has been removed from the image"
           fi
 
           echo "== the 32-bit libraries a Windows game needs =="
@@ -5000,6 +5018,93 @@ jobs:
             --entrypoint /usr/bin/bash \
             -e EXPECTED_NVIDIA="${NVIDIA}" \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-gaming.sh
+
+      # ------------------------------------------------------------------------
+      # THE INSTALLER-ISO REGRESSION GUARD
+      # ------------------------------------------------------------------------
+      # This is the check that keeps the "a stranger can install from a USB
+      # stick" promise from silently breaking again.
+      #
+      # The installer ISO is built by osbuild's image-builder (build-iso.yml). To
+      # work out the installer's package set it reads THIS image's repository
+      # files and asks each repository for its catalogue — and it does that in a
+      # small throwaway environment that does NOT contain this image's local GPG
+      # key files. So any repository whose CATALOGUE is signed
+      # (`repo_gpgcheck=1`) AND whose key is named by a local path
+      # (`gpgkey=file://...`) makes image-builder fail with
+      # "Curl error (37): Could not read a file:// file", and the ISO build dies
+      # before it starts. That is osbuild/bootc-image-builder#1188, and on
+      # 2026-09-06 (run 34012037986) it is exactly how the Terra repository —
+      # added by the gaming layer and left in the image even while switched off —
+      # blocked every ISO.
+      #
+      # ⚠️ THIS IS DELIBERATELY NOT A BLANKET BAN ON `gpgkey=file://`. RPM Fusion
+      # uses a local-path key too, and it is fine and must stay: its catalogue is
+      # NOT signed (`repo_gpgcheck=0`), so image-builder never reads its key, and
+      # that key is only ever needed on the installed machine (where the file is
+      # present) when someone layers a package by hand. Only the exact pair —
+      # signed catalogue plus local key — is the trap, so that exact pair is what
+      # this refuses. Checked inside the finished image, on the real repo files a
+      # machine ships, never on the build checkout.
+      - name: Check no repository file can break the installer ISO build
+        run: |
+          set -euo pipefail
+          cat > /tmp/verify-iso-repos.sh <<'SCRIPT'
+          set -u
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+
+          echo "== the repository files this image ships =="
+          ls -1 /etc/yum.repos.d/*.repo 2>/dev/null | sed 's/^/     /' || echo "     (none)"
+
+          traps=0
+          for repo in /etc/yum.repos.d/*.repo; do
+            [ -e "${repo}" ] || continue
+            # Per-section INI scan: a file may hold several [sections], and the
+            # two keys can appear in either order, so decide at each section
+            # boundary and at end-of-file. repo_gpgcheck=1 + gpgkey=file:// in the
+            # SAME section is the osbuild#1188 trap.
+            awk -v F="${repo}" '
+              function flush() {
+                if (sec != "" && rgc == 1 && filekey == 1)
+                  printf "  TRAP  %s  %s: repo_gpgcheck=1 with gpgkey=file://\n", F, sec
+              }
+              /^[[:space:]]*\[/                                                    { flush(); sec = $0; rgc = 0; filekey = 0; next }
+              /^[[:space:]]*repo_gpgcheck[[:space:]]*=[[:space:]]*1([[:space:]]|$)/ { rgc = 1 }
+              /^[[:space:]]*gpgkey[[:space:]]*=[[:space:]]*file:\/\//               { filekey = 1 }
+              END { flush() }
+            ' "${repo}" > /tmp/aq-iso-trap.txt || true
+            if [ -s /tmp/aq-iso-trap.txt ]; then
+              cat /tmp/aq-iso-trap.txt
+              traps=1
+            fi
+            rm -f /tmp/aq-iso-trap.txt
+          done
+
+          if [ "${traps}" -eq 0 ]; then
+            ok "no repository pairs a signed catalogue with a local-path key — the installer ISO can depsolve"
+          else
+            bad "a repository would break the installer ISO's depsolve (osbuild#1188) — see the TRAP line(s) above; remove that repository from the image or point its gpgkey at an https:// URL"
+          fi
+
+          # And Terra specifically must be gone: it is the one this image adds and
+          # then must remove (build_files/68-gaming.sh step 3b).
+          if ls /etc/yum.repos.d/terra*.repo >/dev/null 2>&1; then
+            bad "a Terra repository file is still in the image — it must be removed after Steam and umu are installed"
+          else
+            ok "no Terra repository file is in the image"
+          fi
+
+          if [ "${fails}" -ne 0 ]; then
+            echo "::error::A repository in this image would stop the installer ISO from building."
+            exit 1
+          fi
+          echo "All installer-ISO repository checks passed."
+          SCRIPT
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-iso-repos.sh
 
       # ------------------------------------------------------------------------
       # PUBLISHING
