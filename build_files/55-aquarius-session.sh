@@ -885,8 +885,15 @@ aq_file_has "${AQ_LABWC_DIR}/rc.xml" '<action name="ShowMenu" menu="root-menu" /
 # prefix, or the menu item is there and does nothing — see the whole section
 # below for why. Checked as a count, so adding a third Settings item without the
 # prefix fails the build rather than shipping one dead menu entry.
-AQ_MENU_CC_TOTAL="$(grep -c 'gnome-control-center' "${AQ_LABWC_DIR}/menu.xml" || true)"
-AQ_MENU_CC_FIXED="$(grep -c 'env XDG_CURRENT_DESKTOP=GNOME gnome-control-center' "${AQ_LABWC_DIR}/menu.xml" || true)"
+#
+# ⚠️ COUNT THE <command> LINES, NOT EVERY MENTION. The first version of this
+# counted every line containing "gnome-control-center", which includes the six
+# lines of the header comment that EXPLAIN the prefix — so a correct menu.xml
+# failed the build (2026-09-06, the first run of this branch). A menu item's
+# command is always inside a <command> element, and that is the only thing being
+# asked about here.
+AQ_MENU_CC_TOTAL="$(grep -c '<command>.*gnome-control-center' "${AQ_LABWC_DIR}/menu.xml" || true)"
+AQ_MENU_CC_FIXED="$(grep -c '<command>env XDG_CURRENT_DESKTOP=GNOME gnome-control-center' "${AQ_LABWC_DIR}/menu.xml" || true)"
 echo "  menu.xml Settings commands: ${AQ_MENU_CC_FIXED} of ${AQ_MENU_CC_TOTAL} carry the GNOME prefix"
 if [ "${AQ_MENU_CC_TOTAL}" -ge 2 ] && [ "${AQ_MENU_CC_FIXED}" -eq "${AQ_MENU_CC_TOTAL}" ]; then
     ok "every Settings command in the menu says 'env XDG_CURRENT_DESKTOP=GNOME' first"
@@ -899,10 +906,15 @@ fi
 # Without <default /> inside it the right-click menu would work and dragging a
 # window by its title bar, edge-resize, click-to-focus and alt-drag would all
 # stop — a far worse desktop than the one we set out to fix. This reads the
-# <mouse> section on its own and looks for <default /> inside THAT, because a
-# <default /> in the <keyboard> section is a different thing and would make a
+# mouse section on its own and looks for <default /> inside THAT, because the
+# <default /> in the keyboard section is a different thing and would make a
 # whole-file grep pass while the mouse was broken.
-if sed -n '/<mouse>/,/<\/mouse>/p' "${AQ_LABWC_DIR}/rc.xml" | grep -q '<default />'; then
+#
+# The section is found by looking for a line that is NOTHING BUT the tag, which
+# is why rc.xml writes those two tags on lines of their own and its comments
+# avoid spelling them out: a mention in prose would be matched first and this
+# would read the wrong range.
+if sed -n '/^ *<mouse>$/,/^ *<\/mouse>$/p' "${AQ_LABWC_DIR}/rc.xml" | grep -q '<default />'; then
     ok "the <mouse> section keeps labwc's own bindings (window dragging, resize, click to focus)"
 else
     bad "rc.xml's <mouse> section has no <default /> — adding the right-click menu would have thrown away window dragging and resizing"

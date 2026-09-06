@@ -2567,7 +2567,9 @@ jobs:
           # <mouse> section on its own: the <default /> in <keyboard> is a
           # different thing and would make a whole-file grep pass over a broken
           # mouse.
-          if sed -n '/<mouse>/,/<\/mouse>/p' /usr/share/aquarius/labwc/rc.xml | grep -q '<default />'; then
+          # The section is found by looking for a line that is nothing but the
+          # tag; rc.xml writes those tags on lines of their own for exactly this.
+          if sed -n '/^ *<mouse>$/,/^ *<\/mouse>$/p' /usr/share/aquarius/labwc/rc.xml | grep -q '<default />'; then
             ok "the <mouse> section keeps labwc's own bindings (dragging, resizing, click to focus)"
           else
             bad "rc.xml's <mouse> section has no <default /> — the right-click menu would have cost us window dragging and resizing"
@@ -2576,8 +2578,12 @@ jobs:
           # that menu item is drawn and does nothing. Counted, so a third Settings
           # item added without it fails the build. Why the prefix exists at all:
           # the Settings block further down.
-          CC_TOTAL="$(grep -c 'gnome-control-center' /usr/share/aquarius/labwc/menu.xml || true)"
-          CC_FIXED="$(grep -c 'env XDG_CURRENT_DESKTOP=GNOME gnome-control-center' /usr/share/aquarius/labwc/menu.xml || true)"
+          #
+          # ⚠️ Count the <command> lines, not every mention: menu.xml's header
+          # comment explains the prefix and names gnome-control-center six times.
+          # Counting those failed a correct file on 2026-09-06.
+          CC_TOTAL="$(grep -c '<command>.*gnome-control-center' /usr/share/aquarius/labwc/menu.xml || true)"
+          CC_FIXED="$(grep -c '<command>env XDG_CURRENT_DESKTOP=GNOME gnome-control-center' /usr/share/aquarius/labwc/menu.xml || true)"
           echo "       ${CC_FIXED} of ${CC_TOTAL} Settings commands carry the GNOME prefix"
           if [ "${CC_TOTAL}" -ge 2 ] && [ "${CC_FIXED}" -eq "${CC_TOTAL}" ]; then
             ok "every Settings item in the desktop menu says 'env XDG_CURRENT_DESKTOP=GNOME' first"

@@ -20,9 +20,16 @@
   Alt+F4 to close, Super+arrows to snap, the volume and brightness keys. Those
   are good and there is no reason to reinvent them, so this file adds three
   bindings on top and otherwise gets out of the way. The same is true of the
-  <mouse> section at the bottom: <default /> keeps labwc's window dragging,
-  edge-resize, click-to-focus and alt-drag, and the section adds exactly one
-  thing on top, a right-click on the desktop.
+  mouse section at the bottom: its own <default /> keeps labwc's window
+  dragging, edge-resize, click-to-focus and alt-drag, and the section adds
+  exactly one thing on top, a right-click on the desktop.
+
+  (The mouse section's opening and closing tags are deliberately written on
+  lines of their own, with nothing else on them, and this comment deliberately
+  does not spell them out in prose. The build reads that section on its own to
+  check the <default /> is still inside it, and it finds the section by looking
+  for a line that is nothing but the tag. Prose that spelled the tag out would
+  be found first and the check would read the wrong lines.)
 
   =============================================================================
   TWO RULES THIS FILE OBEYS
@@ -136,7 +143,7 @@
       labwc's own mouse bindings: dragging a title bar to move a window,
       edge-resize, click to focus and raise, alt-drag to move. Keeping
       <default /> here is the whole point of this line and it is easy to lose:
-      a <mouse> section WITHOUT it replaces labwc's mouse behaviour entirely
+      this section WITHOUT it replaces labwc's mouse behaviour entirely
       rather than adding to it, and the desktop would keep its right-click menu
       while losing the ability to drag a window by its title bar. So this
       section only describes what is different about Aquarius.
