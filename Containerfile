@@ -105,7 +105,7 @@ ARG LABWC_COMMIT=97f28877a343e062f3178d201f0248cd9c2610cf
 ARG QUICKSHELL_VERSION=v0.3.1
 ARG QUICKSHELL_COMMIT=1a4716cde794a59928d9d9fc15f2afc7a95de360
 ARG AQUARIUS_SHELL_REPO=https://github.com/stoneharborent/aquarius-shell.git
-# 3930d1a (2026-09-06, the app switcher): hold Command and tap Tab and a panel of the
+# 3496a6c (2026-09-06, the app switcher): hold Command and tap Tab and a panel of the
 # applications you have open appears in the middle of the screen; let go and you
 # are in the one you stopped on. Down opens that app's windows, Command+` walks
 # them with no panel, and on the Windows keyboard style Alt+Tab lists windows
@@ -113,7 +113,7 @@ ARG AQUARIUS_SHELL_REPO=https://github.com/stoneharborent/aquarius-shell.git
 # labwc's own switcher off; this image's copy matches. The reasoning is written
 # out beside the same value in aquarius-os.env, which is where a bump is made —
 # this line must match it.
-ARG AQUARIUS_SHELL_REF=3930d1ad47b07c61d28ea9478fa277f8701c06ad
+ARG AQUARIUS_SHELL_REF=3496a6ccca1787bae41f02cf9e674ce2b33c5c6e
 
 # ------------------------------------------------------------------------------
 # Our own files, gathered up so the build can reach them
