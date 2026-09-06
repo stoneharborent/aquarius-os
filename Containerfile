@@ -105,14 +105,14 @@ ARG LABWC_COMMIT=97f28877a343e062f3178d201f0248cd9c2610cf
 ARG QUICKSHELL_VERSION=v0.3.1
 ARG QUICKSHELL_COMMIT=1a4716cde794a59928d9d9fc15f2afc7a95de360
 ARG AQUARIUS_SHELL_REPO=https://github.com/stoneharborent/aquarius-shell.git
-# f8fccfc (2026-09-06): THE LOCK SCREEN. A new lock/ folder in the shell —
+# 9f6816c (2026-09-06): THE LOCK SCREEN. A new lock/ folder in the shell —
 # Super+L, a Lock Screen row in the Aquarius menu, and dim/lock/screen-off after
 # 5/10/15 minutes. The password is checked by PAM through the rules this image
 # installs at /etc/pam.d/aquarius-lock; the shell never checks one itself.
 # session/labwc/rc.xml gains the W-l binding, which this image's own copy of that
 # file has too. The reasoning is written out beside the same value in
 # aquarius-os.env, which is where a bump is made — this line must match it.
-ARG AQUARIUS_SHELL_REF=f8fccfcafc211a6e2ecc5590030e6c19cf4415c7
+ARG AQUARIUS_SHELL_REF=9f6816c8b1ef9add94c37bf40d450401cb4b0f44
 
 # ------------------------------------------------------------------------------
 # Our own files, gathered up so the build can reach them
