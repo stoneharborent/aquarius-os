@@ -100,17 +100,14 @@ font-name='Inter 11'
 document-font-name='Inter 11'
 monospace-font-name='JetBrains Mono 10'
 
-# The mouse pointer and the app icons — decided in Phase R5 (2026-09-05).
+# The mouse pointer and the app icons.
 #
-# AquariusOS does NOT ship a hand-drawn cursor set or a hand-drawn icon set of
-# its own. Drawing a full pointer set and a full icon set is a real art project
-# — hundreds of little pictures, in several sizes each — and a half-made one
-# looks worse than a good existing theme. So the decision for now is the same
-# one the rest of this file makes: work WITH GNOME's grain. We name the best
-# existing, Fedora-packaged, well-kept theme for each and set it as the default,
-# and we leave a clearly marked seam so real Aquarius artwork can drop in later
-# by changing exactly these two lines. The whole reasoning, and the swap-in
-# recipe, is in docs/restart/desktop-identity.md.
+# The pointer was decided in Phase R5 (2026-09-05) and has not changed. The
+# icons changed on 2026-09-06: THE SEAM THIS FILE LEFT OPEN IS NOW CLOSED. What
+# it used to say is worth keeping, because it explains why the decision was ever
+# 'Adwaita' — drawing a full icon set is a real art project, and a half-made one
+# looks worse than a good existing theme. So we named GNOME's and left one line
+# to change the day Aquarius icons existed. They exist. This is that line.
 #
 #   cursor-theme  'Adwaita' — GNOME's own pointer. It is clean, neutral, and
 #                 already in the image (adwaita-cursor-theme, installed in
@@ -124,17 +121,37 @@ monospace-font-name='JetBrains Mono 10'
 #                 the desktop scale makes the pointer the right physical size on
 #                 its own; this number is what GDM and the odd app that reads it
 #                 directly fall back to, so a sane, explicit value belongs here.
-#   icon-theme    'Adwaita' — GNOME 50's own icon set, so the desktop's icons
-#                 match the desktop drawing them. Fedora's default anyway; we
-#                 write it out on purpose so it sits in the same place as the
-#                 cursor and the sound, cannot drift, and is the one line that
-#                 changes the day Aquarius icons exist. The packaged alternative
-#                 worth knowing is Papirus (papirus-icon-theme) — a fuller set
-#                 with more coverage of third-party apps; docs/restart/desktop-
-#                 identity.md says how to switch to it if Royce ever wants it.
+#   icon-theme    'Aquarius-Ice' — OUR OWN app icons, light set, since
+#                 2026-09-06. AquariusOS is light-first, so Ice is the default;
+#                 the dark twin, 'Aquarius-Midnight', is built and installed
+#                 beside it and nothing selects it yet (see the TODO below).
+#
+#                 ⚠️ THIS IS NOT A WHOLE ICON SET AND IT IS NOT MEANT TO BE. We
+#                 draw EIGHT icons — the Editor, the Writer, Files, Settings,
+#                 the app chooser, the welcome window and the two DaVinci
+#                 Resolve buttons — and the theme says Inherits=Adwaita,hicolor,
+#                 so every one of the several thousand icons a desktop needs
+#                 still comes from GNOME. The posture is unchanged: work with
+#                 GNOME's grain, and draw only the icons Royce looks at daily.
+#
+#                 Where they come from: branding/icons/ (the drawings) →
+#                 branding/render-app-icons.sh (the one command that rebuilds
+#                 them) → system_files/usr/share/icons/Aquarius-Ice/ and
+#                 Aquarius-Midnight/. Checked in build_files/56-aquarius-icons.sh.
+#
+#                 ⚠️ SET IN TWO PLACES, AND THEY MUST AGREE. The login screen
+#                 has its own copy of this value in build_files/50-aquarius-
+#                 desktop.sh. If they ever differ, the icons visibly change the
+#                 instant you log in.
+#
+#                 TODO (aquarius-shell, not this repo): when the shell switches
+#                 the colour scheme to dark it should set this key to
+#                 'Aquarius-Midnight', and back to 'Aquarius-Ice' when it goes
+#                 light. Both themes are already in the image, so that is a
+#                 one-setting change with no image work behind it.
 cursor-theme='Adwaita'
 cursor-size=24
-icon-theme='Adwaita'
+icon-theme='Aquarius-Ice'
 
 # ------------------------------------------------------------------------------
 # The system sounds
