@@ -571,25 +571,46 @@ jobs:
             bad "/usr/lib64/security/pam_fprintd.so is missing — every login would log a faulty PAM module"
           fi
 
-          echo "== no /etc/pam.d file may name a module that is not installed =="
-          # For every PAM module named on a non-comment line of every rule file,
-          # the module file must exist. PAM modules are named pam_<x>.so, either
-          # bare (resolved against the standard directory) or as an absolute path.
+          echo "== no login rule may REQUIRE a PAM module that is not installed =="
+          # For every module a rule file loads, the file must exist — UNLESS the
+          # line marks it silent-optional. PAM's own rule (man pam.d): a module
+          # TYPE written with a leading '-' — for example
+          #     -session   optional   pam_kwallet5.so auto_start
+          # tells PAM to skip that module quietly when it is missing and log
+          # NOTHING. Those references are optional by design and are not the fault
+          # we are guarding against: keyring/wallet and ConsoleKit lines are
+          # always written this way. The fprintd line, by contrast, was a plain
+          #     auth       sufficient pam_fprintd.so
+          # with no '-', which is exactly why it logged "faulty module" at every
+          # login. So we honour the '-' prefix and fail only on a REQUIRED
+          # reference whose module is absent — the kind that actually writes a
+          # line to the journal.
+          #
+          # Read line by line, because whether a reference is silent depends on
+          # its own first field, not just the module name.
           seen=0
           for f in /etc/pam.d/*; do
             [ -f "${f}" ] || continue
-            for mod in $(sed 's/#.*//' "${f}" | grep -oE '(/[A-Za-z0-9_./-]+/)?pam_[A-Za-z0-9_]+\.so' | sort -u); do
+            while IFS= read -r raw || [ -n "${raw}" ]; do
+              line="${raw%%#*}"                                   # drop trailing comment
+              case "${line}" in *[![:space:]]*) : ;; *) continue ;; esac  # skip blank/comment-only
+              mod="$(printf '%s\n' "${line}" | grep -oE '(/[A-Za-z0-9_./-]+/)?pam_[A-Za-z0-9_]+\.so' | head -n1)"
+              [ -n "${mod}" ] || continue                         # not a module-loading line
+              type_field="$(printf '%s\n' "${line}" | awk '{print $1; exit}')"
+              case "${type_field}" in
+                -*) continue ;;                                   # silent-optional: absence logs nothing
+              esac
               seen=$((seen + 1))
               case "${mod}" in
                 /*) path="${mod}" ;;
                 *)  path="/usr/lib64/security/${mod}" ;;
               esac
               if [ ! -e "${path}" ]; then
-                bad "${f} loads ${mod}, but ${path} is not installed"
+                bad "${f} requires ${mod} (${type_field} …), but ${path} is not installed"
               fi
-            done
+            done < "${f}"
           done
-          echo "  (checked ${seen} module reference(s) across /etc/pam.d)"
+          echo "  (checked ${seen} required module reference(s) across /etc/pam.d)"
           if [ "${fails}" -eq 0 ]; then
             ok "every PAM module named under /etc/pam.d is installed"
           fi
