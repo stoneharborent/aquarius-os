@@ -320,6 +320,10 @@ echo "== the things that make it stand aside =="
 # A safety net that acts when it should not is its own fault. Each of these must
 # stop it dead, before it waits or touches anything.
 
+# ⚠️ THIS IS THE STATE OF EVERY DEFAULT AQUARIUSOS MACHINE since 2026-09-05: the
+# login screen is handed no display arrangement, so there is nothing here for the
+# guard to remove. It must stand aside — and it must SAY so, loudly, which the
+# next case checks.
 scenario no-copies
 rm -f "${ROOT}/etc/xdg/monitors.xml" "${ROOT}/var/lib/gdm/.config/monitors.xml"
 : > "${STUBS}/sessions"
@@ -328,6 +332,62 @@ if acted; then
     fail "there was nothing to take away and it restarted the login screen anyway"
 else
     pass "no copied display file: it does not restart anything"
+fi
+
+# ==============================================================================
+echo ""
+echo "== ⚠️ the journal must answer 'did the guard restart my login screen?' =="
+# ==============================================================================
+# WHY THIS TEST EXISTS. On the night of 2026-09-05, with the login screen black
+# and the greeter's journal showing Xwayland lost about sixty seconds in, the
+# first question was whether this program had restarted GDM and produced what
+# Royce was looking at. Answering it meant reading the guard's source to work out
+# which of its several quiet exits it had taken — at the exact moment nobody has
+# time to read source.
+#
+# So every path that changes nothing must print one greppable phrase, and the
+# repair path must print the other. Two phrases, no third possibility:
+#
+#     journalctl -b -u aquarius-gdm-guard.service
+#
+# ⚠️ IF YOU CHANGE THESE WORDS, CHANGE THEM IN docs/restart/login.md TOO — that
+# is where the command and the two phrases are written down for Royce.
+scenario quiet-exit-is-loud
+rm -f "${ROOT}/etc/xdg/monitors.xml" "${ROOT}/var/lib/gdm/.config/monitors.xml"
+: > "${STUBS}/sessions"
+run_guard
+if grep -q "DID NOT TOUCH THE LOGIN SCREEN" "${ROOT}/said.txt"; then
+    pass "standing aside says 'DID NOT TOUCH THE LOGIN SCREEN' in the journal"
+else
+    fail "it stood aside without saying so — the journal cannot answer 'was it you?'"
+    sed 's/^/       /' "${ROOT}/said.txt"
+fi
+
+# The healthy machine must say it too. This is the OTHER quiet exit — the one at
+# the very end, after a full watch — and it is the one somebody debugging a slow
+# boot will actually be looking at.
+scenario quiet-exit-is-loud-healthy
+printf 'c1\nc1\nc1\nc1\n' > "${STUBS}/sessions"
+run_guard
+if grep -q "DID NOT TOUCH THE LOGIN SCREEN" "${ROOT}/said.txt"; then
+    pass "a healthy watch also says 'DID NOT TOUCH THE LOGIN SCREEN'"
+else
+    fail "the healthy path stayed quiet — the journal cannot answer 'was it you?'"
+    sed 's/^/       /' "${ROOT}/said.txt"
+fi
+
+# And the repair must NOT say it, or the phrase means nothing.
+scenario repair-does-not-claim-innocence
+: > "${STUBS}/sessions"
+run_guard
+if grep -q "DID NOT TOUCH THE LOGIN SCREEN" "${ROOT}/said.txt"; then
+    fail "it repaired the machine and still said it had not touched the login screen"
+    sed 's/^/       /' "${ROOT}/said.txt"
+elif grep -q "REPAIRING THE LOGIN SCREEN" "${ROOT}/said.txt"; then
+    pass "a real repair says 'REPAIRING THE LOGIN SCREEN' and never the other phrase"
+else
+    fail "a repair happened and the journal says neither phrase"
+    sed 's/^/       /' "${ROOT}/said.txt"
 fi
 
 scenario already-acted
