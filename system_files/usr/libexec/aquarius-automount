@@ -351,7 +351,12 @@ class AutoMounter:
             if FS_IFACE in interfaces:
                 self.consider(object_path)
 
-    def _on_interfaces_added(self, _conn, _sender, _path, _iface, _signal, params):
+    # ⚠️ THE TRAILING *_user_data IS NOT OPTIONAL. Gio's signal_subscribe hands
+    # the callback (connection, sender, path, interface, signal, parameters) AND
+    # a user_data argument on the end — None here, since we passed none — so a
+    # six-argument handler would be called with seven and raise TypeError the
+    # first time a drive was plugged in. *_user_data swallows it.
+    def _on_interfaces_added(self, _conn, _sender, _path, _iface, _signal, params, *_user_data):
         object_path, interfaces = params.unpack()
         if FS_IFACE in interfaces:
             self.consider(object_path)
