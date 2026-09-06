@@ -161,7 +161,7 @@ say() { echo "aquarius-gdm-guard: $*"; }
 # compositor losing Xwayland about sixty seconds in. The first thing anybody
 # asked was: "did our own guard restart the login screen, and is that what we are
 # looking at?" Answering it meant reading this program's source to work out which
-# of six quiet exits it had taken.
+# of its five quiet exits it had taken.
 #
 # So every exit that touches nothing now says so in one line, in the same words,
 # with a phrase you can grep for. Next time the question takes one command:
