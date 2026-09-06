@@ -324,19 +324,21 @@ keymap:
       #                          Spotlight key and the Aquarius search key are
       #                          the same key.
       #   Command-Tab            switch apps. GNOME already listens for
-      #                          Super-Tab and does exactly this.
+      #                          Super-Tab, and since 2026-09-06 so does the
+      #                          Aquarius Desktop — it opens the Aquarius app
+      #                          switcher, which shows one big icon per app.
       #   Command-Shift-Tab      switch apps backwards.
-      #   Command-`              switch between windows of the same app.
-      #                          GNOME listens for Super-` for this.
+      #   Command-`              switch between windows of the same app. GNOME
+      #                          listens for Super-` and so does the Aquarius
+      #                          Desktop.
       #   Command-Shift-E        log out of the Aquarius Session.
       #
-      # ⚠️ KNOWN GAP IN THE AQUARIUS SESSION (labwc), 2026-09-03. labwc's own
-      # defaults put "switch windows" on Alt-Tab, not Super-Tab, so Command-Tab
-      # and Command-` do nothing there yet. Fixing it is two lines in the
-      # aquarius-shell repository's session/labwc/rc.xml, which is not ours to
-      # edit — the exact proposal is written down in
-      # docs/restart/aquarius-keys.md. On GNOME, which is what AquariusOS boots
-      # into today, both already work.
+      # THE GAP THAT USED TO BE HERE IS CLOSED. Until 2026-09-06 labwc's own
+      # defaults put "switch windows" on Alt-Tab only, so Command-Tab and
+      # Command-` did nothing in the Aquarius Session while working perfectly in
+      # GNOME. Both desktops now answer them. See docs/restart/aquarius-keys.md,
+      # and, for the switcher itself, the aquarius-shell repository's
+      # docs/app-switcher.md.
 
   # ===========================================================================
   # BLOCK 4 — A NOTE ON WHAT IS *NOT* HERE

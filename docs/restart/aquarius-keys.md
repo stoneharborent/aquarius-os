@@ -415,22 +415,44 @@ labwc, the compositor behind the Aquarius Session, put window switching on
 Alt-Tab only, so **Command-Tab did nothing there** — the same keystroke working
 on one AquariusOS desktop and not the other.
 
-**Fixed 2026-09-03** in the `aquarius-shell` repository (commit `8822088`,
-which this image now pins), in the two places proposed here:
+**Fixed 2026-09-03** in the `aquarius-shell` repository, first with labwc's own
+`NextWindow` and `PreviousWindow` actions, and then **replaced on 2026-09-06 by
+the Aquarius app switcher**, which is the shell's own panel:
 
 ```xml
 <!-- session/labwc/rc.xml, in the <keyboard> block -->
 <keybind key="W-Tab">
-  <action name="NextWindow" />
+  <action name="Execute" command="qs ipc call switcher next" />
 </keybind>
 <keybind key="W-S-Tab">
-  <action name="PreviousWindow" />
+  <action name="Execute" command="qs ipc call switcher prev" />
+</keybind>
+<keybind key="W-grave">
+  <action name="Execute" command="qs ipc call switcher cycle" />
+</keybind>
+<keybind key="A-Tab">
+  <action name="Execute" command="qs ipc call switcher next" />
+</keybind>
+<keybind key="A-S-Tab">
+  <action name="Execute" command="qs ipc call switcher prev" />
 </keybind>
 ```
 
-`NextWindow` and `PreviousWindow` are labwc's own actions — the ones its default
-Alt-Tab is built from — so holding Command and tapping Tab walks the window
-list with the switcher on screen, the way it does on a Mac. Alt-Tab still works.
+Holding Command and tapping Tab now puts a panel in the middle of the screen —
+the dock's own slab, with one big icon per application — and letting go of
+Command takes you to the one you stopped on. `Command-\`` walks a single app's
+windows with no panel at all.
+
+**Both modifiers are bound at once, and that is the point.** In Mac style the
+key beside the space bar sends Super, so Command-Tab arrives as `W-Tab`; in
+Windows style nothing is swapped and Alt-Tab arrives as `A-Tab`. Binding both
+means `aq keys mac` and `aq keys windows` never rebind anything. What changes is
+what the panel LISTS — applications in Mac style, windows in Windows style — and
+the shell reads that from `~/.config/aquarius/keys.conf` itself, live.
+
+The full write-up, including the genuinely hard part (how the shell knows you
+let go of the modifier, and the two approaches that were tried first), is in the
+`aquarius-shell` repository at `docs/app-switcher.md`.
 
 The second change, in the same commit:
 
@@ -533,5 +555,6 @@ written from scratch.
   underneath. Until then the default is Mac and this page is the switch.
 - **A toggle in Quick Settings**, so it is a click rather than a command. That
   is work in the `aquarius-shell` repository.
-- **Command-Tab in the Aquarius Session**, once the shell takes the two-line
-  proposal above.
+- ~~**Command-Tab in the Aquarius Session.**~~ Done, 2026-09-06 — and better
+  than proposed: it opens the Aquarius app switcher rather than labwc's list of
+  window titles. See the section above.

@@ -65,6 +65,16 @@ set it as the default, and leave the door open for our own artwork later.
 | App icons | **`Aquarius-Ice`** (ours, since 2026-09-06) | built in this repo, from `branding/icons/` | Our own nine app icons, light set — AquariusOS is light-first. Everything we do not draw falls through to `adwaita-icon-theme`, which is still installed and still where the other several thousand icons come from. The dark twin `Aquarius-Midnight` is built and installed beside it; nothing selects it yet (see below). |
 | System sounds | **freedesktop** | `sound-theme-freedesktop` | The standard, complete cross-desktop sound set. Safe, familiar, nothing missing. |
 
+**Where the app icons turn up.** They are drawn from the icon theme above by
+every part of the desktop that names an application: the app grid, Files, the
+dock, and — since 2026-09-06 — **the Aquarius app switcher**, the panel
+Command-Tab (or Alt-Tab, on the Windows keyboard style) puts in the middle of
+the screen. The switcher draws one 96px icon per running application, so it is
+the place where a missing or low-resolution icon shows up most obviously. If an
+app comes up as two grey letters there, that is a gap in the icon theme rather
+than a fault in the switcher. The switcher itself is written up in the
+`aquarius-shell` repository at `docs/app-switcher.md`.
+
 The pointer size is set to **24**, GNOME's own default (in "logical" pixels). On
 the 4K bench the desktop scale makes the pointer the right physical size on its
 own; this number is the sane fallback that GDM and the odd app which reads it
