@@ -257,8 +257,12 @@ AQ_CACHE="/src/build/CMakeCache.txt"
 #                                 screen instead of being an ordinary window
 #   WAYLAND_TOPLEVEL_MANAGEMENT   the name of the active window in the bar, and
 #                                 the running-application dots in the dock
-#   WAYLAND_SESSION_LOCK          the lock screen (not built yet, but the
-#                                 protocol has to be there for it)
+#   WAYLAND_SESSION_LOCK          the lock screen. Not a nicety: this is the
+#                                 protocol that lets the compositor itself
+#                                 promise that nothing but the lock is drawn or
+#                                 typed into. Without it there is no lock screen
+#                                 at all. (Built and shipping since 2026-09-06 —
+#                                 the shell's lock/ folder.)
 #   SCREENCOPY                    thumbnails of windows
 #   NETWORK                       Quickshell.Networking — the Wi-Fi tile
 #   BLUETOOTH                     Quickshell.Bluetooth — the Bluetooth tile
@@ -267,7 +271,12 @@ AQ_CACHE="/src/build/CMakeCache.txt"
 #   SERVICE_PIPEWIRE              Quickshell.Services.Pipewire — volume
 #   SERVICE_STATUS_NOTIFIER       Quickshell.Services.SystemTray — the tray
 #   SERVICE_UPOWER                Quickshell.Services.UPower — battery
-#   SERVICE_PAM                   the lock screen's password check
+#   SERVICE_PAM                   the lock screen's password check. The shell
+#                                 imports Quickshell.Services.Pam and asks PAM
+#                                 whether a password is right; it never decides
+#                                 that itself. Without this the import fails and
+#                                 the WHOLE shell refuses to load — no bar, no
+#                                 dock, nothing.
 #   SERVICE_GREETD                Quickshell.Services.Greetd — THE LOGIN SCREEN.
 #                                 Without it the greeter's very first import
 #                                 fails, the whole file refuses to load, and

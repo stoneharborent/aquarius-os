@@ -105,14 +105,14 @@ ARG LABWC_COMMIT=97f28877a343e062f3178d201f0248cd9c2610cf
 ARG QUICKSHELL_VERSION=v0.3.1
 ARG QUICKSHELL_COMMIT=1a4716cde794a59928d9d9fc15f2afc7a95de360
 ARG AQUARIUS_SHELL_REPO=https://github.com/stoneharborent/aquarius-shell.git
-# dd23a40 (2026-09-06, second bench pass): "About This PC" opens the About page
-# itself; a new session/labwc/themerc-override gives the desktop right-click menu
-# and the window title bars the Ice look; rc.xml gains a <theme> font block
-# (Inter, sizes in pixels) alongside the W-Return and W-Tab/W-S-Tab bindings; and
-# every app in the dock gets a right-click menu (Open / New Window, Keep in or
-# Remove from Dock, Quit). The reasoning is written out beside the same value in
+# afd26b9 (2026-09-06): THE LOCK SCREEN. A new lock/ folder in the shell —
+# Super+L, a Lock Screen row in the Aquarius menu, and dim/lock/screen-off after
+# 5/10/15 minutes. The password is checked by PAM through the rules this image
+# installs at /etc/pam.d/aquarius-lock; the shell never checks one itself.
+# session/labwc/rc.xml gains the W-l binding, which this image's own copy of that
+# file has too. The reasoning is written out beside the same value in
 # aquarius-os.env, which is where a bump is made — this line must match it.
-ARG AQUARIUS_SHELL_REF=dd23a40fdd6e8902b5ba119ab73c8d9dc6afdfcd
+ARG AQUARIUS_SHELL_REF=afd26b92830e79359ea6e1b8d13f24bbbdbbc628
 
 # ------------------------------------------------------------------------------
 # Our own files, gathered up so the build can reach them
@@ -353,6 +353,28 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 #     as the default and whose dconf write does the same for the login screen.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/build_files/56-aquarius-icons.sh
+
+# 5.7 The lock screen. Super+L, the Aquarius menu's Lock Screen row, or ten
+#     minutes of nobody touching the machine.
+#
+#     The DRAWING of it came across with the shell at 5.5 (the shell's lock/
+#     folder). This step is the operating system's half: the PAM rules that let
+#     the lock screen ask "is this really you", the service that locks the screen
+#     before the machine sleeps, and wlopm, which turns the monitor off after
+#     fifteen minutes.
+#
+#     ⚠️ THE SHELL NEVER CHECKS A PASSWORD, and the file this step installs at
+#     /etc/pam.d/aquarius-lock is what it asks instead. Without that file nobody
+#     can unlock the machine — which is why this step reads it back rather than
+#     assuming it was copied, and why it also checks that the shell asks for that
+#     exact name. Two repositories, one word, and a rename on either side would
+#     lock somebody out of their own computer.
+#
+#     After 5.5, because it reads the shell's own files; after 5, because the
+#     pam.d file, the service and the helper all arrived with system_files.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache/libdnf5 \
+    /ctx/build_files/57-lock-screen.sh
 
 # 5.8 The kernel pin. Runs on BOTH images, and must run before ANY step that
 #     installs a kernel module.
