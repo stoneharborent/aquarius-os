@@ -13,9 +13,18 @@
 # (https://github.com/osbuild/bootc-image-builder/issues/1188). We worked around
 # it with Titanoboa, Universal Blue's live-ISO builder.
 #
-# That bug was about Bazzite's extra software sources. AquariusOS is built on
-# plain Fedora now and has none of them, so the ordinary Fedora installer works
-# and Titanoboa is gone from this branch.
+# AquariusOS is built on plain Fedora now, so the ordinary Fedora installer
+# works and Titanoboa is gone from this branch.
+#
+# ⚠️ BUT THE SAME BUG BIT US ONCE MORE, ON 2026-09-06. The gaming layer (Phase
+# R4) re-added the Terra repository to install Steam and umu — and Terra is the
+# one repository whose *listing* is signed with a local-path key, which is
+# exactly what osbuild#1188 chokes on, so every ISO failed in depsolve. The fix
+# is that Terra is now REMOVED from the image after its packages are installed
+# (build_files/68-gaming.sh, step 3b), and a CI check refuses any repository that
+# would break the ISO. RPM Fusion stays — its listing is unsigned, so it does not
+# trip the builder. The whole story, and the still-open cosmetic logo gap, are in
+# docs/restart/installer.md.
 #
 # ------------------------------------------------------------------------------
 # WHAT AN "ANACONDA ISO" ACTUALLY DOES

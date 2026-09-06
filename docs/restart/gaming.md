@@ -197,9 +197,13 @@ client delivery is a bad week.
 
 So AquariusOS keeps Fedora's Mesa, and to make sure that stays true:
 
-- Terra is added to the machine and then **switched off**, and only switched on
-  for the single command that installs Steam and umu. It cannot replace a Fedora
-  package by accident, on our build machine or on yours.
+- Terra is added at build time, switched on for the **single command** that
+  installs Steam and umu, and then **removed from the image entirely** — the
+  repository file and its key are taken back out once the two packages are in.
+  So on your finished machine Terra is not merely switched off, it is gone: it
+  cannot replace a Fedora package by accident, ever. (This also unblocks the
+  installer ISO, which could not be built while Terra's repository file was in
+  the image — see [`installer.md`](installer.md).)
 - Every build checks that `mesa-dri-drivers` and `mesa-vulkan-drivers` still say
   their maker is Fedora, and fails if they do not.
 

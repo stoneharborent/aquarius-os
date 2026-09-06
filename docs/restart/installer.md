@@ -17,6 +17,104 @@ separate, larger job. This page explains exactly what is branded, what is not,
 and what each of the two real fixes would cost, so the decision can be made on
 purpose rather than by accident.
 
+> **The rest of this page is about the installer's LOGO** — a cosmetic gap that
+> is still open. There was also, briefly, a much bigger problem: no ISO could be
+> built at all. That is fixed, and the fix is recorded in the next section so it
+> cannot quietly come back.
+
+---
+
+## RESOLVED — the ISO could not be built at all (2026-09-06)
+
+### What you saw
+
+Every ISO build failed within the first minute, in the depsolve step, with:
+
+```
+Errors during downloading metadata for repository 'terra':
+  - Curl error (37): Could not read a file:// file for
+    file:///etc/pki/rpm-gpg/RPM-GPG-KEY-terra44
+error: cannot build manifest: cannot depsolve: ... Failed to retrieve GPG key
+for repo 'terra'
+```
+
+(The failing run was `34012037986`. Both variants failed the same way — this was
+a total block on R5's whole premise that a stranger can install from a USB stick.)
+
+### Why it happened, in plain English
+
+As the section below explains, to build the installer image-builder assembles a
+small scratch environment, and to do that it reads **this image's own repository
+files** (the catalogues in `/etc/yum.repos.d/`) and asks each one for its
+listing. It does this in an environment that does **not** carry this image's
+local GPG key files.
+
+Reading a repository's listing normally needs no key. But a repository can
+**sign its listing** (`repo_gpgcheck=1`), and then the key is needed just to read
+it. The **Terra** repository — added by the gaming layer (Phase R4) to install
+Steam and `umu-launcher` — does exactly that, and names its key by a **local
+file path**:
+
+```
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-terra44
+```
+
+That file exists on a finished, installed machine. It does **not** exist in
+image-builder's scratch environment. So the build tries to read a file that is
+not there, gets "Curl error (37)", and stops before it really starts. This is
+[osbuild/bootc-image-builder#1188](https://github.com/osbuild/bootc-image-builder/issues/1188)
+— the same class of bug that forced the old Bazzite line onto Titanoboa. A
+maintainer note on that issue explains the depsolver autodiscovers every
+repository file under the mounted image's `/etc/yum.repos.d/`, so this bites
+**even when the repository is switched off** — and indeed Terra was `enabled=0`
+in the image and its listing was fetched anyway.
+
+### Why RPM Fusion did NOT cause this (and is deliberately left alone)
+
+RPM Fusion also uses a `gpgkey=file://` local key, and it has been enabled since
+Phase R1 — yet the ISO only broke once the gaming layer was added. The reason is
+one setting: RPM Fusion does **not** sign its listing (`repo_gpgcheck=0`). So
+image-builder never needs RPM Fusion's key to read the listing, and that key is
+only ever needed later, on the installed machine (where the file really is
+present), when someone layers a package by hand. RPM Fusion is therefore useful
+at runtime and harmless to the ISO, so it is kept exactly as it is. The exact
+trap is the **pair**: a signed listing (`repo_gpgcheck=1`) with a local-path key
+(`gpgkey=file://`), and nothing else.
+
+### The fix
+
+Terra has no runtime purpose on AquariusOS: a bootc machine updates by
+downloading a whole new image we build, never from a repository on the user's
+computer, and the two packages Terra provided are already baked in. So Terra is
+now **removed from the image entirely** once Steam and `umu-launcher` are
+installed — the `terra-release` package, its `terra*.repo` file and its key are
+all taken back out. See [`build_files/68-gaming.sh`](../../build_files/68-gaming.sh),
+step "3b", and [`gaming.md`](gaming.md). RPM Fusion was **not** changed:
+converting its key to `https://` was considered and rejected as an unnecessary
+change that would also weaken its offline package verification on the installed
+machine.
+
+### What stops it coming back
+
+Two independent guards, both reading the real files in the finished image (never
+timestamps):
+
+1. **Inside the gaming step.** `68-gaming.sh` proves, right after removing Terra,
+   that no Terra repo file or key survived and that no repository file pairs a
+   signed listing with a local-path key.
+2. **A dedicated CI step**, "Check no repository file can break the installer ISO
+   build" in [`build.yml`](../../.github/workflows/build.yml), scans every
+   `/etc/yum.repos.d/*.repo` in the built image on every build and fails if any
+   section combines `repo_gpgcheck=1` with `gpgkey=file://`, or if any Terra repo
+   file is still present. So even a new repository added years from now cannot
+   re-break the ISO unnoticed.
+
+> If a future feature genuinely needs a repository with a **signed** listing to
+> stay in the shipped image, the guard will (correctly) stop the build; the fix
+> then is to point that repository's `gpgkey=` at the upstream `https://` key URL,
+> which image-builder *can* fetch. Terra did not need that because it did not need
+> to stay at all.
+
 ---
 
 ## What a person actually sees, screen by screen
