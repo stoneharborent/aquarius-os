@@ -215,16 +215,15 @@ broken_check "a display arrangement with nothing in it" "${WORK}/empty.xml"
 broken_check "a file that is not there at all" "${WORK}/no-such-file.xml"
 
 echo ""
-echo "== the messenger really uses the sanitiser =="
+echo "== ⚠️ BY DEFAULT THE LOGIN SCREEN IS GIVEN NOTHING AT ALL =="
 # ------------------------------------------------------------------------------
-# End to end, against the real messenger, with fake home folders.
-# ------------------------------------------------------------------------------
-# This is the test that would have caught the original bug, because the original
-# bug was not a wrong rule — it was a copy with no rule in front of it. Checking
-# the sanitiser alone proves the rule exists; only this proves it is USED.
+# Royce's decision, 2026-09-05, after the copy black-screened the bench twice
+# in two days. The second time, the guard that was supposed to undo it did not
+# act either. Two black boots is enough: the copy is off unless somebody
+# switches it on for one machine.
 #
 # AQ_GDM_DISPLAY_ROOT moves every path the messenger writes to underneath a
-# temporary folder, so this runs as an ordinary user and touches nothing.
+# temporary folder, so all of this runs as an ordinary user and touches nothing.
 run_messenger() {
     local root="$1"
     shift
@@ -234,8 +233,97 @@ run_messenger() {
         bash "${MESSENGER}" "$@" > "${root}/said.txt" 2>&1
 }
 
+# The opt-in marker. Never shipped in an image; written by `aq login scale on`.
+opt_in() {
+    mkdir -p "$1/var/lib/aquarius"
+    : > "$1/var/lib/aquarius/gdm-display-optin"
+}
+
+ROOT0="${WORK}/root0"
+mkdir -p "${ROOT0}/home/royce/.config"
+cp "$(fixture off DP-1 1.25 3840 2160)" "${ROOT0}/home/royce/.config/monitors.xml"
+
+if run_messenger "${ROOT0}"; then
+    pass "with no opt-in the messenger ran and exited cleanly"
+else
+    fail "with no opt-in the messenger failed (it must exit cleanly)"
+    sed 's/^/       /' "${ROOT0}/said.txt"
+fi
+
+if [ -e "${ROOT0}/etc/xdg/monitors.xml" ] || [ -e "${ROOT0}/var/lib/gdm/.config/monitors.xml" ]; then
+    fail "it copied a display arrangement to the login screen with nobody asking"
+else
+    pass "nothing was copied to the login screen"
+fi
+
+if grep -q "login-screen display copy is off" "${ROOT0}/said.txt"; then
+    pass "and it said so, in one line"
+else
+    fail "it did not say why it did nothing"
+    sed 's/^/       /' "${ROOT0}/said.txt"
+fi
+
+echo ""
+echo "== ⚠️ AND IT TAKES AWAY A COPY LEFT BY AN OLDER AQUARIUSOS =="
+# ------------------------------------------------------------------------------
+# THIS IS THE ONE THAT SAVES ROYCE'S BENCH, and it is the whole reason the
+# clean-up is not just "stop writing the file".
+#
+# A machine updating from an older image already HAS both copies — written by
+# the old logout hook at its last shutdown, before any of this existed. If the
+# new image merely declined to write new ones, that machine would still boot
+# into yesterday's black screen. So the boot-time run REMOVES them, and the
+# machine heals itself on its first boot of this image with nobody typing
+# anything.
+ROOT_LEFT="${WORK}/rootleft"
+mkdir -p "${ROOT_LEFT}/home/royce/.config" \
+    "${ROOT_LEFT}/etc/xdg" "${ROOT_LEFT}/var/lib/gdm/.config"
+cp "$(fixture leftover DP-1 1.25 3840 2160)" "${ROOT_LEFT}/home/royce/.config/monitors.xml"
+# Yesterday's copies: unsanitised, 125%, exactly what black-screened the bench.
+cp "${ROOT_LEFT}/home/royce/.config/monitors.xml" "${ROOT_LEFT}/etc/xdg/monitors.xml"
+cp "${ROOT_LEFT}/home/royce/.config/monitors.xml" "${ROOT_LEFT}/var/lib/gdm/.config/monitors.xml"
+
+run_messenger "${ROOT_LEFT}"
+
+if [ -e "${ROOT_LEFT}/etc/xdg/monitors.xml" ] || [ -e "${ROOT_LEFT}/var/lib/gdm/.config/monitors.xml" ]; then
+    fail "a leftover copy survived — that machine would boot to a black screen again"
+    sed 's/^/       /' "${ROOT_LEFT}/said.txt"
+else
+    pass "both leftover copies were removed"
+fi
+
+if grep -q "leftover" "${ROOT_LEFT}/var/lib/aquarius/gdm-display.log" 2> /dev/null; then
+    pass "and the log says a leftover was taken away"
+else
+    fail "nothing in the log explains why the login screen changed size"
+fi
+
+# --dry-run must never delete. It is what a person runs to find out what would
+# happen, and a "tell me" command that changes the machine is a trap.
+ROOT_DRY="${WORK}/rootdry"
+mkdir -p "${ROOT_DRY}/home/royce/.config" "${ROOT_DRY}/etc/xdg"
+cp "$(fixture dry DP-1 1.25 3840 2160)" "${ROOT_DRY}/home/royce/.config/monitors.xml"
+cp "${ROOT_DRY}/home/royce/.config/monitors.xml" "${ROOT_DRY}/etc/xdg/monitors.xml"
+run_messenger "${ROOT_DRY}" --dry-run
+if [ -e "${ROOT_DRY}/etc/xdg/monitors.xml" ]; then
+    pass "--dry-run removed nothing"
+else
+    fail "--dry-run deleted a file — it must only ever say what it would do"
+fi
+
+echo ""
+echo "== the messenger really uses the sanitiser (switched ON) =="
+# ------------------------------------------------------------------------------
+# End to end, against the real messenger, with fake home folders and the opt-in
+# switched on — the state a machine is in after `sudo aq login scale on`.
+# ------------------------------------------------------------------------------
+# This is the test that would have caught the original bug, because the original
+# bug was not a wrong rule — it was a copy with no rule in front of it. Checking
+# the sanitiser alone proves the rule exists; only this proves it is USED.
+
 ROOT="${WORK}/root"
 mkdir -p "${ROOT}/home/royce/.config"
+opt_in "${ROOT}"
 cp "$(fixture arkend DP-1 1.25 3840 2160)" "${ROOT}/home/royce/.config/monitors.xml"
 
 if run_messenger "${ROOT}"; then
@@ -283,6 +371,7 @@ echo ""
 echo "== switching part sizes on changes the answer =="
 ROOT2="${WORK}/root2"
 mkdir -p "${ROOT2}/home/royce/.config" "${ROOT2}/var/lib/aquarius"
+opt_in "${ROOT2}"
 cp "$(fixture arkend2 DP-1 1.25 3840 2160)" "${ROOT2}/home/royce/.config/monitors.xml"
 : > "${ROOT2}/var/lib/aquarius/gdm-fractional-ok"
 
@@ -301,6 +390,7 @@ echo "== the messenger refuses rather than copying something it cannot check =="
 # behaviour — "fall back to copying the original" — is precisely the bug.
 ROOT3="${WORK}/root3"
 mkdir -p "${ROOT3}/home/royce/.config"
+opt_in "${ROOT3}"
 cp "$(fixture arkend3 DP-1 1.25 3840 2160)" "${ROOT3}/home/royce/.config/monitors.xml"
 
 AQ_GDM_DISPLAY_ROOT="${ROOT3}" \
@@ -318,27 +408,27 @@ else
 fi
 
 echo ""
-echo "== the guard cannot loop =="
+echo "== the guard =="
+# The guard's own behaviour — when it acts and when it stands aside — is
+# executed in tests/test-gdm-guard.sh, with fake system commands, because
+# reading the source can only ever tell you the trigger EXISTS. On 2026-09-05
+# the trigger existed, was enabled, ran, and asked the wrong question. Only two
+# checks stay here, and both are about the guard's relationship to this file's
+# subject rather than about the guard itself.
 GUARD="${HERE}/../system_files/usr/libexec/aquarius-gdm-guard"
 if [ -r "${GUARD}" ]; then
-    if bash -n "${GUARD}"; then
-        pass "the guard is valid shell"
-    else
-        fail "the guard does not parse as shell"
-    fi
-    # The stamp is the thing that makes a repair happen at most once per boot.
-    # It has to live under /run, which is emptied at every boot — a stamp under
-    # /var would mean the guard repairs once and then never again, for the life
-    # of the machine.
-    if grep -q '^AQ_STAMP_DIR="/run/' "${GUARD}"; then
-        pass "its 'already tried' stamp is under /run, so it resets at each boot"
-    else
-        fail "the guard's stamp is not under /run — it would only ever repair once, ever"
-    fi
     if grep -q 'is-enabled gdm.service' "${GUARD}"; then
         pass "it stands aside when GDM is not the login screen in use"
     else
         fail "the guard does not check that GDM is in use — it could restart greetd"
+    fi
+    # It must only ever delete the two files THIS program writes. A guard that
+    # can reach a person's own ~/.config/monitors.xml would destroy the setting
+    # rather than the copy of it.
+    if grep -q '/home' "${GUARD}"; then
+        fail "the guard mentions /home — it must only ever remove OUR two copies"
+    else
+        pass "the guard never touches anybody's own display settings"
     fi
 else
     fail "${GUARD} is missing"

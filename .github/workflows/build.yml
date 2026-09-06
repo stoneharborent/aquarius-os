@@ -152,6 +152,14 @@ on:
       # restarts the login screen if none appears. Same arrangement as every
       # side branch: builds and checks, never publishes.
       - restart/gdm-scale-fix
+      # The black login screen, take two. The bench black-screened AGAIN on the
+      # image above, and the guard that was meant to rescue it did nothing —
+      # it asked "is there a session?", and in a black-screen boot there is one.
+      # So the login screen now gets NO copied display file at all by default,
+      # old copies are removed at boot, and the guard's trigger is executed in
+      # CI on both sides. Same arrangement as every side branch: builds and
+      # checks, never publishes.
+      - restart/gdm-copy-off
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -229,6 +237,23 @@ jobs:
       # The first fixture in this test is Royce's own monitor.
       - name: Check the login screen is only given a size it can draw
         run: ./tests/test-gdm-scale-sanitize.sh
+
+      # ------------------------------------------------------------------------
+      # And the safety net underneath it actually fires
+      # ------------------------------------------------------------------------
+      # ⚠️ THIS TEST EXISTS BECAUSE THE SAFETY NET DID NOT WORK. On 2026-09-05
+      # the bench black-screened a SECOND time, on the very image that had just
+      # added the guard, and the guard did nothing. It was enabled. It ran. It
+      # asked logind "is there a graphical session?" — and in a black-screen
+      # boot the answer is yes, because the mouse pointer you are looking at is
+      # drawn by the compositor.
+      #
+      # A trigger that has never been executed is a comment. This runs the guard
+      # against fake system commands, on both sides: it must act when the login
+      # screen is broken (four different shapes of broken) and stand aside when
+      # it is not.
+      - name: Check the login-screen guard actually fires
+        run: ./tests/test-gdm-guard.sh
 
       - name: Work out what this image is called
         run: |
@@ -902,24 +927,70 @@ jobs:
             bad "/usr/libexec/aquarius-gdm-display does not parse as shell"
           fi
 
-          # Run it for real, inside the image. There are no home folders in a
-          # container, so the correct answer is "nobody has chosen a screen
-          # size yet" and a clean exit. That proves the program runs at all,
-          # which is the failure this catches: a syntax error or a missing
-          # python3 would otherwise only show up on Royce's machine, at boot.
-          echo "  ---- running it (expected: nothing to copy) ----"
-          if /usr/libexec/aquarius-gdm-display 2>&1 | sed 's/^/       /'; then
-            ok "it runs and exits cleanly with no display arrangement to copy"
+          # Run it for real, inside the image. There is no opt-in marker here
+          # (there must not be), so the correct answer is "the copy is off" and
+          # a clean exit. That proves the program runs at all, which is the
+          # failure this catches: a syntax error or a missing python3 would
+          # otherwise only show up on Royce's machine, at boot.
+          echo "  ---- running it (expected: the copy is off) ----"
+          if aq_said="$(/usr/libexec/aquarius-gdm-display 2>&1)"; then
+            printf '%s\n' "${aq_said}" | sed 's/^/       /'
+            ok "it runs and exits cleanly"
           else
+            printf '%s\n' "${aq_said}" | sed 's/^/       /'
             bad "it failed to run — see the lines above"
+          fi
+          if printf '%s' "${aq_said}" | grep -q 'display copy is off'; then
+            ok "and it says the copy is off, which is the shipped default"
+          else
+            bad "it did not say the copy is off — a fresh image must copy nothing"
+          fi
+          # ⚠️ AND IT MUST HAVE WRITTEN NOTHING. This is the whole decision of
+          # 2026-09-05, checked by looking rather than by reading the source.
+          for f in /etc/xdg/monitors.xml /var/lib/gdm/.config/monitors.xml; do
+            if [ -e "${f}" ]; then
+              bad "${f} exists in a fresh image — the login screen must be given nothing by default"
+            else
+              ok "${f} does not exist (nothing was handed to the login screen)"
+            fi
+          done
+
+          # ⚠️ AND IT MUST TAKE AWAY A COPY LEFT BY AN OLDER AQUARIUSOS. This is
+          # what heals a machine that is updating: its /etc still holds the file
+          # the old logout hook wrote at the last shutdown, and that file is what
+          # black-screens it. Nobody types anything; the boot run removes it.
+          echo "== it removes a copy left behind by an older AquariusOS =="
+          mkdir -p /etc/xdg /var/lib/gdm/.config
+          printf '<monitors version="2"><configuration><logicalmonitor><scale>1.25</scale></logicalmonitor></configuration></monitors>' \
+            | tee /etc/xdg/monitors.xml > /var/lib/gdm/.config/monitors.xml
+          /usr/libexec/aquarius-gdm-display 2>&1 | sed 's/^/       /'
+          if [ -e /etc/xdg/monitors.xml ] || [ -e /var/lib/gdm/.config/monitors.xml ]; then
+            bad "a leftover copy survived — an updating machine would black-screen again"
+            rm -f /etc/xdg/monitors.xml /var/lib/gdm/.config/monitors.xml
+          else
+            ok "both leftover copies were removed with nobody asking"
           fi
 
           echo "== it runs at boot, before the login screen =="
-          if systemctl is-enabled aquarius-gdm-display.service > /dev/null 2>&1; then
-            ok "aquarius-gdm-display.service is switched on"
-          else
-            bad "aquarius-gdm-display.service is not switched on"
-          fi
+          # ⚠️ CHECKED AS A SHIPPED SYMLINK UNDER /usr, NOT WITH `is-enabled`.
+          # `systemctl enable` writes into /etc, and on this kind of operating
+          # system /etc is 3-way merged at every update: one `systemctl disable`
+          # on one machine turns a service off there FOREVER, and no image can
+          # switch it back on. Royce hit exactly that. The long version is in
+          # build_files/aq-lib.sh.
+          for unit in aquarius-gdm-display.service aquarius-gdm-guard.service; do
+            link="/usr/lib/systemd/system/graphical.target.wants/${unit}"
+            if [ -L "${link}" ] && [ -e "${link}" ]; then
+              ok "${unit} is switched on from /usr, where an update always restores it"
+            else
+              bad "${link} is missing or dangling — ${unit} would never start"
+            fi
+            if [ -e "/etc/systemd/system/graphical.target.wants/${unit}" ]; then
+              bad "${unit} is ALSO switched on through /etc — a build step ran 'systemctl enable'"
+            else
+              ok "nothing switches ${unit} on through /etc"
+            fi
+          done
           if grep -q '^Before=display-manager.service$' \
                /usr/lib/systemd/system/aquarius-gdm-display.service; then
             ok "it is ordered before the login screen starts"
@@ -927,7 +998,12 @@ jobs:
             bad "it is not ordered Before=display-manager.service — it could run too late to matter"
           fi
 
-          echo "== it runs again at every logout =="
+          echo "== the logout hook does nothing unless somebody asked =="
+          # ⚠️ THE SECOND BLACK SCREEN WAS PROBABLY THIS FILE. An update's new
+          # /etc does not exist yet at the moment you log out of the old system,
+          # so the last thing a machine runs before its first boot on a new
+          # image is the OLD logout hook. A hook that copies by default copies
+          # once more after you have stopped wanting it to.
           if [ -x /etc/gdm/PostSession/Default ]; then
             ok "/etc/gdm/PostSession/Default is executable (GDM skips it silently otherwise)"
           else
@@ -937,6 +1013,11 @@ jobs:
             ok "the logout hook calls the messenger"
           else
             bad "the logout hook does not call /usr/libexec/aquarius-gdm-display"
+          fi
+          if grep -q 'gdm-display-optin' /etc/gdm/PostSession/Default 2>/dev/null; then
+            ok "and only when the copy has been switched on"
+          else
+            bad "the logout hook copies unconditionally — that is how the bench got its second black screen"
           fi
           if tail -1 /etc/gdm/PostSession/Default 2>/dev/null | grep -q '^exit 0$'; then
             ok "the logout hook always succeeds (a failing one would trap a session)"
@@ -1041,11 +1122,25 @@ jobs:
           else
             bad "/usr/libexec/aquarius-gdm-guard does not parse as shell"
           fi
-          if systemctl is-enabled aquarius-gdm-guard.service > /dev/null 2>&1; then
-            ok "aquarius-gdm-guard.service is switched on"
+          # ⚠️ AND IT MUST NOT DECIDE ON SESSION EXISTENCE ALONE. That single
+          # question is the whole of the 2026-09-05 failure: the greeter had a
+          # session and the screen was black. tests/test-gdm-guard.sh executes
+          # the new trigger; this is the cheap grep that stops the old shape
+          # coming back in a hurry.
+          if grep -q 'aq_login_screen_is_up\|aq_graphical_session_exists' \
+               /usr/libexec/aquarius-gdm-guard; then
+            bad "the guard is back to asking 'is there a session?' — that is the 2026-09-05 bug"
           else
-            bad "aquarius-gdm-guard.service is not switched on — nothing would rescue the login screen"
+            ok "the guard does not decide on session existence alone"
           fi
+          for signal in aq_graphical_session_ids aq_gdm_restart_count \
+                        aq_compositor_rejected_the_display_config; do
+            if grep -q "${signal}" /usr/libexec/aquarius-gdm-guard; then
+              ok "it still has the '${signal}' signal"
+            else
+              bad "the guard lost the '${signal}' signal — its trigger is back to one question"
+            fi
+          done
           # ⚠️ THE RESCUER MUST NEVER BE ABLE TO STOP THE RESCUE. After= orders
           # it; Requires= would make the login screen depend on it.
           if grep -q '^After=display-manager.service' /usr/lib/systemd/system/aquarius-gdm-guard.service; then
@@ -1068,15 +1163,19 @@ jobs:
             bad "the guard's stamp is not under /run — it would only ever repair once, ever"
           fi
 
-          echo "== whole sizes are the default until somebody says otherwise =="
-          # Shipping the marker would mean shipping the untested behaviour to
-          # every machine. It is created by hand, on one machine, by
-          # `sudo aq login scale fractional`.
-          if [ -e /var/lib/aquarius/gdm-fractional-ok ]; then
-            bad "/var/lib/aquarius/gdm-fractional-ok is baked into the image — part sizes must be opt-in, per machine"
-          else
-            ok "part sizes are off by default (no marker file in the image)"
-          fi
+          echo "== the login screen is given nothing until somebody says otherwise =="
+          # Shipping either marker would mean pushing a behaviour that has
+          # black-screened a real machine twice onto every computer that
+          # installs AquariusOS, with nobody having chosen it. They are created
+          # by hand, on one machine, by `sudo aq login scale on`.
+          for marker in /var/lib/aquarius/gdm-display-optin \
+                        /var/lib/aquarius/gdm-fractional-ok; do
+            if [ -e "${marker}" ]; then
+              bad "${marker} is baked into the image — this must be opt-in, per machine"
+            else
+              ok "${marker} is not in the image"
+            fi
+          done
           if aq_out="$(aq login scale status 2>&1)"; then
             ok "'aq login scale status' runs"
             printf '%s\n' "${aq_out}" | sed 's/^/       /'
@@ -1084,6 +1183,21 @@ jobs:
             bad "'aq login scale status' failed"
             printf '%s\n' "${aq_out}" | sed 's/^/       /'
           fi
+          # And it must SAY off, in words a person can act on. A status command
+          # that reports the opposite of the truth is worse than none.
+          if printf '%s' "${aq_out}" | grep -q 'is NOT given anything'; then
+            ok "and it says the login screen is given nothing"
+          else
+            bad "'aq login scale status' does not report the copy as off"
+          fi
+          # The switch has to exist and be reachable, or the opt-in is a story.
+          for word in 'aq login scale on' 'aq login scale off'; do
+            if aq login scale --help 2>&1 | grep -q "${word}"; then
+              ok "'${word}' is documented in the command's own help"
+            else
+              bad "'${word}' is not in 'aq login scale --help'"
+            fi
+          done
 
           if [ "$fails" -ne 0 ]; then
             echo "::error::The login screen is not set up the way this image intends."
@@ -1124,6 +1238,26 @@ jobs:
               bash /tmp/t/tests/test-gdm-scale-sanitize.sh \
                 /usr/libexec/aquarius-monitors-sanitize \
                 /usr/libexec/aquarius-gdm-display
+            '
+
+      # ------------------------------------------------------------------------
+      # And the guard's trigger, executed against the INSTALLED guard
+      # ------------------------------------------------------------------------
+      # The step before the build ran this against the repository's copy. This
+      # runs it against the program as it exists in the finished image — which
+      # is the only version that will ever run on Royce's machine, and the one
+      # a bad COPY step or a missing chmod would break without changing a line
+      # of source. That is not hypothetical here: the guard that failed on
+      # 2026-09-05 was, as far as any build log could tell, perfectly installed.
+      - name: Check the login-screen guard fires in the finished image
+        run: |
+          set -euo pipefail
+          podman run --rm --pull=never \
+            -v "${GITHUB_WORKSPACE}/tests/test-gdm-guard.sh:/tmp/t/tests/test-gdm-guard.sh:ro" \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" -c '
+              set -e
+              bash /tmp/t/tests/test-gdm-guard.sh /usr/libexec/aquarius-gdm-guard
             '
 
       # Part B of the same photograph: our OWN login screen, drawn by the
