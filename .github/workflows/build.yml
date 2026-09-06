@@ -283,6 +283,14 @@ on:
       # Same arrangement as every side branch: builds and checks, never
       # publishes. See branding/icons/README.md.
       - restart/icon-grammar
+      # The redrawn mark — the small hand-drawn loop at the top of the "A" is
+      # gone (the A is now one clean point), and every place the old mark or the
+      # old Starlight blue was still showing is moved onto the shell's palette:
+      # the logo files, the About-page pictures, the boot splash, the wallpaper
+      # and the terminal colour in os-release.
+      # Same arrangement as every side branch: builds and checks, never
+      # publishes.
+      - restart/logo-recolour
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
