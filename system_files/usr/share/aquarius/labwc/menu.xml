@@ -30,11 +30,22 @@
   OS-only corrections. So a change to the menu in one repository has to be made
   in the other by hand, or the desktop and the shell drift apart.
 
+  THAT IS NO LONGER LEFT TO MEMORY. build_files/check-labwc-drift.sh compares
+  the two copies of this file — and of rc.xml, themerc-override and autostart —
+  against the pinned shell commit, and CI fails the push if any of them differ
+  in anything but their comments. So every element and attribute below is
+  identical to the shell's copy; the prose around them is not, and does not have
+  to be.
+
   =============================================================================
-  THE ONE OS-ONLY DIFFERENCE: `env XDG_CURRENT_DESKTOP=GNOME` ON SETTINGS
+  WHY EVERY SETTINGS LINE STARTS WITH `env XDG_CURRENT_DESKTOP=GNOME`
   =============================================================================
   Every gnome-control-center line below is prefixed with
-  `env XDG_CURRENT_DESKTOP=GNOME`. The shell's copy is not, and it must be here.
+  `env XDG_CURRENT_DESKTOP=GNOME`. It began as an OS-only correction on
+  2026-09-06 — this desktop needs it and a clone of the shell does not — and the
+  shell repository then took the same prefix into its own copy, so that the two
+  files could be held content-identical and compared automatically. It is not
+  optional in either place now.
 
   gnome-control-center refuses to start unless it believes it is running under
   GNOME. Its own code (shell/cc-application.c, is_supported_desktop()) reads

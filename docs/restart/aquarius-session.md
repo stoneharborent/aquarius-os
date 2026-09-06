@@ -94,6 +94,7 @@ And these keys:
 | **Super + Space** | Opens the search palette. Type to find an application, do a sum, or reach a session action like Log Out. Escape closes it. |
 | **Super + Return** | A terminal. This is the escape hatch — it works even when nothing else does. |
 | **Super + Shift + E** | Leaves the Aquarius Desktop and returns you to the login screen. |
+| **Super + Tab** | Switch windows. Hold Super and tap Tab to walk along the list; Super + Shift + Tab walks back. This is here so that Mac mode's Command + Tab does what a Mac does. |
 | **Alt + Tab** | Switch windows. |
 | **Alt + F4** | Close a window. |
 | **Super + arrow keys** | Snap a window to half the screen. |
@@ -113,21 +114,22 @@ Exit*, that is labwc's own built-in menu and it means one of the two files
 described in the next section did not make it into the image. It is the bug the
 bench found on 6 September 2026.
 
-### The window manager's five files, and the change-one-change-both rule
+### The window manager's six files, and the change-one-change-both rule
 
 The Aquarius Desktop is the Aquarius Shell running on the labwc window manager,
 and labwc reads its own configuration out of one folder:
-`/usr/share/aquarius/labwc/`. There are five files in it:
+`/usr/share/aquarius/labwc/`. There are six files in it:
 
 | File | What it does |
 | --- | --- |
-| `rc.xml` | The key bindings, and the one mouse binding: right-click the desktop opens the menu. |
+| `rc.xml` | The key bindings, the one mouse binding (right-click the desktop opens the menu), and the font labwc draws its own menu and title bars in. |
 | `menu.xml` | What that menu contains. |
+| `themerc-override` | What that menu, and every window title bar, look like. New on 6 September 2026. |
 | `autostart` | What runs once the window manager is up — the shell, the wallpaper, the screen size. |
 | `environment` | Variables labwc sets for itself before it starts. |
 | `shutdown` | What runs on the way out. |
 
-**All five are AquariusOS's own copies of files that also live in the
+**All six are AquariusOS's own copies of files that also live in the
 aquarius-shell repository, under `session/labwc/`. Change one, change both.**
 
 This is worth spelling out because it is exactly how the right-click menu went
@@ -145,10 +147,53 @@ its built-in one. Shipping `menu.xml` is the fix; the binding in `rc.xml` is
 written out as well so the gesture does not quietly depend on a labwc default.
 
 The build now refuses to produce an image where that has happened again. It
-checks that all five files are present, that both XML files parse, that
+checks that all six files are present, that both XML files parse, that
 `menu.xml` really declares a menu called `root-menu`, and that `rc.xml` really
 binds a right-click on the desktop to it — reading the finished image, not the
 recipe.
+
+It happened a second time, quietly, and was found on 6 September 2026 while
+fixing the first: the shell repository's `rc.xml` had grown **Super + Tab** and
+**Super + Shift + Tab** bindings and this image's copy had neither, so
+Command + Tab in Mac mode did nothing on our desktop while working perfectly in
+GNOME. Those two bindings are now here, and the build reads them back out of the
+image as well.
+
+### The drift check — how the rule stopped being a rule people have to remember
+
+Naming each missing thing in a check does not generalise: it fixes the binding
+that was lost and says nothing about whatever the shell adds next. So as of the
+second pass over that bench test, the build compares the two copies **directly**
+and fails on any difference in content, whatever it turns out to be.
+
+The comparison is `build_files/check-labwc-drift.sh`. CI runs it on every push,
+in the `shell_tests` job, against a clone of aquarius-shell at exactly the commit
+`AQUARIUS_SHELL_REF` pins. Anyone can run the same thing by hand before pushing:
+
+```
+git clone https://github.com/stoneharborent/aquarius-shell.git /tmp/shell
+cd /tmp/shell && git checkout --detach <the commit in aquarius-os.env>
+cd - && ./build_files/check-labwc-drift.sh /tmp/shell
+```
+
+**Four of the six files are shared with the shell and are compared.** They are:
+
+| File | What "the same" means for it |
+| --- | --- |
+| `rc.xml` | Every element, attribute and value, comments excluded. Both files are read as XML and reduced to a plain listing, so indentation, attribute order and the wording of a comment cannot look like drift and a changed setting always does. |
+| `menu.xml` | The same treatment — including the `env XDG_CURRENT_DESKTOP=GNOME` prefix on the Settings commands, which the shell's copy now carries too. |
+| `themerc-override` | Every line that is not blank and not a comment. labwc's theme file has no end-of-line comment syntax at all, so a `#` after a setting is a bug rather than a note, and the check would see it. |
+| `autostart` | **Not** a straight comparison, and this is the one exception worth knowing about. The image's `autostart` is deliberately the larger file: it starts things that only exist on an installed machine (the wallpaper, the display-scale helper, the polkit agent, the portal reset, the wrapper that puts a dialog on screen if the shell dies). So the rule is one-directional — *every line that runs in the shell's copy must also run in ours* — which is the direction the damage travels. Extra lines on our side are expected. Three lines are known, deliberate exceptions and are listed in the script with a sentence each. |
+
+The other two, `environment` and `shutdown`, are not compared: what they set is
+about system paths that only exist here. Change one of those and you still have
+to check the other by hand.
+
+If the check fails it names the file, prints
+`the shell's copy at <commit> and the OS copy differ — CHANGE ONE, CHANGE BOTH`,
+and shows exactly what differs, with `-` for the image's copy and `+` for the
+shell's. The usual answer is to copy the change across; if a difference is
+genuinely OS-only, say so in the script where it explains that file.
 
 ### Why Settings is launched with `env XDG_CURRENT_DESKTOP=GNOME`
 
@@ -195,6 +240,124 @@ places need it, and they are fixed in three places:
 
 Under the GNOME fallback session the prefix does nothing at all, because
 `XDG_CURRENT_DESKTOP` is already `GNOME` there.
+
+### Why the Bluetooth settings page said *No Bluetooth Found*
+
+**This is the third fault from the 6 September 2026 bench test, and it is the
+strangest of the three.**
+
+Open Quick Settings, click the little arrow beside **Bluetooth**, and the
+Settings app opens on its Bluetooth page. On the bench that page said
+
+```
+No Bluetooth Found
+Plug in a dongle to use Bluetooth.
+```
+
+while a Bluetooth mouse was working on the same machine at the same moment. The
+Bluetooth *tile* in Quick Settings was right — it listed the devices — so only
+the Settings page was wrong.
+
+#### The page never asks Bluetooth anything
+
+That is the part that makes this hard to guess at. You would expect the
+Bluetooth page to ask BlueZ — Linux's Bluetooth service — whether there is a
+Bluetooth adapter. It does not. Read gnome-control-center's own source,
+`panels/bluetooth/cc-bluetooth-panel.c`, and what the page actually reads is a
+single true/false value called **`BluetoothHasAirplaneMode`**, published on the
+message bus by a service named
+
+```
+org.gnome.SettingsDaemon.Rfkill
+```
+
+When that value is false, the page draws the "no devices" screen. It is really
+asking *"is there a radio kill switch for Bluetooth?"* and treating "I could not
+find out" as "no".
+
+"rfkill" is Linux's name for the radio kill switches — the aeroplane-mode
+machinery. Every radio in the machine registers a switch with the kernel, and
+the kernel offers the whole list through one file, `/dev/rfkill`. A small
+program reads that list and publishes it:
+
+```
+/usr/libexec/gsd-rfkill
+```
+
+It ships inside `gnome-settings-daemon`, which is in this image because GNOME is
+the fallback desktop and always will be.
+
+#### And nobody was running it
+
+In GNOME, gnome-session starts that program automatically, through
+`/usr/lib/systemd/user/org.gnome.SettingsDaemon.Rfkill.service`. The Aquarius
+Desktop is not GNOME and does not run gnome-session, so nothing started it. With
+nothing publishing the value, the Settings page read nothing, took nothing as
+false, and drew the empty screen. **The Bluetooth hardware was fine the whole
+time. The page was blind.**
+
+#### The fix
+
+A service of our own that starts the same program:
+`/usr/lib/systemd/user/aquarius-rfkill.service`. Its own header is the long
+version; the two decisions worth knowing here are:
+
+**It is our own file rather than GNOME's, because GNOME's forbids it.** Read
+`org.gnome.SettingsDaemon.Rfkill.service` and you find `RefuseManualStart=true`,
+plus `Requisite=` lines pointing at GNOME session targets that do not exist in
+our session and an `ExecStopPost=` that reports back to gnome-session. It is
+written to be startable by gnome-session and by nothing else.
+
+**It runs in the Aquarius Desktop only.** Every other user service of ours
+(`aquarius-keys`, `aquarius-automount`) hangs off `graphical-session.target`,
+which both desktops reach, because both desktops want them. This one must not:
+GNOME already runs its own copy, the program owns the bus name
+`org.gnome.SettingsDaemon.Rfkill`, and a bus name has exactly one owner. Two
+copies would mean one of them losing the race and quitting — differently on each
+boot, which is the worst kind of fault to chase. So this one hangs off
+`labwc-session.target` instead, which only our session ever starts:
+
+```
+/usr/lib/systemd/user/labwc-session.target.wants/aquarius-rfkill.service
+```
+
+Same "switched on from `/usr`" arrangement as the other two, and the same
+trade-off: `systemctl --user disable` has nothing in `/etc` to remove and will
+not turn it off, while `systemctl --user mask --now aquarius-rfkill` will.
+
+This does **not** touch the Bluetooth tile in Quick Settings — that talks to
+BlueZ directly and was always correct. And it needs nothing from
+NetworkManager: the aeroplane-mode side reads the kernel's switch list and
+nothing else.
+
+#### One more piece: being allowed to *switch* the radios
+
+`/dev/rfkill` is world-readable, so *detecting* Bluetooth works for anybody.
+Actually switching aeroplane mode means writing to that file, and an ordinary
+person cannot write to a root-owned device file unless something says so. That
+something is a udev rule that tags rfkill devices `uaccess` — "give read and
+write to whoever is logged in at the screen right now". systemd ships it in
+`70-uaccess.rules`, and gnome-settings-daemon ships an identical one of its own.
+The build reads the rules out of the finished image and prints what it found,
+because a missing rule is invisible: the page would look right and the switch
+would simply not move.
+
+#### What the build checks
+
+`build_files/78-rfkill.sh`, and a matching read-back in CI, prove out of the
+**finished image** that the helper is there, that our service runs it and takes
+the right bus name, that it hangs off `labwc-session.target` and *not* the
+both-desktops target, that none of GNOME's session gating was copied into it,
+and that the `uaccess` rule is present. GNOME's own service file is printed in
+the build log too, so a future Fedora changing it is visible here rather than on
+a bench.
+
+To see the values for yourself, in the Aquarius Desktop:
+
+```
+systemctl --user status aquarius-rfkill
+busctl --user introspect org.gnome.SettingsDaemon.Rfkill /org/gnome/SettingsDaemon/Rfkill
+```
 
 ### How big it all is
 
@@ -696,7 +859,7 @@ of its own, it must not also start this one — it should write `agent=none` int
 | `/usr/bin/aquarius-session` | The launcher the login screen runs. Sets the environment, starts labwc, and cleans up after it. Heavily commented — worth reading. |
 | `/usr/libexec/aquarius-session-lib` | The list of settings the session uses, and the clean-up that removes them again at logout. **Read this before changing anything about logging in or out.** |
 | `/usr/libexec/aquarius-session-portals` | Run once at login: stops the portals the last desktop left behind, so ours start fresh. |
-| `/usr/share/aquarius/labwc/` | The window manager's configuration, five files: `rc.xml` (key bindings and the desktop right-click), `menu.xml` (what that right-click menu contains), `autostart`, `shutdown`, `environment`. Each one is AquariusOS's own copy of a file in the aquarius-shell repository — change one, change both. |
+| `/usr/share/aquarius/labwc/` | The window manager's configuration, six files: `rc.xml` (key bindings, the desktop right-click, and the menu's font), `menu.xml` (what that right-click menu contains), `themerc-override` (what it and the window title bars look like), `autostart`, `shutdown`, `environment`. Each one is AquariusOS's own copy of a file in the aquarius-shell repository — change one, change both, and `build_files/check-labwc-drift.sh` fails the build if four of the six drift apart. |
 | `/usr/share/applications/org.gnome.Settings.desktop` | Fedora's Settings menu entry, with its `Exec=` line rewritten at build time to start Settings with `XDG_CURRENT_DESKTOP=GNOME`. Without that it exits at once on this desktop. Same for `/usr/share/dbus-1/services/org.gnome.Settings.service`. |
 | `/usr/share/aquarius/shell/` | The Aquarius Shell's QML. |
 | `/usr/libexec/aquarius-shell-start` | Runs the shell, and puts a dialog on screen if it fails. |
@@ -792,6 +955,12 @@ In order. Stop at the first failure and read the log.
 4. **Press Super + Space.** The search palette should appear. Type a few letters
    of an application's name; it should be first in the list. Type `12*12`; it
    should answer 144. Escape closes it.
+4a. **Press Super + Tab.** With two or three windows open, hold Super and tap
+    Tab: a window switcher should appear and walk along the list, and Super +
+    Shift + Tab should walk back. In Mac mode this is what Command + Tab sends,
+    so try it that way too. (Added 2026-09-06 — the binding existed in the
+    aquarius-shell repository and had never been copied into the image's own
+    `rc.xml`.)
 4b. **Right-click the empty desktop.** The Aquarius menu should appear: Search,
     System Settings, Change Wallpaper, Log Out, Sleep, Restart, Power Off. If you
     get *Terminal / Reconfigure / Exit* instead, that is labwc's built-in menu and
@@ -805,6 +974,16 @@ In order. Stop at the first failure and read the log.
     from that one launch route.
 5. **Click the status glyphs.** Quick Settings should open: Wi-Fi, Bluetooth,
    volume, Focus.
+5b. **Open Bluetooth from the arrow beside the tile.** With a Bluetooth device
+    paired and in use, click the little arrow next to Bluetooth in Quick
+    Settings. Settings should open on its Bluetooth page and **show the device
+    list**. If it says *No Bluetooth Found* while Bluetooth is plainly working,
+    the rfkill helper is not running — that is the 6 September 2026 bug. Check
+    with `systemctl --user status aquarius-rfkill`; the section "Why the
+    Bluetooth settings page said No Bluetooth Found" above is the full story.
+    While you are there, the airplane-mode switch on the Wi-Fi page should
+    actually move when you click it (that is the `uaccess` half of the same
+    section).
 6. **Make a notification.** In a terminal (Super + Return):
    `notify-send "Hello" "This is a test"`. A toast should appear. Click the
    clock; it should be listed in the panel.

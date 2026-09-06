@@ -1,0 +1,207 @@
+# =============================================================================
+# aquarius-rfkill — the little program Settings reads Bluetooth from
+# =============================================================================
+# ⚠️ THIS FILE EXISTS BECAUSE OF THE BENCH TEST OF 6 SEPTEMBER 2026.
+#
+# WHAT ROYCE SAW
+#
+# In the Aquarius Desktop, click the status glyphs to open Quick Settings, then
+# click the little arrow beside Bluetooth. That arrow opens GNOME's Settings app
+# on its Bluetooth page. The page said
+#
+#     No Bluetooth Found
+#     Plug in a dongle to use Bluetooth.
+#
+# while a Bluetooth mouse was working on the same machine, at the same moment.
+# The Bluetooth tile in Quick Settings itself was right — it listed the devices
+# — so only the Settings page was wrong.
+#
+# -----------------------------------------------------------------------------
+# WHY IT SAID THAT
+# -----------------------------------------------------------------------------
+# The surprising part: GNOME's Bluetooth page does NOT ask Bluetooth whether
+# there is a Bluetooth adapter. It never talks to BlueZ (the Linux Bluetooth
+# service) to answer that question at all.
+#
+# What it actually reads is a single true/false value called
+# `BluetoothHasAirplaneMode`, published on the message bus by a service named
+#
+#     org.gnome.SettingsDaemon.Rfkill
+#
+# and when that value is false the page draws the "no devices" screen. That is
+# gnome-control-center's own code, in panels/bluetooth/cc-bluetooth-panel.c.
+#
+# "rfkill" is Linux's name for the radio kill switches — the aeroplane-mode
+# machinery. Every radio in the machine (Wi-Fi, Bluetooth, mobile broadband)
+# registers a switch with the kernel, and the kernel exposes the whole list
+# through one file, /dev/rfkill. A small program called
+#
+#     /usr/libexec/gsd-rfkill
+#
+# reads that list and publishes it on the bus under the name above. It ships
+# with gnome-settings-daemon, which is in this image because GNOME is the
+# fallback desktop and is never going away.
+#
+# In GNOME, gnome-session starts that program automatically, through
+# /usr/lib/systemd/user/org.gnome.SettingsDaemon.Rfkill.service. The Aquarius
+# session is not GNOME and does not run gnome-session, so nobody started it.
+# With nobody publishing the value, the Settings page read nothing, treated
+# nothing as false, and drew the empty screen. The Bluetooth hardware was fine
+# the whole time; the page was simply blind.
+#
+# THE FIX IS THIS FILE: start the same helper in our session too.
+#
+# -----------------------------------------------------------------------------
+# WHY THIS IS A FILE OF OURS AND NOT JUST "START GNOME'S ONE"
+# -----------------------------------------------------------------------------
+# Two reasons, and the first is decisive.
+#
+# 1. GNOME'S OWN SERVICE FILE FORBIDS IT. Read
+#    /usr/lib/systemd/user/org.gnome.SettingsDaemon.Rfkill.service and you will
+#    find `RefuseManualStart=true`, plus `Requisite=` and `PartOf=` lines
+#    pointing at GNOME session targets that do not exist in our session and an
+#    `ExecStopPost=` that reports back to gnome-session. It is written to be
+#    startable by gnome-session and by nothing else. Asking systemd to start it
+#    by hand is refused outright.
+#
+# 2. Only one copy may run. The program owns the bus name
+#    org.gnome.SettingsDaemon.Rfkill, and a bus name has exactly one owner. Two
+#    copies would mean one of them losing the race and quitting, differently on
+#    each boot — the worst kind of fault to chase.
+#
+# So this is our own service, running the same program, worded for our session,
+# AND — the important half — SWITCHED ON FOR THE AQUARIUS SESSION ONLY.
+#
+# -----------------------------------------------------------------------------
+# HOW "OUR SESSION ONLY" IS DONE, AND WHY IT IS NOT graphical-session.target
+# -----------------------------------------------------------------------------
+# Most of our user services (aquarius-keys, aquarius-automount) say
+# `WantedBy=graphical-session.target`, because they should run in BOTH desktops.
+# This one must not. GNOME already runs its own copy, and a second one would be
+# the bus-name fight described above.
+#
+# labwc — the window manager underneath the Aquarius Desktop — installs a target
+# of its own, labwc-session.target, and our autostart file starts it by name
+# (see /usr/share/aquarius/labwc/autostart, step 2). GNOME never starts it. So
+# hanging this service off THAT target means "in the Aquarius Desktop, and
+# nowhere else", which is exactly the scope we want. The link that does the
+# hanging is
+#
+#   /usr/lib/systemd/user/labwc-session.target.wants/aquarius-rfkill.service
+#
+# and it is shipped inside the read-only half of the system, so an update always
+# restores it. Same arrangement, and the same trade-off, as aquarius-keys and
+# aquarius-automount: `systemctl --user disable` has nothing in /etc to remove
+# and will not turn this off, but `systemctl --user mask --now aquarius-rfkill`
+# does. The full reasoning is in build_files/aq-lib.sh next to
+# aq_unit_is_on_from_usr.
+#
+# -----------------------------------------------------------------------------
+# WHAT IT DOES *NOT* DO
+# -----------------------------------------------------------------------------
+# It does not touch the Bluetooth tile in the Aquarius Shell's Quick Settings.
+# That tile talks to BlueZ directly and was always correct. This is only about
+# the Settings *page* the arrow beside the tile opens.
+#
+# It also does not need NetworkManager. The aeroplane-mode side of this service
+# reads the kernel's switch list and nothing else; Wi-Fi's own on/off is a
+# NetworkManager matter and is untouched here.
+#
+# -----------------------------------------------------------------------------
+# HOW TO CONTROL IT BY HAND
+# -----------------------------------------------------------------------------
+#   systemctl --user status aquarius-rfkill     is it running?
+#   systemctl --user restart aquarius-rfkill    restart it
+#   journalctl --user -u aquarius-rfkill -b     what it said this login
+#   busctl --user introspect org.gnome.SettingsDaemon.Rfkill \
+#          /org/gnome/SettingsDaemon/Rfkill
+#                                               the values Settings reads
+#   systemctl --user mask --now aquarius-rfkill turn it off for you
+#   systemctl --user unmask aquarius-rfkill     undo that
+#
+# Plain-English guide: docs/restart/aquarius-session.md, the section
+# "Why the Bluetooth settings page said No Bluetooth Found".
+# =============================================================================
+
+[Unit]
+Description=Aquarius — Bluetooth and airplane-mode status for the Settings app
+Documentation=file:///usr/lib/systemd/user/org.gnome.SettingsDaemon.Rfkill.service
+
+# If the graphical session ends, this ends with it. Nothing should be publishing
+# radio status for a desktop that is no longer on the screen. (This is the
+# lifetime rule; the START scope is the [Install] section at the bottom.)
+PartOf=graphical-session.target
+After=graphical-session.target
+
+# -----------------------------------------------------------------------------
+# The login screen must not run this.
+# -----------------------------------------------------------------------------
+# The .wants link lives in /usr/lib/systemd/user, which applies to every account
+# that gets a session — and the login screen (the `gdm` account) is one of
+# those. `!@system` means "not a system account", so this runs for people and
+# not for the machine's own plumbing. The same line, added for the same reason,
+# is on aquarius-keys.service and aquarius-automount.service.
+#
+# In practice the login screen would never reach labwc-session.target anyway,
+# because the greeter does not run our autostart file. This is the belt beside
+# the braces, and it costs nothing.
+ConditionUser=!@system
+
+# If gnome-settings-daemon were ever dropped from the image, the helper would be
+# gone and this service would fail every two seconds forever with nothing useful
+# to say. Better to skip quietly and let the build check be the thing that
+# shouts — build_files/78-rfkill.sh proves the program is there.
+ConditionPathExists=/usr/libexec/gsd-rfkill
+
+[Service]
+# session.slice is where GNOME's own copy runs, and it is where per-session
+# helpers belong. Copied from org.gnome.SettingsDaemon.Rfkill.service.
+Slice=session.slice
+
+# Type=dbus means "this is started when the program takes its name on the
+# message bus". That is the honest definition of ready for this program: the
+# moment the name org.gnome.SettingsDaemon.Rfkill is owned is the moment the
+# Settings app can read from it. Also copied from GNOME's unit — and the reason
+# BusName= below is not optional decoration but part of the type.
+Type=dbus
+BusName=org.gnome.SettingsDaemon.Rfkill
+ExecStart=/usr/libexec/gsd-rfkill
+
+# The message bus can be a second behind a fresh login. One retry loop is
+# enough; unlike the keyboard remapper this is not allowed to retry forever,
+# because the only failure that repeats forever is somebody else holding the bus
+# name, and a service that gives up says so plainly in `systemctl --user status`
+# instead of burying it in a thousand restarts.
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=5
+
+# -----------------------------------------------------------------------------
+# ⚠️ THINGS FROM GNOME'S UNIT THAT ARE DELIBERATELY *NOT* COPIED
+# -----------------------------------------------------------------------------
+#   Requisite=org.gnome.SettingsDaemon.Rfkill.target
+#   PartOf=org.gnome.SettingsDaemon.Rfkill.target
+#   Before=org.gnome.SettingsDaemon.Rfkill.target
+#   After=gnome-session-initialized.target
+#       All four are GNOME's session gating. Requisite= means "refuse to start
+#       unless that target is already up", and none of these targets exist in
+#       the Aquarius session, so copying any of them would make this service
+#       refuse to start — the exact bug it is meant to fix, wearing a hat.
+#
+#   ExecStopPost=/usr/libexec/gnome-session-ctl --exec-stop-check
+#       Reports the exit back to gnome-session, which is not running here.
+#
+#   RefuseManualStart=true / RefuseManualStop=true
+#       Right for a unit only gnome-session may touch. Wrong for ours: the
+#       commands in the header above have to work.
+#
+# GNOME's unit sets no Environment= at all, so there is nothing of that kind to
+# mirror. Read it yourself with:
+#   cat /usr/lib/systemd/user/org.gnome.SettingsDaemon.Rfkill.service
+# -----------------------------------------------------------------------------
+
+[Install]
+# ⚠️ labwc-session.target, NOT graphical-session.target. See the long
+# explanation in the header: GNOME reaches graphical-session.target too, and it
+# already runs its own copy of this program.
+WantedBy=labwc-session.target

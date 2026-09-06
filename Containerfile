@@ -105,7 +105,14 @@ ARG LABWC_COMMIT=97f28877a343e062f3178d201f0248cd9c2610cf
 ARG QUICKSHELL_VERSION=v0.3.1
 ARG QUICKSHELL_COMMIT=1a4716cde794a59928d9d9fc15f2afc7a95de360
 ARG AQUARIUS_SHELL_REPO=https://github.com/stoneharborent/aquarius-shell.git
-ARG AQUARIUS_SHELL_REF=db672bbd976971bde414716c51d99a5aa3540950
+# dd23a40 (2026-09-06, second bench pass): "About This PC" opens the About page
+# itself; a new session/labwc/themerc-override gives the desktop right-click menu
+# and the window title bars the Ice look; rc.xml gains a <theme> font block
+# (Inter, sizes in pixels) alongside the W-Return and W-Tab/W-S-Tab bindings; and
+# every app in the dock gets a right-click menu (Open / New Window, Keep in or
+# Remove from Dock, Quit). The reasoning is written out beside the same value in
+# aquarius-os.env, which is where a bump is made — this line must match it.
+ARG AQUARIUS_SHELL_REF=dd23a40fdd6e8902b5ba119ab73c8d9dc6afdfcd
 
 # ------------------------------------------------------------------------------
 # Our own files, gathered up so the build can reach them
@@ -469,6 +476,29 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 #     files and the shared aquarius_ui).
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/build_files/77-updater.sh
+
+# 7h. Bluetooth (and airplane mode) show up in the Settings app inside OUR
+#     desktop too.
+#
+#     ⚠️ THE BENCH BUG OF 6 SEPTEMBER 2026. The arrow beside the Bluetooth tile
+#     in Quick Settings opens GNOME's Settings on its Bluetooth page, and that
+#     page said "No Bluetooth Found" while a Bluetooth mouse was in use. The
+#     page does not ask Bluetooth anything: it reads one value published by a
+#     helper, /usr/libexec/gsd-rfkill, that GNOME's session starts and ours did
+#     not. The fix is a service of ours that starts the same helper, switched on
+#     for the Aquarius session ONLY — GNOME runs its own copy and two would
+#     fight over one bus name.
+#
+#     The service file arrived with system_files at step 5; this step proves the
+#     helper is in the image, that our service says the right things, that the
+#     "switched on" link hangs off labwc-session.target and not the
+#     both-desktops one, and that /dev/rfkill is writable by the person at the
+#     screen so aeroplane mode can actually be switched.
+#
+#     After step 4 (gnome-settings-daemon, which the helper comes in), step 5
+#     (its files) and step 5.5 (labwc-session.target, which the link hangs off).
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    /ctx/build_files/78-rfkill.sh
 
 # 7e. The gaming layer: Steam, Proton's supporting cast, gamescope, gamemode,
 #     MangoHud, the 32-bit graphics libraries a Windows game needs, and the
