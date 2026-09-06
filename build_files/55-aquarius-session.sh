@@ -645,6 +645,7 @@ aq_feature_for_import() {
         Quickshell.Services.UPower)           echo "SERVICE_UPOWER" ;;
         Quickshell.Services.Mpris)            echo "SERVICE_MPRIS" ;;
         Quickshell.Services.Greetd)           echo "SERVICE_GREETD" ;;
+        Quickshell.Services.Pam)              echo "SERVICE_PAM" ;;
         *)                                    echo "UNKNOWN" ;;
     esac
 }

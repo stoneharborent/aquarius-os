@@ -112,7 +112,7 @@ ARG AQUARIUS_SHELL_REPO=https://github.com/stoneharborent/aquarius-shell.git
 # for whichever theme and whatever AQ_UI_SCALE are in force. The reasoning is
 # written out beside the same value in aquarius-os.env, which is where a bump is
 # made — this line must match it.
-ARG AQUARIUS_SHELL_REF=e421a6077f93fdfca2f892b8ad6585fc4c007684
+ARG AQUARIUS_SHELL_REF=b0706b5f11607d91f3db3d78a268eca07c2c6e9a
 
 # ------------------------------------------------------------------------------
 # Our own files, gathered up so the build can reach them
@@ -353,6 +353,28 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 #     as the default and whose dconf write does the same for the login screen.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/build_files/56-aquarius-icons.sh
+
+# 5.7 The lock screen. Super+L, the Aquarius menu's Lock Screen row, or ten
+#     minutes of nobody touching the machine.
+#
+#     The DRAWING of it came across with the shell at 5.5 (the shell's lock/
+#     folder). This step is the operating system's half: the PAM rules that let
+#     the lock screen ask "is this really you", the service that locks the screen
+#     before the machine sleeps, and wlopm, which turns the monitor off after
+#     fifteen minutes.
+#
+#     ⚠️ THE SHELL NEVER CHECKS A PASSWORD, and the file this step installs at
+#     /etc/pam.d/aquarius-lock is what it asks instead. Without that file nobody
+#     can unlock the machine — which is why this step reads it back rather than
+#     assuming it was copied, and why it also checks that the shell asks for that
+#     exact name. Two repositories, one word, and a rename on either side would
+#     lock somebody out of their own computer.
+#
+#     After 5.5, because it reads the shell's own files; after 5, because the
+#     pam.d file, the service and the helper all arrived with system_files.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache/libdnf5 \
+    /ctx/build_files/57-lock-screen.sh
 
 # 5.8 The kernel pin. Runs on BOTH images, and must run before ANY step that
 #     installs a kernel module.

@@ -305,6 +305,21 @@ on:
       # before any of it reaches main. Same arrangement as every side branch:
       # builds and checks, never publishes.
       - restart/integration
+      # The lock screen. A new lock/ folder in the shell (Super+L, the Aquarius
+      # menu's Lock Screen row, dim/lock/screen-off at 5/10/15 minutes), and
+      # this image's half of it: /etc/pam.d/aquarius-lock, the service that
+      # locks the screen before the machine sleeps, wlopm for turning the
+      # monitor off, and build_files/57-lock-screen.sh, which reads every one of
+      # those back. AQUARIUS_SHELL_REF moves to afd26b9.
+      #
+      # ⚠️ The check worth watching in this run is the one that proves the two
+      # repositories agree on one word: the shell asks PAM for a configuration
+      # called "aquarius-lock" and this image installs a file by that name. A
+      # rename on either side alone means nobody can unlock the machine.
+      #
+      # Same arrangement as every side branch: builds and checks, never
+      # publishes.
+      - restart/lock-screen
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -939,6 +954,177 @@ jobs:
           podman run --rm --pull=never -i \
             --entrypoint /usr/bin/bash \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-pam.sh
+
+      # ------------------------------------------------------------------------
+      # THE LOCK SCREEN, READ BACK OUT OF THE FINISHED IMAGE
+      # ------------------------------------------------------------------------
+      # build_files/57-lock-screen.sh already checks all of this DURING the
+      # build. This asks the same questions of the finished image, for the one
+      # reason that matters here: the file that lets somebody back into their
+      # own computer lives in /etc, and /etc is the part of a bootc image that
+      # later steps, package installs and post-processing can still change. A
+      # thing that was right in the middle of the build is not automatically
+      # right at the end of it.
+      #
+      # ⚠️ WHY EACH OF THESE IS HERE
+      #
+      #   the pam.d file        without it nobody can unlock the machine, and
+      #                         the failure is silent until somebody tries.
+      #   what it says          `auth include login` is the whole of it. A file
+      #                         that survived but lost its line is the same
+      #                         fault wearing a disguise.
+      #   unix_chkpwd           the one privileged step in the whole chain, and
+      #                         it is Fedora's, not ours. Nothing of ours may be
+      #                         setuid; this one must be.
+      #   the QML               Super+L calls a target in a file. No file, no
+      #                         target, no lock.
+      #   the two names agree   the shell asks PAM for "aquarius-lock" and this
+      #                         image installs that name. A rename on one side
+      #                         alone locks somebody out of their computer.
+      #   the key binding       read out of the installed rc.xml, as XML, not as
+      #                         a string search.
+      #   the sleep service     a laptop lid closing has to lock the screen.
+      - name: Check the lock screen can actually let somebody back in
+        run: |
+          set -euo pipefail
+          cat > /tmp/verify-lock.sh <<'SCRIPT'
+          set -u
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+
+          echo "== the rules that let the lock screen ask 'is this really you' =="
+          if [ -r /etc/pam.d/aquarius-lock ]; then
+            ok "/etc/pam.d/aquarius-lock is here"
+            echo "       $(stat -c '%A %U:%G' /etc/pam.d/aquarius-lock)"
+          else
+            bad "/etc/pam.d/aquarius-lock is MISSING — nobody could unlock this machine"
+          fi
+          if grep -qE '^auth[[:space:]]+include[[:space:]]+login$' /etc/pam.d/aquarius-lock 2>/dev/null; then
+            ok "it inherits this machine's ordinary login rules"
+          else
+            bad "/etc/pam.d/aquarius-lock no longer says 'auth include login'"
+          fi
+          if grep -qE '^[[:space:]]*(account|password|session)[[:space:]]' /etc/pam.d/aquarius-lock 2>/dev/null; then
+            bad "/etc/pam.d/aquarius-lock declares more than the auth question"
+          else
+            ok "it declares only the auth question"
+          fi
+          if [ -r /etc/pam.d/login ]; then
+            ok "/etc/pam.d/login is here for it to include"
+          else
+            bad "/etc/pam.d/login is missing, so 'include login' resolves to nothing"
+          fi
+
+          echo "== the one privileged step, and it is Fedora's =="
+          if [ -u /usr/bin/unix_chkpwd ]; then
+            ok "/usr/bin/unix_chkpwd is setuid — the only thing here allowed to read /etc/shadow"
+          else
+            bad "/usr/bin/unix_chkpwd is missing or not setuid — a correct password would be rejected"
+          fi
+          for f in /usr/libexec/aquarius-lock-on-sleep /usr/bin/qs /usr/bin/quickshell; do
+            if [ -u "${f}" ] || [ -g "${f}" ]; then
+              bad "${f} is setuid or setgid. Nothing AquariusOS ships in this path may be."
+            else
+              ok "${f} has no special powers"
+            fi
+          done
+
+          echo "== the lock screen's own files =="
+          if [ ! -s /usr/share/aquarius/shell/shell.qml ]; then
+            echo "  NOTE this image has no Aquarius Shell, so there is no lock screen to check."
+          else
+            for f in qmldir LockState.qml LockLayer.qml LockSurface.qml LockCard.qml \
+                     LockField.qml LockVeil.qml LockBlur.qml LockIdle.qml lock.qml; do
+              if [ -s "/usr/share/aquarius/shell/lock/${f}" ]; then ok "lock/${f}"
+              else bad "/usr/share/aquarius/shell/lock/${f} is missing"; fi
+            done
+
+            # THE CONTRACT BETWEEN TWO REPOSITORIES, IN ONE WORD.
+            if grep -q 'config: "aquarius-lock"' /usr/share/aquarius/shell/lock/LockState.qml; then
+              ok "the shell asks PAM for exactly the rules this image installs"
+            else
+              bad "the shell no longer asks for the 'aquarius-lock' rules. It and /etc/pam.d/aquarius-lock have to name the same thing or nobody gets in."
+            fi
+            if grep -q 'target: "lock"' /usr/share/aquarius/shell/lock/LockLayer.qml; then
+              ok "the shell answers to the IPC target Super+L calls"
+            else
+              bad "the shell no longer declares the IPC target \"lock\" — Super+L would do nothing"
+            fi
+
+            # THE PASSWORD IS NEVER CHECKED IN QML. Said here as well as in the
+            # shell's own tests, because this is the copy that ships.
+            if grep -rlE '(crypt|getspnam|/etc/shadow)' /usr/share/aquarius/shell/lock/ > /dev/null 2>&1; then
+              bad "something in the shipped lock/ looks like it checks a password itself"
+            else
+              ok "nothing in the shipped lock/ reads a password file"
+            fi
+
+            if [ -d /usr/lib64/qt6/qml/QtQuick/Effects ]; then
+              ok "QtQuick.Effects is here, so the veil gets its real blur"
+            else
+              bad "QtQuick.Effects is missing — the veil would fall back to the plain wallpaper"
+            fi
+          fi
+
+          echo "== Super+L =="
+          if python3 - /usr/share/aquarius/labwc/rc.xml <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          for kb in ET.parse(sys.argv[1]).getroot().iter('keybind'):
+              if kb.get('key') != 'W-l':
+                  continue
+              for a in kb:
+                  if a.get('name') == 'Execute' and a.get('command') == 'qs ipc call lock lock':
+                      sys.exit(0)
+              sys.exit(1)
+          sys.exit(1)
+          PY
+          then
+            ok "Super+L runs 'qs ipc call lock lock'"
+          else
+            bad "/usr/share/aquarius/labwc/rc.xml does not bind Super+L to the lock screen"
+          fi
+
+          echo "== locking before the machine sleeps =="
+          if [ -r /usr/lib/systemd/system/aquarius-lock-on-sleep.service ]; then
+            ok "aquarius-lock-on-sleep.service is here"
+          else
+            bad "aquarius-lock-on-sleep.service is missing — a closed laptop lid would leave the desktop unlocked"
+          fi
+          for line in 'Before=sleep.target' 'WantedBy=sleep.target' 'Type=oneshot'; do
+            if grep -qxF "${line}" /usr/lib/systemd/system/aquarius-lock-on-sleep.service 2>/dev/null; then
+              ok "the service says ${line}"
+            else
+              bad "the service no longer says ${line}"
+            fi
+          done
+          if [ -L /usr/lib/systemd/system/sleep.target.wants/aquarius-lock-on-sleep.service ]; then
+            ok "it is switched on, from /usr, so an update cannot lose it"
+          else
+            bad "sleep.target.wants/aquarius-lock-on-sleep.service is missing — the service would never run"
+          fi
+          if [ -x /usr/libexec/aquarius-lock-on-sleep ]; then
+            ok "/usr/libexec/aquarius-lock-on-sleep is runnable"
+          else
+            bad "/usr/libexec/aquarius-lock-on-sleep is missing or not executable"
+          fi
+
+          echo "== turning the monitor off =="
+          if command -v wlopm > /dev/null 2>&1; then
+            ok "wlopm is on the path"
+          else
+            bad "wlopm is missing — the screen would never turn off after fifteen minutes"
+          fi
+
+          if [ "${fails}" -ne 0 ]; then
+            echo "::error::The lock screen is not complete in this image. Read the FAIL lines: some of them mean nobody could unlock the machine."
+            exit 1
+          fi
+          echo "All lock screen checks passed."
+          SCRIPT
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-lock.sh
 
       # ------------------------------------------------------------------------
       # THE FIRMWARE CHECK — added 2026-09-05, after the bench had no Wi-Fi

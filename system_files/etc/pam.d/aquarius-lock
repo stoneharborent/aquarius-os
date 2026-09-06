@@ -1,0 +1,69 @@
+#%PAM-1.0
+# =============================================================================
+# aquarius-lock — how the lock screen is allowed to ask "is this really you"
+# =============================================================================
+# WHAT THIS FILE IS FOR
+#
+# When you press Super+L and then type your password, the Aquarius Shell does
+# NOT check that password. It is not allowed to, and the reason is worth saying
+# plainly: a program that could check a password by itself could also be
+# tricked into saying yes.
+#
+# Instead it asks PAM — the part of Linux whose whole job is answering "is this
+# really you". This file is the list of rules PAM follows when the lock screen
+# asks. It is named `aquarius-lock` because that is the name the shell asks for,
+# in lock/LockState.qml:
+#
+#     PamContext { config: "aquarius-lock" }
+#
+# If this file were missing, the lock screen would refuse to start a check and
+# would say so on screen. That is on purpose too: a lock screen that silently
+# ignores your Enter key is indistinguishable from a frozen computer.
+#
+# -----------------------------------------------------------------------------
+# WHY IT IS ONE LINE
+# -----------------------------------------------------------------------------
+# `include login` means: use whatever this machine's ordinary login rules are.
+#
+# That single word is doing a lot of work, and all of it is work we do not want
+# to do ourselves:
+#
+#   * The machine gains a fingerprint reader -> the lock screen gets it, because
+#     the fingerprint step is added to the shared login rules.
+#   * A password policy, a smart card, two-factor -> the same.
+#   * Somebody changes their password -> nothing here needs to know.
+#
+# PAM's `include` works PER KIND OF RULE. This file only declares an `auth`
+# rule, so only the `auth` half of /etc/pam.d/login is pulled in. The `account`,
+# `password` and `session` halves — which set up SELinux contexts, the login
+# audit id and a private /tmp — are deliberately NOT run, because a lock screen
+# is not opening a new session. It is asking one question about somebody who is
+# already logged in.
+#
+# -----------------------------------------------------------------------------
+# THIS IS EXACTLY WHAT EVERY OTHER LINUX LOCK SCREEN SHIPS
+# -----------------------------------------------------------------------------
+# We checked, inside the real Fedora packages. /etc/pam.d/swaylock,
+# /etc/pam.d/hyprlock and /etc/pam.d/gtklock are each this same one line. So
+# this file is not a clever arrangement of our own; it is the ordinary,
+# well-trodden one, which for anything touching passwords is the point.
+#
+# -----------------------------------------------------------------------------
+# NOTHING HERE NEEDS SPECIAL POWERS, AND THAT IS THE GOOD PART
+# -----------------------------------------------------------------------------
+# The shell runs as you, and so does the small process it forks to talk to PAM.
+# Neither can read /etc/shadow, where passwords actually live — that file is
+# root's. What happens instead is that PAM's `pam_unix` module hands the
+# question to /usr/bin/unix_chkpwd, a tiny program that comes with Fedora's
+# `pam` package, is allowed to read that file, and will ONLY EVER CHECK THE
+# PASSWORD OF THE PERSON WHO RAN IT.
+#
+# So nothing AquariusOS ships is setuid, nothing of ours reads a password file,
+# and the one thing that does is Fedora's, is three hundred lines long, and has
+# been looked at by everybody.
+#
+# Plain-language write-up: the shell repository's docs/lock-screen.md, under
+# "How the password is actually checked".
+# =============================================================================
+
+auth       include      login
