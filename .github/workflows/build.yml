@@ -229,6 +229,15 @@ on:
       # nobody copied the shell's new menu.xml or its Root mousebind across),
       # and the dock's Settings icon did nothing (gnome-control-center exits
       # unless XDG_CURRENT_DESKTOP names GNOME, and ours says Aquarius:wlroots).
+      # It now also carries the shell-side half of those fixes, as a bump of
+      # AQUARIUS_SHELL_REF: one SettingsLauncher singleton that always launches
+      # `env XDG_CURRENT_DESKTOP=GNOME gnome-control-center`, shared by the logo
+      # menu, the Quick Settings chevrons, the dock's Settings entry and the
+      # search palette; and a dock drives list rebuilt as a /run -> /run/media
+      # -> /run/media/<user> chain with a read-back health check on the folder,
+      # so it can never fall back to listing the home directory. The point of
+      # building it here is the shell_tests job below, which clones the shell at
+      # the new pin and runs its structural checks.
       # Same arrangement as every side branch: builds and checks, never
       # publishes.
       - restart/r6-bench-fixes

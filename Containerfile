@@ -105,7 +105,7 @@ ARG LABWC_COMMIT=97f28877a343e062f3178d201f0248cd9c2610cf
 ARG QUICKSHELL_VERSION=v0.3.1
 ARG QUICKSHELL_COMMIT=1a4716cde794a59928d9d9fc15f2afc7a95de360
 ARG AQUARIUS_SHELL_REPO=https://github.com/stoneharborent/aquarius-shell.git
-ARG AQUARIUS_SHELL_REF=3f7379c8eeefec98ff45b1ebcc3bd3268d07248a
+ARG AQUARIUS_SHELL_REF=db672bbd976971bde414716c51d99a5aa3540950
 
 # ------------------------------------------------------------------------------
 # Our own files, gathered up so the build can reach them
