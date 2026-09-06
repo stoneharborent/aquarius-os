@@ -2830,6 +2830,9 @@ jobs:
             grep -q '<name>Aquarius</name>' "${FRAME_OUT}/ice-1/config/rc.xml" \
               && ok "rc.xml names the theme labwc looks the button pictures up under" \
               || bad "rc.xml does not name a theme — labwc would find no button pictures and fall back to bare built-in glyphs"
+            grep -q '<weight>medium</weight>' "${FRAME_OUT}/ice-1/config/rc.xml" \
+              && ok "a window's title is drawn at weight medium (Pango 500), as the design asks" \
+              || bad "the window title is not set to weight medium — labwc takes a word here, not a number"
             grep -q '<font place="MenuItem">' "${FRAME_OUT}/ice-1/config/rc.xml" \
               && ok "and everything labwc draws is drawn in the shell's own typeface" \
               || bad "the generated rc.xml has no <font place=\"MenuItem\"> — labwc would draw the desktop menu in whatever \"sans\" resolves to, next to a shell drawn in Inter"

@@ -215,9 +215,11 @@
         MenuItem   19  = Theme.fsBody     — one row of the Aquarius menu
         MenuHeader 15  = Theme.fsCaption  — a menu title, quieter than its items
         ActiveWindow / InactiveWindow
-                   13  — the window title. Smaller than the bar's own labels on
-                         purpose: a title bar should name a window, not announce
-                         it.
+                   13  — the window title, at weight `medium`. Smaller than the
+                         bar's own labels on purpose: a title bar should name a
+                         window, not announce it. labwc takes a WORD for the
+                         weight rather than a number; `medium` is Pango's 500,
+                         which is what the design asks for.
 
       ⚠️ AQ_UI_SCALE REACHES THESE NOW, and it did not before. It used to be
       that /usr/bin/aquarius-session exported that variable, the shell grew, and
@@ -249,10 +251,12 @@
     <font place="ActiveWindow">
       <name>Inter</name>
       <size>13</size>
+      <weight>medium</weight>
     </font>
     <font place="InactiveWindow">
       <name>Inter</name>
       <size>13</size>
+      <weight>medium</weight>
     </font>
     <!-- AQ-GENERATED-END fonts -->
 

@@ -105,14 +105,14 @@ ARG LABWC_COMMIT=97f28877a343e062f3178d201f0248cd9c2610cf
 ARG QUICKSHELL_VERSION=v0.3.1
 ARG QUICKSHELL_COMMIT=1a4716cde794a59928d9d9fc15f2afc7a95de360
 ARG AQUARIUS_SHELL_REPO=https://github.com/stoneharborent/aquarius-shell.git
-# fe9f7c7 (2026-09-06, the window frame): labwc's colours are no longer written
+# 58550e0 (2026-09-06, the window frame): labwc's colours are no longer written
 # by hand. session/labwc/themerc-override is gone and session/labwc/generate-theme
 # is what replaced it — it reads the shell's theme/Ice.qml or theme/Midnight.qml
 # and writes labwc's themerc, its rc.xml and the round window buttons out of it,
 # for whichever theme and whatever AQ_UI_SCALE are in force. The reasoning is
 # written out beside the same value in aquarius-os.env, which is where a bump is
 # made — this line must match it.
-ARG AQUARIUS_SHELL_REF=fe9f7c787297916770b33b66126e4c4e447e0997
+ARG AQUARIUS_SHELL_REF=58550e0b9e1da41318617fa0fe0b387d4e33c788
 
 # ------------------------------------------------------------------------------
 # Our own files, gathered up so the build can reach them

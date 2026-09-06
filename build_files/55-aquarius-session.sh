@@ -1199,6 +1199,9 @@ else
         aq_file_has "${AQ_FRAME_OUT}/ice-1/config/rc.xml" \
             '<name>Aquarius</name>' \
             "rc.xml names the theme labwc looks the button pictures up under"
+        aq_file_has "${AQ_FRAME_OUT}/ice-1/config/rc.xml" \
+            '<weight>medium</weight>' \
+            "a window's title is drawn at weight medium, which is Pango's 500"
 
         # Windows style, built on its own, because this is the half of `aq keys`
         # that has nothing to do with the keyboard.

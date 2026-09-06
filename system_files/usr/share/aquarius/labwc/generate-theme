@@ -273,6 +273,11 @@ def px(value, scale):
 
 TITLEBAR_HEIGHT = 38     # section 3: the whole title bar
 TITLE_FONT_SIZE = 13     # section 3: Inter, in pixels (labwc's <size> is px)
+# Section 3 asks for "Inter 500" — medium, a little heavier than body text, so a
+# window's name reads as a label rather than as prose. labwc takes a WORD here,
+# not a number: rcxml.c maps `medium` to Pango's PANGO_WEIGHT_MEDIUM, which is
+# 500. (The menu keeps the normal weight; section 5 says leave it as it is.)
+TITLE_FONT_WEIGHT = "medium"
 CORNER_RADIUS = 12       # section 3: matches libadwaita's own fixed 12
 BORDER_WIDTH = 1         # section 3
 
@@ -737,10 +742,12 @@ def build_rc_xml(template, scale, buttons):
             '<font place="ActiveWindow">',
             "  <name>Inter</name>",
             "  <size>%d</size>" % px(TITLE_FONT_SIZE, scale),
+            "  <weight>%s</weight>" % TITLE_FONT_WEIGHT,
             "</font>",
             '<font place="InactiveWindow">',
             "  <name>Inter</name>",
             "  <size>%d</size>" % px(TITLE_FONT_SIZE, scale),
+            "  <weight>%s</weight>" % TITLE_FONT_WEIGHT,
             "</font>",
         ],
     )
