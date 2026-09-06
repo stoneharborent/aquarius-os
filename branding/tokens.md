@@ -199,6 +199,29 @@ Two files live in this folder:
 
 Both are 64×64 and scale to any size without going blurry.
 
+### The wave — one shape, everywhere
+
+**Royce's rule, set 2026-09-06.** The logo's wave is drawn by exactly one path:
+
+```
+M20 40 q6-6 12 0 t12 0
+```
+
+In plain words: two humps side by side, each 12 units wide, and each rising 6 units — the
+rise is always half the width of a hump. That proportion *is* the wave.
+
+**Every wave anywhere in AquariusOS keeps that shape.** App icons, shell glyphs, wallpaper
+details, slides, thumbnails, marketing — if it has a wave, it is this path, made bigger or
+smaller as a whole and moved into place. Never:
+
+- a third hump (or a single one),
+- a taller or flatter rise than half the hump width,
+- a wave drawn by eye that "looks about right".
+
+If you are writing code, do not paste the numbers: write one small function that takes the
+left end, the height and the hump width and returns the path, and call it. The app icons do
+exactly this (the Editor and Writer icons carry the wave at 1.5× — humps 18 wide, rising 9).
+
 ---
 
 ## The wallpaper — "The Pour"
