@@ -29,6 +29,31 @@
 #   "White" in the filename describes THE INK, not the mode — same wording
 #   Fedora uses. The white-ink one is the one you see in dark mode.
 #
+# WHICH MARK GOES ON WHICH PICTURE (decided 2026-09-06)
+#   The About page does exactly one thing with these two files: it shows the
+#   first one in light mode and the second one in dark mode. It does not tint
+#   them, mask them, or ask them to be single-colour — it just picks one.
+#
+#   So the -white file is simply "the dark-mode picture", and the right thing to
+#   put on it is the FULL-COLOUR MIDNIGHT MARK, not a flat white stamp of the
+#   mark. Midnight is the colourway AquariusOS itself uses in dark mode: the
+#   brighter blue (#00BFFF) and the brighter gold (#E6B947), drawn exactly so
+#   they still carry on a dark ground. A white silhouette would be the one place
+#   in the whole system where the logo loses its colour for no reason.
+#
+#   Only the WORD stays white on that picture — white text on a dark panel is
+#   just legible text, and Sora has no colourway of its own.
+#
+#   The light picture gets the Ice mark and the word in Ice's ink, #16273A —
+#   the same deep navy the desktop writes text in, which is what makes the
+#   lockup look like it belongs to the rest of the interface rather than being
+#   a black-and-blue sticker on it.
+#
+#   Before this, the script kept ONE dark-theme drawing and search-and-replaced
+#   three hex codes in it to make the light one. That is gone: the mark now
+#   ships as two finished drawings (branding/logo-ice.svg and
+#   branding/logo-midnight.svg) and this script just picks the right one.
+#
 # WHY 279 x 80 PIXELS, WHICH LOOKS SMALL
 #   Two reasons, and both are worth knowing before anybody "improves" it:
 #
@@ -54,7 +79,11 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MARK_SVG="$REPO_ROOT/branding/logo.svg"
+# Two drawings of the same mark, one per colourway. Since 2026-09-06 the mark
+# ships already coloured for both — there is no recolouring step here any more.
+# See the note under "WHICH MARK GOES ON WHICH PICTURE" below.
+MARK_ICE="$REPO_ROOT/branding/logo-ice.svg"
+MARK_MIDNIGHT="$REPO_ROOT/branding/logo-midnight.svg"
 FONT_TTF="$REPO_ROOT/system_files/usr/share/fonts/sora-fonts/Sora[wght].ttf"
 OUT_DIR="$REPO_ROOT/system_files/usr/share/aquarius/branding"
 
@@ -67,7 +96,7 @@ HEIGHT=80
 # the same letterforms the OS uses everywhere else.
 WORDMARK="AquariusOS"
 
-for f in "$MARK_SVG" "$FONT_TTF"; do
+for f in "$MARK_ICE" "$MARK_MIDNIGHT" "$FONT_TTF"; do
   if [ ! -f "$f" ]; then
     echo "ERROR: $f is missing — cannot draw the logo without it." >&2
     exit 1
@@ -91,35 +120,6 @@ trap 'rm -rf "$tmp"' EXIT
 # square brackets, which are awkward in a URL. Copying it next to the page under
 # a plain name sidesteps the whole question.
 cp "$FONT_TTF" "$tmp/Sora.ttf"
-
-# ------------------------------------------------------------------------------
-# recolour_mark <output-file> <starlight> <nebula> <ancient>
-# ------------------------------------------------------------------------------
-# branding/logo.svg is the ONE drawing of the mark, and it is drawn in the dark
-# theme's colours. On a light About page those colours are too pale to read
-# (#8AB4FF on white is barely visible), so the light version swaps in the light
-# theme's three brand colours — the ones already written down in
-# branding/design-system/tokens/colors.css under [data-theme="light"].
-#
-# Each replacement is checked. A silent no-op here would produce a light logo
-# that still had a dark-theme colour in it, and nobody would spot it.
-recolour_mark() {
-  local out="$1" starlight="$2" nebula="$3" ancient="$4"
-  sed -e "s/#8AB4FF/${starlight}/g" \
-    -e "s/#5B4BE0/${nebula}/g" \
-    -e "s/#E6DDB8/${ancient}/g" \
-    "$MARK_SVG" > "$out"
-
-  local colour
-  for colour in "$starlight" "$nebula" "$ancient"; do
-    if ! grep -q "$colour" "$out"; then
-      echo "ERROR: ${colour} did not end up in the recoloured mark." >&2
-      echo "       branding/logo.svg no longer uses the hex codes this script" >&2
-      echo "       replaces. Open both files and line them up again." >&2
-      exit 1
-    fi
-  done
-}
 
 # ------------------------------------------------------------------------------
 # render <output-png> <mark-svg-file> <ink-colour>
@@ -179,13 +179,11 @@ HTML
   fi
 }
 
-# The dark-mode picture: the mark in its normal colours, the word in white.
-recolour_mark "$tmp/mark-dark.svg" "#8AB4FF" "#5B4BE0" "#E6DDB8"
-render "$OUT_DIR/aquarius-about-logo-white.png" "$tmp/mark-dark.svg" "#FFFFFF"
+# The dark-mode picture: the Midnight mark, and the word in white.
+render "$OUT_DIR/aquarius-about-logo-white.png" "$MARK_MIDNIGHT" "#FFFFFF"
 
-# The light-mode picture: the light theme's deeper blues, and near-black text.
-recolour_mark "$tmp/mark-light.svg" "#3D63D6" "#4A3BC9" "#8A7B3D"
-render "$OUT_DIR/aquarius-about-logo.png" "$tmp/mark-light.svg" "#141726"
+# The light-mode picture: the Ice mark, and the word in Ice's own ink.
+render "$OUT_DIR/aquarius-about-logo.png" "$MARK_ICE" "#16273A"
 
 # Prove the two files really came out at the size the About page expects. A PNG
 # of the wrong size is not a crash, it is a slightly wrong-looking page, which
