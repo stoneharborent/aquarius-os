@@ -393,22 +393,40 @@ installed into the installer's own runtime (confirmed in the same log), so the
 sidebar logo and the header artwork on Anaconda's pages are Fedora's, even though
 every word on those pages says AquariusOS.
 
-The reason is a boundary, not an oversight. That artwork does not come from
-AquariusOS. It lives inside the *installer's own* runtime — a separate
-mini-system the ISO builder assembles from Fedora's packages. Our image is the
-thing being installed, not the thing doing the installing, so nothing we put in
-our image can reach it. The build does replace those same paths *inside our
-image* (`/usr/share/anaconda/pixmaps/*` — 4 of them, confirmed replaced), which
-covers a machine that runs the installer after it is already up, but not the USB
-stick.
+The reason is a boundary, not an oversight, and it was confirmed against how the
+ISO is actually built (2026-09-05). For an `anaconda-iso`, osbuild's
+image-builder assembles a **separate little system** for the installer to run in
+— a `anaconda-tree` — and fills it by reading this image's repository files and
+then **downloading `fedora-logos` fresh from Fedora**. It does *not* copy the
+files we replace inside our own image. Our image is the thing being installed,
+not the thing doing the installing, so nothing we put in our image reaches the
+stick's installer. (Source: osbuild's own description of the `anaconda-iso`
+type — "we inspect the bootable container to find the repository definitions and
+then download and install the relevant package from there".)
 
-Fixing it properly means building a replacement for Fedora's `fedora-logos`
-package, with our pictures at Fedora's filenames, and getting the ISO builder to
-install that package into the installer runtime. `bootc-image-builder` has no
-setting for adding a package to that runtime — its configuration covers the
-kickstart, which installer screens to show, and the disc label, and stops there.
-So it would mean either building the ISO a different way or waiting for that
-setting to exist.
+So the R1 hope — that replacing the artwork *in the image* would carry into the
+installer — does not hold for `anaconda-iso`. It was tested and it does not.
+
+What the in-image replacement DOES cover is the other way somebody meets
+Anaconda: **running it on a machine that is already up**, where the installer is
+part of this image's own files. `build_files/80-boot-branding.sh` replaces the
+Fedora artwork there — and on 2026-09-05 that replacement was corrected: Fedora
+44 moved the installer's `sidebar-logo.png` out of the old flat
+`/usr/share/anaconda/pixmaps/` path and into per-product folders
+(`/usr/share/anaconda/{atomic,cloud,server,silverblue,workstation}/`), so the old
+loop, which named only the flat path, had been replacing nothing. It now finds
+every `sidebar-logo.png` under `/usr/share/anaconda/`, plus `anaconda_header.png`
+and the two boot splashes, and the build asserts each present file is ours. The
+plain `topbar-bg.png` background strip is left alone on purpose.
+
+Fixing the **USB-stick** installer's pictures properly is a separate job with two
+real routes, scoped with the cost of each in
+[`installer.md`](installer.md): ship a small `aquarius-logos` package that
+`Obsoletes` `fedora-logos`, or switch from `anaconda-iso` to the newer
+`bootc-installer` image type and bake our artwork into a custom installer
+container. `bootc-image-builder` has no setting to swap artwork into the
+`anaconda-iso` runtime — its config covers the kickstart, which installer screens
+to show, the disc label, application id and publisher, and stops there.
 
 **2. The boot-loader folder on the stick is named `fedora`.** The ISO carries
 `"vendor": "fedora"`, which is the name of the directory the boot files sit in

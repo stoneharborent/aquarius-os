@@ -636,8 +636,10 @@ replace_logo /usr/share/pixmaps/bootloader/bootlogo_128.png square
 replace_logo /usr/share/pixmaps/bootloader/bootlogo_256.png square
 
 # General-purpose logos. fedora-gdm-logo is the one the login screen would use
-# if our own dconf setting (step 5) were ever removed.
+# if our own dconf setting (step 5) were ever removed. fedora-logo-small.png is
+# the little square copy some menus and dialogs open by that exact path.
 replace_logo /usr/share/pixmaps/fedora-logo.png square
+replace_logo /usr/share/pixmaps/fedora-logo-small.png square
 replace_logo /usr/share/pixmaps/fedora-logo-sprite.png square
 replace_logo /usr/share/pixmaps/fedora-gdm-logo.png wide
 replace_logo /usr/share/pixmaps/system-logo-white.png wide
@@ -647,16 +649,55 @@ while IFS= read -r icon; do
     replace_logo "${icon}" square
 done < <(find /usr/share/icons -name 'fedora-logo-icon.png' 2> /dev/null | sort)
 
-# The installer's own artwork, IF it is in this image. See
-# docs/restart/boot-branding.md — the installer a USB stick actually runs does
-# not read these copies, but a machine that has the installer software on it
-# would, and replacing them costs nothing.
-for p in /usr/share/anaconda/pixmaps/sidebar-logo.png \
-    /usr/share/anaconda/pixmaps/anaconda_header.png \
-    /usr/share/anaconda/boot/splash.png \
-    /usr/share/anaconda/boot/syslinux-splash.png; do
-    replace_logo "${p}" wide
-done
+# ------------------------------------------------------------------------------
+# The installer (Anaconda) artwork, IF it is in this image
+# ------------------------------------------------------------------------------
+# ⚠️ READ docs/restart/installer.md BEFORE CHANGING THIS. What we replace here
+# does NOT reach the picture on the USB-stick installer's own pages. The ISO
+# builder (osbuild image-builder, `anaconda-iso`) assembles a SEPARATE little
+# system for the installer to run in, and it fills it by reading this image's
+# repository files and DOWNLOADING fedora-logos fresh from Fedora — it does not
+# copy the files we replace below. So the stick's installer keeps Fedora's
+# picture no matter what we put here. That is a boundary of the tool, written up
+# with the two ways out (an `aquarius-logos` package, or the `bootc-installer`
+# image type) in docs/restart/installer.md.
+#
+# What this DOES cover is the other way somebody meets Anaconda: running it on a
+# machine that is already up (it is in this image's package set). Cheap, real,
+# and worth getting right — and it is also the artwork an `aquarius-logos`
+# package would reuse, so completeness here is groundwork, not just polish.
+#
+# ⚠️ WHERE THE LOGO ACTUALLY LIVES CHANGED. Older Fedora kept one
+# `sidebar-logo.png` at `/usr/share/anaconda/pixmaps/`. Fedora 44's fedora-logos
+# does NOT: it ships a `sidebar-logo.png` (and a `topbar-bg.png`) inside a
+# per-product folder — `/usr/share/anaconda/{atomic,cloud,server,silverblue,
+# workstation}/` — and there is nothing at the old flat path. The previous
+# version of this loop named only the old flat path, so it replaced nothing on
+# this base and the installer's sidebar stayed Fedora's even after boot. We now
+# find every `sidebar-logo.png` under /usr/share/anaconda/ instead of guessing
+# one path. `topbar-bg.png` is a plain background strip with no logo on it, so it
+# is deliberately left alone — replacing a background with a logo looks wrong.
+#
+# `anaconda_header.png` (the old top banner) and the two boot splashes are still
+# at fixed paths, so they stay named directly.
+say "The installer's own artwork (covers Anaconda run after boot; see installer.md)"
+
+replace_logo /usr/share/anaconda/pixmaps/anaconda_header.png wide
+replace_logo /usr/share/anaconda/boot/splash.png wide
+replace_logo /usr/share/anaconda/boot/syslinux-splash.png wide
+
+# Every per-product sidebar logo fedora-logos ships, whichever folders exist.
+AQ_ANACONDA_SIDEBARS=0
+while IFS= read -r sb; do
+    replace_logo "${sb}" wide
+    AQ_ANACONDA_SIDEBARS=$((AQ_ANACONDA_SIDEBARS + 1))
+done < <(find /usr/share/anaconda -type f -name 'sidebar-logo.png' 2> /dev/null | sort)
+if [ "${AQ_ANACONDA_SIDEBARS}" -eq 0 ]; then
+    echo "  note   no per-product sidebar-logo.png found under /usr/share/anaconda"
+    echo "         (expected only if fedora-logos is not installed — reported above)"
+else
+    echo "  found ${AQ_ANACONDA_SIDEBARS} per-product Anaconda sidebar logo(s)"
+fi
 
 echo
 echo "Replaced ${AQ_REPLACED} Fedora picture(s); ${AQ_ABSENT} of the paths checked are not in this image."
