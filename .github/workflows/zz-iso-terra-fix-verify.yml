@@ -50,14 +50,21 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
 
-      - name: Build the NVIDIA image (local only)
+      - name: Build the NVIDIA image (local only, into root storage)
+        # bib runs as root and reads /var/lib/containers/storage, so the image
+        # must be BUILT into root storage too — otherwise bib cannot find the
+        # local image. So this builds under sudo. (The production ISO path pulls
+        # the image from ghcr.io as root, so it never hits this; that path is
+        # unchanged.) `safe.directory` lets root's git trust this checkout so
+        # `just build`'s label step does not abort on "dubious ownership".
         run: |
           set -euo pipefail
           IMAGE_NAME="$(just variant-image-name nvidia)"
           DEFAULT_TAG="$(just generate-default-tag)"
           echo "IMAGE_NAME=${IMAGE_NAME}"  >> "${GITHUB_ENV}"
           echo "DEFAULT_TAG=${DEFAULT_TAG}" >> "${GITHUB_ENV}"
-          just build "${IMAGE_NAME}" "${DEFAULT_TAG}" "1"
+          sudo git config --system --add safe.directory "$(pwd)"
+          sudo env "PATH=${PATH}" just build "${IMAGE_NAME}" "${DEFAULT_TAG}" "1"
 
       - name: Build an installer ISO from that local image
         # This is the acceptance test. Before the Terra fix this step died in
