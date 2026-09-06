@@ -10,8 +10,8 @@
 #
 # What it draws, top to bottom:
 #
-#   1. A flat Midnight background (#06070C — the `void` colour in
-#      branding/tokens.md).
+#   1. A flat Midnight background (#0B1220 — the `bg` colour in Midnight, the
+#      dark half of branding/tokens.md. Deep-ocean navy, not black.)
 #   2. watermark.png, a little above the middle: the Aquarius mark with a soft
 #      glow, and the word "AquariusOS" underneath it.
 #   3. throbber-0001.png … throbber-0036.png, below that, played in a loop:
@@ -88,10 +88,15 @@ ImageDir=/usr/share/plymouth/themes/aquarius
 # ------------------------------------------------------------------------------
 # The background
 # ------------------------------------------------------------------------------
-# `void` / Midnight from branding/tokens.md. Start and End being the same colour
-# means a flat fill rather than a gradient — the design's boot frame is flat.
-BackgroundStartColor=0x06070C
-BackgroundEndColor=0x06070C
+# Midnight `bg` from branding/tokens.md — the same deep-ocean navy the desktop
+# uses in dark mode, so the boot screen and the machine it leads to are the same
+# colour. Start and End being the same colour means a flat fill rather than a
+# gradient; the design's boot frame is flat.
+#
+# (Before 2026-09-06 this was 0x06070C, the retired Starlight palette's `void`.
+# That palette is gone from the desktop and the boot screen followed it.)
+BackgroundStartColor=0x0B1220
+BackgroundEndColor=0x0B1220
 
 # ------------------------------------------------------------------------------
 # Where each thing sits (fractions of the screen)
@@ -123,7 +128,9 @@ TitleVerticalAlignment=.5
 Font=Inter 11
 TitleFont=Sora 30
 MonospaceFont=JetBrains Mono 10
-ConsoleLogTextColor=0xB4BACD
+# Midnight `inkSoft` — the dimmer of the two text colours, which is right for
+# log lines scrolling past.
+ConsoleLogTextColor=0x93A7BC
 
 # Messages appear under the dots rather than under the logo.
 MessageBelowAnimation=true
@@ -134,14 +141,14 @@ MessageBelowAnimation=true
 # Switched OFF for a normal start-up (see [boot-up] below) — the dots are the
 # progress indicator there, and two indicators at once is noise. It IS switched
 # on for the update and upgrade screens, where a person genuinely wants to know
-# how far along it is. These are the colours it uses when it appears:
-# starlight on surface-2.
+# how far along it is. These are the colours it uses when it appears: Midnight's
+# accent on Midnight's `surfaceAlt`.
 ProgressBarHorizontalAlignment=.5
 ProgressBarVerticalAlignment=.78
 ProgressBarWidth=320
 ProgressBarHeight=3
-ProgressBarForegroundColor=0x8AB4FF
-ProgressBarBackgroundColor=0x161A29
+ProgressBarForegroundColor=0x00BFFF
+ProgressBarBackgroundColor=0x1B2940
 
 # No fade or wipe between screens. tokens.md: quick and calm.
 Transition=none
