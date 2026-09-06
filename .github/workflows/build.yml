@@ -215,6 +215,14 @@ on:
       # window the logo menu opens. Same arrangement as every side branch:
       # builds and checks, never publishes.
       - restart/r6-os
+      # R6 shell completeness, pulled forward — bumping AQUARIUS_SHELL_REF to the
+      # aquarius-shell commit that adds the Aquarius (logo) menu, the desktop
+      # right-click menu, the Quick Settings detail arrows, the darker dock slab
+      # and the dock's mounted-drives list. The point of building it here is the
+      # shell_tests job below, which clones the shell at the new pin and runs its
+      # structural checks. Same arrangement as every side branch: builds and
+      # checks, never publishes.
+      - restart/r6-shell-pin
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
