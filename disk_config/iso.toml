@@ -60,13 +60,20 @@
 # format with old rules; a space or a lower-case letter is rejected.
 #
 # WHAT THIS DOES NOT CHANGE, and what it would take:
-#   The installer program itself (Anaconda) still shows Fedora's logo on its own
-#   pages, because that artwork lives inside the installer's own runtime, which
-#   is assembled by the ISO builder and is not this operating system. Changing it
-#   means shipping a replacement for Fedora's artwork package inside that
-#   runtime, which the ISO builder gives us no way to do. It is ten minutes of
-#   somebody's life, once, on the way to a machine that then says AquariusOS
-#   everywhere forever. See docs/restart/boot-branding.md.
+#   The installer program itself (Anaconda) still shows Fedora's LOGO on its own
+#   pages. Its WORDS already say AquariusOS — the ISO builder takes the product
+#   name from this image's /etc/os-release — but the pictures do not, and cannot
+#   be reached from here. The reason: for an `anaconda-iso`, osbuild's
+#   image-builder builds a SEPARATE little system for the installer to run in,
+#   and fills it by reading this image's repo files and DOWNLOADING fedora-logos
+#   fresh from Fedora. It does not copy the artwork we replace inside our own
+#   image, so replacing it here changes nothing on the stick.
+#
+#   The two real ways to fix it — a small `aquarius-logos` package, or switching
+#   to the `bootc-installer` image type — are scoped, with the cost of each, in
+#   docs/restart/installer.md. Neither is done yet, and it is a logo on a handful
+#   of screens seen once on the way to a machine that says AquariusOS everywhere
+#   forever. See docs/restart/installer.md and docs/restart/boot-branding.md.
 [customizations.iso]
 volume_id = "AQUARIUSOS"
 application_id = "AquariusOS"

@@ -186,6 +186,13 @@ on:
       # Aquarius artwork later. Same arrangement as every side branch: builds
       # and checks, never publishes. See docs/restart/desktop-identity.md.
       - restart/desktop-identity
+      # Phase R5 polish — the installer's branding. Makes the in-image Anaconda
+      # artwork replacement actually land (Fedora 44 moved the sidebar logo into
+      # per-product folders), and adds CI checks that the installer artwork is
+      # ours. Note it does NOT itself build an ISO — ISOs come from
+      # build-iso.yml, started by a tag. Same arrangement as every side branch:
+      # builds and checks, never publishes.
+      - restart/iso-branding
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -1009,6 +1016,110 @@ jobs:
             -e WANT_LIGHT="${LIGHT_SUM}" \
             -e WANT_DARK="${DARK_SUM}" \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-logos.sh
+
+      # ------------------------------------------------------------------------
+      # THE INSTALLER (ANACONDA) ARTWORK, AND THE ISO'S OWN NAME
+      # ------------------------------------------------------------------------
+      # Two separate things, checked together because both are about the
+      # installer and both were the subject of docs/restart/installer.md.
+      #
+      # 1. THE ARTWORK INSIDE THE IMAGE. build_files/80-boot-branding.sh replaces
+      #    the Fedora logos Anaconda would show when it is run on a machine that
+      #    is already up. Fedora 44 moved the sidebar logo into per-product
+      #    folders, so the old fixed path replaced nothing; this asserts that
+      #    every Anaconda logo path that EXISTS now carries our white wordmark.
+      #    It is a positive, absent-safe check: a path that is not there is
+      #    reported and skipped (fedora-logos may not be installed), but a path
+      #    that IS there and is NOT ours fails the build.
+      #
+      #    ⚠️ This does NOT cover the picture on the USB-stick installer's own
+      #    pages — that comes from a fresh fedora-logos the ISO builder downloads
+      #    into a separate runtime, which nothing in this image can reach. See
+      #    docs/restart/installer.md. This check is for the run-after-boot case.
+      #
+      # 2. THE ISO'S OWN NAME. disk_config/iso.toml is not in the image, so this
+      #    half is a plain repository check: the disc label, application id and
+      #    publisher must say AquariusOS / Stone Harbor. These are what a Mac or
+      #    Windows machine shows when the stick is plugged in, and what the
+      #    installer's boot menu is built from.
+      - name: Check the installer artwork is ours and the ISO names itself AquariusOS
+        run: |
+          set -euo pipefail
+
+          echo "== disk_config/iso.toml identity =="
+          fails=0
+          need() { # need <key> <expected>
+            if grep -Eq "^${1}[[:space:]]*=[[:space:]]*\"${2}\"" disk_config/iso.toml; then
+              echo "  OK   ${1} = \"${2}\""
+            else
+              echo "  FAIL ${1} is not \"${2}\" in disk_config/iso.toml"
+              echo "       got: $(grep -E "^${1}[[:space:]]*=" disk_config/iso.toml || echo '(missing)')"
+              fails=1
+            fi
+          }
+          need volume_id AQUARIUSOS
+          need application_id AquariusOS
+          need publisher "Stone Harbor Entertainment"
+          if [ "${fails}" -ne 0 ]; then
+            echo "::error::The installer ISO would not name itself AquariusOS. See disk_config/iso.toml."
+            exit 1
+          fi
+
+          echo "== the Anaconda artwork inside the image =="
+          WANT_WORDMARK="$(sha256sum system_files/usr/share/aquarius/branding/aquarius-about-logo-white.png | awk '{print $1}')"
+          echo "our white wordmark: ${WANT_WORDMARK}"
+          cat > /tmp/verify-installer-art.sh <<'SCRIPT'
+          set -u
+          fails=0
+          seen=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+          # fedora-logos is what puts these files in the image. Report it, do not
+          # require it — an image without it simply has nothing to check here.
+          if rpm -q fedora-logos > /dev/null 2>&1; then
+            echo "fedora-logos is installed: $(rpm -q fedora-logos)"
+          else
+            echo "fedora-logos is NOT installed — no Anaconda artwork to check, which is fine."
+          fi
+
+          check_is_ours() { # check_is_ours <path>
+            local p="$1"
+            if [ ! -e "${p}" ]; then
+              echo "  absent ${p}"
+              return
+            fi
+            seen=$((seen + 1))
+            local got
+            got="$(sha256sum "${p}" | awk '{print $1}')"
+            if [ "${got}" = "${WANT_WORDMARK}" ]; then
+              ok "${p} is ours"
+            else
+              bad "${p} is NOT ours (${got}) — 80-boot-branding.sh did not replace it"
+            fi
+          }
+
+          # Fixed paths.
+          check_is_ours /usr/share/anaconda/pixmaps/anaconda_header.png
+          check_is_ours /usr/share/anaconda/boot/splash.png
+          check_is_ours /usr/share/anaconda/boot/syslinux-splash.png
+
+          # Every per-product sidebar logo, wherever Fedora put it.
+          while IFS= read -r sb; do
+            check_is_ours "${sb}"
+          done < <(find /usr/share/anaconda -type f -name 'sidebar-logo.png' 2>/dev/null | sort)
+
+          echo "Checked; ${seen} Anaconda logo file(s) present in this image."
+
+          if [ "${fails}" -ne 0 ]; then
+            echo "::error::The installer artwork inside the image is not all ours."
+            exit 1
+          fi
+          echo "All present Anaconda logo files are ours (or none are installed)."
+          SCRIPT
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            -e WANT_WORDMARK="${WANT_WORDMARK}" \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-installer-art.sh
 
       # ------------------------------------------------------------------------
       # THE LOGIN SCREEN
