@@ -15,8 +15,10 @@
 #
 # THE THREE THINGS THIS SESSION IS MADE OF
 #   1. labwc — the window manager. It draws the title bars, moves windows
-#      around, and owns the keyboard shortcuts. Configuration lives in
-#      /usr/share/aquarius/labwc/.
+#      around, and owns the keyboard shortcuts. The configuration AquariusOS
+#      ships lives in /usr/share/aquarius/labwc/, and this script builds a
+#      finished copy of it in your home before starting labwc — see "Building
+#      the window frame" further down.
 #   2. The Aquarius Shell — the bar at the top, the dock, the search palette,
 #      the quick settings and the notifications. It is QML, run by Quickshell's
 #      `qs` command. The WINDOW MANAGER starts it, not this script, because a
@@ -56,9 +58,21 @@ set -euo pipefail
 # Fixed locations. On an image-based operating system these cannot move, so
 # unlike the repository's version there is no searching for them.
 # -----------------------------------------------------------------------------
-AQ_LABWC_CONFIG_DIR="/usr/share/aquarius/labwc"
+# The labwc files AquariusOS ships. This folder is a TEMPLATE — see the
+# "Building the window frame" step further down. labwc is normally started with
+# a generated copy of it in the user's home instead.
+AQ_LABWC_TEMPLATE_DIR="/usr/share/aquarius/labwc"
 AQ_SHELL_DIR="/usr/share/aquarius/shell"
 AQ_SESSION_LIB="/usr/libexec/aquarius-session-lib"
+
+# The program that builds the window frame out of the shell's palette. It is
+# EXPORTED because the shell runs it too: when the machine is switched between
+# light and dark, the shell's services/SystemAppearance.qml runs this same
+# program again and then tells labwc to re-read its files, so the title bars
+# follow the theme without logging out. The shell must never contain a path of
+# its own, so it is handed one.
+AQ_FRAME_GENERATOR="${AQ_LABWC_TEMPLATE_DIR}/generate-theme"
+export AQ_FRAME_GENERATOR
 
 # -----------------------------------------------------------------------------
 # The log. Everything below this point goes to the terminal AND to the file.
@@ -190,10 +204,10 @@ if [ -n "${aq_missing}" ]; then
         "Log in with GNOME, and report which names are listed above."
 fi
 
-if [ -d "${AQ_LABWC_CONFIG_DIR}" ]; then
-    echo "  found    ${AQ_LABWC_CONFIG_DIR}"
+if [ -d "${AQ_LABWC_TEMPLATE_DIR}" ]; then
+    echo "  found    ${AQ_LABWC_TEMPLATE_DIR}"
 else
-    die "The folder ${AQ_LABWC_CONFIG_DIR} is not in this image." \
+    die "The folder ${AQ_LABWC_TEMPLATE_DIR} is not in this image." \
         "Without it the window manager has no key bindings and no way to start" \
         "anything. This is a broken image, not something you did. Log in with" \
         "GNOME."
@@ -540,11 +554,66 @@ aq_session_env_reset
 # shellcheck disable=SC2086
 aq_push_env ${AQ_SESSION_ENV_PUSH}
 
+# -----------------------------------------------------------------------------
+# BUILDING THE WINDOW FRAME OUT OF THE SHELL'S PALETTE
+#
+# WHAT THIS STEP IS FOR
+#   Four things on an Aquarius screen are drawn by labwc and not by the shell:
+#   the title bar of every window, the border around it, the little round
+#   buttons in that title bar, and the menu that opens when you right-click the
+#   wallpaper. labwc is a C program reading flat text files, so it cannot read
+#   the shell's QML palette the way the rest of the desktop does.
+#
+#   generate-theme reads that palette — Ice for a light desktop, Midnight for a
+#   dark one — and writes labwc's files out for it: the colours, the sizes and
+#   the round button pictures.
+#
+# WHAT IT REPLACED, AND WHY
+#   Until 2026-09-06 the colours were kept in a second file, themerc-override,
+#   typed out by hand from the shell's Ice palette. That file could hold ONE
+#   theme at ONE size, so a dark desktop had light title bars and AQ_UI_SCALE
+#   grew the shell while the window frames stayed put. Generating it fixes both,
+#   and means the palette exists in exactly one place again.
+#
+# WHY THE FINISHED FILES GO IN YOUR HOME AND NOT IN /usr
+#   Because they have to be rewritten WHILE THE DESKTOP IS RUNNING — every time
+#   the machine goes light or dark, and every time somebody runs `aq keys
+#   windows` to move the window buttons to the other side. /usr on an
+#   image-based operating system is read-only, by design and permanently. So the
+#   folder in /usr is the template and the generated copy is what labwc reads.
+#
+# IF IT FAILS, YOU STILL GET A DESKTOP. labwc is started with the template
+# folder instead, which is a complete, correct configuration on its own — you
+# lose the dark theme and the size knob on the window frames and nothing else. A
+# cosmetic step must never be able to stop somebody logging in.
+# -----------------------------------------------------------------------------
+echo ""
+echo "=== Building the window frame from the shell's palette ==="
+
+AQ_LABWC_DIR="${AQ_LABWC_TEMPLATE_DIR}"
+AQ_LABWC_GENERATED="${XDG_CONFIG_HOME:-${HOME}/.config}/aquarius/labwc"
+
+if [ ! -x "${AQ_FRAME_GENERATOR}" ]; then
+    echo "  ⚠️  ${AQ_FRAME_GENERATOR} is missing. That is a fault in this"
+    echo "      operating system, not in anything you did. Falling back to"
+    echo "      ${AQ_LABWC_TEMPLATE_DIR}."
+elif python3 "${AQ_FRAME_GENERATOR}" --config-out "${AQ_LABWC_GENERATED}"; then
+    AQ_LABWC_DIR="${AQ_LABWC_GENERATED}"
+else
+    echo ""
+    echo "  ⚠️  The window frame could not be built, so labwc will be started"
+    echo "      with ${AQ_LABWC_TEMPLATE_DIR} instead."
+    echo "      The desktop works. What you lose is the dark theme and the size"
+    echo "      knob on the window frames, and the round window buttons will be"
+    echo "      labwc's own. The reason is a few lines above this one."
+    echo ""
+fi
+
 echo ""
 echo "=== Starting ==="
 echo "  window manager: labwc  ($(labwc --version 2>&1 | head -1))"
 echo "  shell:          ${AQ_SHELL_DIR}"
-echo "  labwc config:   ${AQ_LABWC_CONFIG_DIR}"
+echo "  labwc config:   ${AQ_LABWC_DIR}"
 echo "  desktop name:   ${XDG_CURRENT_DESKTOP}"
 echo "  language:       ${LANG}"
 echo ""
@@ -587,7 +656,7 @@ trap 'aq_session_teardown' EXIT
 trap 'exit 143' TERM INT HUP
 
 aq_labwc_status=0
-labwc -C "${AQ_LABWC_CONFIG_DIR}" || aq_labwc_status=$?
+labwc -C "${AQ_LABWC_DIR}" || aq_labwc_status=$?
 
 echo ""
 echo "=== The Aquarius Desktop has ended (window manager exit code ${aq_labwc_status}) ==="

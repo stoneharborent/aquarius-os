@@ -283,6 +283,14 @@ on:
       # Same arrangement as every side branch: builds and checks, never
       # publishes. See branding/icons/README.md.
       - restart/icon-grammar
+      # The window frame — the 2026-09-06 design session's other half: the title
+      # bar, the border, the round window buttons and the desktop menu, all now
+      # GENERATED from the shell's Ice or Midnight palette instead of being
+      # typed out by hand. Also moves the window buttons with `aq keys mac` /
+      # `aq keys windows`, and adds the two-property dark-mode GTK colour.
+      # Same arrangement as every side branch: builds and checks, never
+      # publishes.
+      - restart/window-frame
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -2632,9 +2640,10 @@ jobs:
           echo "== the window manager's configuration =="
           # SIX files. menu.xml joined on the morning of 2026-09-06 — see the
           # desktop right-click block just below for what happens without it —
-          # and themerc-override that afternoon, which is what stops labwc
+          # and generate-theme that evening, which is the program that writes
+          # labwc's colours out of the shell's palette and is what stops labwc
           # drawing that menu and every title bar in its own default grey.
-          for f in rc.xml menu.xml themerc-override autostart shutdown environment; do
+          for f in rc.xml menu.xml generate-theme autostart shutdown environment; do
             if [ -s "/usr/share/aquarius/labwc/${f}" ]; then ok "labwc/${f}"; else bad "labwc/${f} is missing"; fi
           done
           # The corrected form of the summon command. Passing a configuration
@@ -2713,21 +2722,190 @@ jobs:
             bad "a gnome-control-center command in menu.xml has no 'env XDG_CURRENT_DESKTOP=GNOME' prefix — that menu item would do nothing"
           fi
 
-          # The look of that menu, and of every window title bar. labwc splits
-          # one look across two files — colours in themerc-override, fonts in
-          # rc.xml's <theme> section — so both halves are read back here. Get
-          # only one and the desktop menu comes up in the right blue and the
-          # wrong typeface, which nobody photographs and everybody feels.
+          # ----------------------------------------------------------------
+          # THE LOOK OF THAT MENU, AND OF EVERY WINDOW TITLE BAR
+          # ----------------------------------------------------------------
+          # ⚠️ THIS IS NOT A FILE CHECK ANY MORE, AND THAT IS THE POINT.
+          #
+          # On the morning of 2026-09-06 the colours were in a hand-written file
+          # called themerc-override, a second copy of the shell's Ice palette.
+          # That file is gone. It could hold only ONE theme, so a dark desktop
+          # had light title bars, and only ONE size, so AQ_UI_SCALE grew the
+          # shell and reached nothing labwc drew.
+          #
+          # /usr/share/aquarius/labwc/generate-theme replaced it: it reads the
+          # shell's theme/Ice.qml or theme/Midnight.qml and writes labwc's files
+          # out. So there is no shipped file left whose contents mean anything —
+          # what has to be checked is what the PROGRAM produces.
+          #
+          # This runs it four times inside the finished image (Ice and Midnight,
+          # at 1x and at 1.25x) and reads the results back BY CONTENT, which is
+          # this project's rule since 2026-08-31 and is why nothing here looks
+          # at a timestamp.
           echo "== and it looks like Aquarius rather than Openbox =="
-          grep -q '^menu\.items\.bg\.color:' /usr/share/aquarius/labwc/themerc-override \
-            && ok "the desktop menu is drawn on our card colour" \
-            || bad "themerc-override does not set menu.items.bg.color — the right-click menu would be labwc's default grey, which is the bench note of 2026-09-06"
-          grep -q '^window\.active\.title\.bg\.color:' /usr/share/aquarius/labwc/themerc-override \
-            && ok "and so is the focused window's title bar" \
-            || bad "themerc-override does not set window.active.title.bg.color — every window would wear a stock Openbox title bar"
-          grep -q '<font place="MenuItem">' /usr/share/aquarius/labwc/rc.xml \
-            && ok "and both are drawn in the shell's own typeface" \
-            || bad "rc.xml has no <font place=\"MenuItem\"> — labwc would draw the desktop menu in whatever \"sans\" resolves to, next to a shell drawn in Inter"
+
+          FRAME_OUT="$(mktemp -d)"
+          FRAME_OK=1
+          for case in "ice 1" "ice 1.25" "midnight 1" "midnight 1.25"; do
+            # shellcheck disable=SC2086
+            set -- ${case}
+            if python3 /usr/share/aquarius/labwc/generate-theme --quiet \
+                 --scheme "$1" --scale "$2" --buttons mac \
+                 --config-out "${FRAME_OUT}/$1-$2/config" \
+                 --theme-out "${FRAME_OUT}/$1-$2/theme" \
+                 --gtk-out "${FRAME_OUT}/$1-$2/gtk"; then
+              ok "the $1 window frame builds at $2x"
+            else
+              bad "generate-theme failed for $1 at $2x — an installed machine would fall back to labwc's own Openbox grey, which is the bench note of 2026-09-06"
+              FRAME_OK=0
+            fi
+          done
+
+          frame_is() {
+            # $1 = ice-1 / midnight-1 / …, $2 = setting, $3 = value, $4 = why
+            if grep -qxF "$2: $3" "${FRAME_OUT}/$1/config/themerc-override"; then
+              ok "$1: $2 is $3 — $4"
+            else
+              bad "$1: $2 should be '$3' ($4), and is: $(grep -E "^$2:" "${FRAME_OUT}/$1/config/themerc-override" || echo '(missing)')"
+            fi
+          }
+
+          if [ "${FRAME_OK}" -eq 1 ]; then
+            # Section 3 of the window-frame design sheet — the frame, in Ice.
+            frame_is ice-1 window.active.title.bg.color "#F0F6FC" "the focused title bar is the same colour as the top bar"
+            frame_is ice-1 window.inactive.title.bg.color "#E4EDF6" "an unfocused one steps a rung down the surface ladder"
+            frame_is ice-1 window.active.label.text.color "#16273A" "the focused window's title is the primary ink"
+            frame_is ice-1 window.inactive.label.text.color "#7C90A4" "an unfocused title is the muted ink"
+            frame_is ice-1 window.active.border.color "#16273A2E" "the focused border is the strong hairline"
+            frame_is ice-1 window.inactive.border.color "#16273A1A" "an unfocused border is the plain one"
+            frame_is ice-1 window.label.text.justify "Center" "the title is centred"
+            frame_is ice-1 border.width "1" "one pixel, like every other rule on screen"
+
+            # Section 4 — the buttons. THE TITLE BAR'S HEIGHT IS NOT A SETTING
+            # in labwc 0.20: titlebar.height was removed, and the height is
+            # max(font height, button height) + 2 x padding. So these two lines
+            # ARE the 38px title bar: 20 + 9 + 9.
+            frame_is ice-1 window.button.width "20" "a window button's disc is 20 across"
+            frame_is ice-1 window.button.height "20" "and 20 tall"
+            frame_is ice-1 window.button.spacing "8" "with 8 between two discs"
+            frame_is ice-1 window.titlebar.padding.width "12" "and 12 from the window's edge"
+            frame_is ice-1 window.titlebar.padding.height "9" "which makes the title bar 20 + 9 + 9 = 38 tall"
+
+            # Section 5 — the desktop right-click menu, which is the surface the
+            # whole 2026-09-06 pass started from.
+            frame_is ice-1 menu.items.bg.color "#F7FBFE" "the desktop menu is drawn on our card colour"
+            frame_is ice-1 menu.items.text.color "#16273A" "with our ink"
+            frame_is ice-1 menu.items.active.bg.color "#2C8FC429" "and the row under the pointer lit with a wash of the accent"
+            frame_is ice-1 menu.width.min "240" "one fixed width, like the shell's own menu"
+            frame_is ice-1 menu.width.max "240" "min and max together is how labwc fixes a width"
+
+            # THE MIDNIGHT COLUMN. This is the whole reason the hand-written
+            # file had to go: before this there was no Midnight at all, and a
+            # dark desktop kept light title bars.
+            frame_is midnight-1 window.active.title.bg.color "#152033" "on a dark desktop the title bar is Midnight's panel navy"
+            frame_is midnight-1 window.inactive.title.bg.color "#1B2940" "and an unfocused one steps down the same way"
+            frame_is midnight-1 window.active.label.text.color "#DCE9F4" "the title is Midnight's ice-blue ink"
+            frame_is midnight-1 window.inactive.label.text.color "#5C6E82" "and an unfocused title its muted ink"
+            frame_is midnight-1 window.active.border.color "#DCF3FF29" "Midnight's hairlines are tinted ice blue, not white"
+            frame_is midnight-1 window.inactive.border.color "#DCF3FF14" "the quieter of the two"
+            frame_is midnight-1 menu.items.bg.color "#121C2E" "the dark menu card"
+            frame_is midnight-1 menu.items.text.color "#DCE9F4" "its ice-blue text"
+            frame_is midnight-1 menu.items.active.bg.color "#00BFFF1F" "and its accent wash at 12%, because Midnight's blue is brighter"
+
+            # THE SIZE KNOB REACHES labwc NOW, which it never did before.
+            frame_is ice-1.25 window.button.width "25" "a 20px button is 25px at 1.25x"
+            frame_is ice-1.25 menu.items.padding.x "20" "and the menu's padding grows with it"
+
+            # rc.xml's half of the look: the corner radius, the fonts and which
+            # side the buttons sit on. labwc has no themerc key for any of them.
+            grep -q '<cornerRadius>12</cornerRadius>' "${FRAME_OUT}/ice-1/config/rc.xml" \
+              && ok "a window's top corners are rounded by 12, matching libadwaita's fixed 12" \
+              || bad "the generated rc.xml does not set cornerRadius to 12 — our frame and a GTK window's own rounding would disagree by a few pixels"
+            grep -q '<cornerRadius>15</cornerRadius>' "${FRAME_OUT}/ice-1.25/config/rc.xml" \
+              && ok "and that follows AQ_UI_SCALE too" \
+              || bad "cornerRadius does not scale"
+            grep -q '<layout>close,iconify,max:</layout>' "${FRAME_OUT}/ice-1/config/rc.xml" \
+              && ok "Mac style puts close, minimise and maximise on the LEFT, close outermost" \
+              || bad "the generated rc.xml has no Mac titlebar layout — 'aq keys mac' would move the buttons in GNOME and not on our own desktop"
+            grep -q '<name>Aquarius</name>' "${FRAME_OUT}/ice-1/config/rc.xml" \
+              && ok "rc.xml names the theme labwc looks the button pictures up under" \
+              || bad "rc.xml does not name a theme — labwc would find no button pictures and fall back to bare built-in glyphs"
+            grep -q '<font place="MenuItem">' "${FRAME_OUT}/ice-1/config/rc.xml" \
+              && ok "and everything labwc draws is drawn in the shell's own typeface" \
+              || bad "the generated rc.xml has no <font place=\"MenuItem\"> — labwc would draw the desktop menu in whatever \"sans\" resolves to, next to a shell drawn in Inter"
+
+            # The other half of `aq keys`: the buttons on the right.
+            if python3 /usr/share/aquarius/labwc/generate-theme --quiet \
+                 --scheme ice --scale 1 --buttons windows \
+                 --config-out "${FRAME_OUT}/win/config" \
+                 --theme-out "${FRAME_OUT}/win/theme" \
+                 --gtk-out "${FRAME_OUT}/win/gtk"; then
+              grep -q '<layout>:iconify,max,close</layout>' "${FRAME_OUT}/win/config/rc.xml" \
+                && ok "Windows style puts minimise, maximise and close on the RIGHT, close outermost" \
+                || bad "the Windows titlebar layout is wrong — 'aq keys windows' would move the buttons in GNOME and not on our own desktop"
+            else
+              bad "generate-theme failed for the Windows button layout"
+            fi
+
+            # THE BUTTON PICTURES. labwc looks these up BY EXACT NAME, in a
+            # theme folder rather than beside its settings. A missing one is not
+            # an error anywhere: labwc draws a bare built-in glyph with no disc
+            # behind it, and one button quietly stops matching the other two.
+            MISSING=""
+            for case in ice-1 ice-1.25 midnight-1 midnight-1.25; do
+              for b in close iconify max max_toggled; do
+                for s in "" "_hover"; do
+                  for f in active inactive; do
+                    [ -s "${FRAME_OUT}/${case}/theme/${b}${s}-${f}.svg" ] \
+                      || MISSING="${MISSING} ${case}/${b}${s}-${f}.svg"
+                  done
+                done
+              done
+            done
+            if [ -z "${MISSING}" ]; then
+              ok "all 16 window button pictures exist for both themes, at 1x and at 1.25x"
+            else
+              bad "these window button pictures were not drawn:${MISSING}"
+            fi
+
+            # Read two of them by content, because a picture that exists and is
+            # the wrong colour is the failure a file-exists check cannot see.
+            grep -q '#C8463B' "${FRAME_OUT}/ice-1/theme/close_hover-active.svg" \
+              && ok "the close button goes to the Ice danger red under the pointer" \
+              || bad "the Ice close button does not turn red on hover"
+            grep -q '#E07B7B' "${FRAME_OUT}/midnight-1/theme/close_hover-active.svg" \
+              && ok "and to Midnight's own softer red on a dark desktop" \
+              || bad "the Midnight close button does not turn red on hover"
+            grep -q 'opacity="0.450"' "${FRAME_OUT}/ice-1/theme/close-inactive.svg" \
+              && ok "and a window you are not in draws its whole button at 45%" \
+              || bad "an unfocused window's buttons are not faded"
+
+            # THE ONE EXCEPTION TO THE NO-GTK-THEME POSTURE: two properties, in
+            # dark mode only. It must exist for Midnight and must NOT exist for
+            # Ice — a navy window on the Ice light desktop is the same mistake in
+            # the other direction.
+            grep -q 'background-color: #0B1220' "${FRAME_OUT}/midnight-1/gtk/gtk-4.0/gtk.css" \
+              && ok "a dark desktop paints GTK window backgrounds Midnight navy" \
+              || bad "the Midnight GTK file does not set the window background — a Files window would stay libadwaita grey against navy"
+            grep -q 'background-color: #152033' "${FRAME_OUT}/midnight-1/gtk/gtk-4.0/gtk.css" \
+              && ok "and their header bars the panel navy" \
+              || bad "the Midnight GTK file does not set the header bar colour"
+            grep -q 'background-color: #0B1220' "${FRAME_OUT}/midnight-1/gtk/gtk-3.0/gtk.css" \
+              && ok "older GTK applications get the same two properties" \
+              || bad "the gtk-3.0 twin of the Midnight GTK file is missing or wrong"
+            if [ -e "${FRAME_OUT}/ice-1/gtk/gtk-4.0/gtk.css" ]; then
+              bad "the Ice theme wrote a GTK colour file — those two properties are Midnight's, and on a light desktop they would paint every GTK window navy"
+            else
+              ok "the Ice theme writes no GTK colour file, which is correct"
+            fi
+            GTK_RULES="$(grep -cE '^[a-z]' "${FRAME_OUT}/midnight-1/gtk/gtk-4.0/gtk.css" || true)"
+            if [ "${GTK_RULES}" -eq 2 ]; then
+              ok "the GTK file is exactly two rules and nothing else"
+            else
+              bad "the Midnight GTK file has ${GTK_RULES} rules. It is allowed exactly TWO — the window background and the header bar. Anything more is a GTK theme, which this project does not ship."
+            fi
+          fi
+          rm -rf "${FRAME_OUT}"
 
           # ⚠️ THE OTHER 2026-09-06 BENCH BUG: the dock's Settings icon did
           # nothing. gnome-control-center reads XDG_CURRENT_DESKTOP at start-up
@@ -5860,12 +6038,12 @@ jobs:
       # ------------------------------------------------------------------------
       # ⚠️ CHANGE ONE, CHANGE BOTH — and this is what makes that true
       # ------------------------------------------------------------------------
-      # The window manager reads four files, and every one of them exists twice:
-      # once in the shell repository under session/labwc/, and once in this
-      # repository under system_files/usr/share/aquarius/labwc/. The copy here is
-      # what ships on a real machine. Nothing copies one onto the other — on
-      # purpose, because our copies carry OS-only corrections — so the two are
-      # kept in step by hand.
+      # The window manager's configuration folder exists twice: once in the
+      # shell repository under session/labwc/, and once in this repository under
+      # system_files/usr/share/aquarius/labwc/. The copy here is what ships on a
+      # real machine. Nothing copies one onto the other — on purpose, because
+      # our copies carry OS-only corrections — so the two are kept in step by
+      # hand.
       #
       # THAT FAILED TWICE IN ONE DAY, 6 September 2026. In the morning the shell
       # had grown a menu.xml and a right-click binding this image never got, so
@@ -5877,7 +6055,16 @@ jobs:
       #
       # So this compares the files themselves. Comments are ignored — each copy
       # is written for its own reader — and everything the program acts on has to
-      # match. It is a script in this repository rather than lines in this file
+      # match.
+      #
+      # ⚠️ ONE OF THEM IS NOT A FILE ANY MORE. Since 2026-09-06 labwc's colours
+      # are not written by hand in either repository: generate-theme reads the
+      # shell's palette and writes them. Comparing two programs line by line
+      # would be a weak check, so the script RUNS BOTH — Ice and Midnight, at 1x
+      # and 1.25x — and compares what they produce, which is the thing that
+      # actually reaches a screen.
+      #
+      # It is a script in this repository rather than lines in this file
       # so that a person can run exactly what CI runs, against a clone of the
       # shell, before pushing:
       #

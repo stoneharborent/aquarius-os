@@ -1,0 +1,1126 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Stone Harbor Entertainment
+# SPDX-License-Identifier: Apache-2.0
+# =============================================================================
+# generate-theme — build labwc's look out of the shell's own palette
+# =============================================================================
+# WHAT THIS PROGRAM IS FOR, IN ONE PARAGRAPH
+#
+#   Almost everything you see on an Aquarius desktop is drawn by the shell, in
+#   QML, out of theme/Ice.qml or theme/Midnight.qml. Three things are not: the
+#   menu that opens when you right-click the wallpaper, the title bar and border
+#   around every window, and the little round buttons in that title bar. Those
+#   belong to labwc, and labwc is a C program that reads flat text files. It
+#   cannot import QML.
+#
+#   Until this program existed, somebody wrote the numbers out a second time by
+#   hand, in a file called themerc-override, and that hand-written file could
+#   only ever hold ONE theme (Ice) at ONE size. This program replaces it. It
+#   reads the palette out of the QML, does the arithmetic, and writes every file
+#   labwc needs. Nothing about the look of a window is typed twice any more.
+#
+# -----------------------------------------------------------------------------
+# HOW TO CHANGE A COLOUR — the only answer, and it is short
+# -----------------------------------------------------------------------------
+#   Edit theme/Ice.qml (light) or theme/Midnight.qml (dark). Nowhere else.
+#   Log out and back in — or just flip the desktop between light and dark, which
+#   re-runs this program on the spot. There is no second place to keep in step,
+#   because this program is what makes the second copy.
+#
+# -----------------------------------------------------------------------------
+# WHEN IT RUNS
+# -----------------------------------------------------------------------------
+#   1. At login, from session/aquarius-session, BEFORE labwc starts.
+#   2. Whenever the machine is switched between light and dark, from
+#      services/SystemAppearance.qml, which then runs `labwc --reconfigure`
+#      so the change lands without logging out.
+#   3. From `aq keys mac` / `aq keys windows` on AquariusOS, which is the one
+#      switch that decides whether the window buttons sit on the left (Mac) or
+#      the right (Windows).
+#
+# -----------------------------------------------------------------------------
+# WHAT IT WRITES, AND WHY EACH FILE IS WHERE IT IS
+# -----------------------------------------------------------------------------
+#   <config-out>/themerc-override    every colour and size labwc draws with
+#   <config-out>/rc.xml              key bindings + the three settings that have
+#                                    to change at runtime (see below)
+#   <config-out>/menu.xml            copied, unchanged
+#   <config-out>/autostart           copied, unchanged
+#   <config-out>/shutdown            copied, unchanged
+#   <config-out>/environment         copied, unchanged
+#   <theme-out>/*.svg                the round window buttons, one file per
+#                                    button per state
+#   <gtk-out>/gtk-4.0/gtk.css        Midnight only — see "GTK" below
+#   <gtk-out>/gtk-3.0/gtk.css        the same, for older applications
+#
+#   ⚠️ THE TWO OUTPUT FOLDERS ARE DIFFERENT FOLDERS, AND THAT IS labwc's RULE,
+#   NOT OURS. labwc reads its settings from the folder it was started with
+#   (`labwc -C <folder>`), but it looks for BUTTON PICTURES somewhere else
+#   entirely: in a THEME folder, under themes/<name>/labwc/, searched in the
+#   order XDG_DATA_HOME, ~/.themes, then XDG_DATA_DIRS. That is why rc.xml says
+#   <theme><name>Aquarius</name> — that name is how labwc finds the pictures.
+#   (labwc-theme(5), and src/common/dir.c in labwc 0.20.2.)
+#
+#   ⚠️ WHY rc.xml IS WRITTEN OUT RATHER THAN READ WHERE IT SITS. Three of the
+#   things this design needs are rc.xml settings, not theme settings, and labwc
+#   offers no other place to put them:
+#
+#       the corner radius   <theme><cornerRadius>
+#       the title font size <theme><font place="ActiveWindow"><size>
+#       which side the      <theme><titlebar><layout>
+#       buttons sit on
+#
+#   The first two have to follow AQ_UI_SCALE like every other size, and the
+#   third has to change when somebody runs `aq keys windows` — and on
+#   AquariusOS the shipped rc.xml lives in /usr, which is read-only. So the
+#   shipped rc.xml is a TEMPLATE: three regions in it are marked with
+#   `AQ-GENERATED-BEGIN` / `AQ-GENERATED-END` comments, this program rewrites
+#   what is between them, and the finished file is written to a folder in the
+#   user's home that labwc is then started with. Everything else in rc.xml —
+#   every key binding, every comment — is copied through untouched.
+#
+# -----------------------------------------------------------------------------
+# WHAT labwc 0.20.2 CAN AND CANNOT DO — checked in its own source, not guessed
+# -----------------------------------------------------------------------------
+#   CAN   <theme><cornerRadius>            labwc-config(5), default 8
+#   CAN   <theme><titlebar><layout>        labwc-config(5); ids are icon, menu,
+#                                          iconify, max, close, shade, desk, and
+#                                          exactly one colon splits left:right
+#   CAN   SVG buttons                      searched png -> svg -> xbm; our labwc
+#                                          is built +rsvg, and an SVG keeps its
+#                                          OWN colours (only .xbm files are
+#                                          re-coloured by the themerc)
+#   CAN   a hover picture per button       close_hover-active.svg and friends,
+#                                          which is what lets the close button
+#                                          go red while the others do not
+#
+#   CANNOT  set the title bar height directly. `titlebar.height` was REMOVED —
+#           labwc 0.20.2 prints "titlebar.height is no longer supported" and
+#           works the height out itself:
+#               height = max(font height, window.button.height)
+#                        + 2 x window.titlebar.padding.height
+#           So this program gets the 38px bar by setting the button height and
+#           then solving for the padding. See titlebar_padding_height() below.
+#
+#   CANNOT  draw a PRESSED button. labwc's button states are default, hover,
+#           toggled and rounded — there is no pressed state and no
+#           `close_pressed-active.svg`. The design asks for a darker disc while
+#           the mouse is held down; labwc cannot draw it, so a pressed button
+#           looks like a hovered one. Nothing here fakes it.
+#
+#   CANNOT  give each button its own hover BACKGROUND COLOUR through the
+#           themerc: window.button.hover.bg.color is one value for all buttons.
+#           It does not matter, because we do not use it — the disc is drawn
+#           INTO each picture, and labwc only paints its own hover wash when a
+#           button has no hover picture of its own. We ship every hover picture.
+# =============================================================================
+
+import argparse
+import math
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+# =============================================================================
+# THE PALETTE — read straight out of the QML, which is the only source
+# =============================================================================
+# Ice.qml and Midnight.qml are lists of lines shaped like this:
+#
+#     readonly property color ink: "#16273A"         // primary text
+#     readonly property color line: "#1A16273A"      // ink at 10%
+#
+# so one regular expression reads either of them. Nothing else in this program
+# is allowed to contain a colour. If a value below is not in one of those two
+# files, that is a bug here and not a new design decision.
+
+PALETTE_LINE = re.compile(
+    r'readonly\s+property\s+color\s+(?P<name>\w+)\s*:\s*"(?P<value>#[0-9A-Fa-f]{6,8})"'
+)
+
+# The palette roles this program actually uses. Listed by name so that a typo,
+# or a role somebody renames in the QML, is a clear error at start-up instead of
+# a window frame that quietly comes out the wrong colour.
+REQUIRED_ROLES = (
+    "panel",        # the title bar of the window you are in
+    "surface",      # the menu card
+    "surfaceAlt",   # the title bar of a window you are not in; the menu title
+    "ink",          # the title text, and the ink the buttons are drawn in
+    "inkSoft",      # a menu title's label
+    "inkMute",      # the title text of a window you are not in
+    "inkOnAccent",  # the X on a red close button
+    "line",         # the hairline around a window you are not in
+    "lineStrong",   # the hairline around the window you are in
+    "accentWash",   # the row of a menu the pointer is on
+    "danger",       # the close button, while the pointer is on it
+    "bg",           # Midnight's GTK window background
+)
+
+
+def read_palette(path):
+    """Read one QML palette file into a plain dictionary of name -> value."""
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            text = handle.read()
+    except OSError as problem:
+        die("could not read the palette %s: %s" % (path, problem))
+
+    palette = {}
+    for match in PALETTE_LINE.finditer(text):
+        palette[match.group("name")] = match.group("value")
+
+    if not palette:
+        die(
+            "%s has no colours in it.\n"
+            "This program looks for lines shaped\n"
+            '    readonly property color ink: "#16273A"\n'
+            "and found none, so either the file moved or its style changed."
+            % path
+        )
+
+    missing = [role for role in REQUIRED_ROLES if role not in palette]
+    if missing:
+        die(
+            "%s is missing %d colour(s) this design needs: %s.\n"
+            "Every role has to exist in BOTH Ice.qml and Midnight.qml — a role\n"
+            "in one and not the other breaks the desktop the moment somebody\n"
+            "switches between light and dark." % (path, len(missing), ", ".join(missing))
+        )
+
+    return palette
+
+
+# =============================================================================
+# COLOURS — QML writes the opacity first, labwc writes it last
+# =============================================================================
+# QML:   #AARRGGBB   "#1A16273A" is the ink #16273A at 10%
+# labwc: #RRGGBBAA   the same colour is written "#16273A1A"
+#
+# Same colour, same opacity, the alpha byte at the other end. Getting this
+# backwards produces a colour that is not wrong in an obvious way — it is a
+# plausible, slightly-off blue — which is exactly why it is done in one function
+# and never by hand.
+
+
+def qml_to_labwc(value):
+    """Turn a QML colour into the way labwc spells the same colour."""
+    digits = value.lstrip("#")
+    if len(digits) == 6:
+        return "#" + digits.upper()
+    if len(digits) == 8:
+        alpha, rgb = digits[:2], digits[2:]
+        return "#" + rgb.upper() + alpha.upper()
+    die("'%s' is not a colour this program knows how to read." % value)
+
+
+def rgb_of(value):
+    """Just the six colour digits of a QML colour, with no opacity."""
+    digits = value.lstrip("#")
+    return "#" + (digits[2:] if len(digits) == 8 else digits).upper()
+
+
+def at_percent(value, percent):
+    """
+    The same colour, at a given opacity, written labwc's way.
+
+    The design sheet asks for things like "ink at 16%" for which no ready-made
+    token exists in the palette — the palette has ink at 8, 10, 13 and 18 per
+    cent and no more. Rather than invent four new palette roles for four button
+    states, the percentage is applied here, to the palette's OWN ink. The colour
+    still comes from the QML; only the opacity is arithmetic.
+    """
+    alpha = int(round(percent / 100.0 * 255.0))
+    return "%s%02X" % (rgb_of(value), max(0, min(255, alpha)))
+
+
+def svg_opacity(percent):
+    """The same idea, written the way an SVG wants it: 0.16 rather than 16%."""
+    return "%.3f" % (percent / 100.0)
+
+
+# =============================================================================
+# SIZE — the same knob the shell uses, doing the same arithmetic
+# =============================================================================
+# theme/Theme.qml multiplies every size in the shell by AQ_UI_SCALE and rounds
+# the result. labwc knows nothing about that variable, which is why the shell
+# used to grow while the window frames did not. This function is a copy of
+# Theme.px(), deliberately down to the rounding:
+#
+#   * QML's Math.round() rounds a half UP (0.5 becomes 1). Python's own round()
+#     rounds a half to the nearest EVEN number (0.5 becomes 0), which would put
+#     this program one pixel away from the shell at some scales. floor(n + 0.5)
+#     is Math.round(), so that is what is written here.
+#   * A visible thing never rounds away to nothing: a 1px hairline at 0.5x
+#     stays 1px rather than becoming 0px.
+
+
+def px(value, scale):
+    if scale == 1.0:
+        return int(value)
+    scaled = int(math.floor(value * scale + 0.5))
+    if value > 0 and scaled < 1:
+        return 1
+    return scaled
+
+
+# =============================================================================
+# THE DESIGN, WRITTEN DOWN ONCE
+# =============================================================================
+# Every number in this block is from the window-frame design sheet of
+# 2026-09-06. They are design px — the size at AQ_UI_SCALE=1 — and px() above
+# turns them into the size to actually draw.
+
+TITLEBAR_HEIGHT = 38     # section 3: the whole title bar
+TITLE_FONT_SIZE = 13     # section 3: Inter, in pixels (labwc's <size> is px)
+CORNER_RADIUS = 12       # section 3: matches libadwaita's own fixed 12
+BORDER_WIDTH = 1         # section 3
+
+BUTTON_DISC = 20         # section 4: the round disc behind a button's glyph
+BUTTON_GLYPH_BOX = 12    # section 4: the square the glyph is drawn inside
+BUTTON_STROKE = 1.8      # section 4: how thick the glyph's lines are
+BUTTON_SPACING = 8       # section 4: air between two discs
+BUTTON_EDGE_PAD = 12     # section 4: air between the window edge and the first
+                         #            disc. NOTE: section 3 of the same sheet
+                         #            says "titlebar padding 8 (shipped)", which
+                         #            is what the old hand-written file had.
+                         #            Section 4 is the one that states a button
+                         #            measurement on purpose and scales it, so
+                         #            12 is what is built. Flagged for Royce.
+MAX_SQUARE = 7           # section 4: the maximise glyph is a 7x7 square
+MAX_SQUARE_RADIUS = 1.2  # section 4: with 1.2 rounded corners
+
+# The four button discs, as percentages of the theme's own ink.
+DISC_IDLE = {"ice": 10, "midnight": 12}          # section 4
+DISC_HOVER = {"ice": 16, "midnight": 18}         # section 4
+INACTIVE_OPACITY = 45                            # section 4: a window you are
+                                                 # not in draws its whole button
+                                                 # at 45%
+
+# Menu sizes. Section 5 says "keep the shipped Ice values", so these are the
+# numbers the old hand-written themerc-override had, unchanged.
+MENU_WIDTH = 240
+MENU_PADDING_X = 16
+MENU_PADDING_Y = 9
+MENU_SEPARATOR_MARGIN = 8
+MENU_FONT_SIZE = 19       # section 5: "row height = padding 9 + font 19"
+MENU_HEADER_FONT_SIZE = 15
+
+# The name labwc looks the button pictures up under. It appears here, in the
+# folder this program writes them to, and in rc.xml's <theme><name>. Those three
+# have to agree or the buttons simply do not appear.
+THEME_NAME = "Aquarius"
+
+
+def titlebar_padding_height(scale):
+    """
+    Work out the padding that gives us a 38px title bar.
+
+    labwc 0.20.2 has no "make the title bar this tall" setting — the key that
+    used to do it, titlebar.height, was removed, and the compositor now works
+    the height out for itself:
+
+        height = max(active font height, inactive font height,
+                     window.button.height)
+                 + 2 x window.titlebar.padding.height
+
+    The button disc (20 design px) is always taller than the title font (13
+    design px, so about 16px of line box), so the button height is what the
+    MAX picks, and the padding is the only free number left. Solving for it:
+
+        padding = (wanted height - button height) / 2
+
+    Integer division, so at some scales the finished bar is one pixel short of
+    the wanted number rather than one pixel over. The exact height this produces
+    is written into the generated file as a comment, so nobody has to redo this
+    arithmetic to find out what they got.
+    """
+    return max(0, (px(TITLEBAR_HEIGHT, scale) - px(BUTTON_DISC, scale)) // 2)
+
+
+# =============================================================================
+# themerc-override — every colour and size labwc draws with
+# =============================================================================
+# THE FILE FORMAT, IN THREE SENTENCES. One `key: value` per line. A line whose
+# FIRST character is # is a comment, and there is no end-of-line comment syntax
+# at all — labwc splits on the first colon and takes EVERYTHING after it as the
+# value, so `menu.width.min: 240   # why` sets the width to that whole string,
+# which is not a number, and labwc throws the setting away without a word.
+# Every explanation this program writes therefore goes on a line of its own.
+
+
+def build_themerc(palette, scheme, scale):
+    disc_idle = DISC_IDLE[scheme]
+    pad_y = titlebar_padding_height(scale)
+    achieved = px(BUTTON_DISC, scale) + 2 * pad_y
+
+    out = []
+
+    def comment(*lines):
+        for line in lines:
+            out.append("# " + line if line else "#")
+
+    def setting(key, value):
+        out.append("%s: %s" % (key, value))
+
+    def blank():
+        out.append("")
+
+    comment(
+        "=" * 75,
+        "GENERATED FILE — DO NOT EDIT. Your changes will be thrown away.",
+        "=" * 75,
+        "",
+        "Written by %s" % os.path.abspath(__file__),
+        "out of the shell's own palette.",
+        "",
+        "  theme      : %s" % scheme,
+        "  palette    : theme/%s.qml" % scheme.capitalize(),
+        "  AQ_UI_SCALE: %s" % ("%g" % scale),
+        "",
+        "TO CHANGE A COLOUR, edit theme/Ice.qml or theme/Midnight.qml and log",
+        "back in. There is no second copy of the palette to keep in step any",
+        "more; this file IS the second copy, and it is made, not typed.",
+        "",
+        "Colours are written labwc's way, #rrggbbaa, with the opacity LAST. The",
+        "QML writes the same colour #aarrggbb, with the opacity first.",
+        "=" * 75,
+    )
+    blank()
+
+    # -- the desktop right-click menu -----------------------------------------
+    comment(
+        "-" * 75,
+        "The menu that opens when you right-click the wallpaper",
+        "-" * 75,
+        "It should read as the same object as the shell's own menu under the",
+        "Aquarius mark: one card, one hairline around it, and the row under the",
+        "pointer lit with a wash of the accent.",
+    )
+    setting("menu.width.min", px(MENU_WIDTH, scale))
+    setting("menu.width.max", px(MENU_WIDTH, scale))
+    setting("menu.border.width", px(BORDER_WIDTH, scale))
+    setting("menu.border.color", qml_to_labwc(palette["lineStrong"]))
+    setting("menu.items.padding.x", px(MENU_PADDING_X, scale))
+    setting("menu.items.padding.y", px(MENU_PADDING_Y, scale))
+    setting("menu.items.bg.color", qml_to_labwc(palette["surface"]))
+    setting("menu.items.text.color", qml_to_labwc(palette["ink"]))
+    setting("menu.items.active.bg.color", qml_to_labwc(palette["accentWash"]))
+    setting("menu.items.active.text.color", qml_to_labwc(palette["ink"]))
+    setting("menu.separator.width", px(BORDER_WIDTH, scale))
+    setting("menu.separator.color", qml_to_labwc(palette["line"]))
+    setting("menu.separator.padding.width", px(MENU_SEPARATOR_MARGIN, scale))
+    setting("menu.separator.padding.height", px(MENU_SEPARATOR_MARGIN, scale))
+    setting("menu.title.bg.color", qml_to_labwc(palette["surfaceAlt"]))
+    setting("menu.title.text.color", qml_to_labwc(palette["inkSoft"]))
+    setting("menu.title.text.justify", "Left")
+    blank()
+
+    # -- the window frame ------------------------------------------------------
+    comment(
+        "-" * 75,
+        "The title bar and the border around every window",
+        "-" * 75,
+        "A window frame is chrome, and chrome that draws attention to itself is",
+        "chrome you end up looking at. So: the panel colour for the window you",
+        "are in, one step down the surface ladder for the ones you are not, and",
+        "no accent colour anywhere.",
+        "",
+        "The window switcher (the overlay while Super+Tab is held) is not given",
+        "keys of its own: labwc already inherits its background, its border and",
+        "its text colour from the four lines below.",
+    )
+    setting("border.width", px(BORDER_WIDTH, scale))
+    setting("window.active.border.color", qml_to_labwc(palette["lineStrong"]))
+    setting("window.inactive.border.color", qml_to_labwc(palette["line"]))
+    setting("window.active.title.bg.color", qml_to_labwc(palette["panel"]))
+    setting("window.inactive.title.bg.color", qml_to_labwc(palette["surfaceAlt"]))
+    setting("window.active.label.text.color", qml_to_labwc(palette["ink"]))
+    setting("window.inactive.label.text.color", qml_to_labwc(palette["inkMute"]))
+    setting("window.label.text.justify", "Center")
+    blank()
+
+    # -- the buttons -----------------------------------------------------------
+    comment(
+        "-" * 75,
+        "How much room the round window buttons get",
+        "-" * 75,
+        "The buttons themselves are PICTURES, not colours: this program draws",
+        "one SVG per button per state into the theme folder, and each picture",
+        "already contains its own disc and its own glyph. The four numbers here",
+        "only say how much room labwc gives each picture and how far apart they",
+        "sit.",
+        "",
+        "window.button.hover.bg.color is deliberately absent. labwc paints that",
+        "wash only when a button has NO hover picture of its own, and we ship a",
+        "hover picture for every button — so setting it would describe a thing",
+        "that never happens.",
+        "",
+        "⚠️ THE TITLE BAR'S HEIGHT IS NOT A SETTING IN labwc 0.20. The key that",
+        "used to do it, titlebar.height, was removed; labwc now works the height",
+        "out as",
+        "",
+        "    max(font height, window.button.height) + 2 x padding.height",
+        "",
+        "so the padding below is chosen to land on the design's %d px." % TITLEBAR_HEIGHT,
+        "At this scale that gives a title bar of %d px." % achieved,
+    )
+    setting("window.button.width", px(BUTTON_DISC, scale))
+    setting("window.button.height", px(BUTTON_DISC, scale))
+    setting("window.button.spacing", px(BUTTON_SPACING, scale))
+    setting("window.titlebar.padding.width", px(BUTTON_EDGE_PAD, scale))
+    setting("window.titlebar.padding.height", pad_y)
+    blank()
+
+    comment(
+        "-" * 75,
+        "The one thing below that is NOT about our own buttons",
+        "-" * 75,
+        "If a button picture ever fails to load, labwc falls back to a built-in",
+        "one-colour glyph and paints its own hover wash behind it. These three",
+        "lines make that fallback look like the rest of the design rather than",
+        "like Openbox — a round wash in the theme's ink, and the glyph in the",
+        "same two inks as the window's title.",
+    )
+    setting(
+        "window.active.button.unpressed.image.color", qml_to_labwc(palette["ink"])
+    )
+    setting(
+        "window.inactive.button.unpressed.image.color",
+        qml_to_labwc(palette["inkMute"]),
+    )
+    setting("window.button.hover.bg.color", at_percent(palette["ink"], disc_idle))
+    setting("window.button.hover.bg.corner-radius", px(BUTTON_DISC, scale) // 2)
+
+    return "\n".join(out) + "\n"
+
+
+# =============================================================================
+# THE BUTTONS — one small SVG per button, per state
+# =============================================================================
+# labwc looks for these in a THEME folder rather than beside its settings, and
+# it looks for them by exact name:
+#
+#   close-active.svg          the window you are in, pointer elsewhere
+#   close_hover-active.svg    the window you are in, pointer on the button
+#   close-inactive.svg        a window you are not in
+#   close_hover-inactive.svg  a window you are not in, pointer on the button
+#
+# and the same four for `iconify` (minimise), `max` (maximise) and
+# `max_toggled` (the maximise button while the window IS maximised).
+#
+# THE DESIGN CALLS FOR A THIRD STATE, PRESSED, AND labwc HAS NO SUCH STATE.
+# There is no close_pressed-active.svg in labwc 0.20.2 — its button states are
+# default, hover, toggled and rounded, and the source says a pressed state may
+# be added "in future". So a button held down looks like a hovered one. Nothing
+# here pretends otherwise.
+#
+# max_toggled is drawn with the SAME glyph as max, because the design sheet does
+# not draw a "restore" glyph and inventing one would be a design decision. The
+# alternative — leaving it out — is worse: labwc would fall back to its own
+# built-in bare bitmap with no disc behind it, and one button would visibly not
+# match the other two.
+#
+# The pictures are SVG rather than PNG on purpose. labwc looks for png first,
+# then svg, then xbm; our labwc is built with rsvg (the build checks for
+# "+rsvg"), and an SVG is re-drawn at whatever size the button is AND at the
+# monitor's own scale, so one file is sharp on every screen. An SVG also keeps
+# its own colours — only .xbm files get re-coloured by the themerc — which is
+# what makes a red close button possible at all.
+
+SVG_HEAD = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    "<!-- GENERATED by generate-theme. Do not edit. -->\n"
+    "<!-- {what} -->\n"
+    '<svg xmlns="http://www.w3.org/2000/svg" width="{box}" height="{box}" '
+    'viewBox="0 0 {box} {box}">\n'
+)
+
+
+def glyph_paths(kind, colour, stroke):
+    """
+    The lines that make one glyph, drawn inside a 20-unit square.
+
+    The design gives the glyph a 12-unit box in the middle of the 20-unit disc,
+    a stroke of 1.8, and three shapes:
+
+        close     an X          two diagonals corner to corner of the box
+        iconify   a dash        one horizontal line across the middle
+        max       a square      7 x 7, corners rounded by 1.2
+    """
+    centre = BUTTON_DISC / 2.0
+    half = BUTTON_GLYPH_BOX / 2.0
+    common = (
+        'stroke="%s" stroke-width="%s" stroke-linecap="round" '
+        'stroke-linejoin="round" fill="none"' % (colour, stroke)
+    )
+
+    if kind == "close":
+        a, b = centre - half, centre + half
+        return [
+            '  <line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" %s/>' % (a, a, b, b, common),
+            '  <line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" %s/>' % (a, b, b, a, common),
+        ]
+
+    if kind == "iconify":
+        a, b = centre - half, centre + half
+        return [
+            '  <line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" %s/>'
+            % (a, centre, b, centre, common)
+        ]
+
+    # max, and max_toggled, which is deliberately the same picture
+    side = float(MAX_SQUARE)
+    origin = centre - side / 2.0
+    return [
+        '  <rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="%s" ry="%s" %s/>'
+        % (origin, origin, side, side, MAX_SQUARE_RADIUS, MAX_SQUARE_RADIUS, common)
+    ]
+
+
+def build_button_svg(palette, scheme, kind, hovered, active):
+    """One button picture, as SVG text."""
+    ink = rgb_of(palette["ink"])
+
+    if hovered and kind == "close":
+        # The one button that changes colour rather than weight, because the one
+        # button you can press by accident and not undo should say so.
+        disc_fill = rgb_of(palette["danger"])
+        disc_opacity = "1"
+        glyph_colour = rgb_of(palette["inkOnAccent"])
+        what = "close, pointer over it — the disc goes to the theme's danger colour"
+    else:
+        disc_fill = ink
+        disc_opacity = svg_opacity(
+            DISC_HOVER[scheme] if hovered else DISC_IDLE[scheme]
+        )
+        glyph_colour = ink
+        what = "%s, %s" % (kind, "pointer over it" if hovered else "at rest")
+
+    what += ", %s window, %s" % ("focused" if active else "unfocused", scheme)
+
+    body = [SVG_HEAD.format(what=what, box=BUTTON_DISC)]
+
+    # A window you are not in draws the WHOLE button faded, disc and glyph
+    # together, rather than fading the two separately — one group, one opacity.
+    if active:
+        body.append("  <g>\n")
+    else:
+        body.append('  <g opacity="%s">\n' % svg_opacity(INACTIVE_OPACITY))
+
+    radius = BUTTON_DISC / 2.0
+    body.append(
+        '  <circle cx="%.2f" cy="%.2f" r="%.2f" fill="%s" fill-opacity="%s"/>\n'
+        % (radius, radius, radius, disc_fill, disc_opacity)
+    )
+    for line in glyph_paths(kind, glyph_colour, BUTTON_STROKE):
+        body.append(line + "\n")
+
+    body.append("  </g>\n</svg>\n")
+    return "".join(body)
+
+
+BUTTON_KINDS = ("close", "iconify", "max", "max_toggled")
+
+
+def button_files(palette, scheme):
+    """Every button picture for one theme: name -> SVG text."""
+    files = {}
+    for kind in BUTTON_KINDS:
+        glyph = "max" if kind == "max_toggled" else kind
+        for hovered in (False, True):
+            for active in (True, False):
+                name = "%s%s-%s.svg" % (
+                    kind,
+                    "_hover" if hovered else "",
+                    "active" if active else "inactive",
+                )
+                files[name] = build_button_svg(
+                    palette, scheme, glyph, hovered, active
+                )
+    return files
+
+
+# =============================================================================
+# rc.xml — the same file, with three regions filled in
+# =============================================================================
+# The shipped rc.xml is a template. Three regions in it are marked:
+#
+#   <!-- AQ-GENERATED-BEGIN corner-radius -->
+#   ...anything...
+#   <!-- AQ-GENERATED-END corner-radius -->
+#
+# and this program replaces what is between them. Everything else — every key
+# binding, every comment, every blank line — is copied through byte for byte, so
+# the file a person reads in the repository and the file labwc reads at runtime
+# differ only in the three places that HAVE to differ.
+#
+# The markers are XML comments, so the template is valid XML on its own and the
+# drift check (which parses both repositories' copies and compares them element
+# by element) is unaffected by them.
+
+# Which side the buttons sit on, and in which order.
+#
+# labwc's <layout> splits left from right with exactly one colon. The design
+# says close is always the OUTERMOST button — furthest from the title — so on
+# the left it comes first and on the right it comes last.
+#
+# The labwc names are not the English ones: minimise is `iconify` and maximise
+# is `max`.
+BUTTON_LAYOUTS = {
+    "mac": "close,iconify,max:",
+    "windows": ":iconify,max,close",
+}
+
+
+def generated_region(name, body, indent):
+    lines = ["%s<!-- AQ-GENERATED-BEGIN %s -->" % (indent, name)]
+    lines.extend("%s%s" % (indent, line) for line in body)
+    lines.append("%s<!-- AQ-GENERATED-END %s -->" % (indent, name))
+    return "\n".join(lines)
+
+
+def fill_region(text, name, body):
+    """Replace one AQ-GENERATED region, keeping the indentation it had."""
+    pattern = re.compile(
+        r"(?P<indent>[ \t]*)<!--\s*AQ-GENERATED-BEGIN\s+%s\s*-->.*?"
+        r"[ \t]*<!--\s*AQ-GENERATED-END\s+%s\s*-->" % (re.escape(name), re.escape(name)),
+        re.DOTALL,
+    )
+    match = pattern.search(text)
+    if not match:
+        die(
+            "rc.xml has no region marked '%s'.\n"
+            "This program fills in three regions of the shipped rc.xml, each\n"
+            "marked with a pair of comments:\n"
+            "    <!-- AQ-GENERATED-BEGIN %s -->\n"
+            "    <!-- AQ-GENERATED-END %s -->\n"
+            "One of them is missing, so the setting it carries would silently\n"
+            "keep labwc's default." % (name, name, name)
+        )
+    return pattern.sub(
+        lambda _: generated_region(name, body, match.group("indent")), text, count=1
+    )
+
+
+def build_rc_xml(template, scale, buttons):
+    text = template
+
+    text = fill_region(
+        text,
+        "corner-radius",
+        ["<cornerRadius>%d</cornerRadius>" % px(CORNER_RADIUS, scale)],
+    )
+
+    text = fill_region(
+        text,
+        "titlebar-layout",
+        [
+            "<titlebar>",
+            "  <layout>%s</layout>" % BUTTON_LAYOUTS[buttons],
+            "</titlebar>",
+        ],
+    )
+
+    text = fill_region(
+        text,
+        "fonts",
+        [
+            '<font place="MenuItem">',
+            "  <name>Inter</name>",
+            "  <size>%d</size>" % px(MENU_FONT_SIZE, scale),
+            "</font>",
+            '<font place="MenuHeader">',
+            "  <name>Inter</name>",
+            "  <size>%d</size>" % px(MENU_HEADER_FONT_SIZE, scale),
+            "</font>",
+            '<font place="ActiveWindow">',
+            "  <name>Inter</name>",
+            "  <size>%d</size>" % px(TITLE_FONT_SIZE, scale),
+            "</font>",
+            '<font place="InactiveWindow">',
+            "  <name>Inter</name>",
+            "  <size>%d</size>" % px(TITLE_FONT_SIZE, scale),
+            "</font>",
+        ],
+    )
+
+    return text
+
+
+# =============================================================================
+# GTK — the one place AquariusOS colours somebody else's windows
+# =============================================================================
+# AquariusOS's posture is to work WITH GNOME's grain: accent colour, wallpaper,
+# fonts, a few extensions, and then stop. No GNOME Shell theme, no GTK theme, no
+# libadwaita patching. This is the ONE documented exception, and it is two
+# properties wide.
+#
+# WHY IT IS NEEDED. In dark mode the shell turns Midnight — a deep navy — and
+# libadwaita's own dark theme is a neutral near-black. Put a Files window on a
+# Midnight desktop and the window is grey against navy: not broken, but plainly
+# from a different design. Two colours fix it, and nothing else here is touched:
+# no text colours, no buttons, no widget styling, no borders. Everything else
+# still comes from libadwaita and still tracks it.
+#
+# WHY IT IS WRITTEN INTO THE USER'S HOME RATHER THAN SHIPPED IN /etc.
+# The colours must apply in DARK ONLY — a navy window on the Ice light desktop
+# would be exactly the same mistake in the other direction. GTK's CSS has no
+# "only when dark" selector: a stylesheet is loaded or it is not. A file shipped
+# system-wide would therefore be on all the time. So this program puts the file
+# in place when the machine goes dark and takes it away again when it goes
+# light, which is the design sheet's own stated fallback.
+#
+# ⚠️ IT WILL NOT OVERWRITE A FILE IT DID NOT WRITE. If gtk.css already exists
+# and does not carry the marker line below, this program leaves it exactly where
+# it is and says so. Somebody's own GTK customisation is theirs.
+
+GTK_MARKER = "AquariusOS Midnight — generated by generate-theme"
+
+
+def build_gtk_css(palette):
+    return "\n".join(
+        [
+            "/* %s. Do not edit; it is rewritten on every light/dark flip. */"
+            % GTK_MARKER,
+            "/*",
+            " * Two properties, and no more. This is the ONE exception to",
+            " * AquariusOS's no-GTK-theme posture, and it exists so that a Files",
+            " * or Settings window on a Midnight desktop is navy like everything",
+            " * else rather than libadwaita's neutral near-black.",
+            " *",
+            " * Colours come from the shell's theme/Midnight.qml. Nothing else in",
+            " * this file, ever — no text colours, no widget styling.",
+            " */",
+            "window { background-color: %s; }" % rgb_of(palette["bg"]),
+            "headerbar { background-color: %s; }" % rgb_of(palette["panel"]),
+            "",
+        ]
+    )
+
+
+def apply_gtk_css(gtk_root, palette, scheme, report):
+    wanted = build_gtk_css(palette) if scheme == "midnight" else None
+
+    for folder in ("gtk-4.0", "gtk-3.0"):
+        path = os.path.join(gtk_root, folder, "gtk.css")
+
+        existing = None
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as handle:
+                    existing = handle.read()
+            except OSError as problem:
+                report("  note   could not read %s (%s); leaving it alone" % (path, problem))
+                continue
+
+            if GTK_MARKER not in existing:
+                report(
+                    "  note   %s was not written by us, so it is left alone."
+                    % path
+                )
+                report(
+                    "         The Midnight window colour is skipped for %s." % folder
+                )
+                continue
+
+        if wanted is None:
+            if existing is not None:
+                os.remove(path)
+                report("  light  removed %s" % path)
+            continue
+
+        write_file(path, wanted)
+        report("  dark   wrote %s" % path)
+
+
+# =============================================================================
+# PLUMBING
+# =============================================================================
+
+
+def die(message):
+    sys.stderr.write("\n")
+    sys.stderr.write("generate-theme: %s\n" % message)
+    sys.stderr.write("\n")
+    sys.exit(1)
+
+
+def write_file(path, text, mode=0o644):
+    folder = os.path.dirname(path)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+    # Written to a temporary name and moved into place, so that a labwc which is
+    # reading the folder at the same moment never sees half a file.
+    temporary = path + ".new"
+    with open(temporary, "w", encoding="utf-8") as handle:
+        handle.write(text)
+    os.chmod(temporary, mode)
+    os.replace(temporary, path)
+
+
+def read_file(path):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return handle.read()
+    except OSError as problem:
+        die("could not read %s: %s" % (path, problem))
+
+
+def default_scale():
+    raw = os.environ.get("AQ_UI_SCALE", "")
+    if not raw:
+        return 1.0
+    try:
+        value = float(raw)
+    except ValueError:
+        return 1.0
+    if not value > 0:
+        return 1.0
+    # The same clamp theme/Theme.qml applies: a typo of 125 gives a comically
+    # large desktop that is still usable and still fixable, not one whose title
+    # bars are taller than the monitor.
+    return min(3.0, max(0.5, value))
+
+
+def default_buttons(conf_home):
+    """
+    Which side the window buttons sit on.
+
+    It is NOT a setting of its own, and that is deliberate: it follows the one
+    choice Royce already made in the Welcome window. `aq keys mac` puts the
+    buttons on the left, where a Mac has them; `aq keys windows` puts them on
+    the right. Both live in the same one-line file, and a missing file means
+    Mac, because Mac is the AquariusOS default. (The same rule is written in
+    /usr/bin/aq and in /usr/libexec/aquarius-keys-run; all three have to agree.)
+    """
+    path = os.path.join(conf_home, "aquarius", "keys.conf")
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            text = handle.read()
+    except OSError:
+        return "mac"
+
+    found = re.findall(r"^\s*mode\s*=\s*([A-Za-z]+)", text, re.MULTILINE)
+    if found and found[-1].lower() in BUTTON_LAYOUTS:
+        return found[-1].lower()
+    return "mac"
+
+
+def ask_the_portal():
+    """
+    Is this machine set to light or dark?
+
+    The same question services/SystemAppearance.qml asks, asked the same way:
+    the freedesktop appearance portal, which is the one cross-desktop standard
+    for it. 1 means dark, 2 means light, 0 means "no opinion" — and the answer
+    to "no opinion" is Ice, because a light desktop is the AquariusOS identity
+    decision.
+
+    If there is no portal, or no gdbus to ask with, the answer is Ice. A missing
+    portal must never be a broken-looking desktop.
+    """
+    command = [
+        "gdbus", "call", "--session",
+        "--dest", "org.freedesktop.portal.Desktop",
+        "--object-path", "/org/freedesktop/portal/desktop",
+        "--method", "org.freedesktop.portal.Settings.ReadOne",
+        "org.freedesktop.appearance", "color-scheme",
+    ]
+    try:
+        result = subprocess.run(
+            command, capture_output=True, text=True, timeout=5, check=False
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "ice"
+
+    match = re.search(r"uint32\s+(\d+)", result.stdout or "")
+    if match and match.group(1) == "1":
+        return "midnight"
+    return "ice"
+
+
+def here():
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def find_palette_dir(template_dir):
+    """
+    Where Ice.qml and Midnight.qml are, on whichever machine this is.
+
+    This program runs in two quite different places and the palette is not in
+    the same spot in both:
+
+      a clone of aquarius-shell   session/labwc/generate-theme, and the palette
+                                  two folders up, in theme/
+      an installed AquariusOS     /usr/share/aquarius/labwc/generate-theme, and
+                                  the palette in /usr/share/aquarius/shell/theme
+                                  — a different folder, because the OS fetches
+                                  the whole shell at a pinned commit and puts it
+                                  somewhere of its own.
+
+    So rather than one path that is right in one place and wrong in the other,
+    this looks in a short list and takes the first that actually has the file.
+    --palette-dir, and then AQ_PALETTE_DIR, win over both, which is what makes
+    "point it at my working copy for five minutes" possible.
+    """
+    candidates = [
+        os.environ.get("AQ_PALETTE_DIR", ""),
+        os.path.join(template_dir, "..", "..", "theme"),
+        "/usr/share/aquarius/shell/theme",
+        "/usr/local/share/aquarius-shell/theme",
+        "/usr/share/aquarius-shell/theme",
+    ]
+    for candidate in candidates:
+        if candidate and os.path.isfile(os.path.join(candidate, "Ice.qml")):
+            return candidate
+
+    die(
+        "the colour palette could not be found.\n"
+        "Looked for a folder containing Ice.qml in:\n"
+        + "".join(
+            "    %s\n" % (c or "$AQ_PALETTE_DIR (unset)") for c in candidates
+        )
+        + "\n"
+        "That folder is theme/ in the aquarius-shell repository. Without it\n"
+        "there is nothing to build a window frame out of.\n"
+        "Fix: pass --palette-dir, or set AQ_PALETTE_DIR."
+    )
+
+
+def main(argv):
+    parser = argparse.ArgumentParser(
+        description="Build labwc's look out of the Aquarius shell's palette.",
+    )
+    parser.add_argument(
+        "--scheme", default="auto", choices=("auto", "ice", "midnight"),
+        help="which palette to build. 'auto' asks the appearance portal.",
+    )
+    parser.add_argument(
+        "--scale", type=float, default=None,
+        help="the size multiplier. Defaults to AQ_UI_SCALE, or 1.",
+    )
+    parser.add_argument(
+        "--buttons", default="auto", choices=("auto", "mac", "windows"),
+        help="which side the window buttons sit on. 'auto' reads keys.conf.",
+    )
+    parser.add_argument(
+        "--palette-dir", default=None,
+        help="the folder holding Ice.qml and Midnight.qml.",
+    )
+    parser.add_argument(
+        "--template-dir", default=None,
+        help="the folder holding the shipped rc.xml, menu.xml and autostart.",
+    )
+    parser.add_argument(
+        "--config-out", default=None,
+        help="where to write the folder labwc is started with.",
+    )
+    parser.add_argument(
+        "--theme-out", default=None,
+        help="where to write the button pictures.",
+    )
+    parser.add_argument(
+        "--gtk-out", default=None,
+        help="where to write (or remove) the Midnight GTK colours.",
+    )
+    parser.add_argument(
+        "--reconfigure", action="store_true",
+        help="tell a running labwc to re-read its files when this is done.",
+    )
+    parser.add_argument(
+        "--quiet", action="store_true",
+        help="print nothing unless something goes wrong.",
+    )
+    args = parser.parse_args(argv)
+
+    def report(line):
+        if not args.quiet:
+            print(line)
+
+    config_home = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    data_home = os.environ.get("XDG_DATA_HOME") or os.path.expanduser(
+        "~/.local/share"
+    )
+
+    template_dir = args.template_dir or here()
+    palette_dir = args.palette_dir or find_palette_dir(template_dir)
+    config_out = args.config_out or os.path.join(config_home, "aquarius", "labwc")
+    theme_out = args.theme_out or os.path.join(
+        data_home, "themes", THEME_NAME, "labwc"
+    )
+    gtk_out = args.gtk_out or config_home
+
+    scheme = args.scheme if args.scheme != "auto" else ask_the_portal()
+    scale = args.scale if args.scale is not None else default_scale()
+    buttons = args.buttons if args.buttons != "auto" else default_buttons(config_home)
+
+    palette_file = os.path.join(palette_dir, "%s.qml" % scheme.capitalize())
+    palette = read_palette(palette_file)
+
+    report("=== The Aquarius window frame ===")
+    report("  theme    : %s  (%s)" % (scheme, palette_file))
+    report("  size     : %g x" % scale)
+    report("  buttons  : %s  (%s)" % (buttons, BUTTON_LAYOUTS[buttons]))
+    report("  settings : %s" % config_out)
+    report("  pictures : %s" % theme_out)
+
+    # -- the settings folder ---------------------------------------------------
+    write_file(
+        os.path.join(config_out, "themerc-override"),
+        build_themerc(palette, scheme, scale),
+    )
+    write_file(
+        os.path.join(config_out, "rc.xml"),
+        build_rc_xml(read_file(os.path.join(template_dir, "rc.xml")), scale, buttons),
+    )
+
+    # menu.xml, autostart, shutdown and environment never change at runtime, so
+    # they are copied straight across. They are copied rather than left behind
+    # because labwc reads ALL of its files from the one folder it was started
+    # with — a folder holding only some of them would silently lose the desktop
+    # menu, or the line that starts the shell.
+    for name in ("menu.xml", "autostart", "shutdown", "environment"):
+        source = os.path.join(template_dir, name)
+        if not os.path.exists(source):
+            continue
+        destination = os.path.join(config_out, name)
+        os.makedirs(config_out, exist_ok=True)
+        shutil.copyfile(source, destination)
+        # autostart and shutdown are run by labwc, so they keep the execute bit.
+        os.chmod(destination, 0o755 if name in ("autostart", "shutdown") else 0o644)
+
+    # -- the button pictures ---------------------------------------------------
+    # Written into a labwc THEME folder, because that is the only place labwc
+    # looks for them. Anything already there from an earlier run and no longer
+    # wanted is removed, so a renamed button cannot linger.
+    os.makedirs(theme_out, exist_ok=True)
+    wanted = button_files(palette, scheme)
+    for name, text in sorted(wanted.items()):
+        write_file(os.path.join(theme_out, name), text)
+    for name in sorted(os.listdir(theme_out)):
+        if name.endswith(".svg") and name not in wanted:
+            os.remove(os.path.join(theme_out, name))
+    report("  drew %d button pictures" % len(wanted))
+
+    # -- the GTK exception -----------------------------------------------------
+    apply_gtk_css(gtk_out, palette, scheme, report)
+
+    # -- tell labwc ------------------------------------------------------------
+    if args.reconfigure:
+        try:
+            subprocess.run(
+                ["labwc", "--reconfigure"], check=False, timeout=10,
+                capture_output=True,
+            )
+            report("  told labwc to re-read its files")
+        except (OSError, subprocess.SubprocessError) as problem:
+            # Not a failure. At login there is no labwc running yet, and that is
+            # the normal case rather than a fault.
+            report("  note   could not reconfigure labwc (%s)" % problem)
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

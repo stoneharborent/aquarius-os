@@ -1,7 +1,8 @@
 # Desktop identity — the pointer, the icons and the sounds
 
 *Phase R5 polish. Written 2026-09-05.*
-*Updated 2026-09-06: the app icons are now ours. Everything else stands.*
+*Updated 2026-09-06: the app icons are now ours, and so is the window frame.
+Everything else stands.*
 
 > **⚠️ WHAT CHANGED ON 2026-09-06, BEFORE YOU READ THE REST.** This page was
 > written to explain why AquariusOS pointed at *other people's* themes for the
@@ -15,6 +16,12 @@
 > day, and both themes say `Inherits=Adwaita,hicolor`, so every other icon on the
 > machine still comes from GNOME. So the reasoning below about not drawing a
 > whole icon set is still exactly right — we did not draw one.
+>
+> **The window frame is ours too, as of the same day** — the title bar, the
+> border, the round window buttons and the desktop right-click menu. It is not
+> a *theme* in the sense this page warns about: it is generated from the shell's
+> own palette every time the desktop starts. See
+> [The window frame](#the-window-frame) further down.
 >
 > The pointer is still Adwaita and the sounds are still freedesktop. Those two
 > seams are still open, and everything this page says about them still holds.
@@ -191,6 +198,145 @@ A better answer, if this ever comes up, is to set `Inherits=Papirus,Adwaita,hico
 in our own two `index.theme` files instead — that keeps the Aquarius icons and
 gets Papirus's coverage underneath them.
 
+## The window frame
+
+*Added 2026-09-06.*
+
+### What it is
+
+Four things on an Aquarius screen are drawn by **labwc**, the window manager,
+and not by the shell:
+
+- the **title bar** at the top of every window;
+- the **border** around it;
+- the round **window buttons** — close, minimise, maximise;
+- the **menu** that opens when you right-click the wallpaper.
+
+Until 2026-09-06 labwc drew all four in its own default Openbox grey, next to a
+shell that is entirely Ice blue. Royce's bench note was four words: *"the right
+click menu does not have a design yet"*.
+
+### Why this is not the kind of theme this page warns about
+
+Everything above about not chasing GNOME's internals still stands. This is a
+different situation: **labwc is ours**. We chose it, we compile it, and nothing
+upstream is going to move underneath us. There is no treadmill because there is
+nobody else's design to keep up with.
+
+### How it works — generated, not typed
+
+The colours of an Aquarius desktop live in exactly one place: the shell's
+`theme/Ice.qml` (light) and `theme/Midnight.qml` (dark). labwc is a C program
+reading flat text files and cannot read QML, so a program stands between them:
+
+```
+/usr/share/aquarius/labwc/generate-theme
+```
+
+It reads whichever palette is in force and writes out:
+
+| What it writes | Where |
+|---|---|
+| `themerc-override` — every colour and size labwc draws with | `~/.config/aquarius/labwc/` |
+| `rc.xml` — with three settings filled in | `~/.config/aquarius/labwc/` |
+| `menu.xml`, `autostart`, `shutdown`, `environment` | copied there unchanged |
+| the round window buttons, as SVG | `~/.local/share/themes/Aquarius/labwc/` |
+| the dark-mode GTK window colour | `~/.config/gtk-4.0/gtk.css` + `gtk-3.0` |
+
+`/usr/share/aquarius/labwc/` is the **template**. `/usr/bin/aquarius-session`
+runs the generator before starting labwc and then starts labwc with the
+generated folder. If generating ever fails, it starts labwc with the template
+folder and says so in `~/.local/state/aquarius-session/session.log` — you get a
+desktop either way.
+
+The files go in your home rather than in `/usr` for two reasons, and both are
+plain: `/usr` on an image-based operating system is read-only, and these files
+have to be **rewritten while the desktop is running** — every time the machine
+goes light or dark, and every time somebody moves the window buttons to the
+other side.
+
+### When it re-runs
+
+1. **At login**, from `/usr/bin/aquarius-session`.
+2. **When the machine goes light or dark.** The shell's
+   `services/SystemAppearance.qml` runs it again and then runs
+   `labwc --reconfigure`, which is labwc's own "re-read your files now" command.
+   No logout.
+3. **When you run `aq keys mac` or `aq keys windows`**, which is what moves the
+   window buttons from one side to the other.
+
+### How to change a colour
+
+Edit `theme/Ice.qml` or `theme/Midnight.qml` **in the aquarius-shell
+repository**. Nowhere else. There is no second copy of the palette to keep in
+step, because the second copy is made rather than typed.
+
+### The window buttons follow the Mac / Windows choice — one switch, not two
+
+Royce's decision, 2026-09-06: which side the buttons sit on is **not a setting
+of its own**. It follows the answer given in the Welcome window.
+
+| `aq keys …` | Keyboard | Window buttons |
+|---|---|---|
+| `mac` (the default) | Copy is ⌘C | close, minimise, maximise on the **LEFT** |
+| `windows` | Copy is Ctrl+C | minimise, maximise, close on the **RIGHT** |
+
+Close is the outermost button either way — furthest from the title — because it
+is the one press you cannot take back.
+
+`aq keys` sets it on **both** desktops in one go: GNOME through its
+`org.gnome.desktop.wm.preferences button-layout` setting, and the Aquarius
+Desktop by re-running the generator. That matters, because a thing set for one
+desktop and not the other looks like a bug in whichever one you happen to be
+using — which is exactly how Command+Tab was lost earlier the same day.
+
+### The one exception to the no-GTK-theme posture
+
+`build_files/50-aquarius-desktop.sh` says AquariusOS ships no GTK theme. There
+is now one narrow, named exception, and it is **two properties, in dark mode
+only**:
+
+```css
+window    { background-color: #0B1220; }   /* Midnight bg    */
+headerbar { background-color: #152033; }   /* Midnight panel */
+```
+
+**Why.** In dark mode the shell turns Midnight, a deep navy, while libadwaita's
+own dark theme is a neutral near-black. A Files window on a Midnight desktop is
+grey against navy: not broken, plainly from a different design. Two colours fix
+it.
+
+**Why it is not a treadmill.** No text colours, no buttons, no borders, no
+widget styling, and no selector that names a libadwaita internal — the two most
+stable selectors in GTK, set to two colours out of our own palette. If
+libadwaita changes everything else about how a window is drawn, these two lines
+are still either right or harmless. The build prints the exact `gtk4`, `gtk3`
+and `libadwaita` versions the assumption was made against.
+
+**Why it is written into your home rather than shipped in `/etc`.** It must
+apply in **dark only**, and GTK's CSS has no "only when dark" selector — a
+stylesheet is loaded or it is not. A file shipped system-wide would be on all
+the time, and a navy window on the Ice light desktop is the same mistake in the
+other direction. So the generator writes the file when the machine goes dark and
+removes it when it goes light. It also refuses to touch a `gtk.css` it did not
+write itself, so anybody's own GTK customisation is left alone.
+
+### Two things labwc 0.20 cannot do
+
+Written down so they are not rediscovered as bugs:
+
+- **There is no "pressed" button state.** The design asks for a darker disc
+  while the mouse button is held down. labwc's button states are default, hover,
+  toggled and rounded, and nothing else — there is no `close_pressed-active.svg`
+  to ship. A button held down therefore looks like a hovered one. Nothing fakes
+  it.
+- **There is no title-bar height setting.** `titlebar.height` was removed from
+  labwc; the height is now `max(font height, button height) + 2 × padding`. The
+  generator sets the button height (20) and solves for the padding (9), which is
+  what makes the 38px title bar the design asks for. At 1.25× scale the
+  arithmetic lands one pixel short — 47 rather than 48 — because half of an odd
+  number is not a whole number of pixels.
+
 ## How CI proves it
 
 The **"Check the desktop comes up as Ice-light AquariusOS"** step in
@@ -216,6 +362,21 @@ the **"Check the Aquarius app icons"** step, and
 time as well, so a missing theme fails the build before the image is even
 assembled.
 
+The **window frame** is proved by running the generator rather than by reading a
+file, because there is no hand-written file left to read.
+`build_files/55-aquarius-session.sh` builds the theme four times inside the
+image — Ice and Midnight, at 1× and at 1.25× — and reads back every value the
+design sheet names: the title-bar colours, the border hairlines, the button
+sizes that add up to a 38px bar, the menu colours, the corner radius, both
+button layouts, all sixteen button pictures in each of the four combinations,
+and the two-property GTK file (which must exist for Midnight and must *not*
+exist for Ice). Never a timestamp — the tooling that packages a bootable image
+flattens every clock.
+
+`build_files/check-labwc-drift.sh` does the same thing across the two
+repositories: it runs **both** copies of the generator, the shell's and this
+image's, against the same palette, and fails if what they produce differs.
+
 ## Bench check for Royce
 
 After rebasing the bench to an image built from this branch:
@@ -228,6 +389,34 @@ After rebasing the bench to an image built from this branch:
 3. **Trigger a sound.** Plug in a USB drive, or let a notification arrive — you
    should hear the standard freedesktop cue. If you would rather have silence,
    Settings → Sound → *System Sounds* off, and it stays off.
+
+### And for the window frame
+
+Do these in the Aquarius Desktop (not GNOME):
+
+4. **Open a window and look at its title bar.** It should be the same colour as
+   the bar at the top of the screen, with the title centred, a hairline border,
+   and three round buttons. Click another window: the one you left should fade —
+   its title, its border and its buttons all go quieter.
+5. **Hover the buttons.** The disc under minimise and maximise should deepen
+   slightly. The disc under **close** should go red, with a white ×. Holding the
+   mouse down will not darken it further; labwc has no pressed state, and that
+   is expected rather than a fault.
+6. **Right-click the wallpaper.** The menu should look like the menu under the
+   Aquarius mark in the top bar — same card colour, same hairline, same accent
+   wash on the row under the pointer, same typeface.
+7. **Flip the colour scheme in Quick Settings.** A Resolve window's title bar
+   and the desktop menu should change with the shell, in place, **without
+   logging out**. In dark mode a Files window should be navy rather than grey.
+   Flip back and it should return to Ice.
+8. **Run `aq keys windows` in a terminal.** The buttons should move to the right
+   of the title bar — in a GTK window *and* in the labwc frame — without logging
+   out. `aq keys mac` puts them back on the left.
+
+If step 7 or step 8 does nothing, the first place to look is
+`~/.local/state/aquarius-session/session.log`, and the second is
+`~/.config/aquarius/labwc/themerc-override`, which is the file the generator
+wrote and which says at the top which theme and which size it was built for.
 
 Nothing here should look dramatic — that is the point. It should look
 *intentional and finished* rather than like leftover Fedora defaults, and it
