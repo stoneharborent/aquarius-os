@@ -54,6 +54,14 @@
 # AquariusOS is plain Fedora now and has none of those sources, so the standard
 # tool works. This whole workflow is one action call.
 #
+# ⚠️ 2026-09-05: that is no longer completely true. The R4 gaming step adds Fyra
+# Labs' Terra repository (Steam's home), and because the ISO builder depsolves
+# against the image's own repo files it fails on Terra's file:// GPG key — the
+# same class of failure as #1188. The ISO build is currently BLOCKED by this. It
+# is not a branding problem; see docs/restart/installer.md ("Known blocker") for
+# the cause and the fix options. Everything else (identity, in-image artwork,
+# CI checks) is in place and will apply the moment the ISO can build again.
+#
 # A note on that tool: bootc-image-builder was archived in June 2026 and folded
 # into osbuild's image-builder. The old form still works through a compatibility
 # wrapper and it is what Universal Blue's own template still uses, so it is what

@@ -17,6 +17,13 @@
 # plain Fedora now and has none of them, so the ordinary Fedora installer works
 # and Titanoboa is gone from this branch.
 #
+# ⚠️ UPDATE 2026-09-05: that "none of them" is no longer strictly true. The R4
+# gaming step adds Fyra Labs' Terra repository (where Steam comes from), and the
+# ISO builder — which depsolves against this image's own repo files — trips over
+# Terra's file:// GPG key, the SAME class of failure as #1188. The ISO build
+# fails until that is fixed. It is not a branding problem and is written up, with
+# the fix options, in docs/restart/installer.md ("Known blocker").
+#
 # ------------------------------------------------------------------------------
 # WHAT AN "ANACONDA ISO" ACTUALLY DOES
 # ------------------------------------------------------------------------------

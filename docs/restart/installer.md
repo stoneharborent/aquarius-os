@@ -19,6 +19,64 @@ purpose rather than by accident.
 
 ---
 
+## ⚠️ Known blocker (2026-09-05): the ISO does not build while Terra is in the image
+
+Before any of the branding below matters, there is a bigger problem to record:
+**as of 2026-09-05 the ISO build fails outright**, and the cause is instructive.
+
+The first ISO built after the gaming layer landed
+(run <https://github.com/stoneharborent/aquarius-os/actions/runs/34012037986>)
+failed at the "Build the ISO" step with:
+
+```
+Errors during downloading metadata for repository 'terra':
+  - Curl error (37): Could not read a file:// file for
+    file:///etc/pki/rpm-gpg/RPM-GPG-KEY-terra44 [Couldn't open file …]
+RepoError: Failed to retrieve GPG key for repo 'terra'
+error: cannot build manifest: cannot depsolve
+```
+
+This is the mechanism from the section below, caught in the act. To assemble the
+installer, image-builder **reads this image's repository files and depsolves
+against them.** The R4 gaming step (`build_files/68-gaming.sh`) adds Fyra Labs'
+**Terra** repository (that is where Steam comes from) and leaves it switched off
+for normal use — but the repo file, and its `gpgkey=file://…` line, are still on
+the image. The installer depsolve tries to load every repo it finds, cannot open
+Terra's key file from inside its own container, and stops.
+
+This is the **same class of failure** as the Bazzite-era
+`osbuild/bootc-image-builder#1188` — the one `disk_config/iso.toml` and
+`build-iso.yml` say was left behind when we moved to "plain Fedora". It was left
+behind; then R4 re-introduced it by adding a third-party repo. Those two comments
+are now out of date and point here.
+
+**It is not caused by, and does not block, the branding work in this file** — the
+image build (with the corrected Anaconda artwork and the new CI checks) is green.
+It blocks only the ISO, and it would block *any* ISO regardless of branding.
+
+**The fix is its own task** (flagged separately), because it touches the gaming /
+repo layer and Terra's runtime behaviour, not branding. The candidate fixes, in
+order of preference:
+
+1. **Give the installer depsolve only the repos it needs.** image-builder's
+   config / newer flags can point the build at an explicit repo set (Fedora +
+   RPM Fusion) instead of scraping every `.repo` on the image. This leaves Terra
+   untouched at runtime and is the cleanest split. Needs verifying against the
+   `bootc-image-builder-action` version in use.
+2. **Make Terra's repo file safe for an external depsolver** — a reachable
+   `https` `gpgkey` instead of `file://`, or `gpgcheck` handled so a disabled
+   repo is genuinely skipped. Smaller change, but it edits the shipped repo file
+   and must be re-tested so per-command Steam installs still verify signatures.
+3. **Confirm `enabled=0` actually lands in the `.repo` file** and that this
+   image-builder version skips disabled repos. If it does, ensuring the flag is
+   written (not just set at runtime) may be the whole fix.
+
+Until one of those is done, an ISO cannot be produced from a gaming-enabled
+image. Everything else in this document (identity, the in-image artwork, the CI
+checks) is already in place and will apply the moment the ISO can build again.
+
+---
+
 ## What a person actually sees, screen by screen
 
 | When | What they see | Says AquariusOS? |
