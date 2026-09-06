@@ -65,8 +65,11 @@
   =============================================================================
     W-space     open or close the Aquarius search palette
     W-Return    a terminal
-    W-Tab       switch to the next window (hold Super, tap Tab)
-    W-S-Tab     switch to the previous window
+    W-Tab       open the Aquarius app switcher and step forward through it
+    W-S-Tab     the same, backwards
+    W-grave     cycle the windows of the app you are in, with no panel
+    A-Tab       the app switcher again, for the Windows keyboard style
+    A-S-Tab     the same, backwards
     W-S-e       leave the desktop and return to the login screen
 
   =============================================================================
@@ -217,37 +220,112 @@
       </action>
     </keybind>
 
+    <!-- ====================================================================== -->
+    <!-- BEGIN: the Aquarius app switcher. Added 2026-09-06.                     -->
+    <!-- ====================================================================== -->
     <!--
-      Switching windows with the Super key, so that Aquarius Keys' Mac mode
-      behaves the way a Mac does.
+      THE ONLY BLOCK IN THIS FILE THE APP SWITCHER OWNS. Everything it needs is
+      between this banner and the matching END banner further down, including
+      the one setting outside <keyboard>. Nothing else in the file was touched.
 
-      labwc already switches windows, on Alt+Tab, and that binding stays (it
-      comes from the <default /> above). This adds Super+Tab alongside it. The
-      reason is Aquarius Keys: in Mac mode the Command key is mapped to Super,
-      so a person pressing Command+Tab out of habit is really sending Super+Tab.
-      GNOME already does the right thing with that, so before this the same
-      keystroke worked on one AquariusOS desktop and did nothing on the other.
+      This block is the aquarius-shell repository's, copied across on
+      2026-09-06 — see the note about drift under the terminal binding above.
+      Change one, change both; build_files/check-labwc-drift.sh fails the build
+      if the two copies stop agreeing.
 
-      NextWindow and PreviousWindow are labwc's own actions for this, and they
-      are what Alt+Tab is bound to by default (labwc-actions(5), labwc 0.20).
-      They show the window switcher while the modifier is held, so holding Super
-      and tapping Tab walks along the list — the behaviour people expect from
-      this key. The Immediate variants skip that overlay and are meant for
-      bindings with no modifier, which is not this.
+      ======================================================================
+      WHAT THESE FIVE BINDINGS DO
+      ======================================================================
+      None of them launches a program. Each one sends a short message to the
+      shell that is ALREADY running, telling it to show its app switcher and
+      move the selection. `qs ipc call <target> <function>` is Quickshell's own
+      mechanism for that; the target "switcher" and its functions are declared
+      by the IpcHandler in the shell's components/switcher/AppSwitcher.qml.
 
-      These two bindings are the aquarius-shell repository's, copied across on
-      2026-09-06. They had been added there and never here, which is the same
-      drift that lost the right-click menu: this image ships its own hand-kept
-      copies of the labwc files, so a binding the shell repository gains does
-      not appear on a machine until somebody adds it here. Change one, change
-      both.
+      If a key seems to do nothing, ask the running shell what it offers:
+          qs ipc show
+
+      ======================================================================
+      WHY BOTH SUPER AND ALT ARE BOUND, ALL THE TIME
+      ======================================================================
+      AquariusOS asks "Mac or Windows?" once, at first login, and that answer
+      decides which physical key is which:
+
+        Mac style      Aquarius Keys swaps the two keys beside the space bar, so
+                       the key a Mac user reaches for with their thumb sends
+                       SUPER. Command+Tab arrives here as W-Tab. (The
+                       Windows-logo key becomes Option and sends Alt.)
+        Windows style  nothing is swapped and the remapper does not even run.
+                       Alt+Tab arrives here as A-Tab.
+
+      Binding both means this file never has to change when somebody runs
+      `aq keys mac` or `aq keys windows`. What DOES change is what the panel
+      lists — applications in the Mac style, windows in the Windows style — and
+      the shell reads that from ~/.config/aquarius/keys.conf itself, live, with
+      no restart. One question, asked once; no second setting anywhere.
+
+      ======================================================================
+      WHY labwc's OWN SWITCHER IS NOT USED ANY MORE
+      ======================================================================
+      These bindings used to be NextWindow and PreviousWindow, which are
+      labwc's own actions and draw labwc's own on-screen list. That list works,
+      but it is a plain list of window titles in labwc's theme, and it cannot
+      group five windows of one editor into one application the way a Mac does.
+      The Aquarius switcher is drawn by the shell, from the same icon theme and
+      the same colours as the dock, and it knows about applications.
+
+      labwc's list is switched off below, outside </keyboard>, so that nothing
+      can put two switchers on screen at once.
+
+      ======================================================================
+      HOW IT KNOWS YOU LET GO OF THE KEY
+      ======================================================================
+      It is not in this file, and that surprises people, so: the shell sees the
+      release ITSELF. Its panel asks the compositor for the keyboard while it is
+      on screen, and because the Super key on its own is bound to nothing here,
+      labwc passes the release of it straight through to whoever has the
+      keyboard — which by then is the panel. The whole explanation, and the two
+      approaches that were tried first, are in the aquarius-shell repository at
+      docs/app-switcher.md.
+
+      ⚠️ DO NOT ADD A BINDING FOR Super_L OR Alt_L HERE. Binding the modifier on
+      its own would make labwc swallow its press, and a swallowed press means a
+      swallowed release — which is the one event this whole feature depends on.
     -->
+
+    <!-- Mac keyboard style: Command+Tab and Command+Shift+Tab. -->
     <keybind key="W-Tab">
-      <action name="NextWindow" />
+      <action name="Execute" command="qs ipc call switcher next" />
     </keybind>
 
     <keybind key="W-S-Tab">
-      <action name="PreviousWindow" />
+      <action name="Execute" command="qs ipc call switcher prev" />
+    </keybind>
+
+    <!--
+      Command+` — step through the windows of the app you are already in,
+      without putting anything on screen. The key to the left of the 1 on a US
+      keyboard; labwc's name for it is "grave".
+    -->
+    <keybind key="W-grave">
+      <action name="Execute" command="qs ipc call switcher cycle" />
+    </keybind>
+
+    <!--
+      Windows keyboard style: Alt+Tab and Alt+Shift+Tab.
+
+      These REPLACE labwc's built-in Alt+Tab, which arrives from the
+      <default /> at the top of this section. When two keybinds name the same
+      key, labwc keeps the last one written down and drops the earlier — so
+      these lines, coming after it, are the ones that win. (Checked in labwc
+      0.20.2's own source: deduplicate_key_bindings() in src/config/rcxml.c.)
+    -->
+    <keybind key="A-Tab">
+      <action name="Execute" command="qs ipc call switcher next" />
+    </keybind>
+
+    <keybind key="A-S-Tab">
+      <action name="Execute" command="qs ipc call switcher prev" />
     </keybind>
 
     <!-- Leave the desktop and go back to the login screen, where GNOME is one
@@ -257,6 +335,26 @@
     </keybind>
 
   </keyboard>
+
+  <!--
+    labwc's own window switcher, switched off.
+
+    The five bindings above no longer use NextWindow or PreviousWindow, so this
+    list should never appear on its own. This turns it off anyway, belt and
+    braces: if some future binding or a stray default ever reaches those actions
+    again, the result would be TWO switchers on screen at the same time, and
+    that is a confusing thing to debug from a screenshot.
+
+    `show="no"` on the <osd> element is labwc 0.20's spelling for it — checked
+    against labwc-config(5) at 0.20.2, the version this image builds. There is
+    no `<windowSwitcher show="">` attribute; the attribute belongs to <osd>.
+  -->
+  <windowSwitcher>
+    <osd show="no" />
+  </windowSwitcher>
+  <!-- ====================================================================== -->
+  <!-- END: the Aquarius app switcher                                          -->
+  <!-- ====================================================================== -->
 
   <mouse>
 

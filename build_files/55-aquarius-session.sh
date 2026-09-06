@@ -868,24 +868,42 @@ aq_file_has "${AQ_LABWC_DIR}/rc.xml" 'qs ipc call search toggle' \
 aq_file_has "${AQ_LABWC_DIR}/rc.xml" '<action name="Exit" />' \
     "Super+Shift+E leaves the session"
 
-# Super+Tab and Super+Shift+Tab, copied from the shell repository on 2026-09-06.
-# In Mac mode, Aquarius Keys maps the Command key to Super, so somebody pressing
-# Command+Tab out of habit sends Super+Tab. GNOME answers that; before these two
-# bindings, our desktop did nothing at all, and the same keystroke behaving
-# differently on the two AquariusOS desktops is exactly the kind of small
-# wrongness that makes a machine feel unfinished.
+# THE APP SWITCHER'S FIVE KEYS (2026-09-06).
 #
-# This is the same drift that lost the right-click menu below: the shell
-# repository had these and the image did not, because the image keeps its own
-# hand-maintained copies of the labwc files.
+# Hold Command, tap Tab, let go, and a panel of the applications you have open
+# appears in the middle of the screen. BOTH keyboard profiles are bound at once,
+# on purpose:
+#
+#   Mac style      Aquarius Keys swaps the two keys beside the space bar, so
+#                  Command+Tab arrives at labwc as W-Tab.
+#   Windows style  nothing is swapped and the remapper does not even run, so
+#                  Alt+Tab arrives as A-Tab.
+#
+# Binding both means `aq keys mac` and `aq keys windows` never have to rebind
+# anything — only what the panel LISTS changes, and the shell reads that from
+# ~/.config/aquarius/keys.conf itself.
+#
+# These were labwc's own NextWindow and PreviousWindow until 2026-09-06. They now
+# send a message to the running shell, which draws its own panel: one that can
+# group five windows of an editor into one application icon, which labwc's list
+# of window titles cannot.
+#
+# The whole feature, including how the shell knows you let go of the modifier,
+# is written up in the aquarius-shell repository at docs/app-switcher.md.
 aq_file_has "${AQ_LABWC_DIR}/rc.xml" '<keybind key="W-Tab">' \
-    "Super+Tab is bound (Command+Tab in Mac mode)"
-aq_file_has "${AQ_LABWC_DIR}/rc.xml" '<action name="NextWindow" />' \
-    "and it walks forward through the windows"
+    "Command+Tab opens the app switcher (Mac keyboard style)"
 aq_file_has "${AQ_LABWC_DIR}/rc.xml" '<keybind key="W-S-Tab">' \
-    "Super+Shift+Tab is bound"
-aq_file_has "${AQ_LABWC_DIR}/rc.xml" '<action name="PreviousWindow" />' \
-    "and it walks back through them"
+    "and Command+Shift+Tab walks it backwards"
+aq_file_has "${AQ_LABWC_DIR}/rc.xml" '<keybind key="W-grave">' \
+    "Command+\` cycles one app's windows, with no panel"
+aq_file_has "${AQ_LABWC_DIR}/rc.xml" '<keybind key="A-Tab">' \
+    "Alt+Tab opens the same switcher (Windows keyboard style)"
+aq_file_has "${AQ_LABWC_DIR}/rc.xml" '<keybind key="A-S-Tab">' \
+    "and Alt+Shift+Tab walks it backwards"
+aq_file_has "${AQ_LABWC_DIR}/rc.xml" 'command="qs ipc call switcher next"' \
+    "and they reach the shell, rather than labwc's own switcher"
+aq_file_has "${AQ_LABWC_DIR}/rc.xml" '<osd show="no" />' \
+    "labwc's own window switcher is switched off, so there can only be one"
 aq_file_has "${AQ_LABWC_DIR}/autostart" 'aquarius-shell-start' \
     "the window manager starts the shell through the helper that reports failures"
 
