@@ -14,7 +14,7 @@
 #   Then look at the icons, and commit them:
 #   git add branding/icons system_files/usr/share/icons && git commit
 #
-#   It takes a few minutes. It draws 160 separate pictures and each one is a
+#   It takes a few minutes. It draws 192 separate pictures and each one is a
 #   fresh, short run of Chrome.
 #
 # ------------------------------------------------------------------------------
@@ -233,7 +233,7 @@ for i in "${!THEME_DIRS[@]}"; do
     #                              GNOME's own icon set, and then to the
     #                              cross-desktop one. This is what stops the
     #                              theme being a desktop full of grey squares:
-    #                              we only draw eight icons.
+    #                              we only draw nine icons.
     #   Context=Applications       these are app icons, which is what tells a
     #     + Type=Scalable/Fixed    desktop it may use them for a launcher.
     {

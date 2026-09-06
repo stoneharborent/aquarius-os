@@ -4,10 +4,10 @@
 # ==============================================================================
 # WHAT THIS IS FOR
 # ------------------------------------------------------------------------------
-# AquariusOS draws eight of its own app icons — the Editor, the Writer, Files,
-# Settings, the app chooser, the welcome window and the two DaVinci Resolve
-# buttons — and ships them as two icon themes, Aquarius-Ice (the default) and
-# Aquarius-Midnight.
+# AquariusOS draws nine of its own app icons — the Editor, the Writer, Files,
+# Settings, the Console, the app chooser, the welcome window and the two DaVinci
+# Resolve buttons — and ships them as two icon themes, Aquarius-Ice (the default)
+# and Aquarius-Midnight.
 #
 # ⚠️ AN ICON THAT IS MISSING IS NOT AN ERROR ANYWHERE. Both themes say
 # `Inherits=Adwaita,hicolor`, which means anything we fail to provide falls
@@ -59,6 +59,8 @@ ICON_NAMES=(
     aquarius-files
     org.gnome.Settings
     aquarius-settings
+    org.gnome.Ptyxis
+    aquarius-console
     aquarius-apps
     aquarius-welcome
     aquarius-install-resolve
@@ -216,16 +218,18 @@ fi
 # ------------------------------------------------------------------------------
 # 3. GNOME's names and ours are the same picture
 # ------------------------------------------------------------------------------
-# GNOME's Files asks for its icon as `org.gnome.Nautilus` and GNOME's Settings
-# as `org.gnome.Settings`. Neither can be persuaded to ask for anything else, so
-# those are the two names that actually replace an icon on screen. Our own names
-# exist so our windows and our docs can refer to the same picture without
-# knowing GNOME's identifiers — which only works while they ARE the same
-# picture.
+# GNOME's Files asks for its icon as `org.gnome.Nautilus`, GNOME's Settings as
+# `org.gnome.Settings`, and the Console as `org.gnome.Ptyxis` — Ptyxis being
+# Fedora's terminal, which is the terminal this image ships. None of the three
+# can be persuaded to ask for anything else, so those are the three names that
+# actually replace an icon on screen. Our own names exist so our windows and our
+# docs can refer to the same picture without knowing GNOME's identifiers — which
+# only works while they ARE the same picture.
 echo
 echo "== our names and GNOME's names are the same drawing =="
 for theme in "${DEFAULT_THEME}" "${DARK_THEME}"; do
-    for pair in "org.gnome.Nautilus|aquarius-files" "org.gnome.Settings|aquarius-settings"; do
+    for pair in "org.gnome.Nautilus|aquarius-files" "org.gnome.Settings|aquarius-settings" \
+                "org.gnome.Ptyxis|aquarius-console"; do
         gnome_name="${pair%%|*}"
         our_name="${pair##*|}"
         a="${ICONS_ROOT}/${theme}/scalable/apps/${gnome_name}.svg"
@@ -303,6 +307,57 @@ if [ -s "${ICONS_ROOT}/hicolor/scalable/apps/aquarius-logo.svg" ]; then
     pass "aquarius-logo is still where the OS's own branding looks for it"
 else
     fail "aquarius-logo.svg is missing from hicolor — the About page and boot screen use it"
+fi
+
+# ------------------------------------------------------------------------------
+# 7. The colours are the shell's colours, and the old ones have not crept back
+# ------------------------------------------------------------------------------
+# Royce moved the desktop's colour truth on 2026-09-06: it is the Aquarius
+# Desktop shell's own theme files (theme/Ice.qml, theme/Midnight.qml in the
+# aquarius-shell repository), recorded in branding/tokens.md, and the app icons
+# are drawn in it. The palette before that — "Starlight", #8AB4FF blue and
+# #E6DDB8 gold, from the design-system project — is retired for the desktop.
+#
+# ⚠️ WHY THIS IS CHECKED AT ALL. A wrong colour is not an error anywhere. An icon
+# in the old blue draws perfectly, installs perfectly, and passes every check
+# above — it just does not match the desktop it is sitting on, and the only thing
+# that notices is Royce's eye. The specific way it comes back is a stale copy:
+# somebody restores an older branding/tokens.md, or regenerates the icons from an
+# older icons.mjs, and nothing anywhere says so.
+#
+# These files live in the repo, not in a built image, so this section is skipped
+# when the test is pointed at "/" — same as the login-screen check above.
+echo
+echo "== the colours are the shell's palette, not the retired one =="
+TOKENS="${REPO_ROOT}/branding/tokens.md"
+if [ ! -r "${TOKENS}" ]; then
+    echo "  ..  skipped: no branding/tokens.md here (this is a built image, not the repo)"
+else
+    # The shell's own names and its two accents. tokens.md naming them is what
+    # proves it is the post-2026-09-06 file and not an older copy restored.
+    file_says "${TOKENS}" "aquariusBlue" "tokens.md uses the shell's name for the accent (aquariusBlue)"
+    file_says "${TOKENS}" "#2C8FC4" "tokens.md carries the Ice accent #2C8FC4"
+    file_says "${TOKENS}" "#00BFFF" "tokens.md carries the Midnight accent #00BFFF"
+    file_says "${TOKENS}" "starred" "tokens.md uses the shell's name for the gold (starred)"
+
+    # And the drawings really came out in it. This is the half that catches a
+    # stale icons.mjs: tokens.md can be perfect while the committed pictures were
+    # rendered from an older source.
+    file_says "${REPO_ROOT}/branding/icons/icons.mjs" "#2C8FC4" \
+        "icons.mjs draws in the Ice accent #2C8FC4"
+    file_says "${REPO_ROOT}/branding/icons/icons.mjs" "#00BFFF" \
+        "icons.mjs draws in the Midnight accent #00BFFF"
+
+    # No shipped icon may still contain the retired accent. tokens.md is allowed
+    # to name it — it explains what was retired — so only the pictures are read.
+    STALE="$(grep -rl '#8AB4FF' "${ICONS_ROOT}/${DEFAULT_THEME}" "${ICONS_ROOT}/${DARK_THEME}" \
+        "${REPO_ROOT}/branding/icons/ice" "${REPO_ROOT}/branding/icons/midnight" 2> /dev/null)"
+    if [ -z "${STALE}" ]; then
+        pass "no shipped icon still uses the retired Starlight accent #8AB4FF"
+    else
+        fail "these icons still use the retired accent #8AB4FF — rerun branding/render-app-icons.sh:"
+        printf '        %s\n' ${STALE}
+    fi
 fi
 
 # ------------------------------------------------------------------------------
