@@ -143,8 +143,8 @@ after it.
 | `20-hardware-media.sh` | Makes it a working computer: graphics, sound, network, power, firmware, filesystems, and every codec. The biggest step. |
 | `20-hardware-media.sh` (the firmware) | **The programs that live inside the hardware.** Every Wi-Fi and Bluetooth vendor, every graphics vendor, laptop speaker amplifiers, laptop webcams, and both CPU makers' microcode — then counts the actual files on disk to prove they landed. ⚠️ Fedora split `linux-firmware` into about thirty per-vendor packages and the leftovers no longer contain any radio; installing only the old name is what left the bench with "No Wi-Fi Adapter Found" on 2026-09-05. Plain-language guide: [`hardware.md`](hardware.md). |
 | `30-session.sh` | The invisible layer between "has drivers" and "has a desktop": the login screen, portals, XWayland, Flatpak, fonts, containers. |
-| `40-gnome-desktop.sh` | GNOME — a hand-written short list, with a note on everything deliberately left out. |
-| `50-aquarius-desktop.sh` | Makes it *ours*: wallpaper, logos, Ice theme, fonts, dock, the right-click ingest menu. |
+| `40-gnome-desktop.sh` | GNOME — a hand-written short list, with a note on everything deliberately left out. Also installs the **desktop-identity themes** (Adwaita cursor + icons, freedesktop sounds) and checks they are really on disk. See [`desktop-identity.md`](desktop-identity.md). |
+| `50-aquarius-desktop.sh` | Makes it *ours*: wallpaper, logos, Ice theme, fonts, dock, the right-click ingest menu, and the **cursor / icon / sound defaults** that match the login screen. See [`desktop-identity.md`](desktop-identity.md). |
 | `55-aquarius-session.sh` | The **Aquarius Desktop** — our own shell on the labwc window manager, added beside GNOME as a second choice at the login screen. Installs what the two compiled programs need, sets up the portals, and switches greetd off. See [`aquarius-session.md`](aquarius-session.md). |
 | `58-kernel-pin.sh` | **Which kernel AquariusOS ships.** Pins it to the one Universal Blue's ready-made, already-signed kernel modules were built for — the NVIDIA driver, the OBS virtual camera and the two Xbox controller drivers all depend on it exactly. Runs on BOTH images and before every step that installs a module. See [`kernel.md`](kernel.md). |
 | `60-nvidia.sh` | The NVIDIA driver. Does nothing on the AMD/Intel image. The hardest file in the repo — see [`nvidia-notes.md`](nvidia-notes.md). |
@@ -283,6 +283,7 @@ thing locally. `just` with no arguments lists everything available.
 - **Making camera files open in an editor (the ingest helper):** [`ingest.md`](ingest.md)
 - **Mac-style keyboard shortcuts (Copy is Command-C):** [`aquarius-keys.md`](aquarius-keys.md)
 - **How big things are on the screen (and why it was too small):** [`aquarius-display.md`](aquarius-display.md)
+- **The pointer, the icons and the system sounds (and the seam for real Aquarius artwork later):** [`desktop-identity.md`](desktop-identity.md)
 - **The login screen — why it looked like stock Fedora, and the two answers:** [`login.md`](login.md)
 - **⚠️ The BLACK login screen — twice, 4 and 5 September — and why AquariusOS now gives the login screen no display file at all:** [`login.md`](login.md#the-black-login-screen--twice-4-and-5-september-2026)
 - **DaVinci Resolve — installing it, and why it lives in a container:** [`resolve.md`](resolve.md)

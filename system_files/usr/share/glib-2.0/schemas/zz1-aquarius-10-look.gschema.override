@@ -100,6 +100,73 @@ font-name='Inter 11'
 document-font-name='Inter 11'
 monospace-font-name='JetBrains Mono 10'
 
+# The mouse pointer and the app icons — decided in Phase R5 (2026-09-05).
+#
+# AquariusOS does NOT ship a hand-drawn cursor set or a hand-drawn icon set of
+# its own. Drawing a full pointer set and a full icon set is a real art project
+# — hundreds of little pictures, in several sizes each — and a half-made one
+# looks worse than a good existing theme. So the decision for now is the same
+# one the rest of this file makes: work WITH GNOME's grain. We name the best
+# existing, Fedora-packaged, well-kept theme for each and set it as the default,
+# and we leave a clearly marked seam so real Aquarius artwork can drop in later
+# by changing exactly these two lines. The whole reasoning, and the swap-in
+# recipe, is in docs/restart/desktop-identity.md.
+#
+#   cursor-theme  'Adwaita' — GNOME's own pointer. It is clean, neutral, and
+#                 already in the image (adwaita-cursor-theme, installed in
+#                 build_files/40-gnome-desktop.sh). It is ALSO the pointer the
+#                 login screen uses (see build_files/50-aquarius-desktop.sh),
+#                 so the pointer does not change shape the instant you log in.
+#                 The one packaged alternative people ask for, Bibata, is only
+#                 in a COPR, and this project does not pull cursor art from a
+#                 COPR — so Adwaita it is until we draw our own.
+#   cursor-size   24 — GNOME's own default, in "logical" pixels. On the 4K bench
+#                 the desktop scale makes the pointer the right physical size on
+#                 its own; this number is what GDM and the odd app that reads it
+#                 directly fall back to, so a sane, explicit value belongs here.
+#   icon-theme    'Adwaita' — GNOME 50's own icon set, so the desktop's icons
+#                 match the desktop drawing them. Fedora's default anyway; we
+#                 write it out on purpose so it sits in the same place as the
+#                 cursor and the sound, cannot drift, and is the one line that
+#                 changes the day Aquarius icons exist. The packaged alternative
+#                 worth knowing is Papirus (papirus-icon-theme) — a fuller set
+#                 with more coverage of third-party apps; docs/restart/desktop-
+#                 identity.md says how to switch to it if Royce ever wants it.
+cursor-theme='Adwaita'
+cursor-size=24
+icon-theme='Adwaita'
+
+# ------------------------------------------------------------------------------
+# The system sounds
+# ------------------------------------------------------------------------------
+# The little sounds GNOME plays: the log-in chime, a notification, an error
+# bleep. GNOME plays them through a "sound theme" — a named folder of small
+# audio files — exactly the way it uses a cursor theme or an icon theme.
+#
+# Same decision as the cursor and the icons: AquariusOS does not compose its own
+# set of sounds yet, so we point at the best existing, packaged one rather than
+# ship silence or a half-made set. 'freedesktop' is the standard cross-desktop
+# sound theme (the package is sound-theme-freedesktop, installed in
+# build_files/40-gnome-desktop.sh). The seam for real Aquarius audio later is
+# the same shape as the others and is written up in docs/restart/desktop-
+# identity.md — drop files into /usr/share/sounds/aquarius/ and change the one
+# theme-name line below.
+#
+#   theme-name    'freedesktop' — the standard, complete sound set.
+#   event-sounds  true — GNOME's own default: notifications and alerts make a
+#                 sound. A person who finds them annoying turns them off in one
+#                 place — Settings > Sound > System Sounds — and that choice
+#                 then wins over this default forever, the same as every other
+#                 setting in this file. (`gsettings set org.gnome.desktop.sound
+#                 event-sounds false` does the same thing from a terminal.)
+#   input-feedback-sounds  false — GNOME's own default: typing and key presses
+#                 do NOT click. Left at false on purpose; a clicking keyboard is
+#                 a surprise nobody asked for on a machine that records audio.
+[org.gnome.desktop.sound]
+theme-name='freedesktop'
+event-sounds=true
+input-feedback-sounds=false
+
 # ------------------------------------------------------------------------------
 # The wallpaper
 # ------------------------------------------------------------------------------
@@ -166,11 +233,21 @@ secondary-color='#111A2B'
 #                                of decisions made on the bench rather than
 #                                slipped in here.
 #
-#   any GTK or GNOME Shell THEME No shell theme, no GTK theme, no icon-theme
-#                                override. The whole posture is to work WITH
-#                                GNOME's grain rather than repaint it: accent,
-#                                wallpaper, fonts and a small set of
-#                                extensions, and then stop. Every theme we do
-#                                not ship is a theme that cannot break on the
-#                                next GNOME release.
+#   any GTK or GNOME Shell THEME No shell theme, no GTK theme. The whole
+#                                posture is to work WITH GNOME's grain rather
+#                                than repaint it: accent, wallpaper, fonts, a
+#                                small set of extensions, and then stop. Every
+#                                theme we do not ship is a theme that cannot
+#                                break on the next GNOME release.
 #                                Full reasoning: docs/restart/README.md.
+#
+#                                ⚠️ The cursor, icon and sound themes ARE set
+#                                now (above), but every one of them is set TO
+#                                GNOME'S OWN — Adwaita and freedesktop. That is
+#                                not repainting the desktop; it is naming the
+#                                grain out loud so the three settings live in
+#                                one place, cannot drift from each other or from
+#                                the login screen, and give real Aquarius
+#                                artwork a single, documented line to land on
+#                                later. Decided in Phase R5, 2026-09-05; the
+#                                full story is docs/restart/desktop-identity.md.

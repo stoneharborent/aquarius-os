@@ -52,6 +52,16 @@ source "$(dirname "$0")/aq-lib.sh"
 # small file that tells the login screen "there is a GNOME session here, and
 # here is how to start it"; without it GDM shows a login screen with nothing to
 # log into.
+#
+# The last three are AquariusOS's desktop-identity defaults (Phase R5,
+# 2026-09-05). They are GNOME's own themes, named on purpose so the defaults in
+# zz1-aquarius-10-look.gschema.override have a real theme to point at and the
+# CI check that reads those settings back can never pass over a missing file:
+#   adwaita-icon-theme        the app icons  (icon-theme='Adwaita')
+#   adwaita-cursor-theme      the pointer    (cursor-theme='Adwaita')
+#   sound-theme-freedesktop   the sounds     (org.gnome.desktop.sound
+#                             theme-name='freedesktop')
+# Why these and not a bespoke set: docs/restart/desktop-identity.md.
 say "GNOME Shell"
 aq_dnf install \
     gnome-shell \
@@ -62,7 +72,8 @@ aq_dnf install \
     gnome-menus \
     gsettings-desktop-schemas \
     adwaita-icon-theme \
-    adwaita-cursor-theme
+    adwaita-cursor-theme \
+    sound-theme-freedesktop
 
 # ------------------------------------------------------------------------------
 # Settings and system tools
@@ -250,7 +261,10 @@ aq_installed \
     langpacks-core-en \
     gdm \
     dconf \
-    glib2
+    glib2 \
+    adwaita-icon-theme \
+    adwaita-cursor-theme \
+    sound-theme-freedesktop
 
 # The two commands the later steps depend on. glib-compile-schemas belongs to
 # glib2 (not glib2-devel — a trap worth knowing) and without it none of the
@@ -337,5 +351,24 @@ if [ -e "/usr/share/gnome-shell/extensions/dash-to-dock@micxgx.gmail.com/schemas
 else
     ok "the dock has no private settings copy (correct — ours win)"
 fi
+
+# ------------------------------------------------------------------------------
+# The desktop-identity themes point at folders that really exist
+# ------------------------------------------------------------------------------
+# The defaults in zz1-aquarius-10-look name a cursor theme, an icon theme and a
+# sound theme. A theme is a NAMED FOLDER on disk; if the folder is missing,
+# GNOME falls back to something else without a word, and the setting looks like
+# it did nothing. So check the folders, not just the packages.
+say "Checking the cursor, icon and sound themes are on disk"
+for aq_theme_dir in \
+    /usr/share/icons/Adwaita \
+    /usr/share/icons/Adwaita/cursors \
+    /usr/share/sounds/freedesktop; do
+    if [ -d "${aq_theme_dir}" ]; then
+        ok "${aq_theme_dir} exists"
+    else
+        bad "${aq_theme_dir} is missing — a desktop-identity default would silently fall back"
+    fi
+done
 
 aq_finish "The GNOME desktop"
