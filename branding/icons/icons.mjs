@@ -28,7 +28,8 @@ export const ICON_WAVE_Y = (y)=>wavePath(14, y, 18);   // the logo's wave at 1.5
 // THE MARK — the logo's "A" and wave, scaled uniformly about a centre. Stroke stays 5; only the geometry scales.
 export function markPaths(cx, cy, k){
   const X=(x)=>+(cx+(x-32)*k).toFixed(2), Y=(y)=>+(cy+(y-33)*k).toFixed(2), R=(v)=>+(v*k).toFixed(2);
-  return { A:`M${X(14)} ${Y(54)}L${X(30)} ${Y(12)}q${R(1.4)}-${R(3.6)} ${R(4)} 0L${X(50)} ${Y(54)}`, wave:wavePath(X(20), Y(40), R(12)) };
+  // clean apex (Royce, 2026-09-06): the logo is `M14 54 L32 12 L50 54` — the hand-drawn loop is gone
+  return { A:`M${X(14)} ${Y(54)}L${X(32)} ${Y(12)}L${X(50)} ${Y(54)}`, wave:wavePath(X(20), Y(40), R(12)) };
 }
 
 // THE GLYPH SHADOW — under the glyph, never under the plate. Dropped 1.5, blurred 1.6. A lift at 128+, gone by 32.
