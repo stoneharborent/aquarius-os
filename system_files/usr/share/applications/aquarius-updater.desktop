@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Check for Update
+GenericName=System Updates
+Comment=See which version of AquariusOS you have and install a newer one
+Exec=/usr/libexec/aquarius-updater
+TryExec=/usr/libexec/aquarius-updater
+Icon=aquarius-logo
+Terminal=false
+StartupNotify=true
+StartupWMClass=org.aquariusos.Updater
+NoDisplay=true
+Categories=System;
+Keywords=update;updates;upgrade;version;check;system;software;

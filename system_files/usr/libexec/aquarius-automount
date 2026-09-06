@@ -1,0 +1,430 @@
+#!/usr/bin/python3
+# =============================================================================
+# aquarius-automount — plug a drive in, it appears; no password ever
+# =============================================================================
+# PLAIN ENGLISH
+#
+# On a Mac, when you plug in a USB stick, an SD card, or an external SSD, it
+# just appears — you never type a password, and you drag it to the bin (or
+# right-click Eject) to put it away safely. That is what a creator expects, and
+# it is what this program gives the Aquarius Desktop.
+#
+# Fedora already ships the machinery that does the actual mounting — a service
+# called udisks2 — and it already lets the person sitting at the screen mount
+# and unmount a removable drive without a password. What Fedora does NOT do on
+# its own is mount a drive the MOMENT you plug it in. GNOME's Files app does it
+# while Files is running; our own Aquarius Session has no Files app running in
+# the background, so nothing was doing it. This program is that missing piece.
+#
+# It sits quietly in your logged-in session, watches udisks2 for a drive being
+# plugged in (or already plugged in when you logged in), and asks udisks2 to
+# mount it. udisks2 mounts it under /run/media/<you>/<label>, exactly where the
+# dock and Files look for it.
+#
+# -----------------------------------------------------------------------------
+# WHAT IT WILL AND WILL NOT MOUNT — READ THIS BEFORE CHANGING THE FILTER
+# -----------------------------------------------------------------------------
+# It mounts a drive ONLY when udisks2 says all three of these are true:
+#
+#   HintAuto = true    udisks2's own word for "this is the kind of device that
+#                      should be auto-mounted" — i.e. a removable/hotplugged
+#                      drive, not something built into the machine.
+#   HintIgnore = false the drive has not asked to be left alone.
+#   HintSystem = false this is NOT a system-internal disk. This is the line
+#                      that keeps us away from the disk the operating system
+#                      itself lives on.
+#
+# Those three together are udisks2's blessed way of saying "this is a USB stick
+# / SD card / external SSD and not the boot drive". We do NOT invent our own
+# idea of removable — we ask udisks2, which knows.
+#
+# As a second, independent seatbelt, it also refuses to touch any device that
+# is already providing one of the critical system mounts (/, /boot, /var,
+# /home, and the EFI partition). If a filter change ever let one of those
+# through, this catches it before anything is mounted twice. It should never
+# fire; it exists so that a mistake is harmless rather than dangerous.
+#
+# It also skips a drive that is already mounted (nothing to do) and one that is
+# still locked (an encrypted drive shows no filesystem until it is unlocked,
+# and unlocking asks for the passphrase — that is a deliberate, separate step
+# and not ours to automate).
+#
+# -----------------------------------------------------------------------------
+# WHY NO PASSWORD
+# -----------------------------------------------------------------------------
+# The mount call is made as YOU — this program runs in your own session with no
+# special powers. udisks2 asks polkit "is this person allowed?", and the rule
+# in /usr/share/polkit-1/rules.d/49-aquarius-udisks.rules answers "yes, for a
+# removable drive, for the person actually sitting at this machine". So there is
+# no prompt. Unmounting from the dock is the same story in reverse, and the same
+# rule covers it. The rule is deliberately narrow: it never grants a
+# no-password mount of an internal disk. See that file's own header.
+#
+# We pass "auth.no_user_interaction = true" on every mount so that, in the one
+# case where a mount is NOT allowed without a password, it fails quietly and is
+# logged rather than popping a password box at you for a drive you plugged in a
+# second ago. Auto-mounting must never interrupt you.
+#
+# -----------------------------------------------------------------------------
+# HOW IT IS RUN
+# -----------------------------------------------------------------------------
+#   aquarius-automount             watch and mount. This is what the user
+#                                  service /usr/lib/systemd/user/
+#                                  aquarius-automount.service runs.
+#   aquarius-automount --once      mount everything that is plugged in right
+#                                  now, then exit. (No watching.)
+#   aquarius-automount --dry-run   say what it would do and change NOTHING.
+#                                  Designed to run in a build container with no
+#                                  udisks2 and no screen — it prints its rules
+#                                  and exits 0. This is what CI runs.
+#   aquarius-automount --help      this header.
+#
+# It never runs at the login screen: the service carries ConditionUser=!@system,
+# so it starts for people and not for the machine's own login account.
+#
+# -----------------------------------------------------------------------------
+# THE ONE DEPENDENCY
+# -----------------------------------------------------------------------------
+# python3-gobject (the `gi` module) plus GLib and Gio, which come with it. That
+# is the same set the Resolve and welcome windows already need, so nothing new
+# is added to the image. It does NOT use GTK — there is no window here — so it
+# imports only GLib and Gio, which work with no screen.
+#
+# Plain-English guide: docs/restart/automount.md
+# =============================================================================
+
+import os
+import sys
+
+# The bus name and paths udisks2 publishes on. These are stable public API.
+UDISKS = "org.freedesktop.UDisks2"
+UDISKS_PATH = "/org/freedesktop/UDisks2"
+OM_IFACE = "org.freedesktop.DBus.ObjectManager"
+PROPS_IFACE = "org.freedesktop.DBus.Properties"
+BLOCK_IFACE = "org.freedesktop.UDisks2.Block"
+FS_IFACE = "org.freedesktop.UDisks2.Filesystem"
+
+# The mounts we will never, ever put a second mount on top of. udisks2's
+# HintSystem should already keep us away from these; this is the seatbelt.
+CRITICAL_MOUNTS = ("/", "/boot", "/boot/efi", "/efi", "/var", "/home", "/usr")
+
+
+def log(message):
+    """One line to the session journal, tagged so it is easy to find."""
+    print("[automount] %s" % message, flush=True)
+
+
+# -----------------------------------------------------------------------------
+# --dry-run — no bus, no screen, no changes. This is what the build runs.
+# -----------------------------------------------------------------------------
+# It deliberately does NOT touch D-Bus: a build container has no udisks2 and no
+# system bus, and the whole point of --dry-run is that it proves the program
+# loads and states its rules on a machine with neither. It still imports gi, to
+# prove python3-gobject is really in the image.
+def dry_run():
+    import gi  # noqa: F401  (imported to prove it is installed)
+
+    print("aquarius-automount --dry-run")
+    print("Nothing is mounted or changed. This is the rehearsal the build runs.")
+    print("")
+    print("What it does when it runs for real:")
+    print("  * connects to udisks2 on the system bus")
+    print("  * mounts every drive already plugged in, then watches for more")
+    print("  * mounts a drive only when udisks2 says it is:")
+    print("      HintAuto = true   (a removable/hotplugged drive)")
+    print("      HintIgnore = false")
+    print("      HintSystem = false  (NOT a system-internal disk)")
+    print("  * never mounts a device already backing one of: %s" % ", ".join(CRITICAL_MOUNTS))
+    print("  * skips a drive that is already mounted or still locked")
+    print("  * mounts as the logged-in user, with no password, because")
+    print("    /usr/share/polkit-1/rules.d/49-aquarius-udisks.rules allows it")
+    print("    for a removable drive in the active local session")
+    print("  * passes auth.no_user_interaction=true so a disallowed mount fails")
+    print("    quietly instead of interrupting the person")
+    return 0
+
+
+# -----------------------------------------------------------------------------
+# The devices currently backing a critical system mount.
+# -----------------------------------------------------------------------------
+# Read from /proc/self/mountinfo, which lists every mount and the device node
+# behind it. We reduce each such node to its whole-disk name (sda3 -> sda,
+# nvme0n1p2 -> nvme0n1) so that no partition of the system disk can be touched.
+def critical_disks():
+    disks = set()
+    try:
+        with open("/proc/self/mountinfo", "r") as handle:
+            for line in handle:
+                parts = line.split()
+                # Field layout: ... - <fstype> <source> <superopts>
+                # The mount point is field 5 (index 4); the source is after the
+                # standalone "-" separator.
+                try:
+                    mount_point = parts[4]
+                    dash = parts.index("-")
+                    source = parts[dash + 2]
+                except (IndexError, ValueError):
+                    continue
+                if mount_point in CRITICAL_MOUNTS and source.startswith("/dev/"):
+                    disks.add(_whole_disk(source))
+    except OSError:
+        pass
+    return disks
+
+
+def _whole_disk(dev_path):
+    """/dev/sda3 -> sda ; /dev/nvme0n1p2 -> nvme0n1 ; /dev/mmcblk0p1 -> mmcblk0"""
+    name = os.path.basename(dev_path)
+    # nvme/mmcblk name their partitions with a trailing 'pN'.
+    for stem in ("nvme", "mmcblk", "loop"):
+        if name.startswith(stem):
+            idx = name.rfind("p")
+            if idx > 0 and name[idx + 1:].isdigit():
+                return name[:idx]
+            return name
+    # sd*, vd*, hd* just have trailing digits on the partition.
+    return name.rstrip("0123456789")
+
+
+class AutoMounter:
+    def __init__(self, bus):
+        self.bus = bus
+        # Whole-disk names we must never mount on top of. Read once at start;
+        # the system disk does not change under us mid-session.
+        self.protected = critical_disks()
+        if self.protected:
+            log("leaving the system disk(s) alone: %s" % ", ".join(sorted(self.protected)))
+
+    # -- reading udisks2 ----------------------------------------------------
+
+    def _get_prop(self, object_path, interface, name):
+        """One property, or None if the interface/property is not there."""
+        from gi.repository import GLib
+
+        try:
+            reply = self.bus.call_sync(
+                UDISKS,
+                object_path,
+                PROPS_IFACE,
+                "Get",
+                GLib.Variant("(ss)", (interface, name)),
+                GLib.VariantType("(v)"),
+                0,
+                5000,
+                None,
+            )
+        except GLib.Error:
+            return None
+        return reply.unpack()[0]
+
+    def _has_interface(self, object_path, interface):
+        from gi.repository import GLib
+
+        try:
+            self.bus.call_sync(
+                UDISKS,
+                object_path,
+                PROPS_IFACE,
+                "GetAll",
+                GLib.Variant("(s)", (interface,)),
+                GLib.VariantType("(a{sv})"),
+                0,
+                5000,
+                None,
+            )
+            return True
+        except GLib.Error:
+            return False
+
+    # -- the decision -------------------------------------------------------
+
+    def should_mount(self, object_path):
+        """True only for a removable drive that is safe and not already up."""
+        # It has to be a filesystem at all. A whole disk, or a locked encrypted
+        # drive, has no Filesystem interface and there is nothing to mount.
+        if not self._has_interface(object_path, FS_IFACE):
+            return False
+
+        hint_auto = self._get_prop(object_path, BLOCK_IFACE, "HintAuto")
+        hint_ignore = self._get_prop(object_path, BLOCK_IFACE, "HintIgnore")
+        hint_system = self._get_prop(object_path, BLOCK_IFACE, "HintSystem")
+
+        # udisks2's own verdict. This is the real filter.
+        if not hint_auto:
+            return False
+        if hint_ignore:
+            return False
+        if hint_system:
+            log("%s is a system device — leaving it alone" % object_path)
+            return False
+
+        # Already mounted? MountPoints is a list of NUL-terminated byte
+        # strings; a non-empty list means it is up already.
+        mount_points = self._get_prop(object_path, FS_IFACE, "MountPoints")
+        if mount_points:
+            return False
+
+        # The seatbelt: never a device that is part of the system disk.
+        device = self._device_node(object_path)
+        if device:
+            disk = _whole_disk(device)
+            if disk in self.protected:
+                log("%s (%s) is on the system disk — refusing" % (object_path, device))
+                return False
+
+        return True
+
+    def _device_node(self, object_path):
+        """The /dev path of a block device, as a plain string, or ''."""
+        raw = self._get_prop(object_path, BLOCK_IFACE, "Device")
+        if raw is None:
+            return ""
+        # Device is a byte array ending in a NUL. Turn it back into text.
+        try:
+            data = bytes(raw)
+        except TypeError:
+            return ""
+        return data.split(b"\x00", 1)[0].decode("utf-8", "replace")
+
+    # -- doing it -----------------------------------------------------------
+
+    def mount(self, object_path):
+        from gi.repository import GLib
+
+        # No fstype and no path: udisks picks a sensible read/write mount and
+        # puts it at /run/media/<user>/<label>. auth.no_user_interaction keeps
+        # a disallowed mount quiet instead of popping a password box.
+        options = GLib.Variant("a{sv}", {
+            "auth.no_user_interaction": GLib.Variant("b", True),
+        })
+        try:
+            reply = self.bus.call_sync(
+                UDISKS,
+                object_path,
+                FS_IFACE,
+                "Mount",
+                GLib.Variant("(a{sv})", (options,)),
+                GLib.VariantType("(s)"),
+                0,
+                120000,
+                None,
+            )
+            where = reply.unpack()[0]
+            label = self._get_prop(object_path, BLOCK_IFACE, "IdLabel") or "(no label)"
+            log("mounted %s at %s" % (label, where))
+        except GLib.Error as error:
+            # "AlreadyMounted" is a race, not a fault: a drive plugged in during
+            # the initial sweep can be seen twice. Everything else is worth a
+            # line so a genuinely refused mount is visible in the journal.
+            message = error.message or str(error)
+            if "AlreadyMounted" in message:
+                return
+            log("could not mount %s: %s" % (object_path, message))
+
+    def consider(self, object_path):
+        if self.should_mount(object_path):
+            self.mount(object_path)
+
+    # -- the two ways in ----------------------------------------------------
+
+    def sweep(self):
+        """Mount everything that is plugged in right now."""
+        from gi.repository import GLib
+
+        try:
+            reply = self.bus.call_sync(
+                UDISKS,
+                UDISKS_PATH,
+                OM_IFACE,
+                "GetManagedObjects",
+                None,
+                GLib.VariantType("(a{oa{sa{sv}}})"),
+                0,
+                5000,
+                None,
+            )
+        except GLib.Error as error:
+            log("could not ask udisks2 what is plugged in: %s" % (error.message or error))
+            return
+        objects = reply.unpack()[0]
+        for object_path, interfaces in objects.items():
+            if FS_IFACE in interfaces:
+                self.consider(object_path)
+
+    def _on_interfaces_added(self, _conn, _sender, _path, _iface, _signal, params):
+        object_path, interfaces = params.unpack()
+        if FS_IFACE in interfaces:
+            self.consider(object_path)
+
+    def watch(self):
+        """Mount what is here, then keep mounting what turns up."""
+        # A drive plugged in when you logged in.
+        self.sweep()
+        # And every drive plugged in from now on. udisks2 announces a new
+        # filesystem by adding the Filesystem interface to a block object.
+        self.bus.signal_subscribe(
+            UDISKS,
+            OM_IFACE,
+            "InterfacesAdded",
+            UDISKS_PATH,
+            None,
+            0,
+            self._on_interfaces_added,
+        )
+        log("watching for drives")
+
+
+def run(once=False):
+    import gi
+
+    gi.require_version("GLib", "2.0")
+    gi.require_version("Gio", "2.0")
+    from gi.repository import Gio, GLib
+
+    try:
+        bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+    except GLib.Error as error:
+        log("no system bus to talk to udisks2: %s" % (error.message or error))
+        # Exit 75 (temp failure): the service is set to retry, and this is
+        # exactly the sort of thing that is briefly true at the very start of a
+        # session and then fixes itself.
+        return 75
+
+    mounter = AutoMounter(bus)
+
+    if once:
+        mounter.sweep()
+        return 0
+
+    mounter.watch()
+    loop = GLib.MainLoop()
+    try:
+        loop.run()
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
+def main(argv):
+    once = False
+    for arg in argv[1:]:
+        if arg == "--dry-run":
+            return dry_run()
+        if arg == "--once":
+            once = True
+        elif arg in ("-h", "--help", "help"):
+            # Print this file's header, stripped of the leading "# ".
+            here = os.path.abspath(__file__)
+            with open(here, "r") as handle:
+                for line in handle.readlines()[1:120]:
+                    if line.startswith("#"):
+                        print(line[2:].rstrip() if line.startswith("# ") else line[1:].rstrip())
+            return 0
+        else:
+            print("aquarius-automount: I do not understand '%s'." % arg, file=sys.stderr)
+            return 1
+    return run(once=once)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

@@ -1,0 +1,718 @@
+#!/usr/bin/python3
+# =============================================================================
+# aquarius-updater — the "Check for Update" window
+# =============================================================================
+# PLAIN ENGLISH
+#
+# This is the little window that opens when you pick "Check for Update" from the
+# Aquarius logo menu. It tells you which version of AquariusOS you are running,
+# asks the internet whether there is a newer one, and — if there is — updates
+# with one button and offers to restart to finish.
+#
+# WHY UPDATING LOOKS LIKE THIS AND NOT LIKE A TERMINAL
+# AquariusOS updates the whole operating system as one sealed image (that is
+# what "bootc" underneath is doing). It is safe — the old version stays on the
+# disk and the machine can always roll back — but the command that does it,
+# `bootc upgrade`, is a wall of scrolling text. On the operating system whose
+# whole point is that creative work should not feel like system administration,
+# checking for an update should feel like checking for an update. So the text is
+# all still here, one click away behind "Details", and this window is what you
+# actually look at.
+#
+# ⚠️ THIS WINDOW MAKES NO UPDATE DECISIONS OF ITS OWN. Every real answer — the
+# current version, whether a newer one exists, doing the upgrade — comes from
+# `bootc`, the same tool `aq update` runs in a terminal. This window starts it,
+# reads what it says, and draws it. There is one updater on this operating
+# system and two ways to watch it.
+#
+# =============================================================================
+# HOW IT IS RUN
+# =============================================================================
+#   aquarius-updater              open the window (this is what the logo menu
+#                                 runs, and what aquarius-updater.desktop does).
+#   aquarius-updater --gui        the same thing, said explicitly.
+#   aquarius-updater check        no window: check and print the answer. This is
+#                                 what `aq update check` runs.
+#   aquarius-updater apply        no window: do the upgrade in the terminal,
+#                                 asking for a password once. `aq update apply`.
+#   aquarius-updater --dry-run    no window, changes nothing, needs no network:
+#                                 print the current version and describe the
+#                                 check. This is what the build runs, because it
+#                                 works in a container with no screen and no
+#                                 real system to upgrade.
+#   aquarius-updater --help       this header.
+#
+# =============================================================================
+# HOW IT BECOMES ADMINISTRATOR
+# =============================================================================
+# Checking for an update needs no special powers and asks for nothing. DOING the
+# update does — it writes a new system image — so the Update button runs
+# `pkexec bootc upgrade`. pkexec is the standard "may I?" command: it puts up
+# ONE password prompt (through the session's polkit agent), and if you say yes,
+# runs the upgrade as the administrator. Restarting afterwards goes through
+# systemd's logind, which already lets the person at the screen restart their
+# own machine.
+#
+# Notes for whoever maintains this:
+#   * Colours are NOT set here. libadwaita follows the system light/dark setting
+#     and AquariusOS sets its accent at the desktop level, so a window that
+#     paints nothing is an AquariusOS-coloured window in Ice and Midnight for
+#     free. The Aquarius mark at the top is the icon the image installs.
+#   * The top of every page is aquarius_ui.hero() — never an Adw.StatusPage,
+#     which cannot carry the mark. This is the 2026-09-04 rule the three other
+#     windows were fixed to follow; CI greps this file for it too.
+#   * To look at the window without a real system to update:
+#         aquarius-updater --gui   (the check will honestly say it cannot reach
+#                                   the registry on a machine that has no
+#                                   deployment, which is the correct behaviour)
+#
+# Plain-English guide: docs/restart/updater.md
+# =============================================================================
+
+import json
+import os
+import subprocess
+import sys
+
+# Where the OS writes down what it is. Step 70 (70-image-info.sh) creates this.
+IMAGE_INFO = "/usr/share/aquarius/image-info.json"
+BOOTC = "/usr/bin/bootc"
+
+APP_ID = "org.aquariusos.Updater"
+
+
+# -----------------------------------------------------------------------------
+# The facts, read the same way by the window and the terminal
+# -----------------------------------------------------------------------------
+def current_version():
+    """A friendly version string, e.g. 'AquariusOS 44 (20260906)', or a plain
+    fallback if the file is somehow not there."""
+    try:
+        with open(IMAGE_INFO, "r") as handle:
+            info = json.load(handle)
+    except (OSError, ValueError):
+        return "AquariusOS (version unknown)"
+    return info.get("version-pretty") or info.get("version") or "AquariusOS (version unknown)"
+
+
+def image_ref():
+    """Where updates come from, for the Details log. May be empty."""
+    try:
+        with open(IMAGE_INFO, "r") as handle:
+            return json.load(handle).get("image-ref", "")
+    except (OSError, ValueError):
+        return ""
+
+
+def _run(cmd, timeout=120):
+    """Run a command, capture everything it says, never raise."""
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            errors="replace",
+        )
+    except FileNotFoundError:
+        return 127, "", "%s is not installed" % cmd[0]
+    except subprocess.SubprocessError as exc:
+        return 1, "", str(exc)
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+# -----------------------------------------------------------------------------
+# Is there an update? Ask bootc, and turn its answer into one of four states.
+# -----------------------------------------------------------------------------
+# States, so the window and the terminal agree on the words:
+#   up-to-date   there is nothing newer
+#   available    there is a newer image (version filled in when bootc says it)
+#   offline      the registry could not be reached — said plainly, not as a bug
+#   unknown      bootc ran but its answer could not be read (a version change in
+#                bootc's own wording, most likely) — treated as "try updating,
+#                it is safe" rather than pretending to know
+def check_update():
+    result = {"state": "unknown", "version": "", "log": ""}
+
+    code, out, err = _run([BOOTC, "upgrade", "--check"], timeout=90)
+    combined = (out or "") + (err or "")
+    result["log"] = combined.strip()
+
+    text = combined.lower()
+
+    # A network problem is the common, honest case on a laptop that is offline.
+    # bootc exits non-zero and says so; do not dress it up as a fault.
+    offline_markers = (
+        "no such host", "could not resolve", "connection refused",
+        "network is unreachable", "temporary failure in name resolution",
+        "timeout", "timed out", "dial tcp", "i/o error", "failed to fetch",
+    )
+    if code != 0 and any(marker in text for marker in offline_markers):
+        result["state"] = "offline"
+        return result
+
+    # bootc's own wording. "No changes" / "no update" means up to date;
+    # "Update available" means there is one. Both have been stable, but we read
+    # for the phrases rather than the exit code so a change in one does not lie.
+    if "no changes" in text or "no update available" in text or "already" in text and "latest" in text:
+        result["state"] = "up-to-date"
+        return result
+
+    if "update available" in text or "new update" in text:
+        result["state"] = "available"
+        result["version"] = _extract_version(combined)
+        return result
+
+    # bootc ran cleanly but said neither. Fall back to comparing what is booted
+    # against what is staged/available in `bootc status --json`.
+    status = _status_versions()
+    if status is not None:
+        booted, available = status
+        if available and booted and available != booted:
+            result["state"] = "available"
+            result["version"] = available
+            return result
+        if booted:
+            result["state"] = "up-to-date"
+            return result
+
+    if code != 0:
+        # Non-zero, no recognised network error, no status to fall back on: most
+        # likely there is no real deployment to check (a build container, or a
+        # machine installed some other way). Say we could not check.
+        result["state"] = "offline"
+    return result
+
+
+def _extract_version(text):
+    """Best-effort: pull a version-looking token out of bootc's message."""
+    import re
+
+    match = re.search(r"[Vv]ersion[:\s]+([^\s,]+)", text)
+    if match:
+        return match.group(1)
+    return ""
+
+
+def _status_versions():
+    """(booted_version, available_version) from `bootc status --json`, or None."""
+    code, out, _err = _run([BOOTC, "status", "--json"], timeout=30)
+    if code != 0 or not out:
+        return None
+    try:
+        data = json.loads(out)
+    except ValueError:
+        return None
+    status = data.get("status", {}) if isinstance(data, dict) else {}
+
+    def version_of(node):
+        if not isinstance(node, dict):
+            return ""
+        image = node.get("image", {})
+        version = ""
+        if isinstance(image, dict):
+            version = image.get("version") or ""
+            if not version:
+                inner = image.get("image", {})
+                if isinstance(inner, dict):
+                    version = inner.get("version") or ""
+        return version
+
+    booted = version_of(status.get("booted"))
+    # "staged" is a downloaded, not-yet-booted update; that is our "available".
+    available = version_of(status.get("staged"))
+    return booted, available
+
+
+# -----------------------------------------------------------------------------
+# HEADLESS: check  (what `aq update check` runs)
+# -----------------------------------------------------------------------------
+def headless_check():
+    print("Current version: %s" % current_version())
+    result = check_update()
+    state = result["state"]
+    if state == "up-to-date":
+        print("You're up to date.")
+        return 0
+    if state == "available":
+        if result["version"]:
+            print("An update is available (version %s)." % result["version"])
+        else:
+            print("An update is available.")
+        print("Install it with:  aq update apply")
+        return 0
+    if state == "offline":
+        print("Could not reach the update server. Check your internet and try again.")
+        if result["log"]:
+            print(result["log"])
+        return 1
+    print("Could not tell whether an update is available. It is always safe to")
+    print("run 'aq update apply' — the old version stays on the disk.")
+    if result["log"]:
+        print(result["log"])
+    return 1
+
+
+# -----------------------------------------------------------------------------
+# HEADLESS: apply  (what `aq update apply` runs)
+# -----------------------------------------------------------------------------
+def headless_apply():
+    if os.geteuid() == 0:
+        cmd = [BOOTC, "upgrade"]
+    else:
+        # pkexec asks for the password once, then runs the upgrade as root. In a
+        # terminal it prompts on the terminal; under a desktop, the polkit agent
+        # puts up a dialog.
+        cmd = ["pkexec", BOOTC, "upgrade"]
+    print("Updating AquariusOS. This can take a few minutes.")
+    try:
+        code = subprocess.call(cmd)
+    except FileNotFoundError as exc:
+        print("Could not start the update: %s" % exc, file=sys.stderr)
+        return 1
+    if code == 0:
+        print("")
+        print("Update ready. Restart to finish:  sudo systemctl reboot")
+        return 0
+    print("The update did not finish (it ended with code %d)." % code, file=sys.stderr)
+    return code
+
+
+# -----------------------------------------------------------------------------
+# --dry-run  (what the build runs — no window, no network, changes nothing)
+# -----------------------------------------------------------------------------
+def dry_run():
+    print("aquarius-updater --dry-run")
+    print("Nothing is checked, changed or updated. This is the rehearsal the")
+    print("build runs, on a machine with no screen and no real system to update.")
+    print("")
+    print("Current version: %s" % current_version())
+    ref = image_ref()
+    if ref:
+        print("Updates come from: %s" % ref)
+    print("")
+    print("What the window does when it runs for real:")
+    print("  * shows the current version above")
+    print("  * runs 'bootc upgrade --check' and says one of:")
+    print("      You're up to date")
+    print("      An update is available (version X)")
+    print("      Could not reach the update server (offline, said plainly)")
+    print("  * if an update is available, the Update button runs")
+    print("    'pkexec bootc upgrade' with live output in the window")
+    print("  * when it finishes: 'Update ready — restart to finish', with")
+    print("    Restart now (systemctl reboot) or Later")
+    return 0
+
+
+# =============================================================================
+# THE WINDOW
+# =============================================================================
+# Imported late, and only when a window is actually wanted, so that --dry-run
+# and the headless modes work in a build container with no GTK and no screen.
+# This mirrors the note at the top of /usr/lib/aquarius/python/aquarius_ui.py.
+def gui():
+    import threading
+
+    import gi
+
+    gi.require_version("Gtk", "4.0")
+    gi.require_version("Adw", "1")
+    from gi.repository import Adw, GLib, Gtk  # noqa: E402
+
+    sys.path.insert(0, "/usr/lib/aquarius/python")
+    import aquarius_ui  # noqa: E402
+
+    class UpdaterWindow(Adw.ApplicationWindow):
+        def __init__(self, app):
+            super().__init__(application=app)
+            self.proc = None
+            self.cancelled = False
+            self._pulse_source = None
+
+            self.set_title("Check for Update")
+            self.set_default_size(600, 620)
+
+            self.stack = Gtk.Stack(
+                transition_type=Gtk.StackTransitionType.CROSSFADE,
+                transition_duration=180,
+                vexpand=True,
+            )
+            self.stack.add_named(self._build_checking_page(), "checking")
+            self.stack.add_named(self._build_result_page(), "result")
+            self.stack.add_named(self._build_working_page(), "working")
+            self.stack.add_named(self._build_done_page(), "done")
+
+            header = Adw.HeaderBar()
+            self.header_title = Adw.WindowTitle(title="Check for Update", subtitle="")
+            header.set_title_widget(self.header_title)
+            toolbar = Adw.ToolbarView()
+            toolbar.add_top_bar(header)
+            toolbar.set_content(self.stack)
+            self.set_content(toolbar)
+
+            self.connect("close-request", self._on_close_request)
+
+            # Start checking straight away.
+            self.stack.set_visible_child_name("checking")
+            self._start_pulse(self.check_bar)
+            threading.Thread(target=self._check_worker, daemon=True).start()
+
+        # -- page: checking -------------------------------------------------
+
+        def _build_checking_page(self):
+            mark, title, blurb = aquarius_ui.hero(
+                "Checking for updates",
+                "Asking whether there is a newer version of AquariusOS. This "
+                "takes a moment.",
+            )
+            self.check_bar = Gtk.ProgressBar()
+            self.check_bar.set_margin_top(8)
+            self.current_line = aquarius_ui.body_label(current_version())
+            return aquarius_ui.page([mark, title, blurb, self.current_line, self.check_bar])
+
+        # -- page: result (up to date, or an update is available) -----------
+
+        def _build_result_page(self):
+            mark, self.result_title, self.result_blurb = aquarius_ui.hero("", "")
+            self.result_glyph = aquarius_ui.status_glyph()
+            self.result_heading = aquarius_ui.heading_row(self.result_glyph, self.result_title)
+
+            self.result_version = aquarius_ui.body_label("")
+            self.result_current = aquarius_ui.body_label("")
+
+            self.result_log = aquarius_ui.LogPane("Details")
+
+            self.update_button = aquarius_ui.pill_button("Update", suggested=True)
+            self.update_button.connect("clicked", self._on_update_clicked)
+            self.recheck_button = aquarius_ui.pill_button("Check again")
+            self.recheck_button.connect("clicked", self._on_recheck_clicked)
+            self.result_close = aquarius_ui.pill_button("Close")
+            self.result_close.connect("clicked", lambda _b: self.close())
+
+            self.result_buttons = aquarius_ui.button_row(
+                [self.recheck_button, self.update_button, self.result_close]
+            )
+
+            return aquarius_ui.page(
+                [
+                    mark,
+                    self.result_heading,
+                    self.result_blurb,
+                    self.result_version,
+                    self.result_current,
+                    self.result_buttons,
+                    self.result_log.widget,
+                ]
+            )
+
+        # -- page: working (the upgrade is running) -------------------------
+
+        def _build_working_page(self):
+            mark, self.working_title, self.working_blurb = aquarius_ui.hero(
+                "Updating AquariusOS",
+                "This downloads the new version and prepares it. You can leave "
+                "it and come back. Nothing changes until you restart.",
+                style="title-2",
+            )
+            self.working_status = aquarius_ui.status_glyph()
+            self.working_status.set_visible(False)
+            self.working_heading = aquarius_ui.heading_row(self.working_status, self.working_title)
+
+            self.bar = Gtk.ProgressBar()
+            self.bar.set_margin_top(8)
+
+            self.work_log = aquarius_ui.LogPane("Details")
+
+            self.cancel_button = aquarius_ui.pill_button("Cancel")
+            self.cancel_button.connect("clicked", self._on_cancel_clicked)
+            self.retry_button = aquarius_ui.pill_button("Try again", suggested=True)
+            self.retry_button.connect("clicked", self._on_update_clicked)
+            self.retry_button.set_visible(False)
+            self.fail_close = aquarius_ui.pill_button("Close")
+            self.fail_close.connect("clicked", lambda _b: self.close())
+            self.fail_close.set_visible(False)
+            self.work_buttons = aquarius_ui.button_row(
+                [self.cancel_button, self.retry_button, self.fail_close]
+            )
+
+            return aquarius_ui.page(
+                [
+                    mark,
+                    self.working_heading,
+                    self.working_blurb,
+                    self.bar,
+                    self.work_buttons,
+                    self.work_log.widget,
+                ]
+            )
+
+        # -- page: done (restart to finish) ---------------------------------
+
+        def _build_done_page(self):
+            mark, self.done_title, self.done_blurb = aquarius_ui.hero(
+                "Update ready",
+                "The new version is downloaded and prepared. Restart to finish — "
+                "your work and your files are untouched, and if anything is ever "
+                "wrong you can pick the previous version from the boot menu.",
+            )
+            done_glyph = aquarius_ui.status_glyph()
+            aquarius_ui.set_status_glyph(done_glyph, ok=True)
+            heading = aquarius_ui.heading_row(done_glyph, self.done_title)
+
+            restart = aquarius_ui.pill_button("Restart now", suggested=True)
+            restart.connect("clicked", self._on_restart_clicked)
+            later = aquarius_ui.pill_button("Later")
+            later.connect("clicked", lambda _b: self.close())
+            buttons = aquarius_ui.button_row([later, restart])
+            return aquarius_ui.page([mark, heading, self.done_blurb, buttons])
+
+        # -- the pulsing bar ------------------------------------------------
+
+        def _start_pulse(self, bar):
+            self._pulse_bar = bar
+            if self._pulse_source is None:
+                self._pulse_source = GLib.timeout_add(120, self._pulse)
+
+        def _stop_pulse(self):
+            if self._pulse_source is not None:
+                GLib.source_remove(self._pulse_source)
+                self._pulse_source = None
+
+        def _pulse(self):
+            if self._pulse_source is None:
+                return GLib.SOURCE_REMOVE
+            self._pulse_bar.pulse()
+            return GLib.SOURCE_CONTINUE
+
+        # -- checking -------------------------------------------------------
+
+        def _check_worker(self):
+            result = check_update()
+            GLib.idle_add(self._show_result, result)
+
+        def _on_recheck_clicked(self, _button):
+            self.result_log.clear()
+            self.stack.set_visible_child_name("checking")
+            self._start_pulse(self.check_bar)
+            import threading
+            threading.Thread(target=self._check_worker, daemon=True).start()
+
+        def _show_result(self, result):
+            self._stop_pulse()
+            self.result_current.set_label("You have %s." % current_version())
+            self.result_log.clear()
+            if result.get("log"):
+                for line in result["log"].splitlines():
+                    self.result_log.append(line)
+
+            state = result["state"]
+            if state == "up-to-date":
+                aquarius_ui.set_status_glyph(self.result_glyph, ok=True)
+                self.result_title.set_label("You're up to date")
+                self.result_blurb.set_label(
+                    "You have the newest version of AquariusOS. There is nothing "
+                    "to install."
+                )
+                self.result_version.set_visible(False)
+                self.update_button.set_visible(False)
+            elif state == "available":
+                aquarius_ui.set_status_glyph(self.result_glyph, ok=True)
+                self.result_title.set_label("An update is available")
+                if result.get("version"):
+                    self.result_blurb.set_label(
+                        "A newer version of AquariusOS is ready to install."
+                    )
+                    self.result_version.set_label("New version: %s" % result["version"])
+                    self.result_version.set_visible(True)
+                else:
+                    self.result_blurb.set_label(
+                        "A newer version of AquariusOS is ready to install."
+                    )
+                    self.result_version.set_visible(False)
+                self.update_button.set_visible(True)
+                self.update_button.grab_focus()
+                self.set_default_widget(self.update_button)
+            elif state == "offline":
+                aquarius_ui.set_status_glyph(self.result_glyph, ok=False)
+                self.result_title.set_label("Couldn't check")
+                self.result_blurb.set_label(
+                    "AquariusOS could not reach the update server. Check that you "
+                    "are connected to the internet and choose \"Check again\"."
+                )
+                self.result_version.set_visible(False)
+                self.update_button.set_visible(False)
+                self.result_log.set_expanded(True)
+            else:
+                aquarius_ui.set_status_glyph(self.result_glyph, ok=False)
+                self.result_title.set_label("Couldn't tell")
+                self.result_blurb.set_label(
+                    "AquariusOS could not tell whether an update is available. "
+                    "It is always safe to update — the previous version stays on "
+                    "the disk — so you can try, or check again later."
+                )
+                self.result_version.set_visible(False)
+                self.update_button.set_visible(True)
+                self.result_log.set_expanded(True)
+
+            self.stack.set_visible_child_name("result")
+            return GLib.SOURCE_REMOVE
+
+        # -- updating -------------------------------------------------------
+
+        def _on_update_clicked(self, _button):
+            import threading
+
+            self.cancelled = False
+            self.retry_button.set_visible(False)
+            self.fail_close.set_visible(False)
+            self.cancel_button.set_visible(True)
+            self.working_status.set_visible(False)
+            self.working_title.set_label("Updating AquariusOS")
+            self.working_title.remove_css_class("error")
+            self.work_log.clear()
+            self.header_title.set_subtitle("Updating")
+            self.stack.set_visible_child_name("working")
+            self._start_pulse(self.bar)
+
+            ref = image_ref()
+            if ref:
+                self.work_log.append("Updating from %s" % ref)
+
+            threading.Thread(target=self._update_worker, daemon=True).start()
+
+        def _update_worker(self):
+            # pkexec puts up one password prompt, then runs the upgrade as root.
+            # Its output (both streams) goes straight into the Details log.
+            cmd = ["pkexec", BOOTC, "upgrade"]
+            try:
+                self.proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    errors="replace",
+                    bufsize=1,
+                    start_new_session=True,
+                )
+            except OSError as exc:
+                GLib.idle_add(self._update_failed, "The update could not be started: %s" % exc)
+                return
+            for line in self.proc.stdout:
+                GLib.idle_add(self._append_work_log, line.rstrip("\n"))
+            code = self.proc.wait()
+            self.proc = None
+            GLib.idle_add(self._update_finished, code)
+
+        def _append_work_log(self, line):
+            return self.work_log.append(line)
+
+        def _update_finished(self, code):
+            self._stop_pulse()
+            if self.cancelled:
+                return GLib.SOURCE_REMOVE
+            if code == 0:
+                self.bar.set_fraction(1.0)
+                self.header_title.set_subtitle("")
+                self.stack.set_visible_child_name("done")
+                return GLib.SOURCE_REMOVE
+            # pkexec exits 126 when the person dismisses the password prompt or is
+            # not allowed; say that plainly rather than as an error.
+            if code == 126:
+                self._update_failed(
+                    "The update needs your permission and it was not given, so "
+                    "nothing was changed. Choose Try again when you are ready."
+                )
+            else:
+                self._update_failed(
+                    "The update did not finish (it ended with code %d). The "
+                    "details below say where. Nothing has changed until it "
+                    "succeeds, so it is safe to try again." % code
+                )
+            return GLib.SOURCE_REMOVE
+
+        def _update_failed(self, message):
+            self._stop_pulse()
+            self.bar.set_fraction(0.0)
+            self.header_title.set_subtitle("Stopped")
+            self.working_title.set_label("The update did not finish")
+            self.working_title.add_css_class("error")
+            self.working_status.set_visible(True)
+            aquarius_ui.set_status_glyph(self.working_status, ok=False)
+            self.working_blurb.set_label(message)
+            self.work_log.set_expanded(True)
+            self.cancel_button.set_visible(False)
+            self.retry_button.set_visible(True)
+            self.fail_close.set_visible(True)
+            self.retry_button.grab_focus()
+            return GLib.SOURCE_REMOVE
+
+        def _on_cancel_clicked(self, _button):
+            self.cancelled = True
+            self._stop_pulse()
+            if self.proc is not None:
+                try:
+                    os.killpg(os.getpgid(self.proc.pid), 15)
+                except (OSError, ProcessLookupError):
+                    pass
+            # Back to the result page — nothing was committed.
+            self.header_title.set_subtitle("")
+            self._on_recheck_clicked(None)
+
+        # -- restart --------------------------------------------------------
+
+        def _on_restart_clicked(self, _button):
+            # logind lets the person at the screen restart their own machine, so
+            # this needs no pkexec. If it is ever refused, the polkit agent asks.
+            subprocess.Popen(["systemctl", "reboot"])
+
+        # -- closing --------------------------------------------------------
+
+        def _on_close_request(self, _window):
+            # A running upgrade must not be abandoned by closing the window.
+            if self.proc is not None and not self.cancelled:
+                return True  # refuse to close
+            return False
+
+    class UpdaterApp(Adw.Application):
+        def __init__(self):
+            super().__init__(application_id=APP_ID)
+
+        def do_activate(self):
+            window = self.props.active_window
+            if window is None:
+                window = UpdaterWindow(self)
+            window.present()
+
+    return UpdaterApp().run([])
+
+
+# -----------------------------------------------------------------------------
+# The front door
+# -----------------------------------------------------------------------------
+def main(argv):
+    args = argv[1:]
+    if args:
+        first = args[0]
+        if first == "--dry-run":
+            return dry_run()
+        if first in ("check", "--check"):
+            return headless_check()
+        if first in ("apply", "--apply", "upgrade"):
+            return headless_apply()
+        if first in ("--gui",):
+            return gui()
+        if first in ("-h", "--help", "help"):
+            here = os.path.abspath(__file__)
+            with open(here, "r") as handle:
+                for line in handle.readlines()[1:110]:
+                    if line.startswith("#"):
+                        print(line[2:].rstrip() if line.startswith("# ") else line[1:].rstrip())
+            return 0
+        print("aquarius-updater: I do not understand '%s'." % first, file=sys.stderr)
+        return 1
+    # No arguments: open the window.
+    return gui()
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

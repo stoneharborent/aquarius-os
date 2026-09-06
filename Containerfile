@@ -449,6 +449,27 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     /ctx/build_files/67-welcome.sh
 
+# 7f. External drives mount by themselves, with no password. The agent, the user
+#     service and the polkit rule all arrived with system_files at step 5; this
+#     confirms udisks2 is there (from step 2), checks the agent loads with no
+#     screen, and — the sensitive part — checks the polkit rule grants a
+#     no-password mount for REMOVABLE drives only and never for internal disks.
+#
+#     After step 5 (its files) and step 2 (udisks2, exfatprogs, ntfs-3g).
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    /ctx/build_files/76-automount.sh
+
+# 7g. The "Check for Update" window the Aquarius logo menu opens (and `aq
+#     update`). A GTK 4 / libadwaita face on `bootc upgrade`, built on the same
+#     shared window pieces as the Resolve and welcome windows. This checks it
+#     loads with no screen, its launcher entry is valid, and `aq update` is
+#     wired up.
+#
+#     After step 7 (it reads the version out of image-info.json) and step 5 (its
+#     files and the shared aquarius_ui).
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    /ctx/build_files/77-updater.sh
+
 # 7e. The gaming layer: Steam, Proton's supporting cast, gamescope, gamemode,
 #     MangoHud, the 32-bit graphics libraries a Windows game needs, and the
 #     Xbox controller drivers. In BOTH images — this machine is meant to be a
