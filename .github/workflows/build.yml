@@ -513,6 +513,11 @@ jobs:
           check "PRETTY_NAME is AquariusOS"     '^PRETTY_NAME="AquariusOS"$'     /etc/os-release
           check "/usr/lib/os-release agrees"    '^NAME="AquariusOS"$'            /usr/lib/os-release
           check "LOGO is ours"                  '^LOGO=aquarius-logo$'           /etc/os-release
+          # The colour a terminal paints the logo in. `aquariusBlue` at its Ice
+          # value #2C8FC4 = 44,143,196. Checked because it is set by a variable
+          # a long way from the palette it is copied out of, and a stale value
+          # here is invisible until somebody runs neofetch.
+          check "ANSI_COLOR is the Ice accent"  '^ANSI_COLOR="0;38;2;44;143;196"$' /etc/os-release
           check "DEFAULT_HOSTNAME is aquarius"  '^DEFAULT_HOSTNAME="aquarius"$'  /etc/os-release
           check "VARIANT_ID is aquarius-os"     '^VARIANT_ID=aquarius-os$'       /etc/os-release
           check "VARIANT names an edition"      '^VARIANT="(NVIDIA|Desktop) Edition"$' /etc/os-release
