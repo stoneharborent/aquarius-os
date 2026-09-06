@@ -11,7 +11,7 @@
 > `branding/icons/` and documented in
 > [`branding/icons/README.md`](../../branding/icons/README.md).
 >
-> It is a *narrow* set on purpose: **eight icons**, the ones Royce looks at every
+> It is a *narrow* set on purpose: **nine icons**, the ones Royce looks at every
 > day, and both themes say `Inherits=Adwaita,hicolor`, so every other icon on the
 > machine still comes from GNOME. So the reasoning below about not drawing a
 > whole icon set is still exactly right — we did not draw one.
@@ -55,7 +55,7 @@ set it as the default, and leave the door open for our own artwork later.
 | Piece | Theme | Package | Why this one |
 |---|---|---|---|
 | Mouse pointer | **Adwaita** | `adwaita-cursor-theme` | GNOME's own pointer: clean, neutral, already in the image, and already the pointer the **login screen** uses — so the pointer does not change shape the instant you log in. |
-| App icons | **`Aquarius-Ice`** (ours, since 2026-09-06) | built in this repo, from `branding/icons/` | Our own eight app icons, light set — AquariusOS is light-first. Everything we do not draw falls through to `adwaita-icon-theme`, which is still installed and still where the other several thousand icons come from. The dark twin `Aquarius-Midnight` is built and installed beside it; nothing selects it yet (see below). |
+| App icons | **`Aquarius-Ice`** (ours, since 2026-09-06) | built in this repo, from `branding/icons/` | Our own nine app icons, light set — AquariusOS is light-first. Everything we do not draw falls through to `adwaita-icon-theme`, which is still installed and still where the other several thousand icons come from. The dark twin `Aquarius-Midnight` is built and installed beside it; nothing selects it yet (see below). |
 | System sounds | **freedesktop** | `sound-theme-freedesktop` | The standard, complete cross-desktop sound set. Safe, familiar, nothing missing. |
 
 The pointer size is set to **24**, GNOME's own default (in "logical" pixels). On
@@ -142,7 +142,8 @@ seams still open above.
 Two themes ship at `/usr/share/icons/Aquarius-Ice/` and
 `/usr/share/icons/Aquarius-Midnight/`. Each has an `index.theme` saying
 `Inherits=Adwaita,hicolor`, so it only has to draw the icons it wants to change —
-which is eight. `icon-theme='Aquarius-Ice'` is set in the same two files as
+which is nine (twelve files: Files, Settings and the Console are each filed under
+GNOME's name and ours). `icon-theme='Aquarius-Ice'` is set in the same two files as
 everything else on this page, and CI expects it.
 
 The drawings live in `branding/icons/` and are rebuilt with

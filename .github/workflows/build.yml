@@ -241,10 +241,11 @@ on:
       # Same arrangement as every side branch: builds and checks, never
       # publishes.
       - restart/r6-bench-fixes
-      # The app icons — the eight AquariusOS icons from the 2026-09-06 design
-      # session (the Editor, the Writer, Files, Settings, the app chooser, the
-      # welcome window and the two DaVinci Resolve buttons), shipped as two icon
-      # themes, Aquarius-Ice and Aquarius-Midnight, with Ice as the default.
+      # The app icons — the nine AquariusOS icons from the 2026-09-06 design
+      # session (the Editor, the Writer, Files, Settings, the Console, the app
+      # chooser, the welcome window and the two DaVinci Resolve buttons), shipped
+      # as two icon themes, Aquarius-Ice and Aquarius-Midnight, with Ice as the
+      # default, both drawn in the shell's own palette.
       # Same arrangement as every side branch: builds and checks, never
       # publishes. See branding/icons/README.md.
       - restart/icon-grammar
