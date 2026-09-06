@@ -4,26 +4,39 @@
 asked why the screen he logs in at does not look like AquariusOS. Assumes you
 have never used Linux.*
 
-*Updated 2026-09-05 (twice). The first fix turned the login screen black. The
-second fix did not catch it. What ships now is the third answer, and it is to
-stop doing the thing. Start with the incident below — it is the most important
-thing on this page.*
+*Updated 2026-09-05 (three times). The first fix turned the login screen black.
+The second fix did not catch it. The third stopped doing the thing altogether —
+and the screen went black **again**, with the files everyone had been blaming
+provably not on the machine. So there is a second, separate fault, and it has
+its own section: **[Black screen with a cursor at boot](#black-screen-with-a-cursor-at-boot)**.
+Start there. The rest of this page is the first fault, which is closed.*
 
 ---
 
-# The black login screen — twice, 4 and 5 September 2026
+# The black login screen — 4 and 5 September 2026
 
 ## If you are looking at a black screen right now
 
 Press **Ctrl+Alt+F3** for a text login screen, log in, and run:
 
 ```bash
-sudo rm -f /etc/xdg/monitors.xml /var/lib/gdm/.config/monitors.xml
 sudo systemctl restart gdm
 ```
 
-That is the whole recovery, and it has worked both times. If you would rather
-undo the setting properly at the same time:
+**That is the whole recovery.** One command. It has brought the login screen
+back every single time, on every version of this fault.
+
+> **You do not need to delete anything any more.** Earlier versions of this page
+> told you to `sudo rm -f /etc/xdg/monitors.xml /var/lib/gdm/.config/monitors.xml`
+> first. AquariusOS stopped creating those files on 2026-09-05 and removes any
+> old ones at every boot, so on a current machine there is nothing there to
+> delete — the command just says "No such file". Deleting them does no harm; it
+> is simply no longer the fix, and believing it was cost two days of looking in
+> the wrong place. If you are on an image older than 2026-09-05, run the `rm`
+> too.
+
+If your machine is one where somebody switched the display copy back on by hand,
+undo that properly at the same time:
 
 ```bash
 sudo aq login scale off
@@ -32,6 +45,18 @@ sudo systemctl restart gdm
 
 And underneath all of it, AquariusOS keeps the previous version of itself:
 holding the boot menu and picking the older entry undoes an update entirely.
+
+### Which of the two faults am I looking at?
+
+Both look identical — a mouse pointer on an empty screen. This tells them apart:
+
+| | The **first** fault (closed) | The **second** fault (open) |
+| --- | --- | --- |
+| Does `ls /etc/xdg/monitors.xml` find a file? | **yes** | **no** ("No such file") |
+| Does it come back after a `gdm` restart? | yes | yes |
+| Does it happen again on the next boot? | yes, every time | **no** — only the first start after a boot |
+
+The second one is the section below.
 
 ## What happened
 
@@ -326,6 +351,226 @@ document is both of them:
   Shell itself, on the Ice wallpaper, with the Aquarius mark. Shipped and
   switched **off**, waiting for you to try it on the bench. This is where the
   size problem actually gets solved.
+
+---
+
+# Black screen with a cursor at boot
+
+*The second fault. Opened 2026-09-05, still open. Everything above this line is
+the first fault, which is closed.*
+
+## The one command that fixes it
+
+Press **Ctrl+Alt+F3**, log in, and run:
+
+```bash
+sudo systemctl restart gdm
+```
+
+The login screen comes straight back. It has, every time, on every image.
+
+## What we know for certain
+
+These are facts from Royce's own bench, not theories.
+
+1. **It only happens on the FIRST start of the login screen after a boot.**
+   Restart the login screen and it works. It keeps working.
+2. **The copied display files are not involved.** They are not on the machine.
+   The boot-time clean-up removes them and reports `No such file`. Two days were
+   spent blaming them, and by the time of these black screens they were gone.
+3. **The greeter starts.** The mouse pointer is drawn by the compositor, so
+   GNOME's greeter is running, alive, and has a session. It just draws nothing.
+4. **About sixty seconds in, the greeter loses Xwayland:**
+
+   ```
+   gnome-shell[2542]: Connection to xwayland lost
+   gnome-shell[2542]: Gio.DBusError: …ServiceUnknown: The name is not activatable
+   ```
+
+5. **The one setting that lined up with it is now gone.** Of the three images
+   Royce booted that night, the two that showed a black first screen both carried
+   a login-screen setting called `experimental-features`; the one that came up
+   fine did not. That setting was removed on 2026-09-05 — see the note below on
+   why that is *probably* a coincidence.
+
+## What we know is NOT the cause
+
+Ruling things out is most of the value here, because two days went into a wrong
+suspect already.
+
+### It is not the copied display files
+
+Ruled out by observation: they were not on the machine. See fact 2 above.
+
+### It is not our own guard restarting the login screen
+
+This was a real suspicion — the guard's job is to restart the login screen, and
+"a restart at about the right moment" is exactly what the journal looks like. It
+is ruled out **by the guard's own code**, on two independent grounds:
+
+- **It stops before it ever looks.** The guard's third gate is "is there a copied
+  display file to take away?" On a default machine there is not, so it exits
+  immediately — before its twenty-second first look, before its forty-five-second
+  watch, without touching anything. `tests/test-gdm-guard.sh` executes exactly
+  this case (`no-copies`) and fails the build if it ever acts.
+- **The arithmetic is wrong anyway.** Its watch ends at 45 seconds, so a restart
+  it caused would land at ~45s, not ~60s.
+
+**And you no longer have to take that on trust.** Every path where the guard
+changes nothing now prints one greppable line, so one command settles it:
+
+```bash
+journalctl -b -u aquarius-gdm-guard.service
+```
+
+There are only two possible answers, and they are in plain English:
+
+| What the journal says | What it means |
+| --- | --- |
+| `DID NOT TOUCH THE LOGIN SCREEN — …` | the guard is innocent. It deleted nothing and restarted nothing. |
+| `REPAIRING THE LOGIN SCREEN. What was seen: …` | the guard **did** restart your login screen, and the line says why. |
+
+On a default AquariusOS machine it is always the first one.
+
+### It is probably not the removed `experimental-features` setting either
+
+⚠️ **Be suspicious of this one, because it is the tidy answer and tidy answers
+have been wrong twice on this page already.**
+
+The correlation is real: black, black, fine — matching the presence of that
+setting exactly. But the evidence against it being the *cause* is stronger than
+the evidence for it:
+
+**GNOME warns about a name it does not know and carries straight on.** Its window
+manager reads the list, fails to match the name, prints `Unknown experimental
+feature`, adds zero to its feature flags, and moves to the next entry. There is
+no path in that code from an unknown name to a screen that does not draw.
+
+The setting was removed because it was **junk** — two names GNOME deleted in
+February 2026, a warning printed at every start, and a key the next Fedora drops
+entirely. That needed no black screen to justify it.
+
+> **So the next boot is an experiment, and both outcomes are useful.**
+> If the login screen comes up on the first try, the setting was implicated after
+> all and this fault is closed. If it is still black, that clears the setting and
+> leaves the driver-timing question below. **Write down which way it went** —
+> a result nobody records has to be paid for twice.
+
+## What to run on the next black boot
+
+**Do this BEFORE restarting the login screen.** The restart erases the thing we
+need to see: this fault only shows itself on the first start after a boot, so
+once you have restarted, that boot's evidence is spent.
+
+Press **Ctrl+Alt+F3**, log in, and run these five, in order. Photograph the
+screen or, better, save them to a file you can send back:
+
+```bash
+# Save everything to one file (easiest — then just send the file)
+sudo sh -c '{
+  echo "=== 1. the login screen service ==="
+  journalctl -b -u gdm -o short-precise
+  echo "=== 2. the greeter itself, first 60 lines ==="
+  journalctl -b _COMM=gnome-shell -o short-precise | head -60
+  echo "=== 3. the graphics driver, as the kernel saw it ==="
+  journalctl -b -k | grep -iE "nvidia|drm" | head -40
+  echo "=== 4. what the login screen waited for ==="
+  systemd-analyze critical-chain gdm.service
+  echo "=== 5. did our guard touch anything? ==="
+  journalctl -b -u aquarius-gdm-guard.service
+} > /var/log/aquarius-blackscreen.txt 2>&1'
+```
+
+Then: `sudo systemctl restart gdm`, log in normally, and the file is at
+`/var/log/aquarius-blackscreen.txt`.
+
+If you would rather just read them one at a time on the text screen:
+
+```bash
+journalctl -b -u gdm -o short-precise
+journalctl -b _COMM=gnome-shell -o short-precise | head -60
+journalctl -b -k | grep -iE "nvidia|drm" | head -40
+systemd-analyze critical-chain gdm.service
+journalctl -b -u aquarius-gdm-guard.service
+```
+
+### What each one answers
+
+| # | Command | The question it settles |
+| --- | --- | --- |
+| 1 | `journalctl -b -u gdm -o short-precise` | **When did the login screen start, and did it restart itself?** `-o short-precise` gives millisecond timestamps, which is the whole point — this fault is about ordering. |
+| 2 | `journalctl -b _COMM=gnome-shell …` | **What did the greeter say, in order?** Specifically: how many seconds after it started does `Connection to xwayland lost` appear, and what came immediately before it. |
+| 3 | `journalctl -b -k \| grep -iE "nvidia\|drm"` | **When did the graphics driver take the screen?** If the driver binds *after* the login screen started, that is the race, and it is visible right here. |
+| 4 | `systemd-analyze critical-chain gdm.service` | **What was the login screen waiting for, and for how long?** It prints the chain of things that had to finish first, with the time each took. |
+| 5 | `journalctl -b -u aquarius-gdm-guard.service` | **Was it us?** One of the two phrases in the table above. |
+
+### The single most useful comparison
+
+From files 1 and 2, line up two timestamps:
+
+- the moment `Connection to xwayland lost` appears (file 2), and
+- the moment `gdm.service` was stopped or restarted (file 1).
+
+**If they are the same moment, the Xwayland line is the fix, not the fault** —
+it is what the greeter says as it is torn down by the restart Royce typed. That
+would mean the ~60 seconds is simply how long Royce sat looking at a black screen
+before reaching for the keyboard, and the message is a red herring in the same
+way the copied files were.
+
+**If the Xwayland line comes first, with nothing restarting anything,** then the
+greeter really did lose Xwayland on its own while the screen was black, and that
+is a genuine lead worth chasing.
+
+Nobody can tell those two apart from the log excerpt we have. The timestamps can.
+
+## What is already ruled in, and what is already done about it
+
+### The driver-timing theory, and why the obvious fix is already applied
+
+The standard shape of "NVIDIA + Wayland + black GDM on first boot" is a race: the
+login screen starts before the graphics driver has taken the screen, so the
+greeter comes up with nothing to draw on.
+
+**The standard fix for that is to load the driver from the initial ramdisk,
+before anything graphical starts — and AquariusOS already does it.**
+`build_files/60-nvidia.sh` rewrites the driver's dracut configuration from
+`omit_drivers` to `force_drivers`, and adds the built-in Intel and AMD graphics
+alongside, so the NVIDIA module is in the boot ramdisk rather than loaded late.
+The image also ships `nvidia-drm.modeset=1` and `nvidia-drm.fbdev=1` as kernel
+options.
+
+That does not prove the race is impossible — it proves the usual remedy is
+already in place, which makes the plain form of this theory less likely, and
+makes command 3 above the one that would show it if it is happening anyway.
+
+### Nothing of ours delays the login screen
+
+Exactly one AquariusOS service is ordered `Before=display-manager.service`:
+`aquarius-gdm-display.service`. It is a `Type=oneshot` shell script that, with
+the copy switched off (the default), deletes a leftover file if there is one,
+prints one line, and exits. It holds nothing up. Everything else of ours —
+the Flatpak overrides, the graphics-card description for containers — is ordered
+against `local-fs.target` or `multi-user.target` and has no relationship to the
+login screen at all.
+
+The guard is ordered `After=display-manager.service`, which is an ordering rule
+for startup and not a trigger: restarting the login screen does not re-run it.
+
+## What we deliberately did NOT change
+
+It is as important to write down the fixes we rejected as the ones we made,
+because each of these looks obviously right and is not.
+
+| Tempting fix | Why we did not do it |
+| --- | --- |
+| Add `After=systemd-udev-settle.service` to `gdm.service` | `systemd-udev-settle` is deprecated upstream and does not do what people think — it cannot know that a driver which has not appeared *yet* is not coming. Editing a Fedora unit to wait on it trades a rare black screen for a slower boot on every machine and a unit we then own forever. |
+| Add a `ConditionPathExists=/dev/dri/card0` wait to `gdm.service` | Same objection, plus a worse failure: on a machine where that device genuinely never appears, the login screen would not start **at all**, which is strictly worse than a black screen a restart fixes. |
+| Have the guard restart GDM on every boot "just in case" | A restart that fires when nothing is wrong throws people out of a login they are half way through. The guard's whole design rule is that acting wrongly is its own fault. |
+| Ship a second experimental-features value to "fix" the first | This is how we got here. |
+
+**The rule this leaves us with:** we change Fedora's own login-screen unit only
+with evidence from the five commands above, and not before.
+
 
 ---
 
@@ -650,12 +895,12 @@ In order, and stop at the first one that is wrong:
 | --- | --- |
 | `/etc/dconf/db/gdm.d/01-aquarius-logo` | the login screen's logo |
 | `/etc/dconf/db/gdm.d/02-aquarius-look` | its colours, typefaces and pointer |
-| `/etc/dconf/db/gdm.d/03-aquarius-scale` | the old switch that used to be needed for part sizes. Belt only — GNOME 50 turns them on by itself. It does **not** decide whether part sizes are used; `aq login scale` does. |
+| ~~`/etc/dconf/db/gdm.d/03-aquarius-scale`~~ | **Deleted 2026-09-05.** It set `experimental-features` to two names GNOME removed in February 2026, and GNOME said so in the journal at every start: `Unknown experimental feature 'xwayland-native-scaling'`. Nothing replaces it. The build now refuses to ship any login-screen setting GNOME does not have. |
 | `/etc/dconf/db/gdm` | the built database. **This** is what GDM reads; the three files above do nothing until `dconf update` bakes them into it. |
 | `/usr/libexec/aquarius-gdm-display` | the messenger. **Switched off by default**, and with the switch off its job is to REMOVE a copy an older AquariusOS left behind. |
 | `/usr/libexec/aquarius-monitors-sanitize` | when it is switched on, **makes that copy safe first** — rounds part sizes, refuses files it cannot understand. Read its header for the full rule table. |
 | `/usr/lib/systemd/system/aquarius-gdm-display.service` | runs the messenger at every boot, before the login screen |
-| `/usr/libexec/aquarius-gdm-guard` | the rescue: removes the copies and restarts the login screen if it never appeared. Its trigger is three questions, not one — see "why it did not save the bench". |
+| `/usr/libexec/aquarius-gdm-guard` | the rescue: removes the copies and restarts the login screen if it never appeared. Its trigger is three questions, not one — see "why it did not save the bench". **On a default machine it does nothing at all**, and says so: `DID NOT TOUCH THE LOGIN SCREEN`. |
 | `/usr/lib/systemd/system/aquarius-gdm-guard.service` | runs the rescue once per boot, after the login screen starts |
 | `/usr/lib/systemd/system/graphical.target.wants/` | the two links that switch those services on. **Under `/usr`, not `/etc`** — see "How these services are switched on". |
 | `/etc/gdm/PostSession/Default` | runs the messenger again at every logout — **but only if the switch is on**. Otherwise it does nothing, like Fedora's. |
@@ -696,7 +941,7 @@ short version is in the incident section at the top.
 | Question | Answer |
 | --- | --- |
 | Are part sizes still experimental in GNOME? | **No, not since GNOME 50** (March 2026). GNOME's window manager stopped marking framebuffer scaling and native Xwayland scaling as experimental in a change merged 2 February 2026, and the GNOME 50 release notes call it the first stable version. AquariusOS is Fedora 44, which is GNOME 50. |
-| So is the `03-aquarius-scale` setting pointless? | Nearly. It changes nothing while GNOME's own default holds. It is kept because it costs one line and it keeps part sizes working on the login screen if Fedora ever turns that default back off. |
+| So is the `03-aquarius-scale` setting pointless? | Worse than pointless, and it is **gone** as of 2026-09-05. Both names in it were deleted from GNOME by [mutter merge request 4877](https://gitlab.gnome.org/GNOME/mutter/-/merge_requests/4877) (merged 3 February 2026, GNOME 50) when both behaviours became permanent. On GNOME 50 the entire list of experimental features is two names — `kms-modifiers` and `autoclose-xwayland` — and neither was ours. GNOME 51 deletes the setting itself. |
 | Does the login screen read settings from `/etc/dconf/db/gdm.d/`? | **Yes**, and this is the mechanism to rely on. It is a file path, so it keeps working regardless of which temporary user the login screen is running as. |
 | Does copying a file into the `gdm` user's home still work? | **Probably not, since GDM 49.** GDM stopped using a permanent `gdm` account and now gets a temporary one per session, so there may be no home folder to write into. There is an open bug about exactly this. `/etc/xdg/monitors.xml` is the path that matters. |
 | Is "black screen, cursor only" a known result of a part size? | **Not confirmed by anybody upstream.** What *is* documented is that GNOME can reject a whole display arrangement that does not match the monitors plugged in and fall back to defaults, and that a part size can be silently ignored. Neither of those is a black screen. Our evidence is the bench, and it is strong (removing the files fixed it) but it is one machine. This is why the guard exists. |
