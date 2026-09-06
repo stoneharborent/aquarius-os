@@ -827,12 +827,20 @@ if [ "${AQ_SESSION_UNIT_FAILS}" -eq 0 ]; then
 fi
 
 say "The window manager's configuration"
-# FIVE files now. menu.xml joined the list on 2026-09-06, and the reason it was
-# missing is the reason this loop matters: AquariusOS does not stage the shell's
-# session/labwc folder, it ships its own hand-maintained copies here. A file the
-# shell repository adds does NOT appear in this image until somebody adds it
-# here by hand, and nothing complains in the meantime.
-for aq_f in rc.xml menu.xml autostart shutdown environment; do
+# SIX files now. menu.xml joined the list on the morning of 2026-09-06 and
+# themerc-override that afternoon, and the reason each was missing is the reason
+# this loop matters: AquariusOS does not stage the shell's session/labwc folder,
+# it ships its own hand-maintained copies here. A file the shell repository adds
+# does NOT appear in this image until somebody adds it here by hand, and nothing
+# complains in the meantime.
+#
+# That last sentence is now only half true, and the better half is new:
+# build_files/check-labwc-drift.sh compares this image's copies against the
+# shell's, at the pinned commit, and CI fails the push if they differ. This loop
+# is still worth having — it reads the FINISHED IMAGE, so it also catches a file
+# that exists in the repository and never got copied in — but it is no longer
+# the only thing standing between us and another silent drift.
+for aq_f in rc.xml menu.xml themerc-override autostart shutdown environment; do
     if [ -s "${AQ_LABWC_DIR}/${aq_f}" ]; then
         ok "${AQ_LABWC_DIR}/${aq_f}"
     else
@@ -880,6 +888,22 @@ aq_file_has "${AQ_LABWC_DIR}/rc.xml" '<action name="PreviousWindow" />' \
     "and it walks back through them"
 aq_file_has "${AQ_LABWC_DIR}/autostart" 'aquarius-shell-start' \
     "the window manager starts the shell through the helper that reports failures"
+
+# ------------------------------------------------------------------------------
+# THE FONT labwc DRAWS ITS OWN MENU AND TITLE BARS IN
+# ------------------------------------------------------------------------------
+# labwc splits one look across two files: colours come from themerc-override,
+# fonts come from rc.xml's <theme> section. Miss the <theme> section and the
+# colours still land, so the desktop menu comes up in the right blue and the
+# wrong typeface — a difference nobody photographs and everybody feels. There is
+# no error either way; labwc simply falls back to "sans".
+#
+# MenuItem is the one asked about by name because it is the row of the desktop
+# right-click menu, the surface this whole 2026-09-06 pass is about.
+aq_file_has "${AQ_LABWC_DIR}/rc.xml" '<theme>' \
+    "rc.xml has a <theme> section, which is where labwc takes its fonts from"
+aq_file_has "${AQ_LABWC_DIR}/rc.xml" '<font place="MenuItem">' \
+    "and it names the font for a row of the desktop right-click menu"
 
 # ------------------------------------------------------------------------------
 # THE DESKTOP RIGHT-CLICK MENU — the 2026-09-06 bench photograph
@@ -937,6 +961,120 @@ if sed -n '/^ *<mouse>$/,/^ *<\/mouse>$/p' "${AQ_LABWC_DIR}/rc.xml" | grep -q '<
     ok "the <mouse> section keeps labwc's own bindings (window dragging, resize, click to focus)"
 else
     bad "rc.xml's <mouse> section has no <default /> — adding the right-click menu would have thrown away window dragging and resizing"
+fi
+
+# ==============================================================================
+# THE DESKTOP'S OWN COLOURS — themerc-override, new on 2026-09-06
+# ==============================================================================
+# THE BENCH NOTE THAT PRODUCED THIS FILE: "the right click menu does not have a
+# design yet". It did not. Two things on an Aquarius screen are drawn by labwc
+# and not by the shell — the menu that opens on a right-click of the wallpaper,
+# and the title bar and border around every window — and labwc was drawing both
+# in its own default Openbox grey, next to a shell that is entirely Ice blue.
+#
+# themerc-override is labwc's own mechanism for that: it is read on top of the
+# built-in theme, so it only has to name what is different. It lives in the same
+# folder as rc.xml because /usr/bin/aquarius-session starts labwc with
+# `-C <that folder>`, and labwc reads "<config-dir>/themerc-override" from there.
+#
+# WHAT IS CHECKED HERE, AND WHY EACH ONE IS A REAL FAILURE MODE
+#
+#   the file parses as key: value
+#       labwc's parse_config_line() splits on the FIRST colon. A line with no
+#       colon is skipped in silence.
+#
+#   no comment after a setting
+#       ⚠️ THIS IS THE TRAP IN THIS FILE FORMAT AND IT LOOKS LIKE NOTHING.
+#       labwc has no end-of-line comment syntax at all. process_line() returns
+#       early only when the FIRST character is '#'; everything else is split on
+#       the colon and the remainder — including anything somebody wrote after
+#       the value to explain it — becomes part of the value. So
+#           menu.width.min: 240   # the same width as the shell's menu
+#       sets the width to the whole of that text, which is not a number, and
+#       labwc discards it without a word. Every explanation in that file is
+#       therefore on its own line, and this is what keeps it that way.
+#
+#   every colour is a well-formed #rrggbb or #rrggbbaa
+#       Same silence. A colour labwc cannot parse is a key that never took
+#       effect, and the surface keeps its default — one grey menu row in an
+#       otherwise blue menu, with nothing in any log.
+#
+# The values themselves are checked in the OTHER repository: aquarius-shell's
+# tests/test-shell.sh section 15b pulls every colour out of its copy of this
+# file and fails unless that exact value appears in theme/Ice.qml. This image's
+# copy is held equal to that one by build_files/check-labwc-drift.sh, so the two
+# checks together mean a colour here is a colour in Ice.
+say "The colours labwc draws its own menu and title bars in"
+
+AQ_THEMERC="${AQ_LABWC_DIR}/themerc-override"
+AQ_THEMERC_SETTINGS=0
+AQ_THEMERC_COLOURS=0
+AQ_THEMERC_BAD=0
+
+if [ -s "${AQ_THEMERC}" ]; then
+    while IFS= read -r aq_line || [ -n "${aq_line}" ]; do
+        # Trim both ends before looking at anything, so a stray trailing space
+        # is not reported as a broken colour.
+        aq_line="$(printf '%s' "${aq_line}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+
+        # A blank line, or a comment (first character '#'), is not a setting.
+        case "${aq_line}" in
+            '' | '#'*) continue ;;
+        esac
+
+        AQ_THEMERC_SETTINGS=$((AQ_THEMERC_SETTINGS + 1))
+
+        # No colon at all means labwc reads no key and no value.
+        case "${aq_line}" in
+            *:*) ;;
+            *)
+                bad "themerc-override has a line that is not 'key: value', so labwc ignores it: ${aq_line}"
+                AQ_THEMERC_BAD=1
+                continue
+                ;;
+        esac
+
+        aq_value="${aq_line#*:}"
+        aq_value="$(printf '%s' "${aq_value}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+
+        # A '#' anywhere in the value means either a colour or somebody's
+        # comment. A colour is the whole value and nothing else; anything else
+        # is the trap described above.
+        case "${aq_value}" in
+            *'#'*)
+                AQ_THEMERC_COLOURS=$((AQ_THEMERC_COLOURS + 1))
+                if printf '%s' "${aq_value}" | grep -Eq '^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$'; then
+                    :
+                else
+                    bad "themerc-override: '${aq_line}' — the value is not a plain #rrggbb or #rrggbbaa colour. Either the colour is malformed, or somebody wrote an explanation after it on the same line: labwc has no end-of-line comments, so that text becomes part of the value and the whole setting is thrown away in silence."
+                    AQ_THEMERC_BAD=1
+                fi
+                ;;
+        esac
+    done < "${AQ_THEMERC}"
+
+    echo "  themerc-override: ${AQ_THEMERC_SETTINGS} settings, ${AQ_THEMERC_COLOURS} of them colours"
+
+    if [ "${AQ_THEMERC_SETTINGS}" -lt 20 ]; then
+        bad "themerc-override has only ${AQ_THEMERC_SETTINGS} settings — the shipped file has around thirty, so most of the desktop's look is missing"
+        AQ_THEMERC_BAD=1
+    fi
+    if [ "${AQ_THEMERC_COLOURS}" -lt 10 ]; then
+        bad "themerc-override names only ${AQ_THEMERC_COLOURS} colours — the menu and the title bars between them need more than that, so one of the two is still labwc grey"
+        AQ_THEMERC_BAD=1
+    fi
+    if [ "${AQ_THEMERC_BAD}" -eq 0 ]; then
+        ok "every line is a setting labwc can read, and every colour is a well-formed #rrggbb or #rrggbbaa"
+    fi
+
+    # The two surfaces it exists for, asked about by name. A file that parses
+    # perfectly and styles neither is a file that did nothing.
+    aq_file_has "${AQ_THEMERC}" '^menu\.items\.bg\.color:' \
+        "the desktop right-click menu has our card colour rather than labwc's grey"
+    aq_file_has "${AQ_THEMERC}" '^window\.active\.title\.bg\.color:' \
+        "the focused window's title bar has our colour too"
+else
+    bad "${AQ_THEMERC} is missing — labwc would draw the desktop menu and every title bar in its own default grey"
 fi
 
 # ==============================================================================

@@ -105,7 +105,14 @@ ARG LABWC_COMMIT=97f28877a343e062f3178d201f0248cd9c2610cf
 ARG QUICKSHELL_VERSION=v0.3.1
 ARG QUICKSHELL_COMMIT=1a4716cde794a59928d9d9fc15f2afc7a95de360
 ARG AQUARIUS_SHELL_REPO=https://github.com/stoneharborent/aquarius-shell.git
-ARG AQUARIUS_SHELL_REF=db672bbd976971bde414716c51d99a5aa3540950
+# dd23a40 (2026-09-06, second bench pass): "About This PC" opens the About page
+# itself; a new session/labwc/themerc-override gives the desktop right-click menu
+# and the window title bars the Ice look; rc.xml gains a <theme> font block
+# (Inter, sizes in pixels) alongside the W-Return and W-Tab/W-S-Tab bindings; and
+# every app in the dock gets a right-click menu (Open / New Window, Keep in or
+# Remove from Dock, Quit). The reasoning is written out beside the same value in
+# aquarius-os.env, which is where a bump is made — this line must match it.
+ARG AQUARIUS_SHELL_REF=dd23a40fdd6e8902b5ba119ab73c8d9dc6afdfcd
 
 # ------------------------------------------------------------------------------
 # Our own files, gathered up so the build can reach them

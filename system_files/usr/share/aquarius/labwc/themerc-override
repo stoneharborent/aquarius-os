@@ -1,0 +1,262 @@
+# =============================================================================
+# The Aquarius look, for the parts of the screen labwc draws itself
+# =============================================================================
+# WHAT THIS FILE IS FOR
+#
+#   Almost everything you see in an Aquarius session is drawn by the shell, in
+#   QML, out of its theme/Ice.qml. Two things are not: the menu that opens when
+#   you right-click the empty desktop, and the title bar and border around every
+#   window. Those belong to labwc, and until this file existed labwc drew them
+#   in its own default Openbox-style grey — which is exactly what Royce found on
+#   the bench on 2026-09-06: "the right click menu does not have a design yet".
+#
+#   labwc reads its built-in theme first and then reads THIS file on top of it,
+#   so anything not named below simply keeps labwc's own value. That is why the
+#   file is short: it says what is different about Aquarius and nothing else.
+#
+# WHERE labwc LOOKS FOR IT — and why it is next to rc.xml
+#
+#   labwc-theme(5), labwc 0.20.2: "Theme settings specified in themerc can be
+#   overridden by creating a 'themerc-override' file in the configuration
+#   directory, which is normally $HOME/.config/labwc/ but can be a few other
+#   locations as described in labwc-config(5)."
+#
+#   The configuration directory for this session is THIS FOLDER,
+#   /usr/share/aquarius/labwc/, because /usr/bin/aquarius-session starts the
+#   compositor with
+#
+#       labwc -C "${AQ_SESSION_DIR}/labwc"
+#
+#   and labwc's own source is explicit that -C wins outright: in
+#   src/common/dir.c, paths_config_create() begins "If user provided a config
+#   directory with the -C command line option, then that trumps everything else
+#   and we do not create the XDG-Base-Dir list", and src/theme.c reads
+#   "<config-dir>/labwc/themerc-override" straight after the theme. So rc.xml,
+#   menu.xml, autostart and this file are all read out of one folder, and this
+#   file needs no path and no theme name to be found.
+#
+# THE FILE FORMAT, IN THREE SENTENCES
+#
+#   One `key: value` per line. A line whose FIRST character is `#` is a comment
+#   and there are no end-of-line comments — labwc's process_line() returns
+#   immediately on a leading `#`, and parse_config_line() splits the rest on the
+#   first colon and strips the spaces, so anything after the value on the same
+#   line becomes part of the value. Colours are `#rrggbb`, or `#rrggbbaa` with
+#   the opacity as the last two hex digits.
+#
+# =============================================================================
+# ⚠️  THE COLOUR RULE, AND WHY THIS FILE IS ALLOWED TO BREAK IT
+# =============================================================================
+#   The rule everywhere else in this project is absolute: colour lives in the
+#   shell's theme/Ice.qml and theme/Midnight.qml and NOWHERE else. rc.xml and
+#   menu.xml next to this file both say so.
+#
+#   This file is the ONE sanctioned exception, because there is no way to make
+#   it not be one: labwc is a C program reading a flat text file and it cannot
+#   import QML. Somebody has to write the numbers out twice.
+#
+#   EVERY COLOUR BELOW IS COPIED, DIGIT FOR DIGIT, OUT OF the shell's
+#   theme/Ice.qml. Each one names the token it came from. Nothing here is a new
+#   colour, a nudged colour, or a colour somebody eyeballed — if a value below is
+#   not in theme/Ice.qml, that is a bug in this file and not a new design
+#   decision. The shell repository's own tests/test-shell.sh section 15b pulls
+#   every `#rrggbb` out of ITS copy of this file and fails unless that exact
+#   value appears in Ice, and the drift check described below is what keeps this
+#   copy equal to that one — so the enforcement reaches here too.
+#
+#   The translucent values are written labwc's way, `#rrggbbaa`, where Ice writes
+#   QML's way, `#aarrggbb` — the same colour and the same opacity with the alpha
+#   byte at the other end. The two alpha digits are named in the comment beside
+#   each one so a person can check them.
+#
+# =============================================================================
+# ⚠️  THIS FILE HAS A TWIN IN THE aquarius-shell REPOSITORY.
+#     CHANGE ONE, CHANGE BOTH.
+# =============================================================================
+#   THIS copy is the one that ships. It is what an installed AquariusOS machine
+#   reads. The other copy is
+#
+#       session/labwc/themerc-override
+#
+#   in github.com/stoneharborent/aquarius-shell, and it is what runs when the
+#   session is started from a clone of the shell — on the bench, or on plain
+#   Fedora. Nothing copies one onto the other: AquariusOS deliberately does not
+#   stage the shell's session/ folder, because our copies of these files carry
+#   OS-only corrections. So the two are kept in step BY HAND, which is the same
+#   rule rc.xml, menu.xml and autostart next to this one already state.
+#
+#   ⚠️ AND IT IS CHECKED NOW, WHICH IT WAS NOT BEFORE. That rule was broken
+#   twice in a single day — the desktop right-click menu on the morning of
+#   2026-09-06 and the Super+Tab bindings that afternoon — so the build no
+#   longer trusts it. build_files/check-labwc-drift.sh compares the two copies
+#   of all four shared files and fails if they differ in anything but their
+#   comments; CI runs it on every push, in the shell_tests job. Every SETTING
+#   line below is therefore byte-identical to the shell's copy. The comments are
+#   not, and are free to be written for whoever is reading this one.
+#
+# =============================================================================
+# ONLY ICE FOR NOW — the follow-up, written down so it is not a surprise
+# =============================================================================
+#   The shell follows the system's light/dark preference and swaps between Ice
+#   and Midnight while it runs (its services/SystemAppearance.qml). labwc cannot
+#   do that: a themerc is read once, at start-up, and a compositor has no idea
+#   what a QML singleton just decided.
+#
+#   So this file is ICE ONLY, and on a dark desktop the menu and title bars stay
+#   light while the shell goes dark. That is a real seam and it is deliberate for
+#   now rather than unnoticed. Closing it needs three things, and they are a
+#   separate piece of work:
+#
+#     1. a second file, themerc-override.midnight, built from theme/Midnight.qml
+#        the same way and checked by the same test;
+#     2. something that copies the wanted one over `themerc-override` when
+#        SystemAppearance flips;
+#     3. `labwc --reconfigure`, which is labwc's own "re-read your files now"
+#        command, run straight afterwards.
+#
+#   The reason it is not done today is (2): the shell would have to write into
+#   the session's configuration directory, which is a new kind of thing for it
+#   to do and wants a conversation, not a commit.
+#
+# =============================================================================
+# SIZES
+# =============================================================================
+#   The numbers below are the shell's own, taken from its theme/Theme.qml at its
+#   shipped scale (AQ_UI_SCALE unset, which is the 1.0 case, and the tokens are
+#   already written at the size the design ships). So `menu.width.min: 240` IS
+#   Theme.logoMenuMinWidth, and the padding is Theme.logoMenuRowPaddingH.
+#
+#   The FONT for these same surfaces is not here. labwc takes theme colours from
+#   a themerc and fonts from rc.xml, so the two halves of one look live in two
+#   files; the <theme> section of rc.xml next to this one holds the font.
+#
+#   KNOWN LIMITATION: AQ_UI_SCALE does not reach labwc. Set it and the shell
+#   grows while this menu does not. Same follow-up as the theme swap above —
+#   whatever writes a Midnight file can write a scaled one.
+#
+#   NOT PROVEN ON SCREEN. These values are read out of labwc-theme(5) for 0.20.2
+#   and will be looked at on the bench.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# The desktop right-click menu
+# -----------------------------------------------------------------------------
+# It should read as the same object as the shell's own menu off the Aquarius
+# mark: a bright Ice card, one hairline around it, dark navy text, and the row
+# under the pointer lit with a wash of the accent.
+# (components/bar/LogoMenu.qml and components/bar/MenuRow.qml are the reference.)
+
+# Theme.logoMenuMinWidth. Min and max together, so the menu is one fixed width
+# rather than shrinking to whatever the longest label happens to be — the same
+# choice LogoMenu's card makes. labwc's own default max is 200, which is
+# narrower than the min we want, so both have to be set.
+menu.width.min: 240
+menu.width.max: 240
+
+# Theme.hairline. One pixel, like every rule in the shell.
+menu.border.width: 1
+
+# Ice `lineStrong` — ink #16273A at 18% (QML writes it #2E16273A). LogoMenu's
+# card uses lineStrong for its border, standing in for the design's drop shadow.
+menu.border.color: #16273A2E
+
+# Theme.logoMenuRowPaddingH, and a vertical padding chosen to land near
+# Theme.logoMenuRowHeight (36). labwc has no row-height key — a row is the font
+# height plus twice this — so this is the closest honest equivalent, not an
+# exact match.
+menu.items.padding.x: 16
+menu.items.padding.y: 9
+
+# Ice `surface` — the brightest paper, and what LogoMenu's card is filled with.
+menu.items.bg.color: #F7FBFE
+
+# Ice `ink` — the primary text colour, deep navy rather than black.
+menu.items.text.color: #16273A
+
+# Ice `accentWash` — aquariusBlue #2C8FC4 at 16% (QML writes it #292C8FC4). This
+# is the shell's "this row is selected" colour: the Flow Search results list and
+# the notifications panel's Focus pill both use it. A 16% tint of the accent on
+# near-white paper is light enough that the row's text stays the ordinary ink,
+# which is why the line below is not changed to a light colour.
+menu.items.active.bg.color: #2C8FC429
+menu.items.active.text.color: #16273A
+
+# Theme.hairline again, and Ice `line` — ink #16273A at 10% (QML: #1A16273A).
+# MenuRow draws its separator as exactly this: a one-pixel rule in `line`.
+menu.separator.width: 1
+menu.separator.color: #16273A1A
+
+# Theme.logoMenuSeparatorMargin, on both axes — the inset of the rule and the
+# air above and below it, which is how MenuRow spaces its own separator.
+menu.separator.padding.width: 8
+menu.separator.padding.height: 8
+
+# A menu title is a separator WITH a label. Nothing in menu.xml uses one today,
+# but labwc's default for it is a strong blue with white text, which would be
+# startling the first time somebody adds a submenu. Ice `surfaceAlt` with Ice
+# `inkSoft` on it: a quiet band, in keeping with the rest of the card.
+menu.title.bg.color: #E4EDF6
+menu.title.text.color: #47586B
+menu.title.text.justify: Left
+
+
+# -----------------------------------------------------------------------------
+# Window title bars and borders
+# -----------------------------------------------------------------------------
+# The same themerc drives these, so leaving them at labwc's defaults would put
+# an Aquarius menu and a stock Openbox title bar on the same screen. They are
+# styled to agree with the menu and with the shell's top bar, and no further:
+# restrained, Ice-light, no accent anywhere. A window frame is chrome, and chrome
+# that draws attention to itself is chrome you end up looking at.
+#
+# rc.xml asks labwc to draw these at all (<core><decoration>server</decoration>),
+# so every application gets the same frame rather than each drawing its own.
+#
+# The on-screen display — the window switcher that appears while Super+Tab or
+# Alt+Tab is held — is NOT given its own keys. labwc's documented inheritance
+# already points osd.bg.color at window.active.title.bg.color, osd.border.color
+# and osd.label.text.color at the active label colour, and osd.border.width at
+# border.width, so it follows the four lines below on its own. Adding keys that
+# only restate an inheritance is four more values to keep in step with Ice.
+
+# Theme.hairline. One pixel around a window, the same weight as every other rule
+# on screen.
+border.width: 1
+
+# Ice `lineStrong` (18%) for the window you are in, Ice `line` (10%) for the
+# ones you are not — the same two hairline strengths the shell uses everywhere,
+# and the difference is what makes the focused window findable without a colour.
+window.active.border.color: #16273A2E
+window.inactive.border.color: #16273A1A
+
+# Ice `panel` — the top bar's own colour. A title bar and the bar are the same
+# kind of surface, so they are the same colour, and a window that is not focused
+# steps one rung down the surface ladder to Ice `surfaceAlt`.
+window.active.title.bg.color: #F0F6FC
+window.inactive.title.bg.color: #E4EDF6
+
+# Ice `ink` for the focused window's title, Ice `inkMute` for the rest — exactly
+# what the shell does with the name of the active app in the top bar.
+window.active.label.text.color: #16273A
+window.inactive.label.text.color: #7C90A4
+
+# Centred, which is where labwc puts it by default and where the design's own
+# window mock puts it. Written down rather than left implicit, because it is the
+# one title-bar decision somebody is most likely to want to argue with.
+window.label.text.justify: Center
+
+# The close/maximise/minimise marks, drawn in the same two inks as the label so
+# a window's buttons and its title agree.
+window.active.button.unpressed.image.color: #16273A
+window.inactive.button.unpressed.image.color: #7C90A4
+
+# Ice `hoverWash` — ink #16273A at 8% (QML: #1416273A). The same wash a bar item
+# takes when the pointer is over it, so a title-bar button lights the way every
+# other hoverable thing in the shell does.
+window.button.hover.bg.color: #16273A14
+
+# A little air between the border and the first button, so the buttons are not
+# jammed against the window's edge. Theme.sp2 is 10; 8 keeps the title bar from
+# growing wider than it needs to be.
+window.titlebar.padding.width: 8
+window.titlebar.padding.height: 0

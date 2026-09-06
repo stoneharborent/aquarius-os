@@ -13,6 +13,15 @@
   labwc, because labwc 0.20 has HDR10 and colour management today and the
   alternative does not. That is standing decision 2b, 2026-09-02.
 
+  CHANGE ONE, CHANGE BOTH, AND IT IS CHECKED NOW. Nothing copies the shell's
+  session/labwc/ folder into this image; these are hand-maintained copies. That
+  rule was broken twice on 6 September 2026 — the desktop right-click menu in
+  the morning, the Super+Tab bindings that afternoon — so as of the second pass
+  the build compares the two files directly. Every element and attribute below
+  is identical to the shell's copy; only the prose differs, and only because
+  each copy is written for its own reader. The comparison is
+  build_files/check-labwc-drift.sh, run on every push by CI.
+
   =============================================================================
   WHY THIS FILE IS SO SHORT
   =============================================================================
@@ -34,12 +43,18 @@
   =============================================================================
   TWO RULES THIS FILE OBEYS
   =============================================================================
-  1. NO COLOURS. labwc's title bars and borders come from an Openbox-style
-     theme, and it would be easy to paste the Ice palette's hex values into a
-     themerc file here. Do not. Colour in the Aquarius Desktop lives in the
-     shell's theme/Ice.qml and theme/Midnight.qml and nowhere else. Two places
-     holding "the Aquarius blue" is how a desktop stops looking designed. When
-     the shell owns window decoration, it will own the colour too.
+  1. NO COLOURS IN THIS FILE. Colour in the Aquarius Desktop lives in the
+     shell's theme/Ice.qml and theme/Midnight.qml, and there is exactly ONE
+     other file allowed to hold a colour value: `themerc-override` next to this
+     one, which is how labwc's own desktop menu and title bars got the Aquarius
+     look on 2026-09-06. It is an exception because it has to be — labwc is a C
+     program reading a flat text file and cannot import QML, so somebody has to
+     write the numbers out twice — and every value in it is copied digit for
+     digit from Ice. Nothing else here, this file included, may name a colour.
+
+     What this file DOES carry is the FONT for those same surfaces (the <theme>
+     section below), because a font is not a colour and there is no themerc key
+     for it — labwc takes fonts from rc.xml and colours from the themerc.
 
   2. NO PATHS. The shell is started from the autostart file next to this one,
      with a bare `qs`, because /usr/bin/aquarius-session exports QS_CONFIG_PATH
@@ -87,6 +102,75 @@
     <gap>8</gap>
   </core>
 
+  <!--
+    =========================================================================
+    THE FONT labwc DRAWS ITS OWN SURFACES IN
+    =========================================================================
+    The COLOURS of the desktop menu and the window title bars are in
+    `themerc-override` next to this file, which arrived in this image on
+    2026-09-06 and is the one file in this folder allowed to name a colour.
+    Their FONT is not in it: labwc takes theme colours from a themerc and fonts
+    from rc.xml, so the two halves of one look live in two files. That is
+    labwc's split, not ours, and it is why rule 1 above says "no colours" and
+    this section is still here.
+
+    Inter is the shell's own UI face — its theme/Theme.qml picks it as
+    `fontBody`, and every label in the bar, the dock, the menus and the panels
+    is drawn in it. Without these four lines labwc would draw its menu in
+    "sans", whatever that resolves to on the machine, and the desktop menu would
+    be in a different typeface from the shell menu two inches above it.
+
+    IF INTER IS NOT INSTALLED labwc falls back to its default on its own, which
+    is the same outcome the shell's Theme.pickFont() arranges for itself. This
+    image installs Sora, Inter and JetBrains Mono, so on AquariusOS it is
+    always there.
+
+    THE SIZES ARE THE SHELL'S, and labwc's <size> is in PIXELS
+    (labwc-config(5): "Font size in pixels. Default is 10."), which is the same
+    unit theme/Theme.qml uses — it sets font.pixelSize, never pointSize. So:
+
+      MenuItem   19  = Theme.fsBody     — one row of the Aquarius menu
+      MenuHeader 15  = Theme.fsCaption  — a menu title, quieter than its items
+      ActiveWindow / InactiveWindow
+                 15  = Theme.fsCaption  — the size the top bar draws its own
+                                          labels at, and a title bar is the same
+                                          kind of chrome as the bar
+
+    ⚠️ AQ_UI_SCALE DOES NOT REACH HERE. /usr/bin/aquarius-session exports that
+    variable and the shell multiplies every size by it; labwc knows nothing
+    about it. Set it and the shell grows while these do not. Written up as a
+    follow-up in themerc-override's header, alongside the Midnight problem,
+    because both want the same fix.
+
+    Attribute ORDER matters in labwc when a font is written on one line —
+    labwc-config(5) is explicit that `place` must come before `name` and `size`,
+    or the setting lands on every place at once. Child elements have no such
+    trap, so these are written as children.
+  -->
+  <theme>
+
+    <font place="MenuItem">
+      <name>Inter</name>
+      <size>19</size>
+    </font>
+
+    <font place="MenuHeader">
+      <name>Inter</name>
+      <size>15</size>
+    </font>
+
+    <font place="ActiveWindow">
+      <name>Inter</name>
+      <size>15</size>
+    </font>
+
+    <font place="InactiveWindow">
+      <name>Inter</name>
+      <size>15</size>
+    </font>
+
+  </theme>
+
   <keyboard>
 
     <!-- labwc's own defaults: Alt+Tab, Alt+F4, Super+a maximise, Super+arrows
@@ -128,7 +212,9 @@
       ptyxis is Fedora's terminal and is part of the AquariusOS image.
     -->
     <keybind key="W-Return">
-      <action name="Execute" command="ptyxis" />
+      <action name="Execute">
+        <command>ptyxis</command>
+      </action>
     </keybind>
 
     <!--
