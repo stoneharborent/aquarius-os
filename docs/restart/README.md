@@ -146,6 +146,8 @@ after it.
 | `30-session.sh` (fingerprint login) | Also installs **fprintd + fprintd-pam**. ⚠️ Fedora's stock login rules name a fingerprint step (`pam_fprintd.so`), but the bare base ships the rule without the module, so every login logged "PAM adding faulty module" — the 2026-09-05 bench journal. Installing the module resolves the reference (matching Fedora Workstation) and makes fingerprint login work on laptops that have a reader; on a machine without one it sits idle. CI now also fails the build if any `/etc/pam.d` rule *requires* a module that is not installed (silent-optional `-` lines, like keyring and wallet, are honoured and skipped). Plain-language guide: [`login.md`](login.md#the-faulty-pam-module-at-every-login). |
 | `40-gnome-desktop.sh` | GNOME — a hand-written short list, with a note on everything deliberately left out. |
 | `50-aquarius-desktop.sh` | Makes it *ours*: wallpaper, logos, Ice theme, fonts, dock, the right-click ingest menu. |
+| `40-gnome-desktop.sh` | GNOME — a hand-written short list, with a note on everything deliberately left out. Also installs the **desktop-identity themes** (Adwaita cursor + icons, freedesktop sounds) and checks they are really on disk. See [`desktop-identity.md`](desktop-identity.md). |
+| `50-aquarius-desktop.sh` | Makes it *ours*: wallpaper, logos, Ice theme, fonts, dock, the right-click ingest menu, and the **cursor / icon / sound defaults** that match the login screen. See [`desktop-identity.md`](desktop-identity.md). |
 | `55-aquarius-session.sh` | The **Aquarius Desktop** — our own shell on the labwc window manager, added beside GNOME as a second choice at the login screen. Installs what the two compiled programs need, sets up the portals, and switches greetd off. See [`aquarius-session.md`](aquarius-session.md). |
 | `58-kernel-pin.sh` | **Which kernel AquariusOS ships.** Pins it to the one Universal Blue's ready-made, already-signed kernel modules were built for — the NVIDIA driver, the OBS virtual camera and the two Xbox controller drivers all depend on it exactly. Runs on BOTH images and before every step that installs a module. See [`kernel.md`](kernel.md). |
 | `60-nvidia.sh` | The NVIDIA driver. Does nothing on the AMD/Intel image. The hardest file in the repo — see [`nvidia-notes.md`](nvidia-notes.md). |
@@ -284,6 +286,7 @@ thing locally. `just` with no arguments lists everything available.
 - **Making camera files open in an editor (the ingest helper):** [`ingest.md`](ingest.md)
 - **Mac-style keyboard shortcuts (Copy is Command-C):** [`aquarius-keys.md`](aquarius-keys.md)
 - **How big things are on the screen (and why it was too small):** [`aquarius-display.md`](aquarius-display.md)
+- **The pointer, the icons and the system sounds (and the seam for real Aquarius artwork later):** [`desktop-identity.md`](desktop-identity.md)
 - **The login screen — why it looked like stock Fedora, and the two answers:** [`login.md`](login.md)
 - **⚠️ The BLACK login screen — twice, 4 and 5 September — and why AquariusOS now gives the login screen no display file at all:** [`login.md`](login.md#the-black-login-screen--twice-4-and-5-september-2026)
 - **DaVinci Resolve — installing it, and why it lives in a container:** [`resolve.md`](resolve.md)

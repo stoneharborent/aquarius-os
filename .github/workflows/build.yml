@@ -179,6 +179,13 @@ on:
       # installed. Same arrangement as every side branch: builds and checks,
       # never publishes.
       - restart/pam-fprintd
+      # Phase R5 desktop identity — the cursor theme, the icon theme and the
+      # system sounds, chosen from Fedora's own packaged themes (Adwaita and
+      # freedesktop) rather than hand-drawn, set as defaults beside the fonts
+      # and accent so they cannot drift, with a documented seam for real
+      # Aquarius artwork later. Same arrangement as every side branch: builds
+      # and checks, never publishes. See docs/restart/desktop-identity.md.
+      - restart/desktop-identity
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -847,6 +854,16 @@ jobs:
           want org.gnome.desktop.interface accent-color "'blue'"
           want org.gnome.desktop.interface font-name "'Inter 11'"
           want org.gnome.desktop.interface monospace-font-name "'JetBrains Mono 10'"
+          # Phase R5 desktop identity — the pointer, the app icons and the
+          # system sounds. All three are GNOME's own themes, named on purpose so
+          # they sit beside the fonts and accent and cannot drift; they must
+          # also match the login screen (build_files/50-aquarius-desktop.sh sets
+          # the same Adwaita cursor and icons). See docs/restart/desktop-identity.md.
+          want org.gnome.desktop.interface cursor-theme "'Adwaita'"
+          want org.gnome.desktop.interface cursor-size "24"
+          want org.gnome.desktop.interface icon-theme "'Adwaita'"
+          want org.gnome.desktop.sound theme-name "'freedesktop'"
+          want org.gnome.desktop.sound event-sounds "true"
           want org.gnome.desktop.background picture-options "'zoom'"
           want org.gnome.shell.extensions.dash-to-dock dock-position "'BOTTOM'"
           want org.gnome.shell.extensions.dash-to-dock dock-fixed "true"
@@ -900,6 +917,28 @@ jobs:
           for face in Inter "JetBrains Mono" Sora; do
             if fc-list | grep -qi "${face}"; then ok "${face}"
             else bad "${face} is not findable — the interface would fall back to a default"; fi
+          done
+
+          # ---------------------------------------------------------------
+          # Phase R5 desktop identity — the cursor, icon and sound themes
+          # ---------------------------------------------------------------
+          # A theme setting names a PACKAGE and, on disk, a FOLDER. A gsettings
+          # read-back above proves the setting is what we want; these prove the
+          # thing it points at is actually in the image, so GNOME never has to
+          # silently fall back. Package first, then folder.
+          echo "== the desktop-identity theme packages are installed =="
+          for pkg in adwaita-cursor-theme adwaita-icon-theme sound-theme-freedesktop; do
+            if rpm -q "${pkg}" > /dev/null 2>&1; then ok "${pkg} ($(rpm -q "${pkg}"))"
+            else bad "${pkg} is not installed — its theme default would fall back silently"; fi
+          done
+
+          echo "== the theme folders those settings point at exist =="
+          for dir in \
+            /usr/share/icons/Adwaita \
+            /usr/share/icons/Adwaita/cursors \
+            /usr/share/sounds/freedesktop; do
+            if [ -d "${dir}" ]; then ok "${dir}"
+            else bad "${dir} is missing — the matching desktop-identity default would fall back"; fi
           done
 
           if [ "$fails" -ne 0 ]; then

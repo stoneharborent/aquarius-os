@@ -278,11 +278,18 @@ EOF
 #                     desktop: see the note at the top of this file.
 #   font-name         Inter, the interface typeface, so the person's name under
 #                     their picture is set in ours and not Fedora's.
-#   cursor-theme      the pointer. Left at Adwaita deliberately — AquariusOS has
-#                     no cursor theme of its own yet (it is on the R5 list) —
-#                     but written down explicitly so that the day it does, this
-#                     is the one line that changes and the login screen does not
-#                     get forgotten.
+#   cursor-theme      the pointer. Adwaita — and as of Phase R5 (2026-09-05)
+#                     that is a settled decision, not a placeholder: AquariusOS
+#                     ships GNOME's own cursor rather than a hand-drawn one for
+#                     now, and the same choice is made for the desktop session
+#                     in zz1-aquarius-10-look.gschema.override, so the pointer
+#                     does not change shape the instant you log in. Written down
+#                     explicitly so that the day real Aquarius cursor artwork
+#                     exists, this is the one login-screen line that changes and
+#                     it does not get forgotten. Full story + swap-in recipe:
+#                     docs/restart/desktop-identity.md.
+#   icon-theme        the app icons. Adwaita, matching the desktop session for
+#                     the same reason and with the same seam.
 #
 # NOT SET, ON PURPOSE: text-scaling-factor. See the long note above — the screen
 # size is fixed by monitors.xml, and doing it twice makes it wrong the other way.
