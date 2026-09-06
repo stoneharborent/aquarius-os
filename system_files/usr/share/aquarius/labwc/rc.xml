@@ -50,6 +50,8 @@
   =============================================================================
     W-space     open or close the Aquarius search palette
     W-Return    a terminal
+    W-Tab       switch to the next window (hold Super, tap Tab)
+    W-S-Tab     switch to the previous window
     W-S-e       leave the desktop and return to the login screen
 
   =============================================================================
@@ -127,6 +129,39 @@
     -->
     <keybind key="W-Return">
       <action name="Execute" command="ptyxis" />
+    </keybind>
+
+    <!--
+      Switching windows with the Super key, so that Aquarius Keys' Mac mode
+      behaves the way a Mac does.
+
+      labwc already switches windows, on Alt+Tab, and that binding stays (it
+      comes from the <default /> above). This adds Super+Tab alongside it. The
+      reason is Aquarius Keys: in Mac mode the Command key is mapped to Super,
+      so a person pressing Command+Tab out of habit is really sending Super+Tab.
+      GNOME already does the right thing with that, so before this the same
+      keystroke worked on one AquariusOS desktop and did nothing on the other.
+
+      NextWindow and PreviousWindow are labwc's own actions for this, and they
+      are what Alt+Tab is bound to by default (labwc-actions(5), labwc 0.20).
+      They show the window switcher while the modifier is held, so holding Super
+      and tapping Tab walks along the list — the behaviour people expect from
+      this key. The Immediate variants skip that overlay and are meant for
+      bindings with no modifier, which is not this.
+
+      These two bindings are the aquarius-shell repository's, copied across on
+      2026-09-06. They had been added there and never here, which is the same
+      drift that lost the right-click menu: this image ships its own hand-kept
+      copies of the labwc files, so a binding the shell repository gains does
+      not appear on a machine until somebody adds it here. Change one, change
+      both.
+    -->
+    <keybind key="W-Tab">
+      <action name="NextWindow" />
+    </keybind>
+
+    <keybind key="W-S-Tab">
+      <action name="PreviousWindow" />
     </keybind>
 
     <!-- Leave the desktop and go back to the login screen, where GNOME is one

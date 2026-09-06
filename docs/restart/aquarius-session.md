@@ -94,6 +94,7 @@ And these keys:
 | **Super + Space** | Opens the search palette. Type to find an application, do a sum, or reach a session action like Log Out. Escape closes it. |
 | **Super + Return** | A terminal. This is the escape hatch — it works even when nothing else does. |
 | **Super + Shift + E** | Leaves the Aquarius Desktop and returns you to the login screen. |
+| **Super + Tab** | Switch windows. Hold Super and tap Tab to walk along the list; Super + Shift + Tab walks back. This is here so that Mac mode's Command + Tab does what a Mac does. |
 | **Alt + Tab** | Switch windows. |
 | **Alt + F4** | Close a window. |
 | **Super + arrow keys** | Snap a window to half the screen. |
@@ -149,6 +150,14 @@ checks that all five files are present, that both XML files parse, that
 `menu.xml` really declares a menu called `root-menu`, and that `rc.xml` really
 binds a right-click on the desktop to it — reading the finished image, not the
 recipe.
+
+It happened a second time, quietly, and was found on 6 September 2026 while
+fixing the first: the shell repository's `rc.xml` had grown **Super + Tab** and
+**Super + Shift + Tab** bindings and this image's copy had neither, so
+Command + Tab in Mac mode did nothing on our desktop while working perfectly in
+GNOME. Those two bindings are now here, and the build reads them back out of the
+image as well. A proper drift check between the two files — comparing them
+directly rather than naming each binding one at a time — is the next pass's job.
 
 ### Why Settings is launched with `env XDG_CURRENT_DESKTOP=GNOME`
 
@@ -910,6 +919,12 @@ In order. Stop at the first failure and read the log.
 4. **Press Super + Space.** The search palette should appear. Type a few letters
    of an application's name; it should be first in the list. Type `12*12`; it
    should answer 144. Escape closes it.
+4a. **Press Super + Tab.** With two or three windows open, hold Super and tap
+    Tab: a window switcher should appear and walk along the list, and Super +
+    Shift + Tab should walk back. In Mac mode this is what Command + Tab sends,
+    so try it that way too. (Added 2026-09-06 — the binding existed in the
+    aquarius-shell repository and had never been copied into the image's own
+    `rc.xml`.)
 4b. **Right-click the empty desktop.** The Aquarius menu should appear: Search,
     System Settings, Change Wallpaper, Log Out, Sleep, Restart, Power Off. If you
     get *Terminal / Reconfigure / Exit* instead, that is labwc's built-in menu and

@@ -2572,6 +2572,25 @@ jobs:
           grep -q '<action name="Exit" />' /usr/share/aquarius/labwc/rc.xml \
             && ok "Super+Shift+E leaves the session" || bad "there is no way to leave the session by keyboard"
 
+          # Super+Tab / Super+Shift+Tab, copied across from the aquarius-shell
+          # repository on 2026-09-06. In Mac mode Aquarius Keys maps Command to
+          # Super, so Command+Tab arrives here as Super+Tab; GNOME answers it and
+          # our desktop did not. Same drift as the right-click menu below — the
+          # shell repository had these bindings and this image, which keeps its
+          # own copies of the labwc files, did not.
+          grep -q '<keybind key="W-Tab">' /usr/share/aquarius/labwc/rc.xml \
+            && ok "Super+Tab is bound (Command+Tab in Mac mode)" \
+            || bad "rc.xml has no Super+Tab binding — Command+Tab would do nothing in the Aquarius Desktop"
+          grep -q '<action name="NextWindow" />' /usr/share/aquarius/labwc/rc.xml \
+            && ok "and it walks forward through the windows" \
+            || bad "rc.xml binds Super+Tab to no NextWindow action"
+          grep -q '<keybind key="W-S-Tab">' /usr/share/aquarius/labwc/rc.xml \
+            && ok "Super+Shift+Tab is bound" \
+            || bad "rc.xml has no Super+Shift+Tab binding"
+          grep -q '<action name="PreviousWindow" />' /usr/share/aquarius/labwc/rc.xml \
+            && ok "and it walks back through them" \
+            || bad "rc.xml binds Super+Shift+Tab to no PreviousWindow action"
+
           # ⚠️ THE 2026-09-06 BENCH PHOTOGRAPH: right-clicking the wallpaper
           # opened labwc's OWN menu — Terminal, Reconfigure, Exit. The shell
           # repository had grown a menu.xml and a Root mousebind and this image,
