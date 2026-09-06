@@ -256,6 +256,22 @@ on:
       #     rc.xml and had never been copied into the image's own copy — the
       #     same drift that lost the right-click menu last pass.
       #
+      # It then closes that second point properly rather than one binding at a
+      # time. AQUARIUS_SHELL_REF moves to dd23a40, which brings the desktop menu
+      # and title bars an Aquarius look (a new session/labwc/themerc-override),
+      # a <theme> font block in rc.xml, "About This PC" opening the About page
+      # directly, and a right-click menu on every app in the dock. The image
+      # gains its own copy of themerc-override and its rc.xml is brought up to
+      # the shell's content.
+      #
+      # AND THE REAL DELIVERABLE: build_files/check-labwc-drift.sh, run by the
+      # shell_tests job below. It compares the two copies of all four shared
+      # labwc files — rc.xml, menu.xml, themerc-override, autostart — and fails
+      # the push when they differ in anything but their comments. Twice in one
+      # day the shell changed one of those files and the image's copy was not
+      # updated; naming each missing binding in a check does not generalise, and
+      # this does.
+      #
       # Same arrangement as every side branch: builds and checks, never
       # publishes.
       - restart/r6-bench-pass-2
@@ -2556,9 +2572,11 @@ jobs:
             || bad "the launcher does not use AQ_SESSION_ENV_PUSH — the start-up list and the logout list can drift apart"
 
           echo "== the window manager's configuration =="
-          # FIVE files. menu.xml joined on 2026-09-06 — see the desktop
-          # right-click block just below for what happens without it.
-          for f in rc.xml menu.xml autostart shutdown environment; do
+          # SIX files. menu.xml joined on the morning of 2026-09-06 — see the
+          # desktop right-click block just below for what happens without it —
+          # and themerc-override that afternoon, which is what stops labwc
+          # drawing that menu and every title bar in its own default grey.
+          for f in rc.xml menu.xml themerc-override autostart shutdown environment; do
             if [ -s "/usr/share/aquarius/labwc/${f}" ]; then ok "labwc/${f}"; else bad "labwc/${f} is missing"; fi
           done
           # The corrected form of the summon command. Passing a configuration
@@ -2636,6 +2654,22 @@ jobs:
           else
             bad "a gnome-control-center command in menu.xml has no 'env XDG_CURRENT_DESKTOP=GNOME' prefix — that menu item would do nothing"
           fi
+
+          # The look of that menu, and of every window title bar. labwc splits
+          # one look across two files — colours in themerc-override, fonts in
+          # rc.xml's <theme> section — so both halves are read back here. Get
+          # only one and the desktop menu comes up in the right blue and the
+          # wrong typeface, which nobody photographs and everybody feels.
+          echo "== and it looks like Aquarius rather than Openbox =="
+          grep -q '^menu\.items\.bg\.color:' /usr/share/aquarius/labwc/themerc-override \
+            && ok "the desktop menu is drawn on our card colour" \
+            || bad "themerc-override does not set menu.items.bg.color — the right-click menu would be labwc's default grey, which is the bench note of 2026-09-06"
+          grep -q '^window\.active\.title\.bg\.color:' /usr/share/aquarius/labwc/themerc-override \
+            && ok "and so is the focused window's title bar" \
+            || bad "themerc-override does not set window.active.title.bg.color — every window would wear a stock Openbox title bar"
+          grep -q '<font place="MenuItem">' /usr/share/aquarius/labwc/rc.xml \
+            && ok "and both are drawn in the shell's own typeface" \
+            || bad "rc.xml has no <font place=\"MenuItem\"> — labwc would draw the desktop menu in whatever \"sans\" resolves to, next to a shell drawn in Inter"
 
           # ⚠️ THE OTHER 2026-09-06 BENCH BUG: the dock's Settings icon did
           # nothing. gnome-control-center reads XDG_CURRENT_DESKTOP at start-up
@@ -5764,6 +5798,37 @@ jobs:
         if: steps.fetch.outputs.available == 'yes'
         working-directory: aquarius-shell
         run: ./tests/test-shell.sh
+
+      # ------------------------------------------------------------------------
+      # ⚠️ CHANGE ONE, CHANGE BOTH — and this is what makes that true
+      # ------------------------------------------------------------------------
+      # The window manager reads four files, and every one of them exists twice:
+      # once in the shell repository under session/labwc/, and once in this
+      # repository under system_files/usr/share/aquarius/labwc/. The copy here is
+      # what ships on a real machine. Nothing copies one onto the other — on
+      # purpose, because our copies carry OS-only corrections — so the two are
+      # kept in step by hand.
+      #
+      # THAT FAILED TWICE IN ONE DAY, 6 September 2026. In the morning the shell
+      # had grown a menu.xml and a right-click binding this image never got, so
+      # right-clicking the desktop showed labwc's own built-in menu. That
+      # afternoon, while fixing it, we found the shell had also grown Super+Tab
+      # and Super+Shift+Tab that this image never got either. Both times the
+      # build was then taught to look for that one thing by name, which does not
+      # help with whatever the shell adds next.
+      #
+      # So this compares the files themselves. Comments are ignored — each copy
+      # is written for its own reader — and everything the program acts on has to
+      # match. It is a script in this repository rather than lines in this file
+      # so that a person can run exactly what CI runs, against a clone of the
+      # shell, before pushing:
+      #
+      #     ./build_files/check-labwc-drift.sh /path/to/a/clone/of/aquarius-shell
+      #
+      # It needs python3 and nothing else, and that is already on the runner.
+      - name: The image's labwc files still match the shell's
+        if: steps.fetch.outputs.available == 'yes'
+        run: ./build_files/check-labwc-drift.sh aquarius-shell
 
       # The two things this repository needs to be true about the shell, which
       # the shell's own tests have no reason to check because they are about how

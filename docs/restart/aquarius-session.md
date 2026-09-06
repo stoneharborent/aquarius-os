@@ -114,21 +114,22 @@ Exit*, that is labwc's own built-in menu and it means one of the two files
 described in the next section did not make it into the image. It is the bug the
 bench found on 6 September 2026.
 
-### The window manager's five files, and the change-one-change-both rule
+### The window manager's six files, and the change-one-change-both rule
 
 The Aquarius Desktop is the Aquarius Shell running on the labwc window manager,
 and labwc reads its own configuration out of one folder:
-`/usr/share/aquarius/labwc/`. There are five files in it:
+`/usr/share/aquarius/labwc/`. There are six files in it:
 
 | File | What it does |
 | --- | --- |
-| `rc.xml` | The key bindings, and the one mouse binding: right-click the desktop opens the menu. |
+| `rc.xml` | The key bindings, the one mouse binding (right-click the desktop opens the menu), and the font labwc draws its own menu and title bars in. |
 | `menu.xml` | What that menu contains. |
+| `themerc-override` | What that menu, and every window title bar, look like. New on 6 September 2026. |
 | `autostart` | What runs once the window manager is up — the shell, the wallpaper, the screen size. |
 | `environment` | Variables labwc sets for itself before it starts. |
 | `shutdown` | What runs on the way out. |
 
-**All five are AquariusOS's own copies of files that also live in the
+**All six are AquariusOS's own copies of files that also live in the
 aquarius-shell repository, under `session/labwc/`. Change one, change both.**
 
 This is worth spelling out because it is exactly how the right-click menu went
@@ -146,7 +147,7 @@ its built-in one. Shipping `menu.xml` is the fix; the binding in `rc.xml` is
 written out as well so the gesture does not quietly depend on a labwc default.
 
 The build now refuses to produce an image where that has happened again. It
-checks that all five files are present, that both XML files parse, that
+checks that all six files are present, that both XML files parse, that
 `menu.xml` really declares a menu called `root-menu`, and that `rc.xml` really
 binds a right-click on the desktop to it — reading the finished image, not the
 recipe.
@@ -156,8 +157,43 @@ fixing the first: the shell repository's `rc.xml` had grown **Super + Tab** and
 **Super + Shift + Tab** bindings and this image's copy had neither, so
 Command + Tab in Mac mode did nothing on our desktop while working perfectly in
 GNOME. Those two bindings are now here, and the build reads them back out of the
-image as well. A proper drift check between the two files — comparing them
-directly rather than naming each binding one at a time — is the next pass's job.
+image as well.
+
+### The drift check — how the rule stopped being a rule people have to remember
+
+Naming each missing thing in a check does not generalise: it fixes the binding
+that was lost and says nothing about whatever the shell adds next. So as of the
+second pass over that bench test, the build compares the two copies **directly**
+and fails on any difference in content, whatever it turns out to be.
+
+The comparison is `build_files/check-labwc-drift.sh`. CI runs it on every push,
+in the `shell_tests` job, against a clone of aquarius-shell at exactly the commit
+`AQUARIUS_SHELL_REF` pins. Anyone can run the same thing by hand before pushing:
+
+```
+git clone https://github.com/stoneharborent/aquarius-shell.git /tmp/shell
+cd /tmp/shell && git checkout --detach <the commit in aquarius-os.env>
+cd - && ./build_files/check-labwc-drift.sh /tmp/shell
+```
+
+**Four of the six files are shared with the shell and are compared.** They are:
+
+| File | What "the same" means for it |
+| --- | --- |
+| `rc.xml` | Every element, attribute and value, comments excluded. Both files are read as XML and reduced to a plain listing, so indentation, attribute order and the wording of a comment cannot look like drift and a changed setting always does. |
+| `menu.xml` | The same treatment — including the `env XDG_CURRENT_DESKTOP=GNOME` prefix on the Settings commands, which the shell's copy now carries too. |
+| `themerc-override` | Every line that is not blank and not a comment. labwc's theme file has no end-of-line comment syntax at all, so a `#` after a setting is a bug rather than a note, and the check would see it. |
+| `autostart` | **Not** a straight comparison, and this is the one exception worth knowing about. The image's `autostart` is deliberately the larger file: it starts things that only exist on an installed machine (the wallpaper, the display-scale helper, the polkit agent, the portal reset, the wrapper that puts a dialog on screen if the shell dies). So the rule is one-directional — *every line that runs in the shell's copy must also run in ours* — which is the direction the damage travels. Extra lines on our side are expected. Three lines are known, deliberate exceptions and are listed in the script with a sentence each. |
+
+The other two, `environment` and `shutdown`, are not compared: what they set is
+about system paths that only exist here. Change one of those and you still have
+to check the other by hand.
+
+If the check fails it names the file, prints
+`the shell's copy at <commit> and the OS copy differ — CHANGE ONE, CHANGE BOTH`,
+and shows exactly what differs, with `-` for the image's copy and `+` for the
+shell's. The usual answer is to copy the change across; if a difference is
+genuinely OS-only, say so in the script where it explains that file.
 
 ### Why Settings is launched with `env XDG_CURRENT_DESKTOP=GNOME`
 
@@ -823,7 +859,7 @@ of its own, it must not also start this one — it should write `agent=none` int
 | `/usr/bin/aquarius-session` | The launcher the login screen runs. Sets the environment, starts labwc, and cleans up after it. Heavily commented — worth reading. |
 | `/usr/libexec/aquarius-session-lib` | The list of settings the session uses, and the clean-up that removes them again at logout. **Read this before changing anything about logging in or out.** |
 | `/usr/libexec/aquarius-session-portals` | Run once at login: stops the portals the last desktop left behind, so ours start fresh. |
-| `/usr/share/aquarius/labwc/` | The window manager's configuration, five files: `rc.xml` (key bindings and the desktop right-click), `menu.xml` (what that right-click menu contains), `autostart`, `shutdown`, `environment`. Each one is AquariusOS's own copy of a file in the aquarius-shell repository — change one, change both. |
+| `/usr/share/aquarius/labwc/` | The window manager's configuration, six files: `rc.xml` (key bindings, the desktop right-click, and the menu's font), `menu.xml` (what that right-click menu contains), `themerc-override` (what it and the window title bars look like), `autostart`, `shutdown`, `environment`. Each one is AquariusOS's own copy of a file in the aquarius-shell repository — change one, change both, and `build_files/check-labwc-drift.sh` fails the build if four of the six drift apart. |
 | `/usr/share/applications/org.gnome.Settings.desktop` | Fedora's Settings menu entry, with its `Exec=` line rewritten at build time to start Settings with `XDG_CURRENT_DESKTOP=GNOME`. Without that it exits at once on this desktop. Same for `/usr/share/dbus-1/services/org.gnome.Settings.service`. |
 | `/usr/share/aquarius/shell/` | The Aquarius Shell's QML. |
 | `/usr/libexec/aquarius-shell-start` | Runs the shell, and puts a dialog on screen if it fails. |
