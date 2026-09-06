@@ -5,12 +5,17 @@ down here. If you are theming *anything* — the desktop, an app, a website, a s
 YouTube thumbnail about the OS — you read this file first and you copy the values out of
 it. You never pick a colour by eye.
 
-**Where the design comes from:** the Claude Design project **"AquariusOS Core Identity"**,
-direction **"Flow State"**. That project is where the look is *decided*. This file is where
-the decision is *recorded* so that code can use it.
+**Where the colours come from (changed 2026-09-06, Royce's call):** the Aquarius Desktop
+shell's own theme files, `theme/Ice.qml` and `theme/Midnight.qml` in the `aquarius-shell`
+repository. Those are what runs on the bench and what Royce approved on screen. This file
+records them so that everything else — icons, docs, web pages, the GNOME fallback — uses
+the same values. **If this file and the shell ever disagree, the shell wins**, and whoever
+notices updates this file in the same sitting.
 
-**If they ever disagree, the design project wins** — and whoever notices should update this
-file to match, in the same sitting.
+Before 2026-09-06 the colours here came from the Claude Design project "AquariusOS Core
+Identity" (the *Starlight* palette: `#8AB4FF` / `#5B4BE0` / `#E6DDB8`). That palette is
+retired for the desktop. The design project and the `design-system/` mirror next to this
+file still carry it and need re-syncing — see the note at the end of the colour section.
 
 ---
 
@@ -25,98 +30,122 @@ last number is opacity: `1` is solid, `0` is invisible, `.08` is barely there.
 
 ---
 
-## Colours — dark theme (the default)
+## Colours — Ice (the default, light)
 
-AquariusOS is **dark first**. The dark palette is the real design; light is derived from it.
+AquariusOS is **Ice light-first** (decided 2026-09-02). Ice is the palette a new machine
+boots into; Midnight is its dark mode. The names below are the shell's own names, so a
+value in this file and a value in `Ice.qml` are always called the same thing.
 
-### Backgrounds — the layers of the room
+### Grounds — the layers of the room
 
 | Token | Hex | What it's for |
 |---|---|---|
-| `oled` | `#000000` | True black. Only for OLED-panel power saving and full-screen media. Not a UI colour. |
-| `void` | `#06070C` | **The desktop and app background.** The deepest normal surface. |
-| `surface-1` | `#10121C` | Cards and panels sitting on the void. |
-| `surface-2` | `#161A29` | Raised things — popovers, menus, dropdowns. |
-| `surface-3` | `#1D2236` | The highest layer. Tooltips, and the top of a stack of stacked things. |
+| `bg` | `#EAF1F8` | **The desktop and window background.** A blue-tinted white, never pure white. |
+| `bgSoft` | `#DFEAF4` | Slightly recessed areas — a sidebar well, a list's gutter. |
+| `surface` | `#F7FBFE` | Cards, menus and popups — the brightest paper. |
+| `surfaceAlt` | `#E4EDF6` | Secondary cards; the lower half of an app-icon plate. |
+| `panel` | `#F0F6FC` | Chrome — **the top bar**, a window's title bar. |
+| `dockSurface` | `#E3ECF5` | The dock slab. |
 
-### Lines
+### Ink — text and glyphs
+
+| Token | Hex | What it's for |
+|---|---|---|
+| `ink` | `#16273A` | Primary text and line glyphs. Deep navy, not black. |
+| `inkProse` | `#0E1B2A` | Long-form reading text — deeper still. |
+| `inkSoft` | `#47586B` | Secondary text. Labels, captions, "last updated" lines. |
+| `inkMute` | `#7C90A4` | Tertiary and disabled text; the greyed window lights. |
+| `inkOnAccent` | `#FFFFFF` | Text and glyphs sitting *on* the accent. |
+
+### Lines and washes (ink at a percentage)
 
 | Token | Value | What it's for |
 |---|---|---|
-| `border-1` | `rgba(237,239,247,.08)` | The default hairline between things. Deliberately almost invisible. |
-| `border-2` | `rgba(237,239,247,.14)` | A stronger line — focused inputs, the edge of something active. |
+| `line` | `ink` at 10% | The default hairline between things. |
+| `lineStrong` | `ink` at 18% | A stronger edge — a focused window, a menu card's border, an icon plate's ring. |
+| `hoverWash` | `ink` at 8% | The pill behind a hovered row. |
+| `pressWash` | `ink` at 13% | The same pill at the moment of the click. |
+| `scrim` | `ink` at 35% | The dim behind a dialog. |
 
-### Accents — the AquariusOS blue
-
-| Token | Hex | What it's for |
-|---|---|---|
-| `starlight` | `#8AB4FF` | **THE hero accent.** Buttons, links, selection, focus rings. This exact value is the KDE Plasma accent colour on the desktop. |
-| `starlight-hover` | `#A8C6FF` | The same blue when the mouse is over it. |
-| `starlight-press` | `#6E9BF2` | The same blue at the moment of the click. |
-| `nebula` | `#5B4BE0` | Support purple. Depth, gradients, the far end of the wallpaper pour. Never a button colour on its own. |
-| `ancient` | `#E6DDB8` | Support gold. **Rare on purpose** — a single highlight, a thin thread, one badge. If you are using it twice on one screen you are using it wrong. |
-| `on-accent` | `#080B14` | The text/icon colour that goes *on top of* `starlight`. Near-black, because the blue is bright. |
-
-### Text
+### Accents — the Aquarius blue and its family
 
 | Token | Hex | What it's for |
 |---|---|---|
-| `text-1` | `#FFFFFF` | Primary text. Headings, body, anything you must read. |
-| `text-2` | `#B4BACD` | Secondary text. Labels, captions, "last updated" lines. |
-| `text-3` | `#848CA6` | Tertiary text. Disabled items, placeholder text, dividers-as-text. |
-
-> **Changed 2026-08-30** (design V2). These three were `#EDEFF7`, `#8A90A6` and
-> `#565C72`. The design brightened all three so text reads more easily against the
-> very dark backgrounds. Nothing else in this file changed.
->
-> **Careful:** the two border values above are written as `rgba(237,239,247,…)`, and
-> 237,239,247 is the *old* `text-1` in decimal. The borders did **not** change. If you
-> are searching the repo for the old numbers, only text roles move.
+| `aquariusBlue` | `#2C8FC4` | **THE accent.** Buttons, links, selection, focus rings, the running dot under a dock icon. Also called `accent`. |
+| `accentWash` | `aquariusBlue` at 16% | The wash behind a selected row or a lit toggle. |
+| `indigo` | `#6E2BE0` | Support. The far end of the working-line gradient (`aquariusBlue → indigo`), depth. Never a button on its own. |
+| `turquoise` | `#0E9AA0` | Support, rare. |
+| `aquamarine` | `#12A07C` | Support, rare. |
+| `starred` | `#C28B22` | **The gold. Rare on purpose** — one highlight per screen, one gold thing per icon (a playhead, a nib, a rising sun). Twice on one surface is wrong. |
 
 ### Status
 
 | Token | Hex | What it's for |
 |---|---|---|
-| `success` | `#55D6A5` | Done, saved, connected, verified. |
-| `warning` | `#E6C069` | Careful, unsaved, degraded. |
-| `danger` | `#FF7A85` | Failed, destructive, disconnected. |
+| `success` | `#1F9E8C` | Done, saved, connected, verified. Also the green window light. |
+| `warn` | `#C2792E` | Careful, unsaved, degraded. Also the amber window light. |
+| `danger` | `#C8463B` | Failed, destructive, disconnected. Also the red window light and a destructive menu row. |
 
-### Selection
-
-| Token | Value | What it's for |
-|---|---|---|
-| `selection` | `rgba(138,180,255,.16)` | The wash behind selected text and selected rows. It is `starlight` at 16%. |
-
-### Gradients
+### The working line (gradient)
 
 | Token | Value | What it's for |
 |---|---|---|
-| `grad-play` | `linear-gradient(90deg,#8AB4FF,#5B4BE0)` | Starlight into nebula, left to right. The signature gradient — the logo uses it, the wallpaper uses it. |
+| `line-gradient` | `linear-gradient(90deg,#2C8FC4,#6E2BE0)` | `aquariusBlue` into `indigo`, left to right. Every app-icon glyph is drawn in it; the mark's "A" too. |
 
 ---
 
-## Colours — light theme (derived)
+## Colours — Midnight (dark mode)
 
-Light is not a separate design. It is the dark palette re-grounded: backgrounds go pale,
-and the accent **deepens** so it still passes contrast against white.
+Midnight is not black. It is the same room after dark: deep-ocean navy grounds, ice-blue
+ink, and the accent turned up so it still reads.
 
-| Token | Light value |
+| Token | Midnight value | Note |
+|---|---|---|
+| `bg` | `#0B1220` | Deep-ocean navy. |
+| `bgSoft` | `#111A2B` | Also the dock slab (`dockSurface`). |
+| `surface` | `#121C2E` | Cards, menus, popups. |
+| `surfaceAlt` | `#1B2940` | Secondary cards; the top of an app-icon plate. |
+| `panel` | `#152033` | The top bar, a title bar. |
+| `ink` | `#DCE9F4` | Ice-blue text. `inkProse` is the same value — Midnight has no deeper prose ink. |
+| `inkSoft` | `#93A7BC` | |
+| `inkMute` | `#5C6E82` | |
+| `inkOnAccent` | `#08121E` | Near-black on the bright accent. |
+| `line` | `#DCF3FF` at 8% | Ice-blue hairline. |
+| `lineStrong` | `#DCF3FF` at 16% | |
+| `hoverWash` / `pressWash` | `ink` at 8% / 13% | |
+| `scrim` | `bg` at 60% | |
+| `aquariusBlue` | `#00BFFF` | Deep Sky Blue. Brighter than Ice's so it carries on navy. |
+| `accentWash` | `aquariusBlue` at 12% | |
+| `indigo` | `#9B82FF` | |
+| `turquoise` | `#40E0D0` | |
+| `aquamarine` | `#7FFFD4` | |
+| `starred` | `#E6B947` | The gold, brightened for the dark. |
+| `success` / `warn` / `danger` | `#5FC9B0` / `#E0A35A` / `#E07B7B` | |
+| `line-gradient` | `linear-gradient(90deg,#00BFFF,#9B82FF)` | |
+
+### If you are holding an older name
+
+The retired Starlight palette used different names. They map like this, and nothing new
+should use the left-hand column:
+
+| Old name | Now |
 |---|---|
-| background (`void` equivalent) | `#EEF0F7` |
-| `surface-1` | `#F7F8FC` |
-| `surface-2` | `#FFFFFF` |
-| `starlight` | `#3D63D6` |
-| `starlight-hover` | `#2E52C4` |
-| `starlight-press` | `#2545AD` |
-| `nebula` | `#4A3BC9` |
-| `ancient` | `#8A7B3D` |
-| `on-accent` | `#FFFFFF` |
-| `text-1` | `#141726` |
-| `text-2` | `#565C72` |
-| `text-3` | `#8A90A6` |
-| `border-1` | `rgba(20,23,38,.10)` |
-| `border-2` | `rgba(20,23,38,.16)` |
-| `selection` | `rgba(61,99,214,.14)` |
+| `void` / `surface-1` / `surface-2` / `surface-3` | `bg` / `surface` / `surfaceAlt` / `panel` (choose by role, not by number) |
+| `starlight` (`#8AB4FF` dark, `#3D63D6` light) | `aquariusBlue` |
+| `nebula` | `indigo` |
+| `ancient` | `starred` |
+| `text-1` / `text-2` / `text-3` | `ink` / `inkSoft` / `inkMute` |
+| `border-1` / `border-2` | `line` / `lineStrong` |
+| `on-accent` | `inkOnAccent` |
+| `selection` | `accentWash` |
+| `grad-play` | `line-gradient` |
+| `warning` | `warn` |
+
+> **Still on the old palette (2026-09-06):** `logo.svg` (the mark's own gradients),
+> the About-page logo PNGs, the Plymouth boot assets, the wallpaper "The Pour", and the
+> `design-system/` mirror's `tokens/colors.css`. Each is a deliberate re-colour job, not a
+> find-and-replace — the logo especially. Until they are redone, the boot mark and the
+> icon set's mark will differ slightly in hue. Tracked, not forgotten.
 
 ---
 
@@ -239,45 +268,82 @@ the SVG and the PNGs it produced.
 
 ## Copy-paste block (CSS)
 
-For any web page, dashboard or HTML artifact about AquariusOS:
+For any web page, dashboard or HTML artifact about AquariusOS. Ice is the default; add
+`data-theme="midnight"` on the root for dark.
 
 ```css
 :root{
-  --oled:#000000;
-  --void:#06070C;
-  --surface-1:#10121C;
-  --surface-2:#161A29;
-  --surface-3:#1D2236;
-  --border-1:rgba(237,239,247,.08);
-  --border-2:rgba(237,239,247,.14);
-  --starlight:#8AB4FF;
-  --starlight-hover:#A8C6FF;
-  --starlight-press:#6E9BF2;
-  --nebula:#5B4BE0;
-  --ancient:#E6DDB8;
-  --on-accent:#080B14;
-  --text-1:#FFFFFF;
-  --text-2:#B4BACD;
-  --text-3:#848CA6;
-  --success:#55D6A5;
-  --warning:#E6C069;
-  --danger:#FF7A85;
-  --selection:rgba(138,180,255,.16);
-  --grad-play:linear-gradient(90deg,#8AB4FF,#5B4BE0);
+  --bg:#EAF1F8;
+  --bg-soft:#DFEAF4;
+  --surface:#F7FBFE;
+  --surface-alt:#E4EDF6;
+  --panel:#F0F6FC;
+  --dock:#E3ECF5;
+  --ink:#16273A;
+  --ink-prose:#0E1B2A;
+  --ink-soft:#47586B;
+  --ink-mute:#7C90A4;
+  --ink-on-accent:#FFFFFF;
+  --line:rgba(22,39,58,.10);
+  --line-strong:rgba(22,39,58,.18);
+  --hover-wash:rgba(22,39,58,.08);
+  --press-wash:rgba(22,39,58,.13);
+  --scrim:rgba(22,39,58,.35);
+  --accent:#2C8FC4;
+  --accent-wash:rgba(44,143,196,.16);
+  --indigo:#6E2BE0;
+  --turquoise:#0E9AA0;
+  --aquamarine:#12A07C;
+  --starred:#C28B22;
+  --success:#1F9E8C;
+  --warn:#C2792E;
+  --danger:#C8463B;
+  --line-gradient:linear-gradient(90deg,#2C8FC4,#6E2BE0);
+}
+[data-theme="midnight"]{
+  --bg:#0B1220;
+  --bg-soft:#111A2B;
+  --surface:#121C2E;
+  --surface-alt:#1B2940;
+  --panel:#152033;
+  --dock:#111A2B;
+  --ink:#DCE9F4;
+  --ink-prose:#DCE9F4;
+  --ink-soft:#93A7BC;
+  --ink-mute:#5C6E82;
+  --ink-on-accent:#08121E;
+  --line:rgba(220,243,255,.08);
+  --line-strong:rgba(220,243,255,.16);
+  --hover-wash:rgba(220,233,244,.08);
+  --press-wash:rgba(220,233,244,.13);
+  --scrim:rgba(11,18,32,.60);
+  --accent:#00BFFF;
+  --accent-wash:rgba(0,191,255,.12);
+  --indigo:#9B82FF;
+  --turquoise:#40E0D0;
+  --aquamarine:#7FFFD4;
+  --starred:#E6B947;
+  --success:#5FC9B0;
+  --warn:#E0A35A;
+  --danger:#E07B7B;
+  --line-gradient:linear-gradient(90deg,#00BFFF,#9B82FF);
 }
 ```
 
 ---
 
+
 ## Where these tokens actually land in the OS
 
 | Token | Ends up as |
 |---|---|
-| The whole dark palette | `/usr/share/color-schemes/AquariusDark.colors` — the KDE colour scheme |
-| `starlight` | The KDE **accent colour** |
+| The whole palette, both themes | `theme/Ice.qml` and `theme/Midnight.qml` in the shell — the origin, not a copy |
+| `aquariusBlue` | The GNOME fallback's accent is `'blue'`, the nearest of GNOME's nine fixed words (GNOME does not take a hex value) |
+| The palette, in the app icons | `branding/icons/icons.mjs` → the `Aquarius-Ice` and `Aquarius-Midnight` icon themes |
 | Inter | The desktop's general font |
 | JetBrains Mono | The desktop's fixed-width font |
-| The Pour | `/usr/share/wallpapers/AquariusThePour/` and the default background |
+| Sora | The display face — headings, the wordmark, the "DR" letters in the Resolve icons |
+| The Pour | `/usr/share/backgrounds/aquarius/` and the default background (still in the old palette — see above) |
 
 The files that do that live in `../system_files/`. See `README.md` in this folder for how
 that works.

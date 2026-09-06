@@ -17,6 +17,25 @@ beside the code that implements them.
    here agree with `tokens.md` exactly (re-verified at the V2 sync). If they ever
    disagree, the design project wins — update both `tokens.md` and this mirror in the
    same sitting.
+
+   > **⚠️ Out of date since 2026-09-06 — and deliberately left that way.** Royce moved
+   > the desktop's colours off this design project and onto the Aquarius Desktop
+   > shell's own theme files (`theme/Ice.qml`, `theme/Midnight.qml` in the
+   > `aquarius-shell` repository), which is what runs on the bench. `../tokens.md` was
+   > rewritten that day to match the shell; the app icons were redrawn in it. So
+   > `tokens/colors.css` in this folder still holds the retired *Starlight* palette
+   > (`#8AB4FF` / `#5B4BE0` / `#E6DDB8`) and is now **behind** `../tokens.md`.
+   >
+   > **Do not hand-edit `tokens/colors.css` to close the gap.** This folder is a
+   > snapshot of the design project, and hand-patching it makes the next sync a merge
+   > instead of a copy. The order is: the logo, the boot assets and the wallpaper get
+   > re-coloured in the design project first (a deliberate re-colour job, not a
+   > find-and-replace — the logo especially), and then this whole folder is re-synced
+   > from the project in one go, per "How to re-sync" at the bottom.
+   >
+   > Until that happens, **for any colour value read `../tokens.md`, never this
+   > folder.** The artboards here are still the right reference for *layout* and
+   > *behaviour*; only their colours are stale.
 3. **These HTML files are design artboards, not app code.** Open them in a browser to
    see the design. Nothing in the OS build reads them; they exist so an agent (or
    Royce) can look at the intended screen while building the real thing.
