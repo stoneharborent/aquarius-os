@@ -411,6 +411,165 @@ jobs:
       - name: Check the Aquarius app icons
         run: ./tests/test-aquarius-icons.sh
 
+      # ------------------------------------------------------------------------
+      # THE MARK IS ONE DRAWING, AND IT IS THE RIGHT ONE
+      # ------------------------------------------------------------------------
+      # Royce redrew the AquariusOS mark on 2026-09-06. The "A" is now three
+      # straight moves with one clean point at the top; the little hand-drawn
+      # loop that used to sit at the apex is retired.
+      #
+      # ⚠️ WHY THIS IS CHECKED AT ALL. There is no such thing as a wrong-shaped
+      # logo error. A stale copy of the old drawing renders perfectly, installs
+      # perfectly and passes every other check in this file — the only thing that
+      # notices is Royce's eye, and only if he happens to be looking at the boot
+      # screen and the app chooser at the same moment. The way it comes back is
+      # always the same: somebody restores an older file, or re-runs a renderer
+      # from an older source, and nothing anywhere says so.
+      #
+      # So this reads the actual path data out of every drawing that carries the
+      # mark, and it does it both ways round: the new shape must be there, and
+      # the old shape must not be anywhere at all.
+      - name: Check the mark is the redrawn one, everywhere
+        run: |
+          set -uo pipefail
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+
+          # The apex, at the two scales it is ever drawn at.
+          #   logo grid   the 64x64 files in branding/ and the wallpaper watermarks
+          #   icon scale  the app icon, where the mark is shrunk to sit on a plate
+          WANT_LOGO='M14 54L32 12L50 54'
+          WANT_ICON='M17.24 50.22L32 15.78L46.76 50.22'
+          # What the same two used to be. These are what a stale copy looks like.
+          WAS_LOGO='q1.4-3.6 4 0'
+          WAS_ICON='q1.15-2.95 3.28 0'
+
+          echo "== the logo files themselves =="
+          for f in branding/logo.svg branding/logo-ice.svg branding/logo-midnight.svg \
+                   branding/logo-mono.svg \
+                   system_files/usr/share/icons/hicolor/scalable/apps/aquarius-logo.svg; do
+            if [ ! -r "${f}" ]; then bad "${f} is missing"; continue; fi
+            if grep -qF "${WANT_LOGO}" "${f}"; then ok "${f} draws the clean point"
+            else bad "${f} does not draw the clean point (${WANT_LOGO})"; fi
+          done
+
+          # logo.svg is meant to BE the Ice mark, and the icon the OS installs is
+          # meant to be a copy of logo.svg. Both are easy to half-update.
+          echo "== the copies really are copies =="
+          if cmp -s branding/logo.svg branding/logo-ice.svg; then
+            ok "logo.svg is byte-for-byte logo-ice.svg"
+          else bad "logo.svg and logo-ice.svg have drifted apart"; fi
+          if cmp -s branding/logo.svg system_files/usr/share/icons/hicolor/scalable/apps/aquarius-logo.svg; then
+            ok "the installed aquarius-logo.svg is byte-for-byte logo.svg"
+          else bad "aquarius-logo.svg has drifted from branding/logo.svg"; fi
+
+          echo "== the wallpapers' watermarks =="
+          for f in branding/wallpapers/the-pour.svg \
+                   branding/wallpapers/the-pour-ice.svg \
+                   branding/wallpapers/the-pour-midnight.svg; do
+            if grep -qF "${WANT_LOGO}" "${f}"; then ok "$(basename "${f}") draws the clean point"
+            else bad "$(basename "${f}") does not draw the clean point"; fi
+          done
+
+          echo "== the app icon that carries the mark =="
+          # One icon carries the mark and the other eleven do not. That is the
+          # durable form of "only aquarius-apps changed when the apex changed":
+          # if the mark ever spreads to a second icon, or leaves this one, this
+          # says so.
+          for theme in Aquarius-Ice Aquarius-Midnight; do
+            dir="system_files/usr/share/icons/${theme}/scalable/apps"
+            carriers="$(grep -lF "${WANT_ICON}" "${dir}"/*.svg 2> /dev/null | xargs -n1 basename 2> /dev/null | sort | tr '\n' ' ')"
+            if [ "${carriers}" = "aquarius-apps.svg " ]; then
+              ok "${theme}: exactly one icon carries the mark, and it is aquarius-apps"
+            else
+              bad "${theme}: the mark is carried by [${carriers:-nothing}], expected aquarius-apps.svg alone"
+            fi
+          done
+          for f in branding/icons/ice/aquarius-apps.svg branding/icons/midnight/aquarius-apps.svg; do
+            if grep -qF "${WANT_ICON}" "${f}"; then ok "${f} draws the clean point"
+            else bad "${f} does not draw the clean point"; fi
+          done
+
+          echo "== the code that draws it =="
+          if grep -qF 'L${X(32)} ${Y(12)}L${X(50)}' branding/icons/icons.mjs; then
+            ok "icons.mjs markPaths() writes the clean point"
+          else bad "icons.mjs markPaths() no longer writes the clean point"; fi
+
+          echo "== the retired apex is nowhere =="
+          # Two deliberate exclusions:
+          #   design-system/  a mirror of the Claude Design project, re-synced
+          #                   from that side and still carrying the old identity.
+          #                   branding/README.md says so.
+          #   *.md            the written notes are ALLOWED to quote the retired
+          #                   path — that is how they explain what was retired.
+          #                   Only drawings and code are read here.
+          STALE="$(grep -rlF -e "${WAS_LOGO}" -e "${WAS_ICON}" branding system_files \
+                     --exclude-dir=design-system --exclude-dir=node_modules \
+                     --exclude='*.md' 2> /dev/null || true)"
+          if [ -z "${STALE}" ]; then
+            ok "no file still draws the retired curved apex"
+          else
+            bad "these files still draw the retired curved apex:"
+            printf '       %s\n' ${STALE}
+          fi
+
+          # ----------------------------------------------------------------
+          # The rendered pictures, and the sizes they have to come out at
+          # ----------------------------------------------------------------
+          # Each of these is drawn on the Mac and committed, so nothing in the
+          # build would notice a re-render that came out the wrong size. The
+          # image-side steps further down prove the image is carrying THESE
+          # EXACT FILES, by checksum — so a size checked here is a size checked
+          # in the image.
+          echo "== the rendered pictures are the sizes they must be =="
+          python3 - <<'PY' || fails=1
+          import glob, struct, sys
+
+          bad = 0
+          def size(path):
+              data = open(path, "rb").read()
+              if data[:8] != b"\x89PNG\r\n\x1a\n":
+                  return None
+              return struct.unpack(">II", data[16:24])
+
+          want = [
+              ("system_files/usr/share/aquarius/branding/aquarius-about-logo.png", 279, 80,
+               "the light About-page picture"),
+              ("system_files/usr/share/aquarius/branding/aquarius-about-logo-white.png", 279, 80,
+               "the dark About-page picture"),
+              ("system_files/usr/share/aquarius/branding/aquarius-logo.png", 256, 256,
+               "the login screen's logo"),
+              ("system_files/usr/share/plymouth/themes/aquarius/watermark.png", 640, 288,
+               "the boot screen's mark and word"),
+          ]
+          for path, w, h, what in want:
+              got = size(path)
+              if got is None:
+                  print(f"  FAIL {what}: {path} is missing or is not a PNG"); bad = 1
+              elif got != (w, h):
+                  print(f"  FAIL {what}: {path} is {got[0]}x{got[1]}, must be {w}x{h}"); bad = 1
+              else:
+                  print(f"  OK   {what} is {w}x{h}")
+
+          frames = sorted(glob.glob("system_files/usr/share/plymouth/themes/aquarius/throbber-*.png"))
+          if len(frames) != 36:
+              print(f"  FAIL {len(frames)} boot-screen dot frames, expected 36"); bad = 1
+          else:
+              wrong = [f for f in frames if size(f) != (120, 20)]
+              if wrong:
+                  print(f"  FAIL {len(wrong)} dot frames are not 120x20, first: {wrong[0]}"); bad = 1
+              else:
+                  print("  OK   all 36 boot-screen dot frames are 120x20")
+          sys.exit(bad)
+          PY
+
+          if [ "${fails}" -ne 0 ]; then
+            echo "::error::The AquariusOS mark is not the redrawn one everywhere. Scroll up for the FAIL lines."
+            exit 1
+          fi
+          echo "All mark checks passed."
+
       - name: Work out what this image is called
         run: |
           set -euo pipefail
