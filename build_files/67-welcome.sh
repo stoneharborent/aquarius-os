@@ -7,7 +7,8 @@
 # Step 7d put the creator-apps window into the image. This step puts in the
 # window that comes BEFORE it — the one a brand-new person actually meets first.
 #
-#     Step 1 of 3   How should keyboard shortcuts work?   Mac, or Windows.
+#     Step 1 of 3   How should keyboard shortcuts and window buttons work?
+#                                                         Mac, or Windows.
 #     Step 2 of 3   Your creator apps.                    (step 7d's window)
 #     Step 3 of 3   You're set.                           Three tips, and out.
 #
@@ -140,7 +141,7 @@ sed 's/^/       /' "${WEL_OUT}"
 
 aq_file_has "${WEL_OUT}" '^steps: 3$' \
     "a brand-new account gets three steps"
-aq_file_has "${WEL_OUT}" '^step 1 of 3: keyboard — How should keyboard shortcuts work\?$' \
+aq_file_has "${WEL_OUT}" '^step 1 of 3: keyboard — How should keyboard shortcuts and window buttons work\?$' \
     "step 1 asks how the keyboard should work"
 aq_file_has "${WEL_OUT}" '^step 2 of 3: apps — Your creator apps$' \
     "step 2 is the creator apps"

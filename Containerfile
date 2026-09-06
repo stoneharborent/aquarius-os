@@ -105,14 +105,14 @@ ARG LABWC_COMMIT=97f28877a343e062f3178d201f0248cd9c2610cf
 ARG QUICKSHELL_VERSION=v0.3.1
 ARG QUICKSHELL_COMMIT=1a4716cde794a59928d9d9fc15f2afc7a95de360
 ARG AQUARIUS_SHELL_REPO=https://github.com/stoneharborent/aquarius-shell.git
-# dd23a40 (2026-09-06, second bench pass): "About This PC" opens the About page
-# itself; a new session/labwc/themerc-override gives the desktop right-click menu
-# and the window title bars the Ice look; rc.xml gains a <theme> font block
-# (Inter, sizes in pixels) alongside the W-Return and W-Tab/W-S-Tab bindings; and
-# every app in the dock gets a right-click menu (Open / New Window, Keep in or
-# Remove from Dock, Quit). The reasoning is written out beside the same value in
-# aquarius-os.env, which is where a bump is made — this line must match it.
-ARG AQUARIUS_SHELL_REF=dd23a40fdd6e8902b5ba119ab73c8d9dc6afdfcd
+# e421a60 (2026-09-06, the window frame): labwc's colours are no longer written
+# by hand. session/labwc/themerc-override is gone and session/labwc/generate-theme
+# is what replaced it — it reads the shell's theme/Ice.qml or theme/Midnight.qml
+# and writes labwc's themerc, its rc.xml and the round window buttons out of it,
+# for whichever theme and whatever AQ_UI_SCALE are in force. The reasoning is
+# written out beside the same value in aquarius-os.env, which is where a bump is
+# made — this line must match it.
+ARG AQUARIUS_SHELL_REF=e421a6077f93fdfca2f892b8ad6585fc4c007684
 
 # ------------------------------------------------------------------------------
 # Our own files, gathered up so the build can reach them

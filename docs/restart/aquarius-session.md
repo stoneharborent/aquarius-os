@@ -124,7 +124,7 @@ and labwc reads its own configuration out of one folder:
 | --- | --- |
 | `rc.xml` | The key bindings, the one mouse binding (right-click the desktop opens the menu), and the font labwc draws its own menu and title bars in. |
 | `menu.xml` | What that menu contains. |
-| `themerc-override` | What that menu, and every window title bar, look like. New on 6 September 2026. |
+| `generate-theme` | The program that WRITES what that menu, every window title bar and the round window buttons look like, out of the shell's Ice or Midnight palette. It replaced a hand-written `themerc-override` on 6 September 2026. |
 | `autostart` | What runs once the window manager is up — the shell, the wallpaper, the screen size. |
 | `environment` | Variables labwc sets for itself before it starts. |
 | `shutdown` | What runs on the way out. |
@@ -182,7 +182,7 @@ cd - && ./build_files/check-labwc-drift.sh /tmp/shell
 | --- | --- |
 | `rc.xml` | Every element, attribute and value, comments excluded. Both files are read as XML and reduced to a plain listing, so indentation, attribute order and the wording of a comment cannot look like drift and a changed setting always does. |
 | `menu.xml` | The same treatment — including the `env XDG_CURRENT_DESKTOP=GNOME` prefix on the Settings commands, which the shell's copy now carries too. |
-| `themerc-override` | Every line that is not blank and not a comment. labwc's theme file has no end-of-line comment syntax at all, so a `#` after a setting is a bug rather than a note, and the check would see it. |
+| `generate-theme` | Not compared as text — **both copies are RUN**, for Ice and Midnight at 1x and 1.25x, and what they produce is compared. Two programs can be written differently and still agree; what reaches a screen is what they write. |
 | `autostart` | **Not** a straight comparison, and this is the one exception worth knowing about. The image's `autostart` is deliberately the larger file: it starts things that only exist on an installed machine (the wallpaper, the display-scale helper, the polkit agent, the portal reset, the wrapper that puts a dialog on screen if the shell dies). So the rule is one-directional — *every line that runs in the shell's copy must also run in ours* — which is the direction the damage travels. Extra lines on our side are expected. Three lines are known, deliberate exceptions and are listed in the script with a sentence each. |
 
 The other two, `environment` and `shutdown`, are not compared: what they set is
@@ -859,7 +859,7 @@ of its own, it must not also start this one — it should write `agent=none` int
 | `/usr/bin/aquarius-session` | The launcher the login screen runs. Sets the environment, starts labwc, and cleans up after it. Heavily commented — worth reading. |
 | `/usr/libexec/aquarius-session-lib` | The list of settings the session uses, and the clean-up that removes them again at logout. **Read this before changing anything about logging in or out.** |
 | `/usr/libexec/aquarius-session-portals` | Run once at login: stops the portals the last desktop left behind, so ours start fresh. |
-| `/usr/share/aquarius/labwc/` | The window manager's configuration, six files: `rc.xml` (key bindings, the desktop right-click, and the menu's font), `menu.xml` (what that right-click menu contains), `themerc-override` (what it and the window title bars look like), `autostart`, `shutdown`, `environment`. Each one is AquariusOS's own copy of a file in the aquarius-shell repository — change one, change both, and `build_files/check-labwc-drift.sh` fails the build if four of the six drift apart. |
+| `/usr/share/aquarius/labwc/` | The window manager's configuration TEMPLATE, six files: `rc.xml` (key bindings, the desktop right-click, and three settings a program fills in), `menu.xml` (what that right-click menu contains), `generate-theme` (the program that writes labwc's colours, sizes and window buttons out of the shell's palette), `autostart`, `shutdown`, `environment`. Each one is AquariusOS's own copy of a file in the aquarius-shell repository — change one, change both, and `build_files/check-labwc-drift.sh` fails the build if they drift apart. ⚠️ labwc is **not** started with this folder: `/usr/bin/aquarius-session` runs `generate-theme` first and starts labwc with the finished copy in `~/.config/aquarius/labwc/`, because these files have to be rewritten while the desktop is running and `/usr` is read-only. If generating fails it falls back to this folder. |
 | `/usr/share/applications/org.gnome.Settings.desktop` | Fedora's Settings menu entry, with its `Exec=` line rewritten at build time to start Settings with `XDG_CURRENT_DESKTOP=GNOME`. Without that it exits at once on this desktop. Same for `/usr/share/dbus-1/services/org.gnome.Settings.service`. |
 | `/usr/share/aquarius/shell/` | The Aquarius Shell's QML. |
 | `/usr/libexec/aquarius-shell-start` | Runs the shell, and puts a dialog on screen if it fails. |

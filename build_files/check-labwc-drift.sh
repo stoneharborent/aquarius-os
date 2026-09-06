@@ -4,9 +4,9 @@
 # ==============================================================================
 # WHAT THIS IS FOR, IN ONE PARAGRAPH
 #
-# The Aquarius Desktop's window manager, labwc, reads four files. Each of those
-# four files exists TWICE: once in the aquarius-shell repository, under
-# session/labwc/, and once here, under system_files/usr/share/aquarius/labwc/.
+# The Aquarius Desktop's window manager, labwc, is configured by a folder that
+# exists TWICE: once in the aquarius-shell repository, under session/labwc/, and
+# once here, under system_files/usr/share/aquarius/labwc/.
 # The copy here is the one that ships on a real machine. The copy over there is
 # the one that runs when somebody starts the session from a clone of the shell.
 # There is no build step that copies one onto the other — on purpose, because
@@ -62,11 +62,23 @@
 #                      db672bb, so the two really are content-identical and this
 #                      check can be strict about it.
 #
-#   themerc-override   labwc's theme file is not XML. It is one `key: value` per
-#                      line, and a line whose FIRST character is `#` is a
-#                      comment — there is no end-of-line comment syntax at all.
-#                      So the comparison is: every line that is not blank and
-#                      not a comment, trimmed of surrounding spaces.
+#   generate-theme     ⚠️ NOT COMPARED AS TEXT. THE OUTPUT IS COMPARED INSTEAD.
+#
+#                      Since 2026-09-06 labwc's colours are not written by hand
+#                      in either repository. There was a file called
+#                      themerc-override holding a second copy of the shell's Ice
+#                      palette, and it is gone; generate-theme reads the shell's
+#                      theme/Ice.qml or theme/Midnight.qml and writes the file
+#                      out instead.
+#
+#                      Comparing two PROGRAMS line by line would be a weak
+#                      check: two generators can be written differently and
+#                      still agree, or be written identically and disagree
+#                      because one of them reads a palette the other does not
+#                      have. So this script RUNS BOTH — the shell's copy against
+#                      the shell's palette, ours against the same palette — for
+#                      both themes at two sizes, and compares what comes out.
+#                      That is the thing that actually reaches a screen.
 #
 #   autostart          THE ONE THAT IS NOT A STRAIGHT COMPARISON, and the reason
 #                      is worth reading before changing anything here.
@@ -310,7 +322,7 @@ aq_report_drift() {
 # ------------------------------------------------------------------------------
 # Both files have to exist before anything can be compared
 # ------------------------------------------------------------------------------
-for aq_f in rc.xml menu.xml themerc-override autostart; do
+for aq_f in rc.xml menu.xml generate-theme autostart; do
     if [ ! -s "${AQ_OS_DIR}/${aq_f}" ]; then
         echo "  FAIL  ${AQ_OS_DIR}/${aq_f} is missing or empty."
         echo "        The shell has session/labwc/${aq_f}; this image must ship its own copy."
@@ -355,19 +367,97 @@ for aq_f in rc.xml menu.xml; do
 done
 
 # ------------------------------------------------------------------------------
-# themerc-override — every setting line, comments and blank lines excluded
+# generate-theme — RUN BOTH COPIES AND COMPARE WHAT THEY PRODUCE
 # ------------------------------------------------------------------------------
-aq_plain_content "${AQ_OS_DIR}/themerc-override" > "${AQ_TMP}/os-themerc.txt"
-aq_plain_content "${AQ_SHELL_DIR}/themerc-override" > "${AQ_TMP}/shell-themerc.txt"
+# Read the note at the top of this file for why this one is not a text
+# comparison. In short: two programs can be written differently and still agree,
+# and the thing that reaches a screen is what they WRITE, not how they are
+# written. So both copies are run — against the same shell palette, for both
+# themes and at two sizes — and their output is compared line for line, with
+# comments dropped the way the rest of this script drops them.
+#
+# The four combinations are Ice and Midnight (a colour role in one palette and
+# not the other breaks the desktop the moment somebody flips the theme) at 1x
+# and 1.25x (1.25 is the size Royce approved on the bench on 2026-09-03).
+#
+# ⚠️ BOTH RUNS READ THE SHELL'S PALETTE, and that is the point rather than a
+# shortcut. This image does not carry theme/Ice.qml — it fetches the whole shell
+# at the pinned commit at build time — so "the palette" is the shell's, once,
+# and what is being asked here is whether the two GENERATORS agree about what to
+# do with it.
 
-if diff -q "${AQ_TMP}/os-themerc.txt" "${AQ_TMP}/shell-themerc.txt" > /dev/null; then
-    echo "  OK    themerc-override — every setting line matches (comments excluded)"
+if ! command -v python3 > /dev/null 2>&1; then
+    echo "  SKIP  generate-theme — python3 is not on this machine."
+    echo "        CI has it; see the shell_tests job in .github/workflows/build.yml."
 else
-    aq_report_drift "themerc-override" \
-        "The desktop menu and the window title bars would be drawn differently on an installed machine than on a clone of the shell."
-    diff -u "${AQ_TMP}/os-themerc.txt" "${AQ_TMP}/shell-themerc.txt" \
-        | tail -n +3 | sed 's/^/  /' || true
-    echo "  ----------------------------------------------------------------------"
+    AQ_GEN_OK=1
+    for aq_case in "ice 1" "ice 1.25" "midnight 1" "midnight 1.25"; do
+        # shellcheck disable=SC2086
+        set -- ${aq_case}
+        aq_scheme="$1"
+        aq_gen_scale="$2"
+        aq_label="${aq_scheme} at ${aq_gen_scale}x"
+
+        for aq_side in os shell; do
+            if [ "${aq_side}" = "os" ]; then
+                aq_gen="${AQ_OS_DIR}/generate-theme"
+                aq_tmpl="${AQ_OS_DIR}"
+            else
+                aq_gen="${AQ_SHELL_DIR}/generate-theme"
+                aq_tmpl="${AQ_SHELL_DIR}"
+            fi
+
+            if ! python3 "${aq_gen}" --quiet \
+                    --scheme "${aq_scheme}" --scale "${aq_gen_scale}" \
+                    --buttons mac \
+                    --palette-dir "${AQ_SHELL_CLONE}/theme" \
+                    --template-dir "${aq_tmpl}" \
+                    --config-out "${AQ_TMP}/${aq_side}/${aq_scheme}-${aq_gen_scale}/config" \
+                    --theme-out "${AQ_TMP}/${aq_side}/${aq_scheme}-${aq_gen_scale}/theme" \
+                    --gtk-out "${AQ_TMP}/${aq_side}/${aq_scheme}-${aq_gen_scale}/gtk" \
+                    2> "${AQ_TMP}/${aq_side}-${aq_scheme}-${aq_gen_scale}.err"; then
+                echo ""
+                echo "  FAIL  the ${aq_side} copy of generate-theme failed for ${aq_label}:"
+                sed 's/^/        /' "${AQ_TMP}/${aq_side}-${aq_scheme}-${aq_gen_scale}.err" || true
+                AQ_FAILS=1
+                AQ_GEN_OK=0
+            fi
+        done
+
+        [ "${AQ_GEN_OK}" -eq 1 ] || continue
+
+        aq_os_dir="${AQ_TMP}/os/${aq_scheme}-${aq_gen_scale}"
+        aq_sh_dir="${AQ_TMP}/shell/${aq_scheme}-${aq_gen_scale}"
+
+        # The themerc: every setting line, comments dropped.
+        aq_plain_content "${aq_os_dir}/config/themerc-override" \
+            > "${AQ_TMP}/os-themerc.txt"
+        aq_plain_content "${aq_sh_dir}/config/themerc-override" \
+            > "${AQ_TMP}/shell-themerc.txt"
+
+        if diff -q "${AQ_TMP}/os-themerc.txt" "${AQ_TMP}/shell-themerc.txt" \
+                > /dev/null; then
+            echo "  OK    the generated themerc for ${aq_label} matches"
+        else
+            aq_report_drift "generate-theme" \
+                "The two generators disagree about the ${aq_label} theme, so the desktop menu and the window title bars would be drawn differently on an installed machine than on a clone of the shell."
+            diff -u "${AQ_TMP}/os-themerc.txt" "${AQ_TMP}/shell-themerc.txt" \
+                | tail -n +3 | sed 's/^/  /' || true
+            echo "  ----------------------------------------------------------------------"
+        fi
+
+        # The button pictures: same names, same contents. These are XML, but
+        # they are GENERATED XML with no prose in them, so a byte comparison is
+        # the right one and it is stricter.
+        if diff -r "${aq_os_dir}/theme" "${aq_sh_dir}/theme" > "${AQ_TMP}/buttons.diff" 2>&1; then
+            echo "  OK    the window button pictures for ${aq_label} match"
+        else
+            aq_report_drift "generate-theme" \
+                "The two generators drew different window buttons for ${aq_label}."
+            sed 's/^/  /' "${AQ_TMP}/buttons.diff" | head -n 40 || true
+            echo "  ----------------------------------------------------------------------"
+        fi
+    done
 fi
 
 # ------------------------------------------------------------------------------
@@ -424,5 +514,6 @@ if [ "${AQ_FAILS}" -ne 0 ]; then
 fi
 
 echo "=============================================================================="
-echo " All four labwc files agree with the shell at ${AQ_PIN}."
+echo " The labwc files, and what generate-theme makes of them, agree with the"
+echo " shell at ${AQ_PIN}."
 echo "=============================================================================="

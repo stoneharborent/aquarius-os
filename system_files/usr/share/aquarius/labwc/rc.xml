@@ -44,21 +44,42 @@
   TWO RULES THIS FILE OBEYS
   =============================================================================
   1. NO COLOURS IN THIS FILE. Colour in the Aquarius Desktop lives in the
-     shell's theme/Ice.qml and theme/Midnight.qml, and there is exactly ONE
-     other file allowed to hold a colour value: `themerc-override` next to this
-     one, which is how labwc's own desktop menu and title bars got the Aquarius
-     look on 2026-09-06. It is an exception because it has to be — labwc is a C
-     program reading a flat text file and cannot import QML, so somebody has to
-     write the numbers out twice — and every value in it is copied digit for
-     digit from Ice. Nothing else here, this file included, may name a colour.
-
-     What this file DOES carry is the FONT for those same surfaces (the <theme>
-     section below), because a font is not a colour and there is no themerc key
-     for it — labwc takes fonts from rc.xml and colours from the themerc.
+     shell's theme/Ice.qml and theme/Midnight.qml, and NOWHERE ELSE — not even
+     here, and not even in a themerc. There used to be one hand-written
+     exception, a file called themerc-override, holding a second copy of the
+     Ice palette. It is gone. In its place is generate-theme next to this file,
+     which READS the shell's palette and writes labwc's colours out for it. A
+     generated copy cannot drift from the palette, because it is made from it
+     every time the desktop starts.
 
   2. NO PATHS. The shell is started from the autostart file next to this one,
      with a bare `qs`, because /usr/bin/aquarius-session exports QS_CONFIG_PATH
      first. Nothing in this folder names a directory.
+
+  =============================================================================
+  THIS FILE IS A TEMPLATE. THREE PARTS OF IT ARE WRITTEN BY A PROGRAM.
+  =============================================================================
+  labwc keeps one look in two places: colours come from a themerc, but the
+  corner radius, the fonts and which side the window buttons sit on are rc.xml
+  settings and there is no themerc key for any of them. All three have to change
+  while the desktop is running — the first two follow AQ_UI_SCALE like every
+  other size, and the third follows `aq keys mac` / `aq keys windows` — and this
+  file lives in /usr, which on an image-based operating system is read-only.
+
+  So generate-theme next to this file copies this file, rewrites the three
+  regions marked
+
+      AQ-GENERATED-BEGIN <name>   ...   AQ-GENERATED-END <name>
+
+  and writes the finished rc.xml into ~/.config/aquarius/labwc/, which is the
+  folder /usr/bin/aquarius-session then starts labwc with. Everything outside
+  those three regions — every binding, every comment, this one included — is
+  copied through untouched.
+
+  The values written between the markers here are the design at AQ_UI_SCALE=1
+  with Mac buttons, so this template is a correct, complete rc.xml on its own if
+  it is ever read directly. It is, in fact, read directly whenever generating
+  fails: the launcher falls back to this folder rather than refusing to start.
 
   =============================================================================
   KEY BINDINGS ADDED BY US
@@ -104,70 +125,140 @@
 
   <!--
     =========================================================================
-    THE FONT labwc DRAWS ITS OWN SURFACES IN
+    THE HALF OF THE LOOK THAT LIVES IN rc.xml
     =========================================================================
-    The COLOURS of the desktop menu and the window title bars are in
-    `themerc-override` next to this file, which arrived in this image on
-    2026-09-06 and is the one file in this folder allowed to name a colour.
-    Their FONT is not in it: labwc takes theme colours from a themerc and fonts
-    from rc.xml, so the two halves of one look live in two files. That is
-    labwc's split, not ours, and it is why rule 1 above says "no colours" and
-    this section is still here.
+    labwc takes COLOURS from a themerc and everything below from here. That is
+    labwc's split, not ours, and it is why one design lives in two files.
 
-    Inter is the shell's own UI face — its theme/Theme.qml picks it as
-    `fontBody`, and every label in the bar, the dock, the menus and the panels
-    is drawn in it. Without these four lines labwc would draw its menu in
-    "sans", whatever that resolves to on the machine, and the desktop menu would
-    be in a different typeface from the shell menu two inches above it.
-
-    IF INTER IS NOT INSTALLED labwc falls back to its default on its own, which
-    is the same outcome the shell's Theme.pickFont() arranges for itself. This
-    image installs Sora, Inter and JetBrains Mono, so on AquariusOS it is
-    always there.
-
-    THE SIZES ARE THE SHELL'S, and labwc's <size> is in PIXELS
-    (labwc-config(5): "Font size in pixels. Default is 10."), which is the same
-    unit theme/Theme.qml uses — it sets font.pixelSize, never pointSize. So:
-
-      MenuItem   19  = Theme.fsBody     — one row of the Aquarius menu
-      MenuHeader 15  = Theme.fsCaption  — a menu title, quieter than its items
-      ActiveWindow / InactiveWindow
-                 15  = Theme.fsCaption  — the size the top bar draws its own
-                                          labels at, and a title bar is the same
-                                          kind of chrome as the bar
-
-    ⚠️ AQ_UI_SCALE DOES NOT REACH HERE. /usr/bin/aquarius-session exports that
-    variable and the shell multiplies every size by it; labwc knows nothing
-    about it. Set it and the shell grows while these do not. Written up as a
-    follow-up in themerc-override's header, alongside the Midnight problem,
-    because both want the same fix.
-
-    Attribute ORDER matters in labwc when a font is written on one line —
-    labwc-config(5) is explicit that `place` must come before `name` and `size`,
-    or the setting lands on every place at once. Child elements have no such
-    trap, so these are written as children.
+    All three settings in this section are written by generate-theme next to
+    this file. Read the template note at the top of this file for how that
+    works.
   -->
   <theme>
 
+    <!--
+      The name labwc looks the WINDOW BUTTONS up under.
+
+      This is not a colour scheme and it does not change the look on its own.
+      labwc reads its settings from the folder it was started with, but it looks
+      for the little round button PICTURES somewhere else entirely: in
+      themes/<this name>/labwc/, searched under XDG_DATA_HOME first, then
+      ~/.themes, then XDG_DATA_DIRS (labwc-theme(5)). generate-theme draws the
+      pictures into exactly that folder, so this name is the thread that ties
+      the two together. Change it here and the buttons vanish.
+
+      There is no themerc file in that folder and there does not need to be —
+      every colour and size is in the generated themerc-override instead.
+    -->
+    <name>Aquarius</name>
+
+    <!--
+      How round the top corners of a window are.
+
+      12 to match libadwaita's own fixed 12, so that a GTK application's rounded
+      window and the frame labwc draws around it agree instead of showing two
+      radii a pixel apart. labwc's own default is 8.
+
+      ⚠️ labwc clamps this to one less than the title bar height, so a very
+      small title bar quietly reduces it. At the sizes this design uses that
+      never happens (38 against 12).
+    -->
+    <!-- AQ-GENERATED-BEGIN corner-radius -->
+    <cornerRadius>12</cornerRadius>
+    <!-- AQ-GENERATED-END corner-radius -->
+
+    <!--
+      WHICH SIDE THE WINDOW BUTTONS SIT ON.
+
+      This follows the ONE choice made in the Welcome window and has no setting
+      of its own:
+
+        Mac      close, minimise, maximise  on the LEFT
+        Windows  minimise, maximise, close  on the RIGHT
+
+      Close is the outermost button either way — furthest from the title —
+      because it is the one press you cannot take back.
+
+      The syntax is labwc's: exactly one colon splits left from right, commas
+      separate the buttons within a side, and the names are labwc's rather than
+      English ones (`iconify` is minimise, `max` is maximise).
+
+      The switch is `aq keys mac` or `aq keys windows`, which writes the
+      keyboard style, re-runs generate-theme, sets GNOME's matching
+      button-layout so the two desktops agree, and tells labwc to re-read its
+      files. No logging out.
+    -->
+    <!-- AQ-GENERATED-BEGIN titlebar-layout -->
+    <titlebar>
+      <layout>close,iconify,max:</layout>
+    </titlebar>
+    <!-- AQ-GENERATED-END titlebar-layout -->
+
+    <!--
+      THE FONT labwc DRAWS ITS OWN SURFACES IN.
+
+      Inter is the shell's own UI face — its theme/Theme.qml picks it as
+      `fontBody`, and every label in the bar, the dock, the menus and the panels
+      is drawn in it. Without these lines labwc would draw its menu in "sans",
+      whatever that resolves to on the machine, and the desktop menu would be in
+      a different typeface from the shell menu two inches above it.
+
+      IF INTER IS NOT INSTALLED labwc falls back to its default on its own,
+      which is the same outcome the shell's Theme.pickFont() arranges for
+      itself. This image installs Sora, Inter and JetBrains Mono, so on
+      AquariusOS it is always there.
+
+      THE SIZES ARE THE SHELL'S, and labwc's <size> is in PIXELS
+      (labwc-config(5): "Font size in pixels. Default is 10."), which is the
+      same unit theme/Theme.qml uses — it sets font.pixelSize, never pointSize:
+
+        MenuItem   19  = Theme.fsBody     — one row of the Aquarius menu
+        MenuHeader 15  = Theme.fsCaption  — a menu title, quieter than its items
+        ActiveWindow / InactiveWindow
+                   13  — the window title, at weight `medium`. Smaller than the
+                         bar's own labels on purpose: a title bar should name a
+                         window, not announce it. labwc takes a WORD for the
+                         weight rather than a number; `medium` is Pango's 500,
+                         which is what the design asks for.
+
+      ⚠️ AQ_UI_SCALE REACHES THESE NOW, and it did not before. It used to be
+      that /usr/bin/aquarius-session exported that variable, the shell grew, and
+      labwc knew nothing about it — so a scaled desktop had an unscaled desktop
+      menu. generate-theme writes these numbers, so they scale with everything
+      else.
+
+      ⚠️ THE TITLE FONT AND THE TITLE BAR'S HEIGHT ARE CONNECTED, which is not
+      obvious. labwc 0.20 removed the setting that named a title bar height, and
+      works it out as max(font height, button height) + 2 x padding. The button
+      disc (20) is comfortably taller than this font, so the buttons are what
+      decide the height and the arithmetic in generate-theme holds. Make this
+      font much bigger and the title bar grows with it.
+
+      Attribute ORDER matters in labwc when a font is written on one line —
+      labwc-config(5) is explicit that `place` must come before `name` and
+      `size`, or the setting lands on every place at once. Child elements have
+      no such trap, so these are written as children.
+    -->
+    <!-- AQ-GENERATED-BEGIN fonts -->
     <font place="MenuItem">
       <name>Inter</name>
       <size>19</size>
     </font>
-
     <font place="MenuHeader">
       <name>Inter</name>
       <size>15</size>
     </font>
-
     <font place="ActiveWindow">
       <name>Inter</name>
-      <size>15</size>
+      <size>13</size>
+      <weight>medium</weight>
     </font>
-
     <font place="InactiveWindow">
       <name>Inter</name>
-      <size>15</size>
+      <size>13</size>
+      <weight>medium</weight>
     </font>
+    <!-- AQ-GENERATED-END fonts -->
 
   </theme>
 
