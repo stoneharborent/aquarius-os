@@ -283,6 +283,23 @@ on:
       # Same arrangement as every side branch: builds and checks, never
       # publishes. See branding/icons/README.md.
       - restart/icon-grammar
+      # The app switcher — hold Command and tap Tab and a panel of the
+      # applications you have open appears in the middle of the screen, the
+      # dock's slab lifted into the middle with one big icon per app. Let go of
+      # Command and you are in the one you stopped on. Down opens that app's
+      # windows; Command+` walks them with no panel; on the Windows keyboard
+      # style Alt+Tab lists windows instead, one row each.
+      #
+      # This branch carries the OS half of it: the five keybinds in this image's
+      # own copy of rc.xml (content-identical to the shell's, in one clearly
+      # marked block), labwc's own switcher turned off, and a bump of
+      # AQUARIUS_SHELL_REF to the shell commit that draws the panel. The point
+      # of building it here is the shell_tests job below, which clones the shell
+      # at the new pin, runs its structural checks, and compares the two copies
+      # of every labwc file.
+      # Same arrangement as every side branch: builds and checks, never
+      # publishes.
+      - restart/app-switcher
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -2495,7 +2512,10 @@ jobs:
             fi
             for f in theme/Ice.qml theme/Midnight.qml components/bar/TopBar.qml \
                      components/dock/Dock.qml components/search/FlowSearch.qml \
-                     components/notifications/NotificationLayer.qml; do
+                     components/notifications/NotificationLayer.qml \
+                     components/switcher/AppSwitcher.qml \
+                     components/switcher/SwitcherModel.qml \
+                     services/KeyProfile.qml services/AppIdentity.qml; do
               if [ -s "/usr/share/aquarius/shell/${f}" ]; then ok "${f}"; else bad "${f} is missing"; fi
             done
             for junk in harness tests .git .github; do
@@ -2648,24 +2668,58 @@ jobs:
           grep -q '<action name="Exit" />' /usr/share/aquarius/labwc/rc.xml \
             && ok "Super+Shift+E leaves the session" || bad "there is no way to leave the session by keyboard"
 
-          # Super+Tab / Super+Shift+Tab, copied across from the aquarius-shell
-          # repository on 2026-09-06. In Mac mode Aquarius Keys maps Command to
-          # Super, so Command+Tab arrives here as Super+Tab; GNOME answers it and
-          # our desktop did not. Same drift as the right-click menu below — the
-          # shell repository had these bindings and this image, which keeps its
-          # own copies of the labwc files, did not.
-          grep -q '<keybind key="W-Tab">' /usr/share/aquarius/labwc/rc.xml \
-            && ok "Super+Tab is bound (Command+Tab in Mac mode)" \
-            || bad "rc.xml has no Super+Tab binding — Command+Tab would do nothing in the Aquarius Desktop"
-          grep -q '<action name="NextWindow" />' /usr/share/aquarius/labwc/rc.xml \
-            && ok "and it walks forward through the windows" \
-            || bad "rc.xml binds Super+Tab to no NextWindow action"
-          grep -q '<keybind key="W-S-Tab">' /usr/share/aquarius/labwc/rc.xml \
-            && ok "Super+Shift+Tab is bound" \
-            || bad "rc.xml has no Super+Shift+Tab binding"
-          grep -q '<action name="PreviousWindow" />' /usr/share/aquarius/labwc/rc.xml \
-            && ok "and it walks back through them" \
-            || bad "rc.xml binds Super+Shift+Tab to no PreviousWindow action"
+          # ================================================================
+          # THE APP SWITCHER (2026-09-06)
+          # ================================================================
+          # Hold Command, tap Tab, let go. Five bindings drive it, and BOTH
+          # keyboard profiles are bound at once on purpose:
+          #
+          #   Mac style      Aquarius Keys swaps the two keys beside the space
+          #                  bar, so Command+Tab arrives at labwc as W-Tab.
+          #   Windows style  nothing is swapped and the remapper does not even
+          #                  run, so Alt+Tab arrives as A-Tab.
+          #
+          # Binding both means `aq keys mac` / `aq keys windows` never has to
+          # rebind anything. Only what the panel LISTS changes, and the shell
+          # reads that from ~/.config/aquarius/keys.conf itself.
+          #
+          # These used to be labwc's own NextWindow and PreviousWindow. They now
+          # send an IPC message to the shell, which draws its own panel — one
+          # that can group five windows of an editor into one application icon,
+          # which labwc's list cannot.
+          echo "== the app switcher's keys =="
+          for kb in W-Tab:next W-S-Tab:prev W-grave:cycle A-Tab:next A-S-Tab:prev; do
+            key="${kb%%:*}"
+            fn="${kb##*:}"
+            grep -q "<keybind key=\"${key}\">" /usr/share/aquarius/labwc/rc.xml \
+              && ok "${key} is bound" \
+              || bad "rc.xml has no ${key} binding — that key would do nothing in the Aquarius Desktop"
+            grep -q "command=\"qs ipc call switcher ${fn}\"" /usr/share/aquarius/labwc/rc.xml \
+              && ok "and something calls 'switcher ${fn}'" \
+              || bad "rc.xml never calls 'qs ipc call switcher ${fn}' — ${key} is bound to nothing useful"
+          done
+
+          # labwc's own switcher, off. If a stray NextWindow binding ever came
+          # back, two switchers would draw at once, which is a very confusing
+          # thing to debug from a photograph of a screen.
+          # Read as XML rather than grepped for, so that a reworded comment or a
+          # different indentation cannot make this pass or fail by accident.
+          if python3 -c "import sys, xml.etree.ElementTree as ET; osd = ET.parse('/usr/share/aquarius/labwc/rc.xml').getroot().find('./windowSwitcher/osd'); sys.exit(0 if osd is not None and (osd.get('show') or '').lower() in ('no', 'false') else 1)"; then
+            ok "labwc's own window switcher is switched off"
+          else
+            bad "rc.xml does not carry <windowSwitcher><osd show=\"no\" /> — labwc could draw a second switcher beside ours"
+          fi
+
+          # ⚠️ THE ONE BINDING THAT MUST NEVER EXIST. labwc does not forward the
+          # release of a key whose press it swallowed, and the shell seeing the
+          # release of Command is the entire mechanism by which the switcher
+          # knows you let go. Binding a bare modifier here would swallow the
+          # press, and the panel would go up and never commit.
+          if grep -qE 'key="(Super_L|Super_R|Alt_L|Alt_R)"' /usr/share/aquarius/labwc/rc.xml; then
+            bad "rc.xml binds a bare modifier key — that would stop the app switcher ever committing (see the shell's docs/app-switcher.md)"
+          else
+            ok "the bare modifier keys are left unbound, as the switcher needs"
+          fi
 
           # ⚠️ THE 2026-09-06 BENCH PHOTOGRAPH: right-clicking the wallpaper
           # opened labwc's OWN menu — Terminal, Reconfigure, Exit. The shell
@@ -5919,6 +5973,36 @@ jobs:
             echo "  OK   the search palette still declares an IPC handler"
           else
             echo "  FAIL components/search/FlowSearch.qml no longer declares an IpcHandler — Super+Space would do nothing"
+            fails=1
+          fi
+
+          echo "== the app switcher's IPC contract =="
+          # Five keybinds in this repository's rc.xml call `qs ipc call switcher
+          # <function>`, and Quickshell says nothing at all when a call names a
+          # function that is not there — the key would simply do nothing. So
+          # every function the OS-side bindings can send is checked by name
+          # against the shell at the pinned commit.
+          for fn in next prev cycle go cancel; do
+            if grep -qE "function ${fn}\(\)" components/switcher/AppSwitcher.qml; then
+              echo "  OK   the switcher answers '${fn}'"
+            else
+              echo "  FAIL components/switcher/AppSwitcher.qml has no IpcHandler function ${fn}() — a key in this image's rc.xml would do nothing"
+              fails=1
+            fi
+          done
+          if grep -q 'target: "switcher"' components/switcher/AppSwitcher.qml; then
+            echo "  OK   its IPC handler is still called 'switcher'"
+          else
+            echo "  FAIL components/switcher/AppSwitcher.qml no longer declares target: \"switcher\" — every Tab binding in this image would do nothing"
+            fails=1
+          fi
+          # The switcher reads the Mac-or-Windows answer that `aq keys` writes,
+          # from the path THIS repository puts it at. If the shell ever looked
+          # somewhere else, the panel would silently list applications forever.
+          if grep -q 'aquarius/keys.conf' services/KeyProfile.qml; then
+            echo "  OK   it reads ~/.config/aquarius/keys.conf, which is where aq keys writes"
+          else
+            echo "  FAIL services/KeyProfile.qml does not read aquarius/keys.conf — 'aq keys windows' would not reach the switcher"
             fails=1
           fi
 
