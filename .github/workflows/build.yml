@@ -2744,9 +2744,24 @@ jobs:
           # at a timestamp.
           echo "== and it looks like Aquarius rather than Openbox =="
 
+          # ⚠️ NO SHELL MEANS NO PALETTE, AND THAT IS NOT A FAILURE HERE.
+          # This repository's standing rule is that an image built while the
+          # shell repository is private is finished WITHOUT the shell: the
+          # window manager, the wallpaper and the keyboard all still work, there
+          # is simply no bar. The colours labwc draws with are read out of the
+          # shell's theme/Ice.qml, so in that case there is nothing to build a
+          # window frame from either, and the title bars stay labwc's own grey.
+          # Say so and move on, the same way build_files/55-aquarius-session.sh
+          # does — a cosmetic layer must not be what stops an image publishing.
           FRAME_OUT="$(mktemp -d)"
           FRAME_OK=1
+          if [ ! -r /usr/share/aquarius/shell/theme/Ice.qml ]; then
+            echo "       no shell palette in this image, so there is no window"
+            echo "       frame to check. See the shell section above for why."
+            FRAME_OK=0
+          fi
           for case in "ice 1" "ice 1.25" "midnight 1" "midnight 1.25"; do
+            [ "${FRAME_OK}" -eq 1 ] || break
             # shellcheck disable=SC2086
             set -- ${case}
             if python3 /usr/share/aquarius/labwc/generate-theme --quiet \
