@@ -261,6 +261,64 @@ including its own ramdisk.
 
 ---
 
+### How to prove the script is even valid, without a Linux machine
+
+`aquarius.script` is written in Plymouth's own little language, and a syntax
+error in it means one thing on a real machine: **a black boot screen.** Nothing
+in the build can catch that, because parsing only happens when Plymouth actually
+starts drawing, and nothing in a container has a screen.
+
+So it was checked a different way, on the Mac, and this recipe is repeatable
+whenever the script changes in a big way. It builds **Plymouth's own parser** —
+the real one, from the version this image ships — as a small command that reads a
+script file and says whether it is valid:
+
+```bash
+cd /tmp
+curl -sL -o plymouth.tar.gz   https://gitlab.freedesktop.org/plymouth/plymouth/-/archive/24.004.60/plymouth-24.004.60.tar.gz
+tar xzf plymouth.tar.gz
+S=plymouth-24.004.60/src
+
+# Two headers a Mac does not have, and two stubs the parser never reaches.
+mkdir -p shim && printf '#include <limits.h>
+#include <float.h>
+' > shim/values.h
+cat > parsetest.c <<'EOF'
+#include <stdio.h>
+#include <stdbool.h>
+#include <unistd.h>
+#include "script.h"
+#include "script-parse.h"
+bool ply_fd_has_data(int fd) { (void)fd; return false; }
+ssize_t ply_write(int fd, const void *b, size_t n) { return write(fd, b, n); }
+int main(int argc, char **argv) {
+    if (argc < 2) { fprintf(stderr, "usage: parsetest <file.script>
+"); return 2; }
+    if (!script_parse_file(argv[1])) { fprintf(stderr, "PARSE FAILED
+"); return 1; }
+    printf("PARSE OK: %s
+", argv[1]);
+    return 0;
+}
+EOF
+
+clang -o parsetest parsetest.c   $S/plugins/splash/script/script-parse.c $S/plugins/splash/script/script-scan.c   $S/plugins/splash/script/script-debug.c $S/plugins/splash/script/script.c   $S/plugins/splash/script/script-object.c   $S/libply/ply-bitarray.c $S/libply/ply-list.c $S/libply/ply-hashtable.c   $S/libply/ply-logger.c $S/libply/ply-buffer.c $S/libply/ply-array.c   -Ishim -I$S -I$S/libply -I$S/plugins/splash/script   -DPLYMOUTH_LOG_DIRECTORY='"/tmp"' -Wno-everything
+
+./parsetest .../themes/aquarius/aquarius.script
+```
+
+It prints `PARSE OK` or names the line and column of the mistake. It was run
+against this script on 2026-09-06 and it passed — and it was run against a
+deliberately broken file first, to be sure a pass means something.
+
+**What it does NOT prove:** that the script *works*. A name that Plymouth does
+not have — `Plymouth.SetSomethingThatIsNotReal` — parses perfectly and then does
+nothing at all on the machine. That is what the build's own check is for: it
+reads the real instruction names out of the plug-in's compiled file and compares.
+Between the two, the only things left are the ones a bench test finds.
+
+---
+
 ### What a build can prove, and what it cannot
 
 GitHub Actions checks a great deal of this on every push — the frame counts, the

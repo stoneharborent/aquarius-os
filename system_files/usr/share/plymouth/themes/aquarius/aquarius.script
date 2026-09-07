@@ -201,6 +201,18 @@ Plymouth.SetRefreshRate(30);
 # `Window.GetWidth()` / `Window.GetHeight()` are its size. On a machine with two
 # monitors these describe the whole arrangement, and Plymouth draws every sprite
 # on every screen, so the mark appears centred on both.
+#
+# ⚠️ THESE ARE WORKED OUT ONCE, HERE, AND NOT AGAIN. Plymouth does offer to tell
+# a theme when a monitor is plugged in or wakes up mid-boot
+# (`Plymouth.SetDisplayHotplugFunction`) and this theme deliberately does not ask
+# — the same choice Plymouth's own example theme makes. Handling it means
+# re-placing every sprite on screen, which is a code path that only ever runs on
+# a real machine at a moment nobody can arrange, and untested code that runs
+# during boot is worse than a logo that is off-centre.
+#
+# So it is a BENCH QUESTION rather than a settled one: docs/restart/boot-branding.md
+# asks for a look at the mark on the 4K monitor. If it is ever off-centre there,
+# this is the reason and the fix is to add that callback.
 fun screen_middle_x ()
   {
     return Window.GetX() + Window.GetWidth() / 2;
