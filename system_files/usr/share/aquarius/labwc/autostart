@@ -116,11 +116,11 @@ fi
 # shell crashing. If the bar dies you should still be looking at your desktop.
 #
 # --mode fill crops to the screen rather than stretching; -c is the colour
-# behind the image while it loads, and it is the Midnight void from the boot
+# behind the image while it loads, and it is the palette's navy ground (bg) from the boot
 # splash so the hand-off from Plymouth has no flash of grey.
 # ---------------------------------------------------------------------------
 if [ -r /usr/share/backgrounds/aquarius/the-pour-ice-3840x2160.png ]; then
-    swaybg -c '#06070C' \
+    swaybg -c '#0B1220' \
         -i /usr/share/backgrounds/aquarius/the-pour-ice-3840x2160.png \
         -m fill >> "${AQ_LOG:-/dev/null}" 2>&1 &
 fi
