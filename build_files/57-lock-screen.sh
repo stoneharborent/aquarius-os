@@ -231,7 +231,7 @@ fi
 # ships its own copy of. build_files/check-labwc-drift.sh keeps that copy and
 # the shell's identical; this checks the INSTALLED file, which is the one a
 # person's keyboard actually reaches.
-say "The Super+L key binding"
+say "The lock key bindings: Ctrl+Cmd+Q (Mac keys) and Win+L (Windows keys)"
 
 if [ -r "${AQ_LABWC_RC}" ]; then
     if python3 - "${AQ_LABWC_RC}" <<'PYTHON'
@@ -239,22 +239,29 @@ import sys
 import xml.etree.ElementTree as ET
 
 root = ET.parse(sys.argv[1]).getroot()
+# Two keys, one per keyboard style (Royce, 2026-09-07): C-W-q is Ctrl+Cmd+Q in
+# Mac mode, W-l is Win+L in Windows mode. Cmd+L cannot be the lock — Aquarius
+# Keys turns it into Ctrl+L for the address bar before labwc ever sees it.
+wanted = {'C-W-q', 'W-l'}
+bound = set()
 for keybind in root.iter('keybind'):
-    if keybind.get('key') != 'W-l':
+    key = keybind.get('key')
+    if key not in wanted:
         continue
     for action in keybind:
         if action.get('name') == 'Execute' \
                 and action.get('command') == 'qs ipc call lock lock':
-            sys.exit(0)
-    sys.stderr.write('W-l is bound, but not to `qs ipc call lock lock`\n')
+            bound.add(key)
+missing = sorted(wanted - bound)
+if missing:
+    sys.stderr.write('not bound to `qs ipc call lock lock`: %s\n' % ', '.join(missing))
     sys.exit(1)
-sys.stderr.write('there is no W-l keybind in the file at all\n')
-sys.exit(1)
+sys.exit(0)
 PYTHON
     then
-        ok "Super+L runs 'qs ipc call lock lock'"
+        ok "Ctrl+Cmd+Q (C-W-q) and Win+L (W-l) both run 'qs ipc call lock lock'"
     else
-        bad "${AQ_LABWC_RC} does not bind Super+L to the lock screen (see the line above). It should be a keybind on W-l with an Execute action running: qs ipc call lock lock"
+        bad "${AQ_LABWC_RC} does not bind both lock keys (see the line above). It needs keybinds on C-W-q and on W-l, each with an Execute action running: qs ipc call lock lock"
     fi
 else
     bad "${AQ_LABWC_RC} is missing"

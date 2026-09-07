@@ -457,7 +457,7 @@ should match the login screen you just came through.
 *Added 2026-09-06.*
 
 The last piece of identity a person sees every day, and the one with teeth: the
-screen you get when you press **Super+L**, pick **Lock Screen** from the
+screen you get when you press **Ctrl+⌘Q** (Mac keys) or **Win+L** (Windows keys), pick **Lock Screen** from the
 Aquarius menu, or walk away from the machine.
 
 **The whole design of it lives in the shell repository, at
@@ -473,7 +473,7 @@ operating system's half.
 | The PAM rules | `/etc/pam.d/aquarius-lock` | **Without this file nobody can unlock the machine.** One line: `auth include login`. |
 | Locking before sleep | `aquarius-lock-on-sleep.service` + `/usr/libexec/aquarius-lock-on-sleep` | A closed laptop lid, the Sleep row, or an automatic suspend all lock the screen on the way past. |
 | `wlopm` | a package | Turns the monitor off after fifteen minutes. Not `wlr-randr --off`, which re-arranges your windows. |
-| Super+L | `/usr/share/aquarius/labwc/rc.xml` | Runs `qs ipc call lock lock` — a message to the shell that is already running, which is why it is instant. |
+| Ctrl+⌘Q (Mac keys) / Win+L (Windows keys) | `/usr/share/aquarius/labwc/rc.xml` | Runs `qs ipc call lock lock` — a message to the shell that is already running, which is why it is instant. |
 
 All of it is installed and read back by
 [`build_files/57-lock-screen.sh`](../../build_files/57-lock-screen.sh), and
@@ -505,7 +505,7 @@ read both sides and compare them.
 Do these in order. Two of them are the ones that would be expensive to get
 wrong, and they are marked.
 
-1. **Lock with the keyboard.** Press **Super+L** (or **⌘L** in Mac mode). The
+1. **Lock with the keyboard.** Press **Ctrl+⌘Q** in Mac mode (**Win+L** in Windows mode — ⌘L stays the address bar, decided 2026-09-07). The
    screen should be covered *immediately* — no pause, no flash of desktop. You
    should see the clock, big, in the middle, on a frosted version of the
    wallpaper.

@@ -232,7 +232,8 @@ keymap:
       Super-o: C-o                 # open
       Super-p: C-p                 # print
       Super-r: C-r                 # reload / refresh
-      Super-l: C-l                 # jump to the address bar
+      Super-l: C-l                 # jump to the address bar (this is why the lock
+                                   # is Ctrl+Cmd+Q, not Cmd+L — see labwc/rc.xml)
 
       # -----------------------------------------------------------------------
       # Windows and tabs

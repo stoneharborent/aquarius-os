@@ -227,6 +227,16 @@ aq_file_has "${KEYS_DIR}/mac.yaml" '^ *Super_L: Alt_L$' \
     "mac.yaml makes the Windows key Option"
 aq_file_has "${KEYS_DIR}/mac.yaml" 'ids:0x05ac' \
     "mac.yaml recognises Apple keyboards and leaves them alone"
+# The lock key is Ctrl+Cmd+Q (labwc's C-W-q). Cmd+L was the lock for one day,
+# 2026-09-06, and never fired: this file turns Cmd+L into Ctrl+L for the address
+# bar, and labwc never saw it. So the one rule about the lock key is that this
+# file must NOT touch it — a remap of Ctrl+Super+q here would kill the lock
+# again, silently. (xremap spells the chord either way round.)
+if grep -qE '^ *(C-Super-q|Super-C-q|C-Super-Q|Super-C-Q) *:' "${KEYS_DIR}/mac.yaml"; then
+    bad "mac.yaml remaps Ctrl+Cmd+Q — that is the lock key, and labwc would never see it"
+else
+    ok "mac.yaml leaves Ctrl+Cmd+Q alone, so the lock key reaches labwc"
+fi
 # Note the trailing `( |$)` on the next few: these lines have an explanatory
 # comment after them in mac.yaml, so anchoring at the end of the line would
 # never match. The alternative — dropping the anchor — would let
