@@ -29,7 +29,7 @@
 
 set -uo pipefail
 
-AQ_GREETER_QML="/usr/share/aquarius/shell/greeter/greeter.qml"
+AQ_GREETER_QML="/usr/share/aquarius/shell/greeter.qml"
 AQ_SCALE_HELPER="/usr/libexec/aquarius-display-scale"
 
 # The system-wide display arrangement, copied here from whoever last set a scale

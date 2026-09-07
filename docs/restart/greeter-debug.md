@@ -80,7 +80,7 @@ Things to verify on the bench:
 
 ### 2. `qs` launched, then its QML failed to load, so it exited
 `/usr/libexec/aquarius-greeter-shell` ends with `exec /usr/bin/qs -p
-/usr/share/aquarius/shell/greeter/greeter.qml`. If the QML fails to load, `qs`
+/usr/share/aquarius/shell/greeter.qml`. If the QML fails to load, `qs`
 exits non-zero, the greeter-shell exits, labwc's `-s` startup command is done —
 **and labwc keeps running with an empty desktop** (see hypothesis 5). Sub-causes,
 each checkable from qs's own stderr:
@@ -95,7 +95,8 @@ each checkable from qs's own stderr:
     also enforced ON. Also not the likely gap.
   - `Quickshell.Io` is core Quickshell; if it is somehow absent the very first
     imports fail. Worth confirming it resolves.
-- The relative import `"../theme"` not resolving from `-p greeter/greeter.qml`
+- (FIXED 2026-09-07) The relative import `"../theme"` not resolving: the entry is now
+  `greeter.qml` at the shell root, so the config folder is the whole shell and `../` imports resolve
   when the file is given as an absolute path — a `qs -p <file>` vs `qs -p <dir>`
   /  `qs -c <name>` invocation-shape mismatch in this Quickshell version.
 - A runtime error in `GreeterState.qml` (e.g. the account/desktop lister
@@ -112,7 +113,7 @@ leaving labwc's desktop visible underneath. Check for a layer surface in the
 `aquarius-greeter` namespace.
 
 ### 4. The `qs -p` invocation / config-path semantics in Quickshell 0.3.x
-Confirm on the bench that `qs -p /usr/share/aquarius/shell/greeter/greeter.qml`
+Confirm on the bench that `qs -p /usr/share/aquarius/shell/greeter.qml`
 is the correct way to run a single-file config in the installed Quickshell
 version (vs `qs -c`, or `-p` expecting a directory). A wrong flag shape can make
 qs print usage and exit 0 — which looks like "it ran and did nothing".
@@ -151,7 +152,7 @@ journalctl -b -u aquarius-greeter-watchdog --no-pager
 # 4. Run the greeter by hand, as the greetd user, to see qs's error directly.
 #    (Adjust the runtime dir if logind named it differently.)
 sudo -u greetd env XDG_RUNTIME_DIR=/run/user/$(id -u greetd) \
-    /usr/bin/qs -p /usr/share/aquarius/shell/greeter/greeter.qml
+    /usr/bin/qs -p /usr/share/aquarius/shell/greeter.qml
 #    ^ read the FIRST error line. "module X is not installed" points at
 #      hypothesis 2; a QML runtime error points at GreeterState; a usage dump
 #      points at hypothesis 4.

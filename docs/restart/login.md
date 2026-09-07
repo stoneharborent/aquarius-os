@@ -1108,7 +1108,7 @@ greetd                    the login manager. Draws nothing at all. Its one job
             │             Wayland program and needs something to draw into
             └─ /usr/libexec/aquarius-greeter-shell
                  │        sets the screen size, then starts the login screen
-                 └─ qs -p /usr/share/aquarius/shell/greeter/greeter.qml
+                 └─ qs -p /usr/share/aquarius/shell/greeter.qml
                           the login screen itself
 ```
 

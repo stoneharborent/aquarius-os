@@ -230,7 +230,7 @@ done
 # The login screen's own front door and the one piece of it that thinks. The
 # helper beside them is copied out to /usr/libexec by 55-aquarius-session.sh,
 # because that is where greetd's greeter will look for it.
-for aq_f in greeter/greeter.qml greeter/qmldir greeter/GreeterState.qml \
+for aq_f in greeter.qml greeter/qmldir greeter/GreeterState.qml \
     greeter/aquarius-greeter-info; do
     if [ -s "${AQ_DEST}/${aq_f}" ]; then
         ok "${aq_f}"

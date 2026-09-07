@@ -1838,10 +1838,10 @@ login_status() {
         echo "  NO   ${AQ_GREETD_CONF} is missing"
         ready=0
     fi
-    if [ -r /usr/share/aquarius/shell/greeter/greeter.qml ]; then
+    if [ -r /usr/share/aquarius/shell/greeter.qml ]; then
         echo "  yes  the login screen itself is installed"
     else
-        echo "  NO   /usr/share/aquarius/shell/greeter/greeter.qml is missing."
+        echo "  NO   /usr/share/aquarius/shell/greeter.qml is missing."
         echo "       Switching to greetd would give the plain text login screen."
         ready=0
     fi

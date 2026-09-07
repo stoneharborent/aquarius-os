@@ -435,7 +435,7 @@ fi
 
 # The QML the whole thing draws. Copied in with the rest of the shell.
 if [ "${AQ_GREETER_SHELL_HERE}" -eq 1 ]; then
-    for aq_f in greeter/greeter.qml greeter/qmldir greeter/GreeterState.qml \
+    for aq_f in greeter.qml greeter/qmldir greeter/GreeterState.qml \
         greeter/GreeterWindow.qml greeter/GreeterCard.qml greeter/GreeterField.qml; do
         if [ -s "${AQ_SHELL_DIR}/${aq_f}" ]; then
             ok "${aq_f}"
