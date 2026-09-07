@@ -279,6 +279,10 @@ keymap:
       Super-Shift-Right: Shift-End
       Super-Up: C-Home             # to the very top of the document
       Super-Down: C-End            # to the very bottom
+                                   # (both reach the app switcher too, under Cmd-Tab:
+                                   #  it reads them as Up/Down and survives the
+                                   #  moment this remap lets go of Cmd — shell,
+                                   #  AppSwitcher.qml, releaseGrace, 2026-09-07)
       Super-Shift-Up: C-Shift-Home
       Super-Shift-Down: C-Shift-End
 
