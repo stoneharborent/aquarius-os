@@ -415,9 +415,16 @@ After rebasing the bench to an image built from this branch:
 
 Do these in the Aquarius Desktop (not GNOME):
 
-4. **Open a window and look at its title bar.** It should be the same colour as
-   the bar at the top of the screen, with the title centred, a hairline border,
-   and three round buttons. Click another window: the one you left should fade —
+4. **Open a window that lets labwc draw its frame, and look at its title bar.**
+   ⚠️ Not Files, Settings, the terminal or any other GNOME app — those draw
+   their own title bar inside the window and never show labwc's frame, on any
+   compositor (bench, 2026-09-07: this is why "the window theme is not there"
+   when it was). The quickest window that does: open **Firefox**, right-click
+   its toolbar → **Customize Toolbar…** → tick **Title Bar** at the bottom left.
+   Firefox drops its own bar and asks the compositor for one, and the Aquarius
+   frame appears at once. DaVinci Resolve shows it too, once installed.
+   The frame should be the same colour as the bar at the top of the screen,
+   with the title centred, a hairline border, and three round buttons. Click another window: the one you left should fade —
    its title, its border and its buttons all go quieter.
 5. **Hover the buttons.** The disc under minimise and maximise should deepen
    slightly. The disc under **close** should go red, with a white ×. Holding the
