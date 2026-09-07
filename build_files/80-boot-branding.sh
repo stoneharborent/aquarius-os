@@ -551,6 +551,28 @@ cat > "${KARGS_FILE}" << 'EOF'
 kargs = ["quiet", "splash", "rhgb"]
 EOF
 cat "${KARGS_FILE}"
+# The login screen is held back until the pour has played (bench, 2026-09-07:
+# a five-second boot and a television that took two of them to wake). One
+# oneshot unit, ordered before the login screen, switched on from /usr.
+AQ_HOLD_UNIT="/usr/lib/systemd/system/aquarius-boot-hold.service"
+AQ_HOLD_LINK="/usr/lib/systemd/system/graphical.target.wants/aquarius-boot-hold.service"
+say "The login screen waits for the pour"
+aq_file_has "${AQ_HOLD_UNIT}" '^Before=display-manager.service$' \
+    "aquarius-boot-hold finishes before the login screen starts"
+aq_file_has "${AQ_HOLD_UNIT}" '^After=plymouth-start.service$' \
+    "and it does not start counting until the boot screen is up"
+aq_file_has "${AQ_HOLD_UNIT}" '^ConditionKernelCommandLine=splash$' \
+    "and it only runs when a boot screen was asked for"
+aq_file_has "${AQ_HOLD_UNIT}" '^Type=oneshot$' \
+    "it is a oneshot, which is what gives Before= something to wait for"
+if [ -L "${AQ_HOLD_LINK}" ]; then
+    ok "it is switched on ($(readlink "${AQ_HOLD_LINK}"))"
+else
+    bad "${AQ_HOLD_LINK} is missing, so the hold is installed and would never run"
+fi
+aq_file_has "${THEME_DIR}/aquarius.script" '^BOOT_DELAY *= *45;' \
+    "the pour starts 1.5 s late at boot, so a slow screen is awake for it"
+
 aq_file_has "${KARGS_FILE}" 'kargs = \["quiet", "splash", "rhgb"\]' \
     "the boot options ask for a graphical splash"
 

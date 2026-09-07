@@ -39,7 +39,7 @@ an animation.*
 `#0B1220`, the same colour the desktop uses in dark mode, so the machine does
 not change colour between the boot screen and the desktop.
 
-Then, over 2.2 seconds:
+Then — after a second and a half of plain navy, on purpose — over 2.2 seconds:
 
 1. A thin stream of water falls from above the screen into a point in the middle.
 2. Out of that point, both legs of the letter **A** run downward, like water in
@@ -48,6 +48,16 @@ Then, over 2.2 seconds:
 4. The word **AquariusOS** fades in underneath.
 
 Then it **holds** — stands perfectly still — until the login screen takes over.
+
+> **Why the wait, and why the login screen is late (bench, 2026-09-07).** The
+> bench PC gets from boot screen to login screen in five seconds, and its
+> television spends the first two of them still showing the motherboard's logo
+> while it switches over. The pour had finished before the picture arrived;
+> all Royce saw was the held mark. So the pour now starts 1.5 seconds late
+> (`BOOT_DELAY` in `aquarius.script`), and `aquarius-boot-hold.service` keeps
+> the login screen from starting for 3.5 seconds after the real system takes
+> over. On the bench that costs nothing; on a faster machine, a few seconds
+> of navy. Shutdown is untouched — the screen is already awake for the wind.
 
 AquariusOS is named after Aquarius, the water-bearer. That is the whole idea: the
 mark is not drawn, it is **poured**.

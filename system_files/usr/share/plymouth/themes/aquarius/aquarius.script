@@ -86,6 +86,15 @@
 # if they disagree, but it is quicker to get it right here.
 BOOT_FRAMES  = 66;      # the pour: 2.2 seconds at 30 pictures a second
 WIND_FRAMES  = 57;      # the wind: 1.9 seconds
+# How long to wait, at boot only, before the pour begins: 45 pictures = 1.5 s.
+# Found on the bench, 2026-09-07: the pour played to a television that was
+# still showing the motherboard's logo. A big screen takes a second or two to
+# switch over after the machine starts drawing, and by the time the picture
+# arrived the pour was over and only the held mark was left. So at boot the
+# screen stays plain navy for this long, then the stream falls. Shutdown is not
+# delayed: the screen is already awake. (The login screen is also held back
+# until the pour has finished — see aquarius-boot-hold.service.)
+BOOT_DELAY   = 45;
 FRAME_WIDTH  = 288;
 FRAME_HEIGHT = 389;
 
@@ -335,6 +344,7 @@ else
   }
 
 animation.frame = 0;
+animation.waited = 0;
 animation.sprite = Sprite();
 animation.sprite.SetPosition(mark.x, mark.y, Z_MARK);
 
@@ -363,6 +373,14 @@ fun step_animation ()
         return;
       }
 
+    # The wait before the pour: nothing on screen but the navy, so the first
+    # thing the person sees is the stream falling, not a frozen first frame.
+    # BOOT_DELAY is explained beside BOOT_FRAMES at the top.
+    if (animation.waited < BOOT_DELAY)
+      {
+        animation.waited++;
+        return;
+      }
     if (animation.frame < BOOT_FRAMES)
       {
         animation.sprite.SetImage(animation.pour[animation.frame]);

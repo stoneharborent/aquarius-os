@@ -1,0 +1,44 @@
+# =============================================================================
+# aquarius-boot-hold — give the boot animation time to be seen
+# =============================================================================
+# WHAT IT IS FOR
+#
+# The boot screen pours the Aquarius mark over 2.2 seconds and then holds it
+# until the login screen takes over. On the bench (2026-09-07) the machine got
+# from the boot screen to the login screen in five seconds, and a big television
+# took the first two of those to switch over from the motherboard's logo. The
+# pour was finished before anybody could see it. Fast is good; a story nobody
+# sees is not.
+#
+# This service does one thing: it makes the login screen wait. It starts once
+# the boot screen is up, sleeps, and finishes — and the login screen is ordered
+# after it. The pour itself starts 1.5 seconds late (aquarius.script, BOOT_DELAY)
+# so the screen is awake for it; 1.5 + 2.2 = 3.7 seconds, and this waits a
+# little longer than that from the moment the real system takes over.
+#
+# WHAT IT COSTS. On a machine that already takes five seconds, nothing: the
+# wait ends before the login screen would have started anyway. On a faster
+# machine, up to three and a half seconds of navy with the mark held on it.
+#
+# WHEN IT DOES NOT RUN. Only when the boot screen was asked for at all
+# (`splash` on the kernel command line — the image puts it there). Shutting
+# down is not affected: this is ordered before the login screen, and nothing
+# else.
+#
+# HOW IT IS SWITCHED ON. By a link shipped in the read-only half of the system,
+# graphical.target.wants/, the same way every other Aquarius service is. See
+# the note beside aq_unit_is_on_from_usr in build_files/aq-lib.sh.
+# =============================================================================
+[Unit]
+Description=Hold the login screen until the boot animation has played
+DefaultDependencies=no
+ConditionKernelCommandLine=splash
+After=plymouth-start.service
+Before=display-manager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/sleep 3.5
+
+[Install]
+WantedBy=graphical.target
