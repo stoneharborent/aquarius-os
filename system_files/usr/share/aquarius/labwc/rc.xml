@@ -213,14 +213,17 @@
       itself. This image installs Sora, Inter and JetBrains Mono, so on
       AquariusOS it is always there.
 
-      THE SIZES ARE THE SHELL'S, and labwc's <size> is in PIXELS
-      (labwc-config(5): "Font size in pixels. Default is 10."), which is the
-      same unit theme/Theme.qml uses — it sets font.pixelSize, never pointSize:
+      THE SIZES ARE THE SHELL'S, IN PIXELS — but labwc's <size> is in POINTS
+      (src/common/font.c: pango_font_description_set_size, which reads points),
+      so generate-theme converts each one with pt() = px * 72/96 before writing
+      it here. Getting that wrong is what made the right-click menu a third too
+      big on the bench, 2026-09-07. The design pixel sizes, matching
+      theme/Theme.qml (which sets font.pixelSize, never pointSize):
 
-        MenuItem   19  = Theme.fsBody     — one row of the Aquarius menu
-        MenuHeader 15  = Theme.fsCaption  — a menu title, quieter than its items
+        MenuItem   19px = Theme.fsBody     — one row of the Aquarius menu
+        MenuHeader 15px = Theme.fsCaption  — a menu title, quieter than its items
         ActiveWindow / InactiveWindow
-                   13  — the window title, at weight `medium`. Smaller than the
+                   13px — the window title, at weight `medium`. Smaller than the
                          bar's own labels on purpose: a title bar should name a
                          window, not announce it. labwc takes a WORD for the
                          weight rather than a number; `medium` is Pango's 500,

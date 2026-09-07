@@ -264,6 +264,22 @@ def px(value, scale):
     return scaled
 
 
+def pt(value, scale):
+    """
+    A font size in POINTS, from a design size in pixels.
+
+    ⚠️ labwc's <font><size> is in POINTS, not pixels — src/common/font.c does
+    `pango_font_description_set_size(desc, font->size * PANGO_SCALE)`, and that
+    call reads points. An earlier version of this file wrote the design's PIXEL
+    numbers straight into <size>, so every menu row and title came out about a
+    third too big (19px asked for, 19pt = ~25px drawn). Found on the bench,
+    2026-09-07: the right-click menu was visibly larger than the shell's own.
+    Points at 96 dpi are pixels * 72 / 96 = pixels * 0.75, so a 19px row now
+    matches the shell's 19px row. The scale is applied first, same as px().
+    """
+    return max(1, int(math.floor(px(value, scale) * 72.0 / 96.0 + 0.5)))
+
+
 # =============================================================================
 # THE DESIGN, WRITTEN DOWN ONCE
 # =============================================================================
@@ -272,7 +288,7 @@ def px(value, scale):
 # turns them into the size to actually draw.
 
 TITLEBAR_HEIGHT = 38     # section 3: the whole title bar
-TITLE_FONT_SIZE = 13     # section 3: Inter, in pixels (labwc's <size> is px)
+TITLE_FONT_SIZE = 13     # section 3: Inter, design px; written as points via pt() (labwc <size> is pt)
 # Section 3 asks for "Inter 500" — medium, a little heavier than body text, so a
 # window's name reads as a label rather than as prose. labwc takes a WORD here,
 # not a number: rcxml.c maps `medium` to Pango's PANGO_WEIGHT_MEDIUM, which is
@@ -733,20 +749,20 @@ def build_rc_xml(template, scale, buttons):
         [
             '<font place="MenuItem">',
             "  <name>Inter</name>",
-            "  <size>%d</size>" % px(MENU_FONT_SIZE, scale),
+            "  <size>%d</size>" % pt(MENU_FONT_SIZE, scale),
             "</font>",
             '<font place="MenuHeader">',
             "  <name>Inter</name>",
-            "  <size>%d</size>" % px(MENU_HEADER_FONT_SIZE, scale),
+            "  <size>%d</size>" % pt(MENU_HEADER_FONT_SIZE, scale),
             "</font>",
             '<font place="ActiveWindow">',
             "  <name>Inter</name>",
-            "  <size>%d</size>" % px(TITLE_FONT_SIZE, scale),
+            "  <size>%d</size>" % pt(TITLE_FONT_SIZE, scale),
             "  <weight>%s</weight>" % TITLE_FONT_WEIGHT,
             "</font>",
             '<font place="InactiveWindow">',
             "  <name>Inter</name>",
-            "  <size>%d</size>" % px(TITLE_FONT_SIZE, scale),
+            "  <size>%d</size>" % pt(TITLE_FONT_SIZE, scale),
             "  <weight>%s</weight>" % TITLE_FONT_WEIGHT,
             "</font>",
         ],
