@@ -36,7 +36,9 @@ re-synced; its own README says so. Do not copy colours out of it.
 | `render-wallpaper.sh` | Turns that artwork into the picture files the OS actually ships. |
 | `render-logo-png.sh` | Makes the bitmap copy of the mark that GNOME's **login screen** needs. |
 | `render-about-logo.sh` | Makes the two wide "mark + AquariusOS" pictures for GNOME's **Settings > About** page — one for light mode, one for dark. |
-| `render-plymouth-assets.sh` | Makes the pictures for the **boot screen** — the mark with the word AquariusOS under it, and 36 frames of pulsing dots. See `../docs/restart/boot-branding.md`. |
+| `pour.mjs` | **The boot animation itself**, written down as arithmetic. `bootFrame()` is the pour — a stream of water falls from above the screen and the "A" is poured out of it, 2.2 seconds. `shutFrame()` is the wind — the mark is taken apart and blown away to the right, 1.9 seconds. Read its header. |
+| `render-plymouth-assets.sh` | Turns those into the 124 picture files the **boot screen** plays, plus the four small shapes the update and disk-password screens are built from. About four minutes. See `../docs/restart/boot-branding.md`. |
+| `png-colours.py` | Reads the colours that are really inside a picture file, with no image library. It is how the build proves a retired colour is not hiding in one of those 124 frames, where grep cannot look. |
 | `icons/` | **The eight AquariusOS app icons** — the Editor, the Writer, Files, Settings, the app chooser, the welcome window and the two DaVinci Resolve buttons. Drawn by code, in both colour versions. Read [`icons/README.md`](./icons/README.md). |
 | `render-app-icons.sh` | Turns those drawings into the two icon themes the OS ships, `Aquarius-Ice` and `Aquarius-Midnight`. |
 | `README.md` | This file. |
@@ -58,9 +60,9 @@ To make something reach the OS, it has to be placed inside `../system_files/`, a
 path it needs to live at in the finished system. `system_files/` is a mirror of `/`. So:
 
 ```
-system_files/usr/share/plymouth/themes/aquarius/watermark.png
+system_files/usr/share/plymouth/themes/aquarius/boot-0001.png
         ↓  becomes, in the running OS  ↓
-            /usr/share/plymouth/themes/aquarius/watermark.png
+            /usr/share/plymouth/themes/aquarius/boot-0001.png
 ```
 
 The build script (`../build_files/build.sh`) copies everything under `system_files/` into

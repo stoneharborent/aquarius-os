@@ -1,6 +1,7 @@
 # The boot screen, and everything else that used to say Fedora
 
-*Written 2026-09-03. Assumes you have never used Linux.*
+*Written 2026-09-03. The boot-screen section was rewritten on 2026-09-06, when
+the still logo became an animation. Assumes you have never used Linux.*
 
 ---
 
@@ -20,87 +21,404 @@ There were four of them, and all four said something other than AquariusOS:
 | What you see | What it said before | What it says now |
 | --- | --- | --- |
 | The boot menu, if you press a key | Fedora Linux 44 | **AquariusOS 44.\<date\>** |
-| The screen while it starts up | Your computer maker's badge — ASUS, MSI, Dell — or a small grey spinning circle | **The Aquarius mark, the word AquariusOS, three blue dots** |
+| The screen while it starts up | Your computer maker's badge — ASUS, MSI, Dell — or a small grey spinning circle | **The Aquarius mark being poured out of falling water, and the word AquariusOS** |
+| The screen while it shuts down | The same badge again | **The mark being taken apart and blown away by the wind** |
 | The text banner over a text login | Fedora Linux 44 | **AquariusOS** |
 | `cat /etc/system-release` in a terminal | Fedora release 44 | **AquariusOS release 44** |
 
 ---
 
-## The boot screen (the important one)
+## The boot animation (the important one)
+
+*Rewritten 2026-09-06, when the boot screen stopped being a picture and became
+an animation.*
 
 ### What you should see
 
-A deep-ocean navy screen — Midnight's `bg`, `#0B1220`, the same colour the
-desktop uses in dark mode, so the machine does not change colour between the
-boot screen and the desktop. Just above the middle, the Aquarius mark with a
-soft blue glow around it and the word **AquariusOS** underneath. Below that,
-three blue dots with a pulse travelling left to right, so the screen is visibly
-alive rather than frozen.
+**Starting up — the pour.** A deep-ocean navy screen: Midnight's `bg`,
+`#0B1220`, the same colour the desktop uses in dark mode, so the machine does
+not change colour between the boot screen and the desktop.
 
-(Until 2026-09-06 this was near-black `#06070C`, from the retired Starlight
-palette. `branding/tokens.md` is the record of what replaced it.)
+Then, over 2.2 seconds:
 
-It is the same picture as step 02 of the "Boot to desktop · one journey" strip
-in `branding/design-system/AquariusOS Core Identity.html`, with the word added
-because Royce asked for the boot screen to say Aquarius.
+1. A thin stream of water falls from above the screen into a point in the middle.
+2. Out of that point, both legs of the letter **A** run downward, like water in
+   two channels.
+3. The wave that crosses the A spills out from left to right.
+4. The word **AquariusOS** fades in underneath.
+
+Then it **holds** — stands perfectly still — until the login screen takes over.
+
+AquariusOS is named after Aquarius, the water-bearer. That is the whole idea: the
+mark is not drawn, it is **poured**.
+
+**Shutting down or restarting — the wind.** The opposite, over 1.9 seconds. The
+word fades out first. Then the wind takes the mark apart — the left leg wears
+away from its foot upward, the right leg from the point downward, the wave last
+— and each stroke breaks into drops that stream off to the right and fade. Then
+the screen is dark.
+
+**Installing updates.** The pour and the hold as usual, and underneath it: what
+is being installed, "Please do not turn the computer off.", a thin progress bar
+and a percentage. When it reaches the end the line changes to "Turning off." and
+the wind plays.
+
+**Unlocking an encrypted disk.** The pour, then "Unlock the disk", a box to type
+into with one dot per character, and "Type the disk password to start."
+underneath. A wrong password shakes the box once and says so in plain words.
+
+(Until 2026-09-06 all of this was one still picture of the mark with three
+pulsing dots under it, and the ground was near-black `#06070C` from the retired
+Starlight palette. `branding/tokens.md` is the record of what replaced the
+colour; the rest of this section is the record of what replaced the picture.)
+
+---
+
+### ⚠️ The reversal: this used to be a `two-step` theme, deliberately
+
+This is worth reading before changing anything here, because the *old* choice
+was argued for at length and it was not wrong.
+
+Plymouth — the program that draws the boot screen — draws a theme using one of
+several **plug-ins**. Until this rewrite, ours named `two-step`, and the reasons
+were good ones:
+
+- `two-step` is the plug-in **Fedora's own default themes use** (`bgrt`, which a
+  stock Fedora machine boots with, and `spinner`). So it is the code path that
+  Fedora, Red Hat and Universal Blue test on every graphics card there is, on
+  every release. That matters most on NVIDIA, where the boot splash is
+  historically the first thing to break.
+- It already knew how to draw the screens a boot screen occasionally has to draw
+  and that are easy to forget: **the disk-password box**, the shutdown screen,
+  the "installing updates" screen. Those came free, and they were correct.
+- The cost was that `two-step` can only play a fixed loop of pictures in one
+  place. It cannot play something **once and then stop**, and it cannot tell
+  starting up from shutting down.
+
+**What changed.** On 2026-09-06 Royce approved a designed boot *animation*
+rather than a still logo — and, in as many words: **a story needs a sequence.**
+The pour has to play once, in order, and then hold. The wind has to be a
+different story from the pour. `two-step` cannot do either of those things, with
+any pictures and any settings. Only Plymouth's `script` plug-in can.
+
+**So the trade was taken, with eyes open:**
+
+| | |
+| --- | --- |
+| **What we gave up** | The screens that used to come free now have to be drawn by hand. The one that matters is the **disk-password box** — the piece nobody would notice was missing until the day somebody turned on disk encryption and the machine appeared to hang at a blank screen. It is written, it is in `aquarius.script`, and it is on the bench-test list below precisely because a build cannot prove it. |
+| **What we kept** | **The update screen was kept, not dropped** — because we now draw it ourselves, with the same headings and the same "Please do not turn the computer off." the old theme carried. |
+| **What we gained** | The pour, the hold, the wind — a boot screen that is our own design rather than Fedora's design in our colours. |
+| **The risk we accept** | `script` is a less-travelled code path than `two-step`. It is not exotic — it ships in Fedora as `plymouth-plugin-script`, it is what most custom boot themes in the world use, and Plymouth's own example theme is written for it — but it is not what Fedora's default theme exercises. **If a machine ever shows a black screen where the animation should be, this is the first thing to suspect.** See "If it ever goes wrong" at the end of this section. |
+
+---
 
 ### Where it lives
 
 | Thing | Where |
 | --- | --- |
-| The picture in the middle | `system_files/usr/share/plymouth/themes/aquarius/watermark.png` |
-| The 36 frames of dots | `system_files/usr/share/plymouth/themes/aquarius/throbber-0001.png` … `-0036.png` |
-| The settings — colours, positions | `system_files/usr/share/plymouth/themes/aquarius/aquarius.plymouth` |
-| The script that draws the pictures | `branding/render-plymouth-assets.sh` |
-| The build step that installs it all | `build_files/80-boot-branding.sh` |
+| **The animation itself**, written down as arithmetic | `branding/pour.mjs` |
+| The script that turns that into picture files | `branding/render-plymouth-assets.sh` |
+| The tool that reads the colours back out of a picture | `branding/png-colours.py` |
+| The 66 frames of the pour | `system_files/usr/share/plymouth/themes/aquarius/boot-0001.png` … `-0066.png` |
+| What holds on screen afterwards | `…/themes/aquarius/hold.png` |
+| The 57 frames of the wind | `…/themes/aquarius/shutdown-0001.png` … `-0057.png` |
+| The update and password screens' furniture | `…/themes/aquarius/box.png`, `bullet.png`, `bar-track.png`, `bar-fill.png` |
+| **What the boot screen DOES** — the little program that plays it all | `…/themes/aquarius/aquarius.script` |
+| The three lines naming the plug-in and pointing at the two above | `…/themes/aquarius/aquarius.plymouth` |
+| The build step that installs and checks it | `build_files/80-boot-branding.sh` |
 
-The program that draws the boot screen is called **Plymouth**, and a set of
-pictures plus a settings file is called a **theme**. Ours is called `aquarius`.
+A set of pictures plus a settings file is called a **theme**. Ours is called
+`aquarius`.
 
-### How to change the picture later
+**Which file do I want?**
 
-Three steps, on the Mac:
+- To change what the animation **looks like** — the shapes, the timing, the
+  colours of the mark — that is `branding/pour.mjs`, and then you re-render.
+- To change what the boot screen **does** — the words on the update screen, where
+  things sit, how the password box behaves — that is `aquarius.script`, and
+  nothing needs re-rendering.
+
+---
+
+### How to change the animation, and re-draw the frames
+
+Once, ever, on the Mac (it downloads the one small library that reads the Sora
+font file):
 
 ```bash
-# 1. Change something. Either the mark itself…
-#      branding/logo-midnight.svg   (the boot screen is a dark screen, so it
-#                                    uses the Midnight drawing of the mark)
-#    …or the sizes and colours at the top of the render script.
+npm --prefix branding/icons install
+```
 
-# 2. Re-draw the pictures.
+Then, every time:
+
+```bash
+# 1. Change the animation. That is branding/pour.mjs — read its header first;
+#    it explains what happens at each moment of the pour and of the wind.
+
+# 2. Re-draw all 124 pictures. About four minutes. It checks its own work.
 bash branding/render-plymouth-assets.sh
 
-# 3. Look at what it made, then commit it.
-open system_files/usr/share/plymouth/themes/aquarius/watermark.png
+# 3. Look at a few of them, then commit.
+open system_files/usr/share/plymouth/themes/aquarius/boot-0033.png
 git add system_files/usr/share/plymouth/themes/aquarius
-git commit -m "Change the boot screen picture"
+git commit -m "Change the boot animation"
 git push
 ```
 
-GitHub rebuilds the OS, and the next update on the bench brings the new picture
-down with it — `sudo bootc upgrade` once the bench is on the new image (see
-[`bench-rebase.md`](bench-rebase.md) for getting it there). You never have to
-touch the machine itself.
+GitHub rebuilds the OS, and the next update on the bench brings the new
+animation down with it — `sudo bootc upgrade` once the bench is on the new image
+(see [`bench-rebase.md`](bench-rebase.md) for getting it there). You never have
+to touch the machine itself.
+
+**To watch the animation before committing:** open
+`system_files/usr/share/plymouth/themes/aquarius/` in Finder, select
+`boot-0001.png`, press space to open Preview, and hold the down arrow. It plays.
 
 **Do not edit the PNG files by hand.** They are output. The next person to run
 the render script would silently throw your edit away.
 
-### Moving things around, without redrawing anything
-
-The positions in `aquarius.plymouth` are **fractions of the screen**, not pixels.
-`.5` is the middle, `0` is the top or left edge, `1` is the bottom or right. That
-is what makes one file work on a handheld and on a 4K monitor.
-
-```
-WatermarkVerticalAlignment=.44     # the mark and the word — 44% down the screen
-VerticalAlignment=.66              # the dots — 66% down
-```
-
-Colours in that file are written `0xRRGGBB` — the same six hex digits used
-everywhere else in the project, with `0x` in front instead of `#`. Copy them out
-of `branding/tokens.md`. Never pick one by eye.
+**What the render script proves before it lets you commit:** every frame is
+present, numbered with no gaps and 288×389; `hold.png` is byte-for-byte the
+pour's last frame (a hold that differs by one pixel is a visible flicker at the
+moment the animation stops); the four small shapes are their exact sizes; and —
+by opening the pictures and reading the actual pixels — that no retired colour
+appears in any of the 124 frames and that the progress bar really is the Aquarius
+blue rather than something close to it.
 
 ---
+
+### Moving things around, without redrawing anything
+
+Everything about *where things sit* is in `aquarius.script`, near the top, under
+"**WORKING OUT WHERE THINGS GO**". Positions are worked out from the size of the
+screen rather than typed in as pixels, so one file is right on a small laptop
+panel and on the 4K monitor:
+
+```
+mark.y = Window.GetY() + Window.GetHeight() * 0.44 - FRAME_HEIGHT / 2;
+```
+
+`0.44` is 44% of the way down the screen — the same 44% the old boot screen used,
+so the mark does not appear to jump between the two. Everything else hangs off
+the **bottom of the mark** rather than off the screen, so nothing can ever land
+on top of the logo however tall or short the screen is.
+
+Colours there are written as their three 0-to-255 parts, put through a helper
+called `channel`:
+
+```
+#   bg        #0B1220 = 11, 18, 32
+BG_RED = channel(11);   BG_GREEN = channel(18);   BG_BLUE = channel(32);
+```
+
+Copy the numbers out of `branding/tokens.md`. Never pick one by eye.
+
+---
+
+### Why there is only one set of pictures, and not a bigger set for 4K
+
+Plymouth draws a theme's pictures at their own pixel size — it does not scale
+them up for a big screen or down for a small one. It *does* know about
+high-density screens in general, so the question of whether we owed it a second
+set of pictures at twice the size was a real one.
+
+It was answered by reading the source of **the exact Plymouth this image ships,
+24.004.60**, rather than assumed. Two answers, both no:
+
+- The `script` plug-in never touches "device scale" at all — the words do not
+  appear anywhere in its source.
+- There would be no way to hand it two sets even if we wanted to. A picture is
+  loaded by file name and drawn; there is no "and use this one on a dense
+  screen" anywhere in the interface it offers.
+
+So: one set, at 288×389, which reads as a confident centred mark on a 1280-wide
+laptop panel and a modest one on the 4K monitor. The reasoning is written into
+`branding/render-plymouth-assets.sh` too, so nobody has to find this document.
+
+---
+
+### ⚠️ If it ever goes wrong: how to get a boot screen back in one line
+
+If the bench ever boots to a black screen where the animation should be, the
+first thing to suspect is the `script` plug-in on that particular graphics card.
+From a text console (`Ctrl+Alt+F3`) or over ssh:
+
+```bash
+sudo plymouth-set-default-theme spinner
+sudo dracut --force --no-hostonly --kver "$(uname -r)" \
+     /usr/lib/modules/$(uname -r)/initramfs.img
+sudo reboot
+```
+
+That puts Fedora's own plain boot screen back. If the machine then boots
+normally, the animation is the problem and it is worth saying so in the repo. If
+it still black-screens, the boot screen was never the problem and the fault is
+somewhere else entirely.
+
+To go back: `sudo plymouth-set-default-theme aquarius` and rebuild the ramdisk
+the same way — or just `sudo bootc upgrade`, which reinstalls the whole image
+including its own ramdisk.
+
+---
+
+### How to prove the script is even valid, without a Linux machine
+
+`aquarius.script` is written in Plymouth's own little language, and a syntax
+error in it means one thing on a real machine: **a black boot screen.** Nothing
+in the build can catch that, because parsing only happens when Plymouth actually
+starts drawing, and nothing in a container has a screen.
+
+So it was checked a different way, on the Mac, and this recipe is repeatable
+whenever the script changes in a big way. It builds **Plymouth's own parser** —
+the real one, from the version this image ships — as a small command that reads a
+script file and says whether it is valid:
+
+```bash
+cd /tmp
+curl -sL -o plymouth.tar.gz   https://gitlab.freedesktop.org/plymouth/plymouth/-/archive/24.004.60/plymouth-24.004.60.tar.gz
+tar xzf plymouth.tar.gz
+S=plymouth-24.004.60/src
+
+# Two headers a Mac does not have, and two stubs the parser never reaches.
+mkdir -p shim && printf '#include <limits.h>
+#include <float.h>
+' > shim/values.h
+cat > parsetest.c <<'EOF'
+#include <stdio.h>
+#include <stdbool.h>
+#include <unistd.h>
+#include "script.h"
+#include "script-parse.h"
+bool ply_fd_has_data(int fd) { (void)fd; return false; }
+ssize_t ply_write(int fd, const void *b, size_t n) { return write(fd, b, n); }
+int main(int argc, char **argv) {
+    if (argc < 2) { fprintf(stderr, "usage: parsetest <file.script>
+"); return 2; }
+    if (!script_parse_file(argv[1])) { fprintf(stderr, "PARSE FAILED
+"); return 1; }
+    printf("PARSE OK: %s
+", argv[1]);
+    return 0;
+}
+EOF
+
+clang -o parsetest parsetest.c   $S/plugins/splash/script/script-parse.c $S/plugins/splash/script/script-scan.c   $S/plugins/splash/script/script-debug.c $S/plugins/splash/script/script.c   $S/plugins/splash/script/script-object.c   $S/libply/ply-bitarray.c $S/libply/ply-list.c $S/libply/ply-hashtable.c   $S/libply/ply-logger.c $S/libply/ply-buffer.c $S/libply/ply-array.c   -Ishim -I$S -I$S/libply -I$S/plugins/splash/script   -DPLYMOUTH_LOG_DIRECTORY='"/tmp"' -Wno-everything
+
+./parsetest .../themes/aquarius/aquarius.script
+```
+
+It prints `PARSE OK` or names the line and column of the mistake. It was run
+against this script on 2026-09-06 and it passed — and it was run against a
+deliberately broken file first, to be sure a pass means something.
+
+**What it does NOT prove:** that the script *works*. A name that Plymouth does
+not have — `Plymouth.SetSomethingThatIsNotReal` — parses perfectly and then does
+nothing at all on the machine. That is what the build's own check is for: it
+reads the real instruction names out of the plug-in's compiled file and compares.
+Between the two, the only things left are the ones a bench test finds.
+
+---
+
+### What a build can prove, and what it cannot
+
+GitHub Actions checks a great deal of this on every push — the frame counts, the
+numbering, the sizes, the colours **inside** the pictures, that the hold is the
+pour's last frame, that every Plymouth instruction the script uses really exists
+in this Plymouth, and that the theme, the script, the frames, the password box,
+the plug-in and the three font files are all inside the boot ramdisk.
+
+**What it cannot prove, and what the bench is for:**
+
+| What | Why a build cannot see it |
+| --- | --- |
+| That the animation actually *plays*, at the right speed | Nothing in a container has a screen |
+| That the pour reads as a pour and the wind as a wind | It is a judgement about a moving picture |
+| The disk-password box | It only appears on a machine with an encrypted disk |
+| The update screen in real use | It only appears during a real update |
+
+---
+
+### The bench test
+
+On the bench machine, after `sudo bootc upgrade` and a restart:
+
+**1. Watch it start up.** You should see the stream fall, the A pour out of it,
+the wave spill across, the word fade in — and then **stillness** until the login
+screen appears.
+
+> ⚠️ **If the pour re-plays** — if it pours, holds, and then pours again — that
+> means Plymouth restarted the theme rather than the animation looping. Our
+> script has no loop in it at all: once the pour finishes, the code that advances
+> the frames does nothing for the rest of the boot. So a second pour is Plymouth
+> starting a fresh copy of the theme, which happens when the boot screen is
+> stopped and started again mid-boot (a display handover, or a second Plymouth
+> being asked for). Worth reporting with a note of what was on screen in between.
+
+**2. Watch it shut down.** Choose Shut Down and watch: the word should fade, then
+the mark should be taken apart from the left and blown off to the right, then
+darkness. Restart should do exactly the same thing.
+
+> **Before tests 3, 4 and 5:** `plymouth --show-splash` puts the boot screen
+> **over the top of your desktop** and it stays there until you say
+> `plymouth quit`. So do these over ssh from the Mac, or from a text console
+> (`Ctrl+Alt+F3`, log in, and `Ctrl+Alt+F2` to get back) — not from a terminal
+> window you are looking at, because the boot screen will cover it and you will
+> not be able to type the next command.
+
+**3. The update screen, without waiting for a real update.** From that terminal:
+
+```bash
+sudo plymouth --show-splash          # bring the boot screen up over the desktop
+sudo plymouth system-update --progress=15
+sudo plymouth system-update --progress=60
+sudo plymouth system-update --progress=100    # this one plays the wind
+sudo plymouth quit                   # put it away again
+```
+
+You should see the pour, then "Installing updates", "Please do not turn the
+computer off.", a thin blue bar filling, and the percentage. At 100 the line
+should change to "Turning off." and the wind should play with the heading and
+the full bar still behind it.
+
+*(The script deliberately draws that screen whenever a percentage arrives,
+whatever the machine says it is doing, precisely so this test works.)*
+
+**4. A message.**
+
+```bash
+sudo plymouth --show-splash
+sudo plymouth display-message --text="Checking the disk. This can take a while."
+sudo plymouth hide-message --text="Checking the disk. This can take a while."
+sudo plymouth quit
+```
+
+The line should appear near the bottom of the screen and go away again.
+
+**5. The disk-password box.** The real test needs a machine with an encrypted
+disk. Short of that:
+
+```bash
+sudo plymouth --show-splash
+
+# --command is where the typed password gets sent. /usr/bin/false rejects
+# everything, which is exactly what we want: every attempt "fails", so Plymouth
+# asks again, and asking again with nothing typed is the ONLY signal a boot
+# theme ever gets that a password was wrong. That is what fires the shake.
+# --number-of-tries is not optional here; Plymouth refuses it without --command.
+sudo plymouth ask-for-password --command=/usr/bin/false --number-of-tries=3
+
+# Type anything and press Enter. The box should shake once, and the line under
+# it should change to "That password did not work. Try again."
+sudo plymouth quit
+```
+
+What to look for: a **420×48 box with soft corners in Midnight's surface colour
+with a hairline around it** — never Fedora's plain grey box — "Unlock the disk"
+above it, a dot per character typed, and "Type the disk password to start."
+underneath.
+
+**6. Photographs.** One of the hold, one of the update screen, one of the
+password box. They are the only record of what this actually looks like.
 
 ## Why there is no computer-maker's badge any more
 
@@ -112,19 +430,25 @@ default boot theme — which is literally named `bgrt` — exists to pick that
 picture up and use it as the background. That is why a stock Fedora machine
 shows an ASUS or Dell logo while it starts rather than showing Fedora's own.
 
-Plymouth has a switch for it, and it is **per screen** rather than global — the
-start-up screen, the shutdown screen and the update screen each have their own.
-Our theme turns it off in every one of them:
+**How the old theme dealt with it.** Plymouth's `two-step` plug-in has a switch
+for it, and the switch is **per screen** rather than global — the start-up
+screen, the shutdown screen and the update screen each have their own. The old
+theme turned it off in all six of its sections, and missing one would have let
+the badge back in on that screen only, which is the kind of thing you find out
+about six weeks later.
 
-```
-[boot-up]
-UseFirmwareBackground=false
-```
+**How it works now, since 2026-09-06, and why this is better.** The `script`
+plug-in **has no such setting at all.** It does not read the firmware's picture
+and has no code to draw it — verified by reading the plug-in's own source for the
+Plymouth this image ships (24.004.60): the only two settings it reads out of the
+theme file are `ImageDir` and `ScriptFile`. And our script paints its own flat
+Midnight ground over the whole screen on every single frame, so there is nothing
+for a badge to show through.
 
-Miss one of those sections and the badge comes back on that one screen only,
-which is the kind of thing you find out about six weeks later. So the check in
-`.github/workflows/build.yml` fails the build if the word `true` ever
-appears next to that setting anywhere in the theme.
+So the badge is now gone **by construction** rather than by remembering to switch
+it off in six places. The build checks that the theme file names no such setting
+at all — a left-over `UseFirmwareBackground` line would do nothing, which is
+exactly why it must not be there to mislead somebody reading the file.
 
 ---
 
@@ -230,9 +554,15 @@ sudo lsinitrd /usr/lib/modules/$(uname -r)/initramfs.img | grep plymouth/themes
 # And what does the ramdisk's own copy of the setting say?
 sudo lsinitrd -f /etc/plymouth/plymouthd.conf /usr/lib/modules/$(uname -r)/initramfs.img
 # → Theme=aquarius
+
+# ⚠️ And the plug-in that PLAYS the animation. This is the one that would be
+# easiest to miss: every picture can be inside the ramdisk and the boot screen
+# is still black if the thing that knows how to play them was left out.
+sudo lsinitrd /usr/lib/modules/$(uname -r)/initramfs.img | grep script.so
+# → should list a plymouth .../script.so
 ```
 
-GitHub Actions runs all three of those on every build, inside the finished image,
+GitHub Actions runs all four of those on every build, inside the finished image,
 and refuses to publish if any of them is wrong.
 
 ---
@@ -303,7 +633,7 @@ job, and `bench-rebase.md` now asks for it.
 | `/etc/motd` | printed *after* logging in over ssh | **empty, on purpose.** A machine that greets you by name on every single connection gets old fast, and the name is already on the screen above the prompt |
 | `/etc/fedora-release` | old programs that grew up reading a one-line description | `AquariusOS release 44` |
 | `/etc/system-release`, `/etc/redhat-release` | the same | they are **links** to the file above, so they follow automatically |
-| `/usr/share/plymouth/themes/spinner/watermark.png` | Fedora's own boot themes | our logo, so even if something switched the boot screen back to a Fedora theme, the logo on it would still be ours |
+| `/usr/share/plymouth/themes/spinner/watermark.png` | Fedora's own boot themes | our logo — so if the boot screen is ever switched back to Fedora's plain theme (see "If it ever goes wrong" above), the logo on it is still ours |
 | `/usr/share/pixmaps/fedora-logo.png`, `fedora-gdm-logo.png`, `bootloader/bootlogo_*.png`, every `fedora-logo-icon.png` in the icon theme | programs that open a logo by its exact file path instead of looking it up by name | our mark |
 | `gnome-tour`, `gnome-initial-setup` | would show a "Welcome to Fedora" screen on a new account | **removed if present**, and the build fails if either sneaks back in |
 

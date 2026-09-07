@@ -1,0 +1,737 @@
+# ==============================================================================
+# The AquariusOS boot screen — what it actually does
+# ==============================================================================
+# PLAIN ENGLISH
+#
+# This is a little program. Plymouth — the program that draws the screen you see
+# while the computer is starting up or shutting down — runs it, and everything on
+# that screen is drawn by the steps below.
+#
+# It is written in Plymouth's own small scripting language. You have not seen it
+# before and you do not need to know it: it looks like most other languages,
+# `#` starts a comment, and every piece of it that is not obvious is explained
+# where it happens.
+#
+# ------------------------------------------------------------------------------
+# THE FOUR THINGS THIS SCREEN EVER SHOWS
+# ------------------------------------------------------------------------------
+#
+#   1. STARTING UP — "the pour".  AquariusOS is named after Aquarius, the
+#      water-bearer, so the "A" is poured. A stream of water falls from above the
+#      screen into the point at the top of the A; both legs run downward out of
+#      it; the wave spills across from left to right; and the word "AquariusOS"
+#      fades in underneath. 2.2 seconds. Then it HOLDS — stands still — until the
+#      login screen takes over.
+#
+#   2. SHUTTING DOWN or RESTARTING — "the wind".  The opposite. The word fades,
+#      then the wind takes the mark apart and blows it away to the right in
+#      drops. 1.9 seconds, then the screen is dark.
+#
+#   3. INSTALLING UPDATES.  The pour, then the hold, and underneath it: what is
+#      being installed, "Please do not turn the computer off.", a thin progress
+#      bar, and a percentage. When it reaches the end the line changes to
+#      "Turning off." and the wind plays.
+#
+#   4. UNLOCKING AN ENCRYPTED DISK.  The pour, then a box to type the password
+#      into, one dot per character, and a line of plain words underneath. A
+#      wrong password shakes the box once and says so.
+#
+# ------------------------------------------------------------------------------
+# HOW A "FRAME" WORKS, IF THAT IS NEW
+# ------------------------------------------------------------------------------
+# A moving picture is a stack of still pictures shown quickly one after another.
+# Each still is a FRAME. The pour is 66 of them and the wind is 57, both played
+# at 30 a second. They are ordinary picture files sitting in this same folder —
+# boot-0001.png … boot-0066.png and shutdown-0001.png … shutdown-0057.png — and
+# all this program does with them is show the right one at the right moment.
+#
+# The pictures are DRAWN ON THE MAC and committed to the repository, by
+# branding/render-plymouth-assets.sh. Nothing here draws a shape; there is no
+# way to draw a shape at boot time. If you want to change what the animation
+# LOOKS like, that is branding/pour.mjs and that script — not this file. If you
+# want to change what the boot screen DOES, you are in the right file.
+#
+# ------------------------------------------------------------------------------
+# ⚠️ AFTER ANY CHANGE HERE, THE BOOT RAMDISK HAS TO BE REBUILT
+# ------------------------------------------------------------------------------
+# A copy of this whole folder is baked into a file called the initramfs, and it
+# is THAT copy the machine actually uses. The build rebuilds it for you in
+# build_files/80-boot-branding.sh. If an edit ever appears to do nothing at all,
+# that is the mechanism, and docs/restart/boot-branding.md explains it properly.
+#
+# ------------------------------------------------------------------------------
+# WHERE THE NAMES IN THIS FILE COME FROM
+# ------------------------------------------------------------------------------
+# Everything spelled `Plymouth.Something`, `Window.Something`, `Image` or
+# `Sprite` is Plymouth's, not ours. They were read out of the source code of the
+# exact Plymouth this image ships — version 24.004.60, the one in Fedora 44 —
+# rather than copied from a tutorial, because these names have changed between
+# releases and a misspelled one fails silently: the screen simply never does that
+# thing. The files they were read from are
+# src/plugins/splash/script/script-lib-{plymouth,image,sprite}.c in Plymouth's
+# own source.
+#
+# A "sprite" is one picture placed at one spot on the screen. You make one, you
+# give it a picture, you tell it where to sit and how see-through to be, and
+# Plymouth draws it. Everything on this screen is a sprite.
+# ==============================================================================
+
+
+# ==============================================================================
+# 1. THE NUMBERS, THE COLOURS AND THE WORDS
+# ==============================================================================
+# ⚠️ THE FRAME COUNTS AND THE FRAME SIZE MUST MATCH THREE OTHER FILES:
+# branding/pour.mjs, branding/render-plymouth-assets.sh and the checks in
+# build_files/80-boot-branding.sh. Change one, change all four. The build fails
+# if they disagree, but it is quicker to get it right here.
+BOOT_FRAMES  = 66;      # the pour: 2.2 seconds at 30 pictures a second
+WIND_FRAMES  = 57;      # the wind: 1.9 seconds
+FRAME_WIDTH  = 288;
+FRAME_HEIGHT = 389;
+
+BAR_WIDTH  = 320;       # the progress bar on the update screen
+BAR_HEIGHT = 3;
+BOX_WIDTH  = 420;       # the box you type a disk password into
+BOX_HEIGHT = 48;
+
+# ------------------------------------------------------------------------------
+# Turning a colour into the numbers Plymouth wants
+# ------------------------------------------------------------------------------
+# Colours everywhere else in this project are written as six hex digits —
+# #0B1220. Plymouth instead wants each of red, green and blue as a number
+# between 0 and 1.
+#
+# So `channel` does the conversion: hand it the 0-to-255 value of one part of a
+# colour and it hands back Plymouth's version of it.
+#
+# ⚠️ THE HALF IS NOT A ROUNDING ERROR, IT IS THE FIX FOR ONE. Plymouth multiplies
+# the number back by 255 and throws the fraction away rather than rounding it. So
+# 11/255 can come back as 10, and a colour that is one step out is a colour that
+# is wrong. Adding half a step first means the number you write is the number
+# that comes out.
+fun channel (value_out_of_255)
+  {
+    return (value_out_of_255 + 0.5) / 255;
+  }
+
+# The Midnight palette, from branding/tokens.md. The boot screen is a dark
+# screen, so it uses the same colours the desktop shows in dark mode — which is
+# why the machine does not change colour between starting up and being started.
+# Never pick one of these by eye.
+#
+#   bg        #0B1220 = 11, 18, 32     the ground, edge to edge
+#   ink       #DCE9F4 = 220, 233, 244  headings
+#   inkSoft   #93A7BC = 147, 167, 188  ordinary lines of explanation
+#   inkMute   #5C6E82 = 92, 110, 130   the percentage, and anything quieter still
+BG_RED    = channel(11);   BG_GREEN    = channel(18);   BG_BLUE    = channel(32);
+INK_RED   = channel(220);  INK_GREEN   = channel(233);  INK_BLUE   = channel(244);
+SOFT_RED  = channel(147);  SOFT_GREEN  = channel(167);  SOFT_BLUE  = channel(188);
+MUTE_RED  = channel(92);   MUTE_GREEN  = channel(110);  MUTE_BLUE  = channel(130);
+
+# The typefaces, exactly as the boot screen carried them before this rewrite.
+# build_files/80-boot-branding.sh asks for these three font files to be put
+# inside the boot ramdisk, and the build checks that they arrived — because if
+# one is missing, Plymouth quietly falls back to whatever face it can find and
+# nobody notices until they look at a photograph of the screen.
+#
+# The word "AquariusOS" under the mark is NOT set here. It is already part of
+# the animation's pictures, drawn as a shape on the Mac, so it can never fall
+# back to the wrong face.
+TITLE_FONT   = "Sora Semi-Bold 30";
+UNLOCK_FONT  = "Sora Semi-Bold 24";
+BODY_FONT    = "Inter 16";
+NUMBER_FONT  = "JetBrains Mono 11";
+
+# The words on the update screens, one pair per kind of update. These are word
+# for word what the old boot screen said — they were reviewed then and there is
+# no reason to change them now.
+DO_NOT_TURN_OFF = "Please do not turn the computer off.";
+TURNING_OFF     = "Turning off.";
+
+# The words on the disk-password screen.
+UNLOCK_TITLE  = "Unlock the disk";
+UNLOCK_HELP   = "Type the disk password to start.";
+UNLOCK_WRONG  = "That password did not work. Try again.";
+ANSWER_HELP   = "Type your answer, then press Enter.";
+
+# How the box shakes when a password is wrong: one quick left-right-left, three
+# nudges of six pixels and then two smaller ones to settle. Seven steps at 30 a
+# second is a shake that lasts about a quarter of a second — long enough to
+# notice, short enough not to be annoying.
+SHAKE_STEPS = 7;
+shake_offset[0] =  6;
+shake_offset[1] = -6;
+shake_offset[2] =  6;
+shake_offset[3] = -6;
+shake_offset[4] =  3;
+shake_offset[5] = -3;
+shake_offset[6] =  0;
+
+
+# ==============================================================================
+# 2. THE GROUND
+# ==============================================================================
+# A flat Midnight fill over the whole screen, painted before anything else and
+# on every frame. Setting the top and the bottom to the same colour is how you
+# ask for a flat fill rather than a gradient; the design's boot screen is flat.
+#
+# ⚠️ THIS IS WHAT REMOVES THE COMPUTER-MAKER'S BADGE. A stock Fedora machine
+# shows a Dell or ASUS logo while it starts, because Fedora's default boot theme
+# exists to pick up the picture the computer's own firmware left in memory and
+# use it as the background. Nothing in this file ever asks for that picture, and
+# the plug-in running this script has no code to draw it, so it cannot appear.
+Window.SetBackgroundTopColor(BG_RED, BG_GREEN, BG_BLUE);
+Window.SetBackgroundBottomColor(BG_RED, BG_GREEN, BG_BLUE);
+
+# How many times a second Plymouth should call us to draw the next frame. The
+# animation was drawn at 30 a second, so asking for 30 means one call is exactly
+# one frame and there is no arithmetic to get wrong. (Left alone Plymouth uses
+# 50, which would play the animation too fast.)
+Plymouth.SetRefreshRate(30);
+
+
+# ==============================================================================
+# 3. WORKING OUT WHERE THINGS GO
+# ==============================================================================
+# Positions here are worked out from the size of the screen rather than typed in
+# as pixels, so that one file is right on a small laptop panel and on the 4K
+# monitor on the bench.
+#
+# `Window.GetX()` and `Window.GetY()` are the top-left corner of the screen and
+# `Window.GetWidth()` / `Window.GetHeight()` are its size. On a machine with two
+# monitors these describe the whole arrangement, and Plymouth draws every sprite
+# on every screen, so the mark appears centred on both.
+#
+# ⚠️ THESE ARE WORKED OUT ONCE, HERE, AND NOT AGAIN. Plymouth does offer to tell
+# a theme when a monitor is plugged in or wakes up mid-boot
+# (`Plymouth.SetDisplayHotplugFunction`) and this theme deliberately does not ask
+# — the same choice Plymouth's own example theme makes. Handling it means
+# re-placing every sprite on screen, which is a code path that only ever runs on
+# a real machine at a moment nobody can arrange, and untested code that runs
+# during boot is worse than a logo that is off-centre.
+#
+# So it is a BENCH QUESTION rather than a settled one: docs/restart/boot-branding.md
+# asks for a look at the mark on the 4K monitor. If it is ever off-centre there,
+# this is the reason and the fix is to add that callback.
+fun screen_middle_x ()
+  {
+    return Window.GetX() + Window.GetWidth() / 2;
+  }
+
+# The mark sits with its middle 44% of the way down the screen — slightly above
+# the true centre, because the space below it holds the update or password
+# furniture and the two together read as balanced. It is the same 44% the old
+# boot screen used, so the logo does not appear to jump between the two.
+mark.x = screen_middle_x() - FRAME_WIDTH / 2;
+mark.y = Window.GetY() + Window.GetHeight() * 0.44 - FRAME_HEIGHT / 2;
+
+# Everything else hangs off the BOTTOM of the mark rather than off the screen, so
+# nothing can ever land on top of the logo however tall or short the screen is.
+below_mark = mark.y + FRAME_HEIGHT + 24;
+
+# ⚠️ …unless the screen is genuinely tiny, in which case hanging things off the
+# mark would push them off the bottom. The mark is 389 pixels tall and the
+# furniture under it needs about 130 more, so on anything shorter than roughly
+# 600 pixels the sum above runs past the edge — a fallback 640x480 mode being the
+# real case. Rather than let the progress bar vanish, the whole group is pulled
+# back up to sit against the bottom of the screen. It will overlap the mark on a
+# screen that small, which is much better than being invisible.
+FURNITURE_HEIGHT = 130;
+screen_bottom = Window.GetY() + Window.GetHeight();
+if (below_mark + FURNITURE_HEIGHT > screen_bottom)
+  below_mark = screen_bottom - FURNITURE_HEIGHT;
+
+# The update screen, top to bottom.
+update.title_y   = below_mark;
+update.line_y    = below_mark + 52;
+update.bar_x     = screen_middle_x() - BAR_WIDTH / 2;
+update.bar_y     = below_mark + 96;
+update.percent_y = below_mark + 112;
+
+# The disk-password screen, top to bottom.
+dialog.title_y = below_mark;
+dialog.box_x   = screen_middle_x() - BOX_WIDTH / 2;
+dialog.box_y   = below_mark + 46;
+dialog.help_y  = below_mark + 110;
+
+# How far in front of each other things are drawn. Bigger is nearer the viewer.
+# The mark is at the back, the update furniture in front of it, the password box
+# in front of that, and a message from the system in front of everything.
+Z_MARK    = 0;
+Z_UPDATE  = 10;
+Z_DIALOG  = 100;
+Z_MESSAGE = 1000;
+
+
+# ==============================================================================
+# 4. LOADING THE PICTURES
+# ==============================================================================
+# Every picture the screen might show has to be loaded before it can be shown,
+# and loading one takes a moment. So only the pictures the machine is actually
+# going to need are loaded: a normal start-up loads the 66 frames of the pour and
+# never touches the 57 of the wind.
+#
+# ⚠️ FOUR-DIGIT NUMBERS. The files are called boot-0001.png, not boot-1.png. This
+# builds that name. Get it wrong and Plymouth looks for a file that is not there,
+# finds nothing, and the frame is simply blank — no error, no warning.
+fun four_digits (n)
+  {
+    if (n < 10)   return "000" + n;
+    if (n < 100)  return "00" + n;
+    if (n < 1000) return "0" + n;
+    return "" + n;
+  }
+
+fun load_pour ()
+  {
+    if (animation.pour_loaded) return;
+    for (i = 0; i < BOOT_FRAMES; i++)
+      animation.pour[i] = Image("boot-" + four_digits(i + 1) + ".png");
+    # What is left on screen once the pour has finished. It is the pour's last
+    # frame, drawn from the same instant, and the render script proves the two
+    # files are byte-for-byte identical — so there is no flicker at the moment
+    # the animation stops.
+    animation.hold = Image("hold.png");
+    animation.pour_loaded = 1;
+  }
+
+fun load_wind ()
+  {
+    if (animation.wind_loaded) return;
+    for (i = 0; i < WIND_FRAMES; i++)
+      animation.wind[i] = Image("shutdown-" + four_digits(i + 1) + ".png");
+    animation.wind_loaded = 1;
+  }
+
+
+# ==============================================================================
+# 5. WHICH STORY TO PLAY
+# ==============================================================================
+# `Plymouth.GetMode()` says what the computer is doing. It is one of exactly
+# these words, and they come from Plymouth's own source rather than from
+# guesswork:
+#
+#   "boot"              starting up normally
+#   "shutdown"          turning off
+#   "reboot"            restarting
+#   "updates"           installing updates before it turns off
+#   "system-upgrade"    moving to a new version of the whole system
+#   "firmware-upgrade"  updating the computer's own firmware
+#   "system-reset"      resetting the machine
+#   "unknown"           Plymouth could not tell (it does happen; treat it as a
+#                       normal start-up rather than showing nothing at all)
+animation.mode = Plymouth.GetMode();
+
+# Going down: the wind. Everything else: the pour.
+if (animation.mode == "shutdown" || animation.mode == "reboot")
+  {
+    animation.story = "wind";
+    load_wind();
+  }
+else
+  {
+    animation.story = "pour";
+    load_pour();
+  }
+
+animation.frame = 0;
+animation.sprite = Sprite();
+animation.sprite.SetPosition(mark.x, mark.y, Z_MARK);
+
+
+# ==============================================================================
+# 6. PLAYING IT
+# ==============================================================================
+# Plymouth calls `refresh_callback` 30 times a second, for as long as the boot
+# screen is up. Each call moves everything on by exactly one frame. That is the
+# whole animation: there is no timer and no clock, just "show the next one".
+fun step_animation ()
+  {
+    if (animation.story == "wind")
+      {
+        if (animation.frame < WIND_FRAMES)
+          {
+            animation.sprite.SetImage(animation.wind[animation.frame]);
+            animation.frame++;
+          }
+        else
+          {
+            # The wind has finished. Nothing is left on screen — which is the
+            # point: the machine is going off.
+            animation.sprite.SetOpacity(0);
+          }
+        return;
+      }
+
+    if (animation.frame < BOOT_FRAMES)
+      {
+        animation.sprite.SetImage(animation.pour[animation.frame]);
+        animation.frame++;
+
+        # The pour has just finished. Swap in the hold — the same picture as the
+        # frame we have just shown, so nothing moves — and from now on this
+        # function does nothing at all. The mark stands still until the login
+        # screen takes over.
+        if (animation.frame == BOOT_FRAMES)
+          animation.sprite.SetImage(animation.hold);
+      }
+  }
+
+fun refresh_callback ()
+  {
+    step_shake();       # the password box's one shake, if one is running
+    step_animation();   # the pour or the wind, one frame further on
+  }
+
+Plymouth.SetRefreshFunction(refresh_callback);
+
+# ------------------------------------------------------------------------------
+# The one callback we deliberately do NOT use
+# ------------------------------------------------------------------------------
+# Plymouth also offers `Plymouth.SetBootProgressFunction`, which is called
+# continuously during a normal start-up with its own guess at how far along the
+# machine is. A progress bar during an ordinary boot was considered and left out
+# on purpose: the pour is the thing that says the machine is alive, and two
+# indicators at once is noise. The bar below is only for updates, where somebody
+# genuinely wants to know how much longer.
+
+
+# ==============================================================================
+# 7. WRITING WORDS ON THE SCREEN
+# ==============================================================================
+# `Image.Text` turns a line of words into a picture, which then goes on a sprite
+# like any other picture. It needs the plymouth-plugin-label package; without it
+# it hands back nothing at all, which is why every use of it is checked before it
+# is used rather than assumed to have worked.
+#
+# `write_centred` is the one helper every piece of text on this screen goes
+# through: it draws the words, puts them on the sprite it was handed, and centres
+# them on the screen at the height it was given.
+fun write_centred (sprite, words, font, red, green, blue, y, z)
+  {
+    picture = Image.Text(words, red, green, blue, 1, font, "center");
+    if (!picture) return;
+    sprite.SetImage(picture);
+    sprite.SetPosition(screen_middle_x() - picture.GetWidth() / 2, y, z);
+    sprite.SetOpacity(1);
+  }
+
+# Every piece of text this screen can show gets its own sprite, made once here
+# and left empty until there is something to put in it. An empty sprite draws
+# nothing.
+text.title   = Sprite();   # a heading — "Installing updates", "Unlock the disk"
+text.line    = Sprite();   # the line of plain words under it
+text.percent = Sprite();   # the percentage on the update screen
+text.typed   = Sprite();   # what has been typed, when it is an answer and not
+                           # a password (a password shows dots instead)
+text.message = Sprite();   # a line the system asked us to show
+
+
+# ==============================================================================
+# 8. THE UPDATE SCREEN
+# ==============================================================================
+# What the machine shows while it is installing something and must not be turned
+# off. The pour plays and holds as usual; this adds the heading, the line of
+# explanation, the bar and the percentage underneath it.
+#
+# The bar is two pictures, one on top of the other: bar-track.png is the empty
+# 320x3 line in Midnight's `surfaceAlt`, and bar-fill.png is the same shape in
+# Aquarius blue. There is no way to draw a rectangle at boot time, so filling the
+# bar means SQUEEZING the blue picture narrower and narrower — `Scale` makes a
+# new picture at a new size — and letting the empty one show through behind it.
+bar.track = Sprite();
+bar.fill = Sprite();
+bar.full_picture = Image("bar-fill.png");
+
+fun start_update_screen ()
+  {
+    if (update.started) return;
+    update.started = 1;
+
+    # Which heading, decided by what the machine is doing. Word for word what
+    # the boot screen said before this rewrite.
+    heading = "Installing updates";
+    if (animation.mode == "system-upgrade")   heading = "Upgrading AquariusOS";
+    if (animation.mode == "firmware-upgrade") heading = "Updating firmware";
+    if (animation.mode == "system-reset")     heading = "Resetting AquariusOS";
+
+    write_centred(text.title, heading, TITLE_FONT,
+                  INK_RED, INK_GREEN, INK_BLUE, update.title_y, Z_UPDATE);
+    write_centred(text.line, DO_NOT_TURN_OFF, BODY_FONT,
+                  SOFT_RED, SOFT_GREEN, SOFT_BLUE, update.line_y, Z_UPDATE);
+
+    track_picture = Image("bar-track.png");
+    if (track_picture)
+      {
+        bar.track.SetImage(track_picture);
+        bar.track.SetPosition(update.bar_x, update.bar_y, Z_UPDATE);
+        bar.track.SetOpacity(1);
+      }
+  }
+
+# ⚠️ NOTE THE `part` LOCAL, AND NEVER ASSIGN TO A FUNCTION'S OWN PARAMETER IN
+# THIS LANGUAGE. A parameter is not a copy — it is the caller's own value, shared.
+# Writing `fraction = 0` here would reach back and change whatever the caller
+# handed in, and the day somebody calls this with a variable rather than a sum,
+# that variable would silently be set to 0. So the value is copied into a local
+# first and the local is what gets tidied up.
+fun set_bar (fraction)
+  {
+    part = fraction;
+    if (part < 0) part = 0;
+    if (part > 1) part = 1;
+
+    filled = Math.Int(BAR_WIDTH * part);
+    if (filled < 1)
+      {
+        # Nothing done yet. Hide the blue rather than drawing a picture no
+        # pixels wide, which is not a thing.
+        bar.fill.SetOpacity(0);
+        return;
+      }
+    if (!bar.full_picture) return;
+
+    bar.picture = bar.full_picture.Scale(filled, BAR_HEIGHT);
+    bar.fill.SetImage(bar.picture);
+    bar.fill.SetPosition(update.bar_x, update.bar_y, Z_UPDATE + 1);
+    bar.fill.SetOpacity(1);
+  }
+
+# ------------------------------------------------------------------------------
+# Where the percentage actually comes from
+# ------------------------------------------------------------------------------
+# `Plymouth.SetSystemUpdateFunction` hands us a whole number from 0 to 100. It is
+# what `plymouth system-update --progress=NN` sends, and it is what the update
+# tooling sends while it works.
+#
+# ⚠️ THE SCREEN IS DRAWN WHENEVER A PERCENTAGE ARRIVES, whatever mode the machine
+# says it is in. That is on purpose and it is what makes the bench test in
+# docs/restart/boot-branding.md work: a person can run `plymouth --show-splash`
+# and then `plymouth system-update --progress=40` from a terminal on a machine
+# that is already up, and see the real update screen. Nothing sends that message
+# during an ordinary start-up, so there is no cost to being generous here.
+fun system_update_callback (progress)
+  {
+    start_update_screen();
+    set_bar(progress / 100);
+    write_centred(text.percent, Math.Int(progress) + "%", NUMBER_FONT,
+                  MUTE_RED, MUTE_GREEN, MUTE_BLUE, update.percent_y, Z_UPDATE);
+
+    # Finished. The line changes to say what happens next, and the wind plays —
+    # the heading and the full bar stay on screen behind it, so the screen never
+    # looks as though it has died.
+    if (progress >= 100 && !update.finished)
+      {
+        update.finished = 1;
+        write_centred(text.line, TURNING_OFF, BODY_FONT,
+                      SOFT_RED, SOFT_GREEN, SOFT_BLUE, update.line_y, Z_UPDATE);
+        load_wind();
+        animation.story = "wind";
+        animation.frame = 0;
+      }
+  }
+
+Plymouth.SetSystemUpdateFunction(system_update_callback);
+
+
+# ==============================================================================
+# 9. THE DISK PASSWORD
+# ==============================================================================
+# On a machine whose disk is encrypted, the computer cannot go any further until
+# somebody types the password. This is the screen that asks.
+#
+# ⚠️ THIS IS THE PIECE THAT HAD TO BE WRITTEN BY HAND. The plug-in the boot
+# screen used before this rewrite drew a password box for us, in Fedora's plain
+# grey. Moving to a plug-in that can play an animation means drawing our own —
+# and this is the one screen a build cannot prove is right, because it only
+# appears on a machine with an encrypted disk. It is on the bench-test list in
+# docs/restart/boot-branding.md for exactly that reason.
+#
+# The design: a 420x48 box with soft corners in Midnight's `surface`, a hairline
+# around it, one dot per character typed, a heading above and a line of plain
+# words below. Never Fedora's grey box.
+dialog.box = Sprite();
+dialog.shown = 0;
+dialog.shake_left = 0;
+dialog.previous_dots = 0;
+
+fun place_dialog (nudge)
+  {
+    # `nudge` moves the whole box sideways. It is 0 except during the shake.
+    dialog.box.SetPosition(dialog.box_x + nudge, dialog.box_y, Z_DIALOG);
+    for (i = 0; dialog.dot[i]; i++)
+      dialog.dot[i].SetPosition(dialog.dot_x[i] + nudge, dialog.dot_y, Z_DIALOG + 1);
+  }
+
+fun show_dialog (heading, help_words)
+  {
+    if (!dialog.built)
+      {
+        picture = Image("box.png");
+        if (picture) dialog.box.SetImage(picture);
+        dialog.dot_picture = Image("bullet.png");
+        # Where the first dot sits: a comfortable margin in from the left edge of
+        # the box, and vertically in the middle of it.
+        dialog.first_dot_x = dialog.box_x + 20;
+        dialog.dot_y = dialog.box_y + BOX_HEIGHT / 2 - 9;
+        dialog.built = 1;
+      }
+
+    write_centred(text.title, heading, UNLOCK_FONT,
+                  INK_RED, INK_GREEN, INK_BLUE, dialog.title_y, Z_DIALOG);
+    write_centred(text.line, help_words, BODY_FONT,
+                  SOFT_RED, SOFT_GREEN, SOFT_BLUE, dialog.help_y, Z_DIALOG);
+
+    dialog.box.SetOpacity(1);
+    dialog.shown = 1;
+    place_dialog(0);
+  }
+
+fun hide_dialog ()
+  {
+    dialog.box.SetOpacity(0);
+    for (i = 0; dialog.dot[i]; i++)
+      dialog.dot[i].SetOpacity(0);
+    text.title.SetOpacity(0);
+    text.line.SetOpacity(0);
+    text.typed.SetOpacity(0);
+    dialog.shown = 0;
+    dialog.previous_dots = 0;
+    dialog.shake_left = 0;
+  }
+
+# One dot per character typed. Dots are made the first time they are needed and
+# then reused — somebody who types twelve characters, deletes them and types
+# eight again gets the same twelve dots back, eight of them visible.
+#
+# ⚠️ WITH A CEILING. The box is 420 pixels wide, the dots start 20 pixels in and
+# sit 18 apart, so 21 of them reach the far edge. A real disk passphrase is
+# often longer than that, and without this the dots would march straight out of
+# the box and off across the screen. Twenty is the most that are ever shown; the
+# typing still works exactly as before, it just stops adding dots.
+MAX_DOTS = 20;
+
+fun set_dots (how_many)
+  {
+    if (!dialog.dot_picture) return;
+
+    # A local, not the parameter: see the warning above set_bar.
+    visible = how_many;
+    if (visible > MAX_DOTS) visible = MAX_DOTS;
+
+    for (i = 0; dialog.dot[i] || i < visible; i++)
+      {
+        if (!dialog.dot[i])
+          {
+            dialog.dot[i] = Sprite(dialog.dot_picture);
+            dialog.dot_x[i] = dialog.first_dot_x + i * 18;
+          }
+        if (i < visible)
+          dialog.dot[i].SetOpacity(1);
+        else
+          dialog.dot[i].SetOpacity(0);
+      }
+    place_dialog(0);
+  }
+
+# ------------------------------------------------------------------------------
+# The shake, when a password is wrong
+# ------------------------------------------------------------------------------
+# One step of it per frame, seven frames in all. `refresh_callback` above calls
+# this on every single frame; it does nothing unless a shake is running.
+fun step_shake ()
+  {
+    if (dialog.shake_left < 1) return;
+    step = SHAKE_STEPS - dialog.shake_left;
+    place_dialog(shake_offset[step]);
+    dialog.shake_left--;
+  }
+
+# ------------------------------------------------------------------------------
+# Plymouth calls this every time the password box should be shown — once when it
+# first appears, and again after every single keystroke, with the number of
+# characters typed so far.
+#
+# ⚠️ HOW WE KNOW A PASSWORD WAS WRONG. Plymouth does not tell us. What it does is
+# ask again, from the beginning, with the count back at zero. So: if the box was
+# already up, the last count was more than zero, and the new count is zero, the
+# attempt failed. That is the only signal there is, and it is what every other
+# boot theme in the world uses.
+# ------------------------------------------------------------------------------
+fun display_password_callback (prompt, dots)
+  {
+    heading = UNLOCK_TITLE;
+    help_words = UNLOCK_HELP;
+
+    if (dialog.shown && dialog.previous_dots > 0 && dots == 0)
+      {
+        help_words = UNLOCK_WRONG;
+        dialog.shake_left = SHAKE_STEPS;
+      }
+
+    show_dialog(heading, help_words);
+    set_dots(dots);
+    dialog.previous_dots = dots;
+  }
+
+Plymouth.SetDisplayPasswordFunction(display_password_callback);
+
+
+# ==============================================================================
+# 10. QUESTIONS, MESSAGES, AND GOING BACK TO NORMAL
+# ==============================================================================
+# A QUESTION is the rare case where the machine wants words rather than a
+# password — so what is typed is shown rather than hidden behind dots. The
+# question itself comes from the system, so it is shown as it was given rather
+# than replaced with words of our own.
+fun display_question_callback (prompt, typed_so_far)
+  {
+    show_dialog(prompt, ANSWER_HELP);
+    set_dots(0);
+    write_centred(text.typed, typed_so_far, BODY_FONT,
+                  INK_RED, INK_GREEN, INK_BLUE,
+                  dialog.box_y + BOX_HEIGHT / 2 - 12, Z_DIALOG + 1);
+  }
+
+Plymouth.SetDisplayQuestionFunction(display_question_callback);
+
+# A MESSAGE is a line the system wants a person to read — usually something has
+# gone wrong and is being explained. It goes at the very bottom, in front of
+# everything else, and stays until the system takes it away again.
+fun display_message_callback (words)
+  {
+    write_centred(text.message, words, BODY_FONT,
+                  SOFT_RED, SOFT_GREEN, SOFT_BLUE,
+                  Window.GetY() + Window.GetHeight() - 64, Z_MESSAGE);
+  }
+
+fun hide_message_callback (words)
+  {
+    text.message.SetOpacity(0);
+  }
+
+# `SetDisplayMessageFunction` is the name in this version of Plymouth.
+# `SetMessageFunction` is an older name for the same thing and still works; the
+# current one is used here so that a search of Plymouth's own source finds it.
+Plymouth.SetDisplayMessageFunction(display_message_callback);
+Plymouth.SetHideMessageFunction(hide_message_callback);
+
+# NORMAL means the machine has stopped asking for anything: the password was
+# accepted, or the question was answered. Everything the dialog put on screen
+# goes away and the mark is left holding on its own.
+fun display_normal_callback ()
+  {
+    hide_dialog();
+    text.typed.SetOpacity(0);
+  }
+
+Plymouth.SetDisplayNormalFunction(display_normal_callback);
+
+# QUIT is Plymouth handing over — to the login screen, or to the machine going
+# off. There is nothing to tidy up: whatever is on screen at that moment is
+# exactly what should be on screen, and Plymouth takes it away itself.
+fun quit_callback ()
+  {
+  }
+
+Plymouth.SetQuitFunction(quit_callback);

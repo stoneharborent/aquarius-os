@@ -337,6 +337,17 @@ on:
       # Same arrangement as every side branch: builds and checks, never
       # publishes.
       - restart/app-switcher
+      # The boot animation — the 2026-09-06 design session's last piece. The
+      # boot screen stops being a still logo with a row of dots under it: the
+      # "A" is poured out of falling water on the way up (2.2 s, 66 frames) and
+      # blown away by the wind on the way down (1.9 s, 57 frames), and the theme
+      # moves from Plymouth's two-step plug-in to its script plug-in so that it
+      # can play a sequence at all. Also carries the update screen and the
+      # disk-password box, both of which the old plug-in drew for us and this
+      # one does not.
+      # Same arrangement as every side branch: builds and checks, never
+      # publishes.
+      - restart/boot-animation
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -542,6 +553,15 @@ jobs:
             ok "icons.mjs markPaths() writes the clean point"
           else bad "icons.mjs markPaths() no longer writes the clean point"; fi
 
+          # The boot animation draws the same mark, but as TWO strokes that both
+          # start at the point on top — that is what lets both legs pour downward
+          # at the same time. Same geometry, written differently, so it needs its
+          # own line here rather than the one above.
+          if grep -qF "LEG_L = 'M32 12L14 54'" branding/pour.mjs \
+             && grep -qF "LEG_R = 'M32 12L50 54'" branding/pour.mjs; then
+            ok "pour.mjs pours the A out of the clean point (32,12)"
+          else bad "pour.mjs no longer pours the A out of the clean point"; fi
+
           echo "== the retired apex is nowhere =="
           # Two deliberate exclusions:
           #   design-system/  a mirror of the Claude Design project, re-synced
@@ -586,8 +606,6 @@ jobs:
                "the dark About-page picture"),
               ("system_files/usr/share/aquarius/branding/aquarius-logo.png", 256, 256,
                "the login screen's logo"),
-              ("system_files/usr/share/plymouth/themes/aquarius/watermark.png", 640, 288,
-               "the boot screen's mark and word"),
           ]
           for path, w, h, what in want:
               got = size(path)
@@ -598,17 +616,112 @@ jobs:
               else:
                   print(f"  OK   {what} is {w}x{h}")
 
-          frames = sorted(glob.glob("system_files/usr/share/plymouth/themes/aquarius/throbber-*.png"))
-          if len(frames) != 36:
-              print(f"  FAIL {len(frames)} boot-screen dot frames, expected 36"); bad = 1
-          else:
-              wrong = [f for f in frames if size(f) != (120, 20)]
-              if wrong:
-                  print(f"  FAIL {len(wrong)} dot frames are not 120x20, first: {wrong[0]}"); bad = 1
+          # ----------------------------------------------------------------
+          # The boot animation's frames
+          # ----------------------------------------------------------------
+          # 66 frames of the pour, 57 of the wind, the hold, and the four small
+          # shapes the update and disk-password screens are built from. Numbered
+          # with no gaps — the boot screen's own script counts up from 0001 and a
+          # gap is a frame that silently never appears.
+          THEME = "system_files/usr/share/plymouth/themes/aquarius"
+
+          def check_run(prefix, count, w, h):
+              global bad
+              found = sorted(glob.glob(f"{THEME}/{prefix}-*.png"))
+              if len(found) != count:
+                  print(f"  FAIL {len(found)} {prefix} frames, expected {count}"); bad = 1
+                  return
+              for i, path in enumerate(found, start=1):
+                  want = f"{prefix}-{i:04d}.png"
+                  if path.rsplit("/", 1)[1] != want:
+                      print(f"  FAIL expected {want}, found {path} — the frames must "
+                            "be numbered with no gaps"); bad = 1
+                      return
+                  if size(path) != (w, h):
+                      got = size(path)
+                      print(f"  FAIL {want} is {got}, must be {w}x{h}"); bad = 1
+                      return
+              print(f"  OK   {count} {prefix} frames, all {w}x{h}")
+
+          check_run("boot", 66, 288, 389)
+          check_run("shutdown", 57, 288, 389)
+
+          # The hold has to be the pour's LAST frame, exactly. A hold that differs
+          # by one pixel is a visible flicker the moment the animation stops.
+          try:
+              last = open(f"{THEME}/boot-0066.png", "rb").read()
+              hold = open(f"{THEME}/hold.png", "rb").read()
+              if last != hold:
+                  print("  FAIL hold.png is not byte-for-byte boot-0066.png — the "
+                        "animation would flicker when it stops"); bad = 1
               else:
-                  print("  OK   all 36 boot-screen dot frames are 120x20")
+                  print("  OK   hold.png is byte-for-byte boot-0066.png")
+          except FileNotFoundError as e:
+              print(f"  FAIL {e.filename} is missing"); bad = 1
+
+          for name, w, h, what in [
+              ("box.png", 420, 48, "the disk-password box"),
+              ("bullet.png", 18, 18, "one typed dot"),
+              ("bar-track.png", 320, 3, "the empty progress bar"),
+              ("bar-fill.png", 320, 3, "the blue that fills it"),
+          ]:
+              got = size(f"{THEME}/{name}")
+              if got is None:
+                  print(f"  FAIL {what}: {name} is missing or is not a PNG"); bad = 1
+              elif got != (w, h):
+                  print(f"  FAIL {what}: {name} is {got[0]}x{got[1]}, must be {w}x{h}"); bad = 1
+              else:
+                  print(f"  OK   {what} is {w}x{h}")
+
+          # Nothing from the boot screen this replaced may still be here. It would
+          # not be drawn, but it would be carried into the boot ramdisk, which is
+          # the one file in this image whose size is worth caring about.
+          stale = sorted(glob.glob(f"{THEME}/throbber-*.png") + glob.glob(f"{THEME}/watermark.png"))
+          if stale:
+              print(f"  FAIL {len(stale)} left-over picture(s) from the old boot screen, "
+                    f"first: {stale[0]}"); bad = 1
+          else:
+              print("  OK   none of the old boot screen's pictures are left behind")
+
           sys.exit(bad)
           PY
+
+          # ----------------------------------------------------------------
+          # ⚠️ THE COLOURS INSIDE THE PICTURES
+          # ----------------------------------------------------------------
+          # This is the check no settings file can do. When a colour is retired
+          # from the palette it has to disappear from the PICTURES as well, and
+          # a hundred and twenty-four PNGs are a place a retired colour can hide
+          # where grep cannot look. branding/png-colours.py opens them and reads
+          # the actual pixels.
+          #
+          # It is done HERE, on the repository, rather than inside the image —
+          # the image-side step below proves it is carrying these exact files by
+          # checksum, so a colour checked here is a colour checked in the image.
+          echo "== no retired colour is inside any frame of the boot animation =="
+          if python3 branding/png-colours.py \
+               --forbid 8AB4FF,5B4BE0,E6DDB8,06070C \
+               system_files/usr/share/plymouth/themes/aquarius/boot-*.png \
+               system_files/usr/share/plymouth/themes/aquarius/shutdown-*.png \
+               system_files/usr/share/plymouth/themes/aquarius/hold.png; then
+            echo "  OK   no retired Starlight colour in any of the 124 frames"
+          else
+            echo "  FAIL a retired colour is still in the boot animation (see above)"
+            fails=1
+          fi
+
+          echo "== and the update screen's furniture really is the Midnight palette =="
+          if python3 branding/png-colours.py --require 00BFFF \
+               system_files/usr/share/plymouth/themes/aquarius/bar-fill.png \
+             && python3 branding/png-colours.py --require 1B2940 \
+               system_files/usr/share/plymouth/themes/aquarius/bar-track.png \
+             && python3 branding/png-colours.py --require 121C2E \
+               system_files/usr/share/plymouth/themes/aquarius/box.png; then
+            echo "  OK   the bar is the Aquarius blue on surfaceAlt and the box is surface"
+          else
+            echo "  FAIL the progress bar or the password box is not the colour it must be"
+            fails=1
+          fi
 
           if [ "${fails}" -ne 0 ]; then
             echo "::error::The AquariusOS mark is not the redrawn one everywhere. Scroll up for the FAIL lines."
@@ -2440,12 +2553,23 @@ jobs:
       - name: Check the boot screen says AquariusOS
         run: |
           set -euo pipefail
-          # The picture in the middle of the boot screen, checksummed from the
-          # repository. Same trick as the About-page step above: the only way to
-          # know OUR picture went in is to compare the bytes.
-          WATERMARK_SUM="$(sha256sum system_files/usr/share/plymouth/themes/aquarius/watermark.png | awk '{print $1}')"
-          REPO_FRAMES="$(find system_files/usr/share/plymouth/themes/aquarius -name 'throbber-*.png' | wc -l | tr -d ' ')"
-          echo "In the repository: watermark ${WATERMARK_SUM}, ${REPO_FRAMES} throbber frames"
+          # Three fingerprints taken from the repository and handed to the
+          # checks that run INSIDE the finished image. Same trick as the
+          # About-page step above: the only way to know OUR files went in is to
+          # compare the bytes.
+          #
+          # The hold is the one picture worth checksumming on its own. It is what
+          # a person actually looks at for the several seconds between the
+          # animation finishing and the login screen appearing, so it is the
+          # frame most worth being certain about.
+          HOLD_SUM="$(sha256sum system_files/usr/share/plymouth/themes/aquarius/hold.png | awk '{print $1}')"
+          SCRIPT_SUM="$(sha256sum system_files/usr/share/plymouth/themes/aquarius/aquarius.script | awk '{print $1}')"
+          THEME_DIR_REPO=system_files/usr/share/plymouth/themes/aquarius
+          REPO_BOOT="$(find "${THEME_DIR_REPO}" -name 'boot-*.png' | wc -l | tr -d ' ')"
+          REPO_WIND="$(find "${THEME_DIR_REPO}" -name 'shutdown-*.png' | wc -l | tr -d ' ')"
+          echo "In the repository: ${REPO_BOOT} pour frames, ${REPO_WIND} wind frames"
+          echo "                   hold ${HOLD_SUM}"
+          echo "                   script ${SCRIPT_SUM}"
 
           cat > /tmp/verify-boot.sh <<'SCRIPT'
           set -u
@@ -2459,64 +2583,142 @@ jobs:
 
           THEME=/usr/share/plymouth/themes/aquarius
 
-          echo "== the splash program and its parts =="
-          for pkg in plymouth plymouth-plugin-two-step plymouth-plugin-label \
-                     plymouth-theme-spinner plymouth-system-theme dracut; do
+          echo "== the boot screen's program and its parts =="
+          # ⚠️ plymouth-plugin-script is the one that matters now. It is what
+          # PLAYS the animation; without it the boot screen is black. The theme
+          # moved to it on 2026-09-06 — see the long note in the theme file.
+          for pkg in plymouth plymouth-plugin-script plymouth-plugin-two-step \
+                     plymouth-plugin-label plymouth-theme-spinner \
+                     plymouth-system-theme dracut; do
             if rpm -q "${pkg}" > /dev/null 2>&1; then ok "${pkg} $(rpm -q --queryformat '%{VERSION}-%{RELEASE}' "${pkg}")"
             else bad "${pkg} is NOT installed"; fi
           done
 
           echo "== the Aquarius theme on disk =="
           ls -l "${THEME}" || true
-          FRAMES="$(find "${THEME}" -name 'throbber-*.png' | wc -l)"
-          echo "throbber frames in the image: ${FRAMES}"
-          if [ "${FRAMES}" -eq "${WANT_FRAMES}" ]; then ok "all ${WANT_FRAMES} throbber frames are installed"
-          else bad "${FRAMES} throbber frames in the image, expected ${WANT_FRAMES}"; fi
 
-          got="$(sha256sum "${THEME}/watermark.png" 2>/dev/null | awk '{print $1}')"
-          echo "watermark.png in the image: ${got:-<missing>}"
-          if [ "${got}" = "${WANT_WATERMARK}" ]; then ok "the picture on the boot screen is ours"
-          else bad "the boot screen picture is NOT the one in the repository"; fi
+          BOOT="$(find "${THEME}" -name 'boot-*.png' | wc -l)"
+          WIND="$(find "${THEME}" -name 'shutdown-*.png' | wc -l)"
+          echo "frames in the image: ${BOOT} of the pour, ${WIND} of the wind"
+          if [ "${BOOT}" -eq "${WANT_BOOT}" ]; then ok "all ${WANT_BOOT} frames of the pour are installed"
+          else bad "${BOOT} pour frames in the image, expected ${WANT_BOOT}"; fi
+          if [ "${WIND}" -eq "${WANT_WIND}" ]; then ok "all ${WANT_WIND} frames of the wind are installed"
+          else bad "${WIND} wind frames in the image, expected ${WANT_WIND}"; fi
 
-          # lock.png is the one file the two-step plug-in genuinely requires. If
-          # it is missing, a machine with an encrypted disk shows no password box
-          # and appears to hang.
-          if [ -s "${THEME}/lock.png" ]; then ok "the disk-password box has its artwork"
-          else bad "${THEME}/lock.png is missing — an encrypted machine would show no password box"; fi
+          got="$(sha256sum "${THEME}/hold.png" 2>/dev/null | awk '{print $1}')"
+          echo "hold.png in the image: ${got:-<missing>}"
+          if [ "${got}" = "${WANT_HOLD}" ]; then ok "the picture left on screen after the pour is ours"
+          else bad "hold.png is NOT the one in the repository"; fi
+
+          got="$(sha256sum "${THEME}/aquarius.script" 2>/dev/null | awk '{print $1}')"
+          echo "aquarius.script in the image: ${got:-<missing>}"
+          if [ "${got}" = "${WANT_SCRIPT}" ]; then ok "the program that plays the animation is ours"
+          else bad "aquarius.script is NOT the one in the repository"; fi
+
+          # The four small shapes the update and disk-password screens are built
+          # from. box.png is the one that matters most: without it a machine with
+          # an encrypted disk would appear to hang at a blank screen.
+          for f in box.png bullet.png bar-track.png bar-fill.png; do
+            if [ -s "${THEME}/${f}" ]; then ok "${f} is installed"
+            else bad "${THEME}/${f} is missing"; fi
+          done
+
+          # And nothing from the boot screen this replaced. It would not be
+          # drawn, but it would be carried into the boot ramdisk.
+          if ls "${THEME}"/throbber-*.png "${THEME}"/watermark.png > /dev/null 2>&1; then
+            bad "pictures from the old two-step boot screen are still in the theme folder"
+            ls -1 "${THEME}"/throbber-*.png "${THEME}"/watermark.png 2>/dev/null || true
+          else
+            ok "none of the old boot screen's pictures are left in the theme folder"
+          fi
 
           echo "== the theme's own settings =="
           cat "${THEME}/aquarius.plymouth" | grep -vE '^[[:space:]]*(#|$)' || true
-          check "the theme uses the two-step plug-in"  '^ModuleName=two-step$'          "${THEME}/aquarius.plymouth"
-          # The two colours, read out of the theme the image actually ships.
-          # Both moved on 2026-09-06 when the boot screen was put on the
-          # Midnight palette the desktop already uses: the ground is Midnight
-          # `bg` and the progress bar is Midnight `aquariusBlue`.
-          check "the background is Midnight bg"        '^BackgroundStartColor=0x0B1220$' "${THEME}/aquarius.plymouth"
-          check "the background does not fade"         '^BackgroundEndColor=0x0B1220$'   "${THEME}/aquarius.plymouth"
-          check "the progress colour is the Midnight accent" '^ProgressBarForegroundColor=0x00BFFF$' "${THEME}/aquarius.plymouth"
-          # And the retired palette really is gone from this file, rather than
-          # just absent from the two lines above.
-          #
-          # Comment lines are skipped. The file's own notes NAME the retired
-          # colours to explain what they were replaced with, which is the point
-          # of writing them down — only the settings themselves are read here.
-          if grep -vE '^[[:space:]]*#' "${THEME}/aquarius.plymouth" \
-               | grep -Eq '0x(8AB4FF|5B4BE0|E6DDB8|06070C)'; then
-            bad "the boot theme still SETS a retired Starlight colour"
-            grep -nE '0x(8AB4FF|5B4BE0|E6DDB8|06070C)' "${THEME}/aquarius.plymouth" \
-              | grep -vE ':[[:space:]]*#'
+          check "the theme is played by the script plug-in" '^ModuleName=script$' \
+                "${THEME}/aquarius.plymouth"
+          check "it points at the script that is really installed" \
+                "^ScriptFile=${THEME}/aquarius.script$" "${THEME}/aquarius.plymouth"
+          check "it looks for its pictures where they really are" \
+                "^ImageDir=${THEME}$" "${THEME}/aquarius.plymouth"
+
+          # ⚠️ THE OLD PLUG-IN'S SETTINGS MUST ALL BE GONE. The script plug-in
+          # ignores them, so leaving one behind would change nothing and mislead
+          # forever — somebody reading the file would believe a setting that does
+          # not do anything.
+          if grep -qE '^(ModuleName=two-step|\[two-step\]|UseFirmwareBackground=|ProgressBar[A-Za-z]*=|Watermark[A-Za-z]*=|UseAnimation=)' \
+               "${THEME}/aquarius.plymouth"; then
+            bad "the theme still carries settings from the old two-step boot screen:"
+            grep -nE '^(ModuleName=two-step|\[two-step\]|UseFirmwareBackground=|ProgressBar[A-Za-z]*=|Watermark[A-Za-z]*=|UseAnimation=)' \
+              "${THEME}/aquarius.plymouth"
           else
-            ok "no setting in the boot theme uses a retired Starlight colour"
+            ok "no left-over settings from the old two-step boot screen"
           fi
 
-          # THE SETTING THAT REMOVES THE MANUFACTURER'S BADGE. It is per-screen,
-          # so it has to be false in every screen the theme defines — one missed
-          # section lets a Dell or ASUS logo back in on that screen only.
-          if grep -q '^UseFirmwareBackground=true$' "${THEME}/aquarius.plymouth"; then
-            bad "the theme switches the firmware/manufacturer logo ON somewhere"
-            grep -n '^UseFirmwareBackground=' "${THEME}/aquarius.plymouth"
+          echo "== the script that draws it all =="
+          # The colours the animation does NOT carry in a picture: the Midnight
+          # ground the whole screen is painted with, written as the three parts
+          # of #0B1220 (11, 18, 32).
+          check "the ground is Midnight bg (#0B1220 = 11, 18, 32)" \
+                '^BG_RED    = channel\(11\);   BG_GREEN    = channel\(18\);   BG_BLUE    = channel\(32\);$' \
+                "${THEME}/aquarius.script"
+          check "the script plays all 66 frames of the pour" '^BOOT_FRAMES  = 66;' \
+                "${THEME}/aquarius.script"
+          check "the script plays all 57 frames of the wind" '^WIND_FRAMES  = 57;' \
+                "${THEME}/aquarius.script"
+          # The two screens the old plug-in drew for us and this one does not.
+          # If either of these ever disappears from the script, that screen is
+          # simply gone and nobody finds out until it is needed.
+          check "the script draws a disk-password box" 'Plymouth.SetDisplayPasswordFunction' \
+                "${THEME}/aquarius.script"
+          check "the script draws the 'installing updates' screen" 'Plymouth.SetSystemUpdateFunction' \
+                "${THEME}/aquarius.script"
+          check "and the words on it are still the reviewed ones" \
+                'Please do not turn the computer off\.' "${THEME}/aquarius.script"
+
+          # The retired palette really is gone from the script, rather than just
+          # absent from the lines above. Comment lines are skipped: the file's own
+          # notes name the old colours to explain what replaced them.
+          if grep -vE '^[[:space:]]*#' "${THEME}/aquarius.script" \
+               | grep -Eqi '(8AB4FF|5B4BE0|E6DDB8|06070C)'; then
+            bad "the boot script still names a retired Starlight colour"
+            grep -nEi '(8AB4FF|5B4BE0|E6DDB8|06070C)' "${THEME}/aquarius.script" \
+              | grep -vE ':[[:space:]]*#'
           else
-            ok "the firmware/manufacturer logo is off in every screen ($(grep -c '^UseFirmwareBackground=false$' "${THEME}/aquarius.plymouth") of them)"
+            ok "no retired Starlight colour in the boot script"
+          fi
+
+          # ------------------------------------------------------------------
+          # ⚠️ EVERY PLYMOUTH INSTRUCTION THE SCRIPT USES REALLY EXISTS HERE
+          # ------------------------------------------------------------------
+          # The script talks to Plymouth by name. Those names have changed
+          # between Plymouth releases, and a name that does not exist FAILS
+          # SILENTLY: the theme loads, the screen appears, and that one thing
+          # never happens. Nothing is printed anywhere.
+          #
+          # So the names are read out of the plug-in's own compiled file — they
+          # are stored in it as plain text, because that is how it registers
+          # them — with `grep -a` rather than `strings`, because `strings` comes
+          # from binutils and a check that quietly does not run is worse than no
+          # check at all.
+          SCRIPT_SO="$(rpm -ql plymouth-plugin-script 2>/dev/null | grep -E '/script\.so$' | head -n1 || true)"
+          echo "the script plug-in itself: ${SCRIPT_SO:-<not found>}"
+          if [ -r "${SCRIPT_SO}" ]; then
+            grep -vE '^[[:space:]]*#' "${THEME}/aquarius.script" \
+              | grep -oE 'Plymouth\.[A-Za-z]+' | sed 's/^Plymouth\.//' | sort -u > /tmp/uses.txt
+            USES="$(wc -l < /tmp/uses.txt | tr -d ' ')"
+            echo "the script uses ${USES} Plymouth instructions:"; sed 's/^/  /' /tmp/uses.txt
+            if [ "${USES}" -lt 5 ]; then
+              bad "only ${USES} instructions found — too few to be true, so the search is broken"
+            else
+              unknown=0
+              while IFS= read -r name; do
+                if grep -a -q "${name}" "${SCRIPT_SO}"; then ok "Plymouth.${name} exists in this Plymouth"
+                else bad "Plymouth.${name} does NOT exist in this Plymouth — it would do nothing, silently"; unknown=1; fi
+              done < /tmp/uses.txt
+              [ "${unknown}" -eq 0 ] && ok "all ${USES} instructions the boot animation uses are real"
+            fi
+          else
+            bad "the script plug-in's own file could not be found, so the instruction names could not be checked"
           fi
 
           echo "== which splash this machine is set to =="
@@ -2605,13 +2807,53 @@ jobs:
 
             # These three lines are the evidence that the splash is really in the
             # ramdisk and not just on disk.
+            # Each of these is a different way for the boot animation to be
+            # broken on a real machine while every file on disk looks perfect.
             for want in 'plymouth/themes/aquarius/aquarius.plymouth' \
-                        'plymouth/themes/aquarius/watermark.png' \
-                        'plymouth/themes/aquarius/throbber-0001.png'; do
+                        'plymouth/themes/aquarius/aquarius.script' \
+                        'plymouth/themes/aquarius/boot-0001.png' \
+                        'plymouth/themes/aquarius/hold.png' \
+                        'plymouth/themes/aquarius/shutdown-0001.png' \
+                        'plymouth/themes/aquarius/box.png'; do
               if grep -q "${want}" /tmp/initrd-ply.txt; then
                 ok "in the ramdisk: $(grep -m1 "${want}" /tmp/initrd-ply.txt | awk '{print $NF}')"
               else
                 bad "${want} is NOT inside the ramdisk"
+              fi
+            done
+
+            # ⚠️ AND THE PLUG-IN THAT PLAYS THEM. Easiest of all to miss: every
+            # picture could be in the ramdisk and the boot screen would still be
+            # black, because nothing in there would know how to play them.
+            if grep -qE 'plymouth/(plugins/)?script\.so' /tmp/initrd-ply.txt; then
+              ok "in the ramdisk: the script plug-in that plays the animation"
+            else
+              bad "script.so is NOT inside the ramdisk — the boot screen would be black"
+            fi
+
+            # The old boot screen's pictures must not still be riding along in
+            # the largest file in the image.
+            for gone in 'plymouth/themes/aquarius/watermark.png' \
+                        'plymouth/themes/aquarius/throbber-0001.png'; do
+              if grep -q "${gone}" /tmp/initrd-ply.txt; then
+                bad "${gone} from the old boot screen is still inside the ramdisk"
+              fi
+            done
+
+            # The three faces the boot screen sets its words in. They are asked
+            # for with dracut's `install_optional_items`, which cannot fail — so
+            # this is the only thing standing between a missing font and a boot
+            # screen whose headings are quietly set in something else.
+            echo "-- the AquariusOS fonts inside the ramdisk --"
+            lsinitrd "${IMG}" 2>/dev/null | grep -iE 'fonts/(sora|rsms-inter|jetbrains)' \
+              > /tmp/initrd-fonts.txt || true
+            cat /tmp/initrd-fonts.txt || true
+            for face in sora-fonts rsms-inter-fonts jetbrains-mono-fonts; do
+              if grep -q "fonts/${face}/" /tmp/initrd-fonts.txt; then
+                ok "in the ramdisk: ${face}"
+              else
+                bad "${face} is NOT inside the ramdisk — the boot screen's words would"
+                bad "fall back to another face, silently"
               fi
             done
 
@@ -2651,8 +2893,10 @@ jobs:
           SCRIPT
           podman run --rm --pull=never -i \
             --entrypoint /usr/bin/bash \
-            -e WANT_WATERMARK="${WATERMARK_SUM}" \
-            -e WANT_FRAMES="${REPO_FRAMES}" \
+            -e WANT_HOLD="${HOLD_SUM}" \
+            -e WANT_SCRIPT="${SCRIPT_SUM}" \
+            -e WANT_BOOT="${REPO_BOOT}" \
+            -e WANT_WIND="${REPO_WIND}" \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-boot.sh
 
       # ------------------------------------------------------------------------
@@ -3728,10 +3972,13 @@ jobs:
             nofedora "an AquariusOS default" "${f}"
           done
 
-          # The theme folder the machine actually boots with. Text files only —
-          # the borrowed grey password-box PNGs are pictures of rectangles and
-          # have no words in them.
-          echo "-- the active boot splash theme --"
+          # The theme folder the machine actually boots with. Text files only
+          # (`-I`) — the animation's frames are pictures and have no words in
+          # them to read. The two text files are the theme file and the script
+          # that plays the animation, and both of them TALK about Fedora at
+          # length in their notes, which is allowed; what must not say Fedora is
+          # a setting.
+          echo "-- the active boot screen's theme --"
           grep -rIl -i fedora /usr/share/plymouth/themes/aquarius > /tmp/fed-theme.txt 2>/dev/null || true
           if [ -s /tmp/fed-theme.txt ]; then
             # ... except our own explanatory notes, which are allowed to discuss
