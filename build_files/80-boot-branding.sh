@@ -15,7 +15,7 @@
 #
 # Six jobs, in this order:
 #
-#   1. Put the Aquarius boot splash in place and make it the default.
+#   1. Put the Aquarius boot animation in place and make it the default.
 #   2. Tell the boot menu to call itself AquariusOS.
 #   3. Make the kernel actually ASK for a graphical splash at start-up.
 #   4. Fix the text banners — /etc/issue, /etc/motd, /etc/fedora-release.
@@ -70,89 +70,304 @@ AQ_WIDE_PNG="/usr/share/aquarius/branding/aquarius-about-logo-white.png"  # 279x
 PRETTY_NAME="AquariusOS"
 
 # ==============================================================================
-# 1. THE BOOT SPLASH
+# 1. THE BOOT ANIMATION
 # ==============================================================================
-say "The boot splash"
-
-# Our theme's own files came in with step 5, from
-# system_files/usr/share/plymouth/themes/aquarius/. Check they are really here
-# before doing anything that depends on them.
-if [ ! -r "${THEME_DIR}/${THEME_NAME}.plymouth" ]; then
-    echo "AQUARIUS ERROR: ${THEME_DIR}/${THEME_NAME}.plymouth is missing." >&2
-    echo "                Step 5 copies it in from" >&2
-    echo "                system_files/usr/share/plymouth/themes/aquarius/." >&2
-    echo "                Without it there is no AquariusOS boot splash." >&2
-    exit 1
-fi
-if [ ! -s "${THEME_DIR}/watermark.png" ]; then
-    echo "AQUARIUS ERROR: ${THEME_DIR}/watermark.png is missing or empty." >&2
-    echo "                That is the mark-and-word picture in the middle of the" >&2
-    echo "                boot screen. Re-draw it on the Mac with:" >&2
-    echo "                    bash branding/render-plymouth-assets.sh" >&2
-    exit 1
-fi
-
-AQ_FRAMES="$(find "${THEME_DIR}" -name 'throbber-*.png' -printf . | wc -c)"
-echo "Aquarius splash pictures: watermark.png + ${AQ_FRAMES} throbber frames"
-if [ "${AQ_FRAMES}" -lt 2 ]; then
-    echo "AQUARIUS ERROR: only ${AQ_FRAMES} throbber frame(s) in ${THEME_DIR}." >&2
-    echo "                The dots under the logo would not move. Re-draw them:" >&2
-    echo "                    bash branding/render-plymouth-assets.sh" >&2
-    exit 1
-fi
+say "The boot animation"
 
 # ------------------------------------------------------------------------------
-# Borrow Fedora's password-box pictures
+# What has to be here, and why each piece matters
 # ------------------------------------------------------------------------------
-# If this machine's disk is encrypted, the boot splash has to draw a box to type
-# the password into: a rounded rectangle, a padlock, and a dot per character.
-# Those are plain grey shapes with no branding on them at all, and Fedora's
-# `spinner` theme already ships them at exactly the sizes the two-step plug-in
-# expects. Drawing our own would be three more pictures to maintain for no
-# visible difference.
+# The theme's own files came in with step 5, from
+# system_files/usr/share/plymouth/themes/aquarius/. Since 2026-09-06 the theme is
+# not a still picture with a row of dots under it — it is an ANIMATION, played by
+# Plymouth's `script` plug-in, and it is made of:
 #
-# `lock.png` is the one two-step genuinely requires, so a missing spinner theme
-# is a hard stop rather than a shrug.
-say "The password box (borrowed from Fedora's plain grey shapes)"
+#   aquarius.plymouth              names the plug-in and points at the two things
+#                                  below. Three lines that matter.
+#   aquarius.script                the little program that plays the animation and
+#                                  draws the update and disk-password screens.
+#   boot-0001 … boot-0066.png      the pour — 2.2 seconds at 30 pictures a second
+#   hold.png                       what stays on screen after the pour finishes
+#   shutdown-0001 … -0057.png      the wind — 1.9 seconds
+#   box.png, bullet.png,           the furniture on the update and password
+#   bar-track.png, bar-fill.png    screens
+#
+# docs/restart/boot-branding.md tells the whole story, including why this
+# replaced the two-step theme that was here before.
+AQ_THEME_FILE="${THEME_DIR}/${THEME_NAME}.plymouth"
+AQ_SCRIPT_FILE="${THEME_DIR}/${THEME_NAME}.script"
 
-if [ ! -d "${SPINNER_DIR}" ]; then
-    echo "AQUARIUS ERROR: ${SPINNER_DIR} does not exist, so there are no" >&2
-    echo "                password-box pictures to copy." >&2
-    echo "                build_files/20-hardware-media.sh installs" >&2
-    echo "                plymouth-theme-spinner for exactly this reason." >&2
-    echo "                Themes actually present:" >&2
-    ls -1 /usr/share/plymouth/themes/ >&2 || true
-    exit 1
-fi
+# ⚠️ THESE FOUR NUMBERS MUST MATCH branding/pour.mjs,
+# branding/render-plymouth-assets.sh AND the theme's own aquarius.script. All
+# four say so. This is the only one of the four that can stop a build.
+AQ_BOOT_FRAMES=66
+AQ_WIND_FRAMES=57
+AQ_FRAME_W=288
+AQ_FRAME_H=389
 
-echo "What Fedora's spinner theme actually ships (so a missing picture names itself):"
-rpm -ql plymouth-theme-spinner 2> /dev/null | sed 's/^/  /' || echo "  (cannot list the package)"
-
-# An explicit list, not a wildcard. A wildcard would also drag in spinner's own
-# grey spinning animation, which would then fight our dots for the same spot on
-# screen.
-for f in lock.png entry.png entry-nolock.png bullet.png box.png \
-    keyboard.png capslock.png keymap-render.png; do
-    if [ -r "${SPINNER_DIR}/${f}" ]; then
-        install -D -m 0644 "${SPINNER_DIR}/${f}" "${THEME_DIR}/${f}"
-        echo "  copied ${f}"
-    else
-        echo "  NOTE ${f} is not in this Fedora's spinner theme — skipping (optional)"
+for f in "${AQ_THEME_FILE}" "${AQ_SCRIPT_FILE}"; do
+    if [ ! -r "$f" ]; then
+        echo "AQUARIUS ERROR: $f is missing." >&2
+        echo "                Step 5 copies it in from" >&2
+        echo "                system_files/usr/share/plymouth/themes/aquarius/." >&2
+        echo "                Without it there is no AquariusOS boot animation." >&2
+        exit 1
     fi
 done
 
-if [ -s "${THEME_DIR}/lock.png" ]; then
-    ok "the password box has its pictures (lock.png is the required one)"
+# ------------------------------------------------------------------------------
+# The plug-in that plays it
+# ------------------------------------------------------------------------------
+# The old theme used `two-step`, the plug-in Fedora's own themes use. It can only
+# loop a fixed set of pictures in one place; it cannot play something once and
+# stop, and it cannot tell starting up from shutting down. The designed animation
+# needs both, so the theme moved to the `script` plug-in — which is a separate
+# package, and a missing one means a machine that boots to a blank screen where
+# the animation should be.
+say "The scripting plug-in the animation needs"
+
+if ! rpm -q plymouth-plugin-script > /dev/null 2>&1; then
+    echo "AQUARIUS ERROR: plymouth-plugin-script is not installed, so nothing in" >&2
+    echo "                this image can play the boot animation. It is asked" >&2
+    echo "                for in build_files/20-hardware-media.sh." >&2
+    echo "                Plymouth packages that ARE installed:" >&2
+    rpm -qa 'plymouth*' | sort >&2
+    exit 1
+fi
+ok "plymouth-plugin-script $(rpm -q --queryformat '%{VERSION}-%{RELEASE}' plymouth-plugin-script)"
+
+echo "This image's Plymouth: $(rpm -q --queryformat '%{VERSION}-%{RELEASE}' plymouth)"
+echo "What plymouth-plugin-script ships:"
+rpm -ql plymouth-plugin-script | sed 's/^/  /'
+
+AQ_SCRIPT_SO="$(rpm -ql plymouth-plugin-script | grep -E '/script\.so$' | head -n1 || true)"
+if [ -z "${AQ_SCRIPT_SO}" ] || [ ! -r "${AQ_SCRIPT_SO}" ]; then
+    bad "the script plug-in's own file (script.so) is not where the package says it is"
 else
-    bad "${THEME_DIR}/lock.png is missing — a machine with an encrypted disk would show no password box"
+    ok "the plug-in itself is at ${AQ_SCRIPT_SO}"
 fi
 
-# Belt and braces: prove no Fedora-branded or competing animation art slipped in.
-if compgen -G "${THEME_DIR}/animation-*.png" > /dev/null; then
-    bad "${THEME_DIR} contains animation-*.png — those are Fedora's frames, not ours"
-    ls -1 "${THEME_DIR}"/animation-*.png
+# ------------------------------------------------------------------------------
+# ⚠️ EVERY PLYMOUTH INSTRUCTION THE THEME USES REALLY EXISTS IN THIS PLYMOUTH
+# ------------------------------------------------------------------------------
+# This is the check that would have caught the mistake this whole rewrite was
+# most likely to make.
+#
+# aquarius.script talks to Plymouth by name — `Plymouth.SetRefreshFunction`,
+# `Plymouth.SetSystemUpdateFunction`, and so on. Those names have changed between
+# Plymouth releases, and a name that does not exist FAILS SILENTLY: the theme
+# loads, the screen appears, and that one thing simply never happens. Nothing is
+# printed anywhere.
+#
+# So rather than trusting the documentation, this reads the names out of the
+# plug-in's own compiled file — they are stored in it as plain text, because that
+# is how it registers them — and checks that every name the theme uses is one of
+# them.
+say "Every Plymouth instruction the theme uses exists in THIS Plymouth"
+
+# ⚠️ READ THE NAMES OUT OF THE BINARY WITH `grep -a`, NOT WITH `strings`.
+# `strings` comes from the binutils package, which this image does not
+# necessarily install — and a check that quietly does not run is worse than no
+# check at all, because it prints nothing and everybody assumes it passed.
+# `grep -a` is in every image there is and answers the same question.
+if [ -r "${AQ_SCRIPT_SO}" ]; then
+    # Pull `Plymouth.Something` out of the theme, ignoring comment lines.
+    grep -vE '^[[:space:]]*#' "${AQ_SCRIPT_FILE}" \
+        | grep -oE 'Plymouth\.[A-Za-z]+' | sed 's/^Plymouth\.//' | sort -u \
+        > /tmp/aq-theme-uses.txt
+
+    AQ_USES="$(wc -l < /tmp/aq-theme-uses.txt | tr -d ' ')"
+    echo "The theme uses ${AQ_USES} Plymouth instructions:"
+    sed 's/^/  /' /tmp/aq-theme-uses.txt
+
+    if [ "${AQ_USES}" -lt 5 ]; then
+        # Fewer than five means the search above found almost nothing, which
+        # means it is broken rather than that the theme is simple. Say so
+        # instead of reporting a confident pass over a check that did nothing.
+        bad "only ${AQ_USES} Plymouth instructions found in the theme — that is too"
+        bad "few to be true, so the search that looks for them is broken."
+    else
+        aq_unknown=0
+        while IFS= read -r name; do
+            if grep -a -q "${name}" "${AQ_SCRIPT_SO}"; then
+                ok "Plymouth.${name} exists in this Plymouth"
+            else
+                bad "Plymouth.${name} does NOT exist in this Plymouth. That"
+                bad "instruction would do nothing at all, silently. The name has"
+                bad "probably been renamed in this release — check the plug-in's"
+                bad "own source before changing the theme."
+                aq_unknown=1
+            fi
+        done < /tmp/aq-theme-uses.txt
+
+        if [ "${aq_unknown}" -eq 0 ]; then
+            ok "all ${AQ_USES} Plymouth instructions the boot animation uses are real"
+        fi
+    fi
+    rm -f /tmp/aq-theme-uses.txt
 else
-    ok "no Fedora animation frames in our theme folder (correct)"
+    bad "the script plug-in's own file could not be read, so the instruction names"
+    bad "the theme uses could not be checked against it."
+fi
+
+# ------------------------------------------------------------------------------
+# The theme file says what it has to say
+# ------------------------------------------------------------------------------
+say "The theme file"
+echo "--- ${AQ_THEME_FILE} (settings only, comments stripped) ---"
+grep -vE '^[[:space:]]*(#|$)' "${AQ_THEME_FILE}" || true
+echo "---"
+
+aq_file_has "${AQ_THEME_FILE}" '^ModuleName=script$' \
+    "the theme is played by the script plug-in"
+aq_file_has "${AQ_THEME_FILE}" "^ScriptFile=${AQ_SCRIPT_FILE}$" \
+    "the theme points at the script that is really installed"
+aq_file_has "${AQ_THEME_FILE}" "^ImageDir=${THEME_DIR}$" \
+    "the theme looks for its pictures in the folder they are really in"
+
+# The old plug-in's settings must all be gone. Leaving one behind would be
+# harmless in effect — the script plug-in ignores them — and confusing forever,
+# because a person reading the file would believe a setting that does nothing.
+if grep -qE '^(ModuleName=two-step|\[two-step\]|UseFirmwareBackground=|ProgressBar[A-Za-z]*=|Watermark[A-Za-z]*=|UseAnimation=)' "${AQ_THEME_FILE}"; then
+    bad "the theme file still carries settings from the old two-step boot screen:"
+    grep -nE '^(ModuleName=two-step|\[two-step\]|UseFirmwareBackground=|ProgressBar[A-Za-z]*=|Watermark[A-Za-z]*=|UseAnimation=)' "${AQ_THEME_FILE}" >&2
+else
+    ok "no left-over settings from the old two-step boot screen"
+fi
+
+# ------------------------------------------------------------------------------
+# The script says what it has to say
+# ------------------------------------------------------------------------------
+# The one colour that is set by the script rather than baked into a picture: the
+# Midnight ground the whole screen is painted with. It is written as the three
+# 0-to-255 parts of #0B1220, put through the script's own `channel` helper.
+say "The boot screen's own script"
+
+aq_file_has "${AQ_SCRIPT_FILE}" '^BG_RED    = channel\(11\);   BG_GREEN    = channel\(18\);   BG_BLUE    = channel\(32\);$' \
+    "the ground is Midnight bg (#0B1220 = 11, 18, 32)"
+aq_file_has "${AQ_SCRIPT_FILE}" '^BOOT_FRAMES  = '"${AQ_BOOT_FRAMES}"';' \
+    "the script plays all ${AQ_BOOT_FRAMES} frames of the pour"
+aq_file_has "${AQ_SCRIPT_FILE}" '^WIND_FRAMES  = '"${AQ_WIND_FRAMES}"';' \
+    "the script plays all ${AQ_WIND_FRAMES} frames of the wind"
+aq_file_has "${AQ_SCRIPT_FILE}" 'Plymouth.SetDisplayPasswordFunction' \
+    "the script draws a disk-password box (the piece two-step used to give us free)"
+aq_file_has "${AQ_SCRIPT_FILE}" 'Plymouth.SetSystemUpdateFunction' \
+    "the script draws the 'installing updates' screen"
+
+# A retired colour must not be SET anywhere in the script. Comment lines are
+# skipped: the file's own notes name the old palette to explain what replaced it,
+# which is the point of writing it down.
+if grep -vE '^[[:space:]]*#' "${AQ_SCRIPT_FILE}" \
+    | grep -Eqi '(8AB4FF|5B4BE0|E6DDB8|06070C)'; then
+    bad "the boot script still names a retired Starlight colour"
+    grep -nEi '(8AB4FF|5B4BE0|E6DDB8|06070C)' "${AQ_SCRIPT_FILE}" | grep -vE ':[[:space:]]*#' >&2
+else
+    ok "no retired Starlight colour in the boot script"
+fi
+
+# ------------------------------------------------------------------------------
+# The pictures — counted, and their sizes read back out of the files
+# ------------------------------------------------------------------------------
+# A picture of the wrong size is not a crash. It is a boot screen that looks
+# slightly wrong, which nobody notices. A MISSING one is worse: the script counts
+# up from 0001 and a gap is a frame that silently never appears. So both are read
+# out of the actual files rather than assumed.
+#
+# The sizes come out of each PNG's own header — bytes 17 to 24 of the file, which
+# is where PNG stores its width and height — so this needs no image library on the
+# build machine.
+say "The animation's pictures"
+
+if python3 - "${THEME_DIR}" "${AQ_BOOT_FRAMES}" "${AQ_WIND_FRAMES}" \
+    "${AQ_FRAME_W}" "${AQ_FRAME_H}" << 'PY'; then
+import glob
+import os
+import struct
+import sys
+
+theme_dir = sys.argv[1]
+boot_frames, wind_frames, frame_w, frame_h = (int(a) for a in sys.argv[2:6])
+faults = []
+
+
+def size(path):
+    data = open(path, "rb").read()
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        faults.append(f"{path} is not a PNG file at all")
+        return None
+    return struct.unpack(">II", data[16:24])
+
+
+def check_run(prefix, count):
+    found = sorted(glob.glob(os.path.join(theme_dir, f"{prefix}-*.png")))
+    if len(found) != count:
+        faults.append(f"{len(found)} {prefix} frames in the image, expected {count}")
+        return
+    for i, path in enumerate(found, start=1):
+        want = f"{prefix}-{i:04d}.png"
+        if os.path.basename(path) != want:
+            faults.append(f"expected {want}, found {os.path.basename(path)} — the "
+                          "frames must be numbered with no gaps")
+            return
+        got = size(path)
+        if got and got != (frame_w, frame_h):
+            faults.append(f"{want} is {got[0]}x{got[1]}, expected {frame_w}x{frame_h}")
+            return
+    print(f"  OK   {count} {prefix} frames, all {frame_w}x{frame_h}")
+
+
+check_run("boot", boot_frames)
+check_run("shutdown", wind_frames)
+
+# The hold has to be the pour's LAST frame, exactly. A hold that differs by one
+# pixel is a visible flicker at the moment the animation stops.
+last = os.path.join(theme_dir, f"boot-{boot_frames:04d}.png")
+hold = os.path.join(theme_dir, "hold.png")
+if not os.path.exists(hold):
+    faults.append("hold.png is missing — there would be nothing on screen after the pour")
+elif open(hold, "rb").read() != open(last, "rb").read():
+    faults.append(f"hold.png is not byte-for-byte boot-{boot_frames:04d}.png — the "
+                  "animation would flicker when it stops")
+else:
+    print(f"  OK   hold.png is byte-for-byte boot-{boot_frames:04d}.png (no flicker at the end)")
+
+# The furniture on the update and disk-password screens.
+for name, want_w, want_h, what in [
+    ("box.png", 420, 48, "the disk-password box"),
+    ("bullet.png", 18, 18, "one typed dot"),
+    ("bar-track.png", 320, 3, "the empty progress bar"),
+    ("bar-fill.png", 320, 3, "the blue that fills it"),
+]:
+    path = os.path.join(theme_dir, name)
+    if not os.path.exists(path):
+        faults.append(f"{name} is missing — {what} would not be drawn")
+        continue
+    got = size(path)
+    if got and got != (want_w, want_h):
+        faults.append(f"{name} is {got[0]}x{got[1]}, expected {want_w}x{want_h}")
+    else:
+        print(f"  OK   {name} is {want_w}x{want_h} ({what})")
+
+# Nothing from the old two-step boot screen may still be here. It would not be
+# drawn, but it would be carried into the boot ramdisk, and the ramdisk is the
+# one file in this image whose size is worth caring about.
+for stale in sorted(glob.glob(os.path.join(theme_dir, "throbber-*.png"))
+                    + glob.glob(os.path.join(theme_dir, "watermark.png"))):
+    faults.append(f"{stale} is left over from the old boot screen and should be deleted")
+
+for fault in faults:
+    print(f"  FAIL {fault}")
+sys.exit(1 if faults else 0)
+PY
+    aq_pictures_ok=1
+else
+    aq_pictures_ok=0
+fi
+
+if [ "${aq_pictures_ok}" -eq 1 ]; then
+    ok "every picture the boot animation needs is present and the right size"
+else
+    bad "the boot animation's pictures are not what the theme expects (see above)"
 fi
 
 # ------------------------------------------------------------------------------
@@ -228,16 +443,27 @@ ls -1 /usr/share/plymouth/themes/
 # ------------------------------------------------------------------------------
 # Ask for our fonts inside the boot ramdisk
 # ------------------------------------------------------------------------------
-# The boot ramdisk is deliberately tiny and carries almost no fonts. That only
-# matters for the one or two lines of text a boot splash ever draws (the password
-# prompt, an update message), and Plymouth falls back to whatever it can find, so
-# nothing breaks either way. `install_optional_items` means "put these in if they
-# exist" — it can never fail the build.
+# The boot ramdisk is deliberately tiny and carries almost no fonts.
+#
+# ⚠️ THAT MATTERS MORE THAN IT USED TO. Until 2026-09-06 the boot screen was a
+# picture with a row of dots under it and text was a rarity. Now it draws real
+# headings — "Installing updates", "Unlock the disk" — and if a font file is not
+# in the ramdisk, Plymouth quietly falls back to whatever face it can find and
+# nobody notices until they look at a photograph of the screen.
+#
+# So the three faces are asked for here, and the read-back after the ramdisk is
+# rebuilt CHECKS THAT THEY ARRIVED rather than hoping. (The word "AquariusOS"
+# under the mark is not affected either way: it is drawn into the animation's
+# pictures as a shape on the Mac, so it can never fall back.)
+#
+# `install_optional_items` means "put these in if they exist" — it can never
+# fail the build, which is why the check afterwards is the thing that guards it.
 say "Asking for the AquariusOS fonts in the boot ramdisk"
 install -d -m 0755 /usr/lib/dracut/dracut.conf.d
 cat > /usr/lib/dracut/dracut.conf.d/99-aquarius-plymouth.conf << 'EOF'
-# AquariusOS: try to carry our own faces into the boot ramdisk, so the rare line
-# of text on the boot splash is set in Inter rather than in a fallback face.
+# AquariusOS: carry our own faces into the boot ramdisk, so the headings and
+# prompts on the boot screen are set in Sora, Inter and JetBrains Mono rather
+# than in whatever face Plymouth can find to fall back to.
 # "optional" means a missing file is skipped silently rather than failing.
 # NOTE the paths are globs. The Sora file is really called "Sora[wght].ttf",
 # and square brackets mean "one of these letters" to a glob, so naming it
@@ -951,28 +1177,89 @@ for want in plymouth ostree bootc; do
     fi
 done
 
-# And the actual point of the exercise: is OUR splash in there?
-say "Is the Aquarius splash really inside the ramdisk?"
+# And the actual point of the exercise: is OUR boot animation in there?
+say "Is the Aquarius boot animation really inside the ramdisk?"
 lsinitrd "${AQ_INITRAMFS}" 2> /dev/null | grep -i plymouth > /tmp/aq-initrd-plymouth.txt || true
 echo "Everything Plymouth-related inside the ramdisk:"
 sed 's/^/       /' /tmp/aq-initrd-plymouth.txt || true
 echo
 
-if grep -q "plymouth/themes/${THEME_NAME}/" /tmp/aq-initrd-plymouth.txt; then
-    ok "the '${THEME_NAME}' splash theme is inside the boot ramdisk"
+# Six things have to be in there, and each one is a different way for the boot
+# animation to be broken on a real machine while every file on disk looks fine.
+aq_in_ramdisk() {   # aq_in_ramdisk <path fragment> <what it is> <what breaks without it>
+    if grep -qF "$1" /tmp/aq-initrd-plymouth.txt; then
+        ok "in the ramdisk: $2"
+    else
+        bad "$1 is NOT inside the ramdisk — $3"
+    fi
+}
+
+aq_in_ramdisk "plymouth/themes/${THEME_NAME}/" \
+    "the '${THEME_NAME}' theme folder" \
+    "the machine would show Fedora's boot screen"
+aq_in_ramdisk "plymouth/themes/${THEME_NAME}/${THEME_NAME}.plymouth" \
+    "the theme file" \
+    "there would be nothing naming the script plug-in"
+aq_in_ramdisk "plymouth/themes/${THEME_NAME}/${THEME_NAME}.script" \
+    "the script that plays the animation" \
+    "the screen would be blank — the theme file points at a file that is not there"
+aq_in_ramdisk "plymouth/themes/${THEME_NAME}/boot-0001.png" \
+    "the first frame of the pour" \
+    "the animation would have no pictures to play"
+aq_in_ramdisk "plymouth/themes/${THEME_NAME}/hold.png" \
+    "the hold" \
+    "the screen would go blank the moment the pour finished"
+aq_in_ramdisk "plymouth/themes/${THEME_NAME}/shutdown-0001.png" \
+    "the first frame of the wind" \
+    "shutting down would show nothing"
+aq_in_ramdisk "plymouth/themes/${THEME_NAME}/box.png" \
+    "the disk-password box" \
+    "a machine with an encrypted disk would appear to hang at a blank screen"
+
+# ⚠️ AND THE PLUG-IN ITSELF. This is the one that would be easiest to miss: the
+# theme can be in the ramdisk in full, and if the plug-in that PLAYS it was not
+# carried in with it the screen is simply black. dracut's plymouth part is what
+# puts it there, and it goes on the strength of what is installed on disk.
+if grep -qE 'plymouth/(plugins/)?script\.so' /tmp/aq-initrd-plymouth.txt; then
+    ok "in the ramdisk: the script plug-in that plays the animation"
 else
-    bad "no plymouth/themes/${THEME_NAME}/ inside the ramdisk — the machine would show Fedora's splash"
+    bad "the script plug-in (script.so) is NOT inside the ramdisk. Every picture"
+    bad "could be in there and the boot screen would still be black, because"
+    bad "nothing in the ramdisk would know how to play them."
 fi
-if grep -q "plymouth/themes/${THEME_NAME}/watermark.png" /tmp/aq-initrd-plymouth.txt; then
-    ok "and so is the mark-and-word picture"
-else
-    bad "watermark.png is not inside the ramdisk — the splash would have no logo"
-fi
-if grep -qE "plymouth/themes/${THEME_NAME}/throbber-0001\.png" /tmp/aq-initrd-plymouth.txt; then
-    ok "and so are the dots"
-else
-    bad "throbber-0001.png is not inside the ramdisk — the dots would not appear"
-fi
+
+# ------------------------------------------------------------------------------
+# The three faces the boot screen sets its words in
+# ------------------------------------------------------------------------------
+# Asked for further up, in the dracut settings file. `install_optional_items`
+# cannot fail, so this is the only thing standing between a missing font and a
+# boot screen whose headings are set in something else entirely.
+say "Are the AquariusOS fonts inside the ramdisk?"
+lsinitrd "${AQ_INITRAMFS}" 2> /dev/null | grep -iE 'fonts/(sora|rsms-inter|jetbrains)' \
+    > /tmp/aq-initrd-fonts.txt || true
+echo "Font files inside the ramdisk:"
+sed 's/^/       /' /tmp/aq-initrd-fonts.txt || true
+for aq_face in "sora-fonts:Sora, for the headings" \
+               "rsms-inter-fonts:Inter, for the lines of explanation" \
+               "jetbrains-mono-fonts:JetBrains Mono, for the percentage"; do
+    aq_dir="${aq_face%%:*}"
+    aq_what="${aq_face##*:}"
+    if grep -q "fonts/${aq_dir}/" /tmp/aq-initrd-fonts.txt; then
+        ok "in the ramdisk: ${aq_what}"
+    else
+        bad "no ${aq_dir} inside the ramdisk — ${aq_what%%,*} would fall back to"
+        bad "another face on the boot screen, silently."
+    fi
+done
+rm -f /tmp/aq-initrd-fonts.txt
+
+# The old boot screen's pictures must not still be riding along. They are dead
+# weight in the single largest file in the image.
+for aq_stale in watermark.png throbber-0001.png; do
+    if grep -qF "plymouth/themes/${THEME_NAME}/${aq_stale}" /tmp/aq-initrd-plymouth.txt; then
+        bad "${aq_stale} from the old boot screen is still inside the ramdisk"
+    fi
+done
 
 # The settings file inside the ramdisk is what the splash program reads while
 # the machine is starting. If it named a Fedora theme, everything above would be

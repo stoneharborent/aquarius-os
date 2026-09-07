@@ -381,15 +381,27 @@ aq_dnf install \
 #                              replace it — but it is what a bare image falls
 #                              back to, and having it means step 8 has something
 #                              to compare ours against.
-#   plymouth-plugin-two-step   the drawing plug-in our theme uses. See the long
-#                              note in system_files/.../aquarius.plymouth for
-#                              why this one and not the scripting plug-in.
-#   plymouth-plugin-label      draws TEXT on the splash. Without it the
-#                              "type your disk password" prompt would appear
-#                              as a box with no words in it.
-#   plymouth-theme-spinner     Fedora's plain grey password-box pictures, which
-#                              step 8 borrows rather than re-drawing. Also what
-#                              Fedora's own default theme takes its artwork from.
+#   plymouth-plugin-script     ⚠️ THE ONE OUR THEME USES. It is what plays the
+#                              AquariusOS boot ANIMATION — the "A" being poured
+#                              out of falling water on the way up, and blown
+#                              away by the wind on the way down. Without this
+#                              package the boot screen is black. The long note
+#                              in system_files/.../aquarius.plymouth explains
+#                              why the theme moved to it on 2026-09-06.
+#   plymouth-plugin-two-step   the plug-in Fedora's OWN themes use (`bgrt` and
+#                              `spinner`). Our theme no longer uses it, but
+#                              those themes are still installed and are the
+#                              fallback if the animation ever has to be switched
+#                              off on a machine, so it stays.
+#   plymouth-plugin-label      draws TEXT on the boot screen. Without it the
+#                              "Unlock the disk" heading, the update headings
+#                              and the percentage all silently draw nothing.
+#   plymouth-theme-spinner     Fedora's own plain boot theme. Kept as the
+#                              one-line fallback if the animation ever misbehaves
+#                              on a particular graphics card
+#                              (`sudo plymouth-set-default-theme spinner`), and
+#                              it is where Fedora's default theme takes its
+#                              artwork from.
 #
 # zram-generator-defaults turns a slice of memory into compressed swap. It is
 # what Fedora ships on every desktop edition and it is the difference between
@@ -398,6 +410,7 @@ say "Boot splash and compressed swap"
 aq_dnf install \
     plymouth \
     plymouth-system-theme \
+    plymouth-plugin-script \
     plymouth-plugin-two-step \
     plymouth-plugin-label \
     plymouth-theme-spinner \
@@ -448,6 +461,7 @@ aq_installed \
     fwupd \
     linux-firmware \
     plymouth \
+    plymouth-plugin-script \
     plymouth-plugin-two-step \
     plymouth-plugin-label \
     plymouth-theme-spinner \
