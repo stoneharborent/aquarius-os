@@ -554,9 +554,15 @@ sudo lsinitrd /usr/lib/modules/$(uname -r)/initramfs.img | grep plymouth/themes
 # And what does the ramdisk's own copy of the setting say?
 sudo lsinitrd -f /etc/plymouth/plymouthd.conf /usr/lib/modules/$(uname -r)/initramfs.img
 # → Theme=aquarius
+
+# ⚠️ And the plug-in that PLAYS the animation. This is the one that would be
+# easiest to miss: every picture can be inside the ramdisk and the boot screen
+# is still black if the thing that knows how to play them was left out.
+sudo lsinitrd /usr/lib/modules/$(uname -r)/initramfs.img | grep script.so
+# → should list a plymouth .../script.so
 ```
 
-GitHub Actions runs all three of those on every build, inside the finished image,
+GitHub Actions runs all four of those on every build, inside the finished image,
 and refuses to publish if any of them is wrong.
 
 ---
