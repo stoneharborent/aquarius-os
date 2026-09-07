@@ -38,6 +38,13 @@ aq_log() { echo "[shell-start] $*" >> "${AQ_LOG}"; }
 
 aq_log "starting the Aquarius Shell"
 aq_log "  QS_CONFIG_PATH = ${QS_CONFIG_PATH:-(not set!)}"
+aq_log "  QS_ICON_THEME = ${QS_ICON_THEME:-(not set!)}"
+case "${QS_ICON_THEME:-}" in
+    Aquarius-Ice|Aquarius-Midnight) : ;;
+    *) echo "[shell-start]   NOTE: that is not an Aquarius icon theme, so the dock will not show the Aquarius icons." ;
+       echo "[shell-start]         A saved choice in your account wins over the image default (bench, 2026-09-07: a leftover breeze-dark)." ;
+       echo "[shell-start]         To go back to the default:  gsettings reset org.gnome.desktop.interface icon-theme   then log out and in." ;;
+esac
 
 # ---------------------------------------------------------------------------
 # Is there a shell in this image at all?
