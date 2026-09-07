@@ -121,7 +121,7 @@ const ease = (t) => (t < 0 ? 0 : t > 1 ? 1 : (t < 0.5 ? 2 * t * t : 1 - Math.pow
 // The word, turned into a shape once
 // ------------------------------------------------------------------------------
 // Worked out the first time this file is loaded and then reused for every frame,
-// because it is the same shape in all 123 of them.
+// because it is the same shape in all 124 of them.
 //
 // The numbers match what the drawing used while it was being designed: the word
 // sits on a line 78 units down, centred on 32 (the middle of the 64-wide grid),

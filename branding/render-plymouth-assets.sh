@@ -12,7 +12,7 @@
 #   npm --prefix branding/icons install     # once, ever — see WHAT IT NEEDS
 #   bash branding/render-plymouth-assets.sh
 #
-#   It takes two or three minutes. Then look at the pictures it wrote, and
+#   It takes about four minutes. Then look at the pictures it wrote, and
 #   commit them:
 #   git add system_files/usr/share/plymouth/themes/aquarius && git commit
 #
