@@ -229,6 +229,18 @@ mark.y = Window.GetY() + Window.GetHeight() * 0.44 - FRAME_HEIGHT / 2;
 # nothing can ever land on top of the logo however tall or short the screen is.
 below_mark = mark.y + FRAME_HEIGHT + 24;
 
+# ⚠️ …unless the screen is genuinely tiny, in which case hanging things off the
+# mark would push them off the bottom. The mark is 389 pixels tall and the
+# furniture under it needs about 130 more, so on anything shorter than roughly
+# 600 pixels the sum above runs past the edge — a fallback 640x480 mode being the
+# real case. Rather than let the progress bar vanish, the whole group is pulled
+# back up to sit against the bottom of the screen. It will overlap the mark on a
+# screen that small, which is much better than being invisible.
+FURNITURE_HEIGHT = 130;
+screen_bottom = Window.GetY() + Window.GetHeight();
+if (below_mark + FURNITURE_HEIGHT > screen_bottom)
+  below_mark = screen_bottom - FURNITURE_HEIGHT;
+
 # The update screen, top to bottom.
 update.title_y   = below_mark;
 update.line_y    = below_mark + 52;
@@ -457,12 +469,19 @@ fun start_update_screen ()
       }
   }
 
+# ⚠️ NOTE THE `part` LOCAL, AND NEVER ASSIGN TO A FUNCTION'S OWN PARAMETER IN
+# THIS LANGUAGE. A parameter is not a copy — it is the caller's own value, shared.
+# Writing `fraction = 0` here would reach back and change whatever the caller
+# handed in, and the day somebody calls this with a variable rather than a sum,
+# that variable would silently be set to 0. So the value is copied into a local
+# first and the local is what gets tidied up.
 fun set_bar (fraction)
   {
-    if (fraction < 0) fraction = 0;
-    if (fraction > 1) fraction = 1;
+    part = fraction;
+    if (part < 0) part = 0;
+    if (part > 1) part = 1;
 
-    filled = Math.Int(BAR_WIDTH * fraction);
+    filled = Math.Int(BAR_WIDTH * part);
     if (filled < 1)
       {
         # Nothing done yet. Hide the blue rather than drawing a picture no
@@ -584,17 +603,30 @@ fun hide_dialog ()
 # One dot per character typed. Dots are made the first time they are needed and
 # then reused — somebody who types twelve characters, deletes them and types
 # eight again gets the same twelve dots back, eight of them visible.
+#
+# ⚠️ WITH A CEILING. The box is 420 pixels wide, the dots start 20 pixels in and
+# sit 18 apart, so 21 of them reach the far edge. A real disk passphrase is
+# often longer than that, and without this the dots would march straight out of
+# the box and off across the screen. Twenty is the most that are ever shown; the
+# typing still works exactly as before, it just stops adding dots.
+MAX_DOTS = 20;
+
 fun set_dots (how_many)
   {
     if (!dialog.dot_picture) return;
-    for (i = 0; dialog.dot[i] || i < how_many; i++)
+
+    # A local, not the parameter: see the warning above set_bar.
+    visible = how_many;
+    if (visible > MAX_DOTS) visible = MAX_DOTS;
+
+    for (i = 0; dialog.dot[i] || i < visible; i++)
       {
         if (!dialog.dot[i])
           {
             dialog.dot[i] = Sprite(dialog.dot_picture);
             dialog.dot_x[i] = dialog.first_dot_x + i * 18;
           }
-        if (i < how_many)
+        if (i < visible)
           dialog.dot[i].SetOpacity(1);
         else
           dialog.dot[i].SetOpacity(0);
