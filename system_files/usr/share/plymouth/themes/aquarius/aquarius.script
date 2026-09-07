@@ -407,10 +407,12 @@ fun write_centred (sprite, words, font, red, green, blue, y, z)
 # Every piece of text this screen can show gets its own sprite, made once here
 # and left empty until there is something to put in it. An empty sprite draws
 # nothing.
-text.title   = Sprite();
-text.line    = Sprite();
-text.percent = Sprite();
-text.message = Sprite();
+text.title   = Sprite();   # a heading — "Installing updates", "Unlock the disk"
+text.line    = Sprite();   # the line of plain words under it
+text.percent = Sprite();   # the percentage on the update screen
+text.typed   = Sprite();   # what has been typed, when it is an answer and not
+                           # a password (a password shows dots instead)
+text.message = Sprite();   # a line the system asked us to show
 
 
 # ==============================================================================
@@ -573,6 +575,7 @@ fun hide_dialog ()
       dialog.dot[i].SetOpacity(0);
     text.title.SetOpacity(0);
     text.line.SetOpacity(0);
+    text.typed.SetOpacity(0);
     dialog.shown = 0;
     dialog.previous_dots = 0;
     dialog.shake_left = 0;
@@ -653,7 +656,7 @@ fun display_question_callback (prompt, typed_so_far)
   {
     show_dialog(prompt, ANSWER_HELP);
     set_dots(0);
-    write_centred(text.percent, typed_so_far, BODY_FONT,
+    write_centred(text.typed, typed_so_far, BODY_FONT,
                   INK_RED, INK_GREEN, INK_BLUE,
                   dialog.box_y + BOX_HEIGHT / 2 - 12, Z_DIALOG + 1);
   }
@@ -687,7 +690,7 @@ Plymouth.SetHideMessageFunction(hide_message_callback);
 fun display_normal_callback ()
   {
     hide_dialog();
-    text.percent.SetOpacity(0);
+    text.typed.SetOpacity(0);
   }
 
 Plymouth.SetDisplayNormalFunction(display_normal_callback);
