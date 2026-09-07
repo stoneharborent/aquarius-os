@@ -519,13 +519,23 @@
       the bench saw, and which is why menu.xml matters more than this binding
       does.
 
-      Left-click on the root is deliberately left unbound. AquariusOS has no
-      desktop icons, by Royce's decision, so a left click on the wallpaper
-      should do nothing at all.
+      Left-click on the root does nothing, and the <mousebind> below is what
+      makes that true. This used to say left-click was "left unbound" — but
+      <default /> above loads labwc's own bindings, and those bind Left (and
+      Middle) on the desktop to open the menu too
+      (include/config/default-bindings.h). On the bench, 2026-09-07, that showed
+      up as a left click behaving like a right click. `None` is labwc's
+      documented way to cancel one inherited binding (rcxml.c: "cancel a default
+      binding by using the None action"), and it leaves the window and titlebar
+      defaults from <default /> untouched. AquariusOS has no desktop icons, by
+      Royce's decision, so a left click on the wallpaper should do nothing.
     -->
     <context name="Root">
       <mousebind button="Right" action="Press">
         <action name="ShowMenu" menu="root-menu" />
+      </mousebind>
+      <mousebind button="Left" action="Press">
+        <action name="None" />
       </mousebind>
     </context>
 

@@ -116,7 +116,7 @@
 # This is the list /usr/bin/aquarius-session hands to systemd and D-Bus. Every
 # `export` in that file must appear here — the test enforces it.
 # -----------------------------------------------------------------------------
-AQ_SESSION_ENV_PUSH="XDG_SESSION_TYPE XDG_SESSION_DESKTOP XDG_CURRENT_DESKTOP QS_CONFIG_PATH QS_ICON_THEME QT_QPA_PLATFORM AQ_LOG AQ_UI_SCALE AQ_FRAME_GENERATOR LANG"
+AQ_SESSION_ENV_PUSH="XDG_SESSION_TYPE XDG_SESSION_DESKTOP XDG_CURRENT_DESKTOP QS_CONFIG_PATH QS_ICON_THEME GTK_USE_PORTAL QT_QPA_PLATFORM AQ_LOG AQ_UI_SCALE AQ_FRAME_GENERATOR LANG"
 
 # -----------------------------------------------------------------------------
 # THE TWO THE WINDOW MANAGER ADDS LATER

@@ -347,6 +347,15 @@ export QS_CONFIG_PATH="${AQ_SHELL_DIR}"
 # going through XWayland.
 export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland}"
 
+# One file picker for the whole desktop. GTK_USE_PORTAL=1 makes every GTK
+# application open the shared xdg-desktop-portal file chooser (provided by
+# xdg-desktop-portal-gtk) rather than drawing its own — so Files, the browser's
+# download dialog and the like all present the same window. Design rule 14,
+# Royce 2026-09-07. NOTE this reaches GTK apps and portal-aware Qt apps only;
+# an app that ships its own non-portal chooser (DaVinci Resolve is the known
+# one, and it runs in its own container besides) draws its own regardless.
+export GTK_USE_PORTAL="${GTK_USE_PORTAL:-1}"
+
 # -----------------------------------------------------------------------------
 # WHICH ICONS THE SHELL DRAWS (added 2026-09-06, after the bench showed none)
 # -----------------------------------------------------------------------------
