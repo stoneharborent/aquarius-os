@@ -112,7 +112,7 @@ ARG AQUARIUS_SHELL_REPO=https://github.com/stoneharborent/aquarius-shell.git
 # for whichever theme and whatever AQ_UI_SCALE are in force. The reasoning is
 # written out beside the same value in aquarius-os.env, which is where a bump is
 # made — this line must match it.
-ARG AQUARIUS_SHELL_REF=8120774ec43f83e2b1de99d5cfd9ce2a03bcd54e
+ARG AQUARIUS_SHELL_REF=8e45f5ea8af507ed35e8daa7bb486d38027f7c92
 
 # ------------------------------------------------------------------------------
 # Our own files, gathered up so the build can reach them
