@@ -358,8 +358,14 @@ screen appears.
 the mark should be taken apart from the left and blown off to the right, then
 darkness. Restart should do exactly the same thing.
 
-**3. The update screen, without waiting for a real update.** From a terminal on
-the machine:
+> **Before tests 3, 4 and 5:** `plymouth --show-splash` puts the boot screen
+> **over the top of your desktop** and it stays there until you say
+> `plymouth quit`. So do these over ssh from the Mac, or from a text console
+> (`Ctrl+Alt+F3`, log in, and `Ctrl+Alt+F2` to get back) — not from a terminal
+> window you are looking at, because the boot screen will cover it and you will
+> not be able to type the next command.
+
+**3. The update screen, without waiting for a real update.** From that terminal:
 
 ```bash
 sudo plymouth --show-splash          # bring the boot screen up over the desktop
@@ -393,9 +399,16 @@ disk. Short of that:
 
 ```bash
 sudo plymouth --show-splash
-sudo plymouth ask-for-password --prompt="Test" --number-of-tries=2
-# type something wrong, press Enter — the box should shake once and the line
-# under it should change to "That password did not work. Try again."
+
+# --command is where the typed password gets sent. /usr/bin/false rejects
+# everything, which is exactly what we want: every attempt "fails", so Plymouth
+# asks again, and asking again with nothing typed is the ONLY signal a boot
+# theme ever gets that a password was wrong. That is what fires the shake.
+# --number-of-tries is not optional here; Plymouth refuses it without --command.
+sudo plymouth ask-for-password --command=/usr/bin/false --number-of-tries=3
+
+# Type anything and press Enter. The box should shake once, and the line under
+# it should change to "That password did not work. Try again."
 sudo plymouth quit
 ```
 
