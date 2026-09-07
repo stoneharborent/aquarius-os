@@ -65,6 +65,17 @@ set it as the default, and leave the door open for our own artwork later.
 | App icons | **`Aquarius-Ice`** (ours, since 2026-09-06) | built in this repo, from `branding/icons/` | Our own nine app icons, light set — AquariusOS is light-first. Everything we do not draw falls through to `adwaita-icon-theme`, which is still installed and still where the other several thousand icons come from. The dark twin `Aquarius-Midnight` is built and installed beside it; nothing selects it yet (see below). |
 | System sounds | **freedesktop** | `sound-theme-freedesktop` | The standard, complete cross-desktop sound set. Safe, familiar, nothing missing. |
 
+**How the shell finds them — and why it needed telling (2026-09-06).** Every
+GTK application reads the `icon-theme` setting directly. Quickshell, which draws
+the dock, the search results and the app switcher, is a Qt program, and Qt only
+learns the icon theme from a "platform theme" it has for GNOME and for KDE.
+Our session is neither by name (`XDG_CURRENT_DESKTOP=Aquarius:wlroots`, on
+purpose), so Qt reports *no* icon theme and searches only `hicolor` — where the
+Aquarius icons are not. On the bench that looked like the artwork had never
+shipped. `/usr/bin/aquarius-session` now reads the same `icon-theme` setting
+and hands it to the shell as `QS_ICON_THEME`; the greeter sets the image
+default. Changing icon theme in Settings reaches the dock at the next login.
+
 **Where the app icons turn up.** They are drawn from the icon theme above by
 every part of the desktop that names an application: the app grid, Files, the
 dock, and — since 2026-09-06 — **the Aquarius app switcher**, the panel

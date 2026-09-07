@@ -707,6 +707,11 @@ fi
 
 aq_file_has "${AQ_SESSION_ENTRY}" '^Name=Aquarius Desktop$' "it is called 'Aquarius Desktop'"
 aq_file_has "${AQ_SESSION_ENTRY}" '^Exec=/usr/bin/aquarius-session$' "it runs our launcher"
+# Without this export Qt hands the shell an EMPTY icon theme (our desktop name
+# is not GNOME or KDE), only hicolor is searched, and every Aquarius app icon
+# in the dock is two grey letters. Found on the bench, 2026-09-06.
+aq_file_has "${AQ_LAUNCHER}" '^export QS_ICON_THEME=' "the launcher tells the shell which icon theme to draw from"
+aq_file_has /usr/libexec/aquarius-greeter '^export QS_ICON_THEME=' "the greeter tells its shell which icon theme to draw from"
 aq_file_has "${AQ_SESSION_ENTRY}" '^DesktopNames=Aquarius$' "it names the desktop 'Aquarius', which is what finds the portal configuration"
 
 # GNOME's entry must still be there. A desktop that replaces the fallback rather

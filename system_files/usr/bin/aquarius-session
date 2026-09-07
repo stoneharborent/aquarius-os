@@ -347,6 +347,30 @@ export QS_CONFIG_PATH="${AQ_SHELL_DIR}"
 # going through XWayland.
 export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland}"
 
+# -----------------------------------------------------------------------------
+# WHICH ICONS THE SHELL DRAWS (added 2026-09-06, after the bench showed none)
+# -----------------------------------------------------------------------------
+# Quickshell asks Qt for every app icon by name, and Qt looks the name up in
+# whatever icon theme its "platform theme" reports. Qt only has platform themes
+# for GNOME and KDE. It picks one by XDG_CURRENT_DESKTOP, and ours (above) is
+# neither — deliberately, see the note there — so Qt falls back to its generic
+# theme, whose icon theme name is EMPTY (qgenericunixtheme.cpp: no
+# SystemIconThemeName at all, only "hicolor" as the fallback). The result: the
+# shell searches hicolor and nothing else. Aquarius-Ice lives in
+# /usr/share/icons/Aquarius-Ice, is never searched, and every Aquarius app in
+# the dock comes up as two grey letters — on a machine that has the icons.
+#
+# Quickshell offers a way past this: the QS_ICON_THEME variable, read once at
+# start. It is set here from the same GNOME setting every GTK application on
+# the machine reads (icon-theme, which the image defaults to Aquarius-Ice and a
+# person may change in Settings), so the dock matches Files and the app grid.
+# Changing the icon theme takes effect at the next login, not live.
+# -----------------------------------------------------------------------------
+if [ -z "${QS_ICON_THEME:-}" ]; then
+    QS_ICON_THEME="$(gsettings get org.gnome.desktop.interface icon-theme 2> /dev/null | tr -d "'")"
+fi
+export QS_ICON_THEME="${QS_ICON_THEME:-Aquarius-Ice}"
+
 # Deliberately NOT set: GDK_BACKEND. Setting it globally breaks the screencast
 # portal, and there is no upside.
 

@@ -81,6 +81,13 @@ export XDG_SESSION_TYPE="wayland"
 export XDG_CURRENT_DESKTOP="Aquarius:wlroots"
 export QT_QPA_PLATFORM="wayland"
 
+# The login screen draws app icons too (the session chooser). Qt has no
+# platform theme for a desktop called "Aquarius" and so reports NO icon theme,
+# leaving only hicolor — where our icons are not. Nobody is logged in yet, so
+# there is no personal setting to read; the image's default is the answer.
+# See the longer note in /usr/bin/aquarius-session.
+export QS_ICON_THEME="${QS_ICON_THEME:-Aquarius-Ice}"
+
 # Qt draws its own window decorations badly and the login screen has none, so
 # this stops Qt looking for a decoration plugin it does not need.
 export QT_WAYLAND_DISABLE_WINDOWDECORATION="1"
