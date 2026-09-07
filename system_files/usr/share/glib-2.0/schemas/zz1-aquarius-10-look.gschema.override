@@ -268,3 +268,18 @@ secondary-color='#111A2B'
 #                                artwork a single, documented line to land on
 #                                later. Decided in Phase R5, 2026-09-05; the
 #                                full story is docs/restart/desktop-identity.md.
+
+# ------------------------------------------------------------------------------
+# Window buttons follow the keyboard choice (Royce, 2026-09-06)
+# ------------------------------------------------------------------------------
+# The Welcome step's "Mac or Windows" choice sets where the window buttons sit
+# as well as the keyboard style: Mac = close, minimise, maximise on the LEFT;
+# Windows = minimise, maximise, close on the RIGHT. `aq keys mac|windows` writes
+# this key when the choice changes; this is the DEFAULT for a fresh account,
+# which is the Mac layout because Mac is the default keyboard style. Without a
+# default here, every GTK window kept GNOME's own close-only, right-hand bar
+# until someone ran `aq keys` by hand — which is what the bench showed on
+# 6 September 2026. (The comment block above once said this belonged to a
+# bench decision. That decision is made.)
+[org.gnome.desktop.wm.preferences]
+button-layout='close,minimize,maximize:'
