@@ -20,7 +20,40 @@
 # on the next GNOME release, and chasing GNOME's internals is a treadmill that
 # has eaten entire distributions.
 #
-# ⚠️ ONE NAMED EXCEPTION SINCE 2026-09-06, AND IT IS NARROW ON PURPOSE.
+# ⚠️ TWO NAMED EXCEPTIONS SINCE 2026-09-06, BOTH NARROW ON PURPOSE.
+#
+# EXCEPTION 2 — TWO PROPERTIES OF GTK CSS, IN DARK MODE ONLY.
+# This is the one place AquariusOS colours somebody else's windows, and it is
+# two lines long:
+#
+#     window    { background-color: #0B1220; }   Midnight `bg`
+#     headerbar { background-color: #152033; }   Midnight `panel`
+#
+# WHY. In dark mode the Aquarius shell turns Midnight, a deep navy, and
+# libadwaita's own dark theme is a neutral near-black. Put a Files window on a
+# Midnight desktop and the window is grey against navy — not broken, plainly
+# from a different design. Two colours fix it.
+#
+# WHY IT IS NOT A TREADMILL. There is nothing of GNOME's here to keep up with.
+# No text colours, no buttons, no borders, no widget styling, no selectors that
+# name a libadwaita internal — the two most stable selectors in GTK, set to two
+# colours out of our own palette. If libadwaita changes everything else about
+# how a window is drawn, these two lines are still either right or harmless.
+#
+# WHY IT IS NOT SHIPPED AS A FILE IN /etc. Because it must apply in DARK ONLY,
+# and GTK's CSS has no "only when dark" selector — a stylesheet is loaded or it
+# is not. A file shipped system-wide would be on all the time, and a navy window
+# on the Ice light desktop is the same mistake in the other direction. So the
+# file is WRITTEN when the machine goes dark and REMOVED when it goes light, by
+# /usr/share/aquarius/labwc/generate-theme, into ~/.config/gtk-4.0/gtk.css and
+# its gtk-3.0 twin. That program also refuses to touch a gtk.css it did not
+# write, so somebody's own GTK customisation is left alone.
+#
+# The colours come from the shell's theme/Midnight.qml, like every other colour
+# in this project. build_files/55-aquarius-session.sh reads the generated file
+# back and fails the build if it is ever more than those two rules.
+#
+# EXCEPTION 1 — THE APP ICONS.
 # This list used to say "no icon theme" as well, and now AquariusOS does ship
 # one — but it is not an icon theme in the sense that sentence meant. It is
 # EIGHT icons: the Editor, the Writer, Files, Settings, the app chooser, the
@@ -1051,6 +1084,35 @@ if [ -s "${LOGO_SVG}" ]; then
     ok "$(basename "${LOGO_SVG}") is installed"
 else
     bad "${LOGO_SVG} is missing — os-release names it and the About page would be blank"
+fi
+
+# ------------------------------------------------------------------------------
+# WHICH GTK THIS IMAGE ACTUALLY HAS
+# ------------------------------------------------------------------------------
+# The narrow exception at the top of this file — two properties of GTK CSS, in
+# dark mode only — is written against GTK and libadwaita as they are IN THIS
+# IMAGE, not as they were in whatever version somebody remembered. So the
+# versions are printed here, into the build log, where a person looking at a
+# window that came out the wrong colour six months from now can see exactly what
+# the assumption was made against.
+#
+# It is a version READ-BACK, not a version requirement: nothing here pins GTK,
+# and the two selectors used (`window` and `headerbar`) are the two most stable
+# ones in GTK. This exists so that if they ever DO stop working, the log says
+# what changed.
+say "Which GTK the two-property dark-mode exception is written against"
+for aq_pkg in gtk4 gtk3 libadwaita; do
+    aq_ver="$(rpm -q --queryformat '%{VERSION}-%{RELEASE}' "${aq_pkg}" 2> /dev/null || true)"
+    if [ -n "${aq_ver}" ]; then
+        echo "  ${aq_pkg}: ${aq_ver}"
+    else
+        echo "  ${aq_pkg}: not installed"
+    fi
+done
+if rpm -q gtk4 > /dev/null 2>&1 && rpm -q libadwaita > /dev/null 2>&1; then
+    ok "GTK 4 and libadwaita are both here, which is what the dark-mode exception styles"
+else
+    bad "gtk4 or libadwaita is missing from this image — GNOME's own applications could not run, so something far bigger than the window colour is wrong"
 fi
 
 # Nothing in system_files/ should be writable by everybody: /usr is meant to be

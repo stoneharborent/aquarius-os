@@ -11,7 +11,7 @@ opens. It asks two questions and then says goodbye:
 
 | | |
 | --- | --- |
-| **Step 1 of 3** | *How should keyboard shortcuts work?* Mac, or Windows. Mac is already chosen. |
+| **Step 1 of 3** | *How should keyboard shortcuts and window buttons work?* Mac, or Windows. Mac is already chosen. One answer sets both: Mac means ⌘C and the window buttons on the left, Windows means Ctrl+C and them on the right. |
 | **Step 2 of 3** | *Your creator apps.* The window you already know — tick what you want. |
 | **Step 3 of 3** | *You're set.* Three things worth knowing, and a button that closes it. |
 
@@ -43,7 +43,7 @@ So: one flow, three steps, asked once.
 
 ### Step 1 — the keyboard
 
-> **How should keyboard shortcuts work?**
+> **How should keyboard shortcuts and window buttons work?**
 >
 > AquariusOS can work the way a Mac does. Most people who edit video came from
 > one, so that is what it does unless you say otherwise.

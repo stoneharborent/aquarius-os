@@ -99,7 +99,10 @@ render() {
 # ------------------------------------------------------------------------------
 render_kde() {
   SRC="$SRC_DIR/the-pour.svg"
-  BGCOLOR="#06070C"
+  # the-pour.svg's own ground, so a stray transparent pixel at the edge shows
+  # the wallpaper's colour rather than white. Moved to Midnight's `bg` with the
+  # rest of that drawing on 2026-09-06.
+  BGCOLOR="#0B1220"
   local out="$REPO_ROOT/system_files/usr/share/wallpapers/AquariusThePour/contents"
   mkdir -p "$out/images"
 

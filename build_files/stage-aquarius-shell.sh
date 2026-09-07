@@ -164,7 +164,12 @@ install -d -m 0755 "${AQ_DEST}"
 # theme/ and the Aquarius mark with the desktop and is otherwise its own thing.
 # It travels with the shell rather than living here because it IS the shell,
 # wearing a different hat, and the two must never disagree about a colour.
-for aq_part in shell.qml components services theme assets greeter; do
+#
+# lock/ is the LOCK screen, and it is a different case from greeter/ again: it
+# is not a separate entry point at all. shell.qml holds it, so it is already
+# loaded and waiting the moment you log in, which is the whole reason Super+L is
+# instant. It has to come across or Super+L would do nothing at all.
+for aq_part in shell.qml components services theme assets greeter lock; do
     if [ ! -e "/src/${aq_part}" ]; then
         bad "the shell repository has no '${aq_part}' — its layout changed and this script has not caught up"
         continue
@@ -231,6 +236,20 @@ for aq_f in greeter/greeter.qml greeter/qmldir greeter/GreeterState.qml \
         ok "${aq_f}"
     else
         bad "${aq_f} is missing — the login screen would not start"
+    fi
+done
+
+# The lock screen. Its state file is the one that talks to PAM, and the pam.d
+# file this image installs at /etc/pam.d/aquarius-lock is only useful if it is
+# here to ask for it. build_files/57-lock-screen.sh checks the two agree on the
+# name; this checks the files arrived at all.
+for aq_f in lock/qmldir lock/LockState.qml lock/LockLayer.qml \
+    lock/LockSurface.qml lock/LockCard.qml lock/LockField.qml \
+    lock/LockVeil.qml lock/LockBlur.qml lock/LockIdle.qml; do
+    if [ -s "${AQ_DEST}/${aq_f}" ]; then
+        ok "${aq_f}"
+    else
+        bad "${aq_f} is missing — Super+L would do nothing and the machine would never lock itself"
     fi
 done
 

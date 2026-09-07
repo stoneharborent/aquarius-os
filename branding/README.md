@@ -8,9 +8,16 @@ the wallpaper art. It is the *source*. The OS itself reads copies of these thing
 every colour and measurement AquariusOS uses. Nothing in this project should ever use a
 colour that isn't in that file.
 
-The design itself is decided in the Claude Design project **"AquariusOS Core Identity"**,
-direction **"Flow State"**. This folder is where that decision gets written down in a form
-the build can use.
+**Where the design is decided.** Since 2026-09-06 the colours come from the Aquarius Desktop
+shell's own theme files — `theme/Ice.qml` and `theme/Midnight.qml` in the `aquarius-shell`
+repository. Those are what runs on the bench and what Royce approved on screen.
+`tokens.md` writes them down so everything else can use the same numbers. If `tokens.md` and
+the shell ever disagree, **the shell wins**.
+
+Before that, the design came from the Claude Design project "AquariusOS Core Identity",
+direction "Flow State" — the *Starlight* palette. That palette is retired. The
+`design-system/` folder next to this one is still a copy of it and is waiting to be
+re-synced; its own README says so. Do not copy colours out of it.
 
 ---
 
@@ -19,9 +26,13 @@ the build can use.
 | File | What it is |
 |---|---|
 | `tokens.md` | **The source of truth.** Every colour, font, size, corner radius, shadow and animation speed. Read this first. |
-| `logo.svg` | The AquariusOS mark, in colour. |
+| `logo.svg` | The AquariusOS mark, in colour, for a light background. Same drawing as `logo-ice.svg` — this is the name the rest of the repo asks for. |
+| `logo-ice.svg` | The mark in the Ice (light) colours, under its honest name. |
+| `logo-midnight.svg` | The mark in the Midnight (dark) colours — brighter blue, brighter gold, so it still carries on a navy ground. |
 | `logo-mono.svg` | The same mark in a single colour, for icons and watermarks. |
-| `wallpapers/the-pour.svg` | The default wallpaper, as editable artwork. |
+| `wallpapers/the-pour-ice.svg` | The default wallpaper for light mode, as editable artwork. |
+| `wallpapers/the-pour-midnight.svg` | The same picture for dark mode. |
+| `wallpapers/the-pour.svg` | The original drawing, from the retired KDE line. Nothing installs it any more; it is kept because it is the parent of the two above. |
 | `render-wallpaper.sh` | Turns that artwork into the picture files the OS actually ships. |
 | `render-logo-png.sh` | Makes the bitmap copy of the mark that GNOME's **login screen** needs. |
 | `render-about-logo.sh` | Makes the two wide "mark + AquariusOS" pictures for GNOME's **Settings > About** page — one for light mode, one for dark. |
@@ -47,9 +58,9 @@ To make something reach the OS, it has to be placed inside `../system_files/`, a
 path it needs to live at in the finished system. `system_files/` is a mirror of `/`. So:
 
 ```
-system_files/usr/share/color-schemes/AquariusDark.colors
+system_files/usr/share/plymouth/themes/aquarius/watermark.png
         ↓  becomes, in the running OS  ↓
-            /usr/share/color-schemes/AquariusDark.colors
+            /usr/share/plymouth/themes/aquarius/watermark.png
 ```
 
 The build script (`../build_files/build.sh`) copies everything under `system_files/` into
@@ -61,25 +72,33 @@ the image with a single command. That is the whole mechanism.
 
 | The design says | Which becomes this file | Which makes this happen |
 |---|---|---|
-| the dark colour palette | `system_files/usr/share/color-schemes/AquariusDark.colors` | The KDE colour scheme "Aquarius Dark" |
-| `starlight` `#8AB4FF` | same file + the KDE defaults | The accent colour on buttons, links and selections |
-| Inter, JetBrains Mono | two `dnf5 install` lines in `build.sh` | The desktop's normal and code fonts |
+| the whole palette, both themes | `theme/Ice.qml` / `theme/Midnight.qml`, in the **shell's** repo | Every colour in the Aquarius Desktop. This folder copies *from* there, never the other way round. |
+| `aquariusBlue` `#2C8FC4` | `ANSI_COLOR` in `build_files/70-image-info.sh` | The colour a terminal paints the logo in (`neofetch` and friends) |
+| `aquariusBlue`, as a word | `'blue'` in the GNOME defaults | GNOME's accent. GNOME takes one of nine fixed words, not a hex code, and `blue` is the nearest. |
+| the palette, in the app icons | `branding/icons/icons.mjs` → `system_files/usr/share/icons/Aquarius-{Ice,Midnight}/` | The two icon themes |
+| Midnight `bg` `#0B1220` + `aquariusBlue` `#00BFFF` | `system_files/usr/share/plymouth/themes/aquarius/` | The boot screen's ground and its progress bar |
+| Inter, JetBrains Mono | two `dnf5 install` lines in the build files | The desktop's normal and code fonts |
 | Sora | `system_files/usr/share/fonts/sora-fonts/` | The display font, for headlines |
-| "The Pour" | `system_files/usr/share/wallpapers/AquariusThePour/` | The default desktop background |
-| the desktop layout | `system_files/usr/share/plasma/look-and-feel/org.aquariusos.desktop/` | The top bar and the floating dock |
+| "The Pour" | `system_files/usr/share/backgrounds/aquarius/` | The default desktop background, one picture per theme |
+| the mark | `system_files/usr/share/icons/hicolor/scalable/apps/aquarius-logo.svg` | The logo every app finds by name — the About page, the boot screen, the logo menu |
 
 ---
 
 ## Changing the wallpaper
 
-1. Open `wallpapers/the-pour.svg` and edit it. It is plain text — any code editor opens it,
-   and design apps can open it too.
+1. Open `wallpapers/the-pour-ice.svg` (light mode) or `wallpapers/the-pour-midnight.svg`
+   (dark mode) and edit it. They are plain text — any code editor opens them, and design
+   apps can open them too. **Change both**, or the desktop will look like two different
+   designs depending on the time of day.
 2. Run this, from anywhere:
    ```bash
-   bash branding/render-wallpaper.sh
+   bash branding/render-wallpaper.sh gnome
    ```
-   That writes fresh picture files at 4K, 1080p and 1280×800 straight into
-   `system_files/usr/share/wallpapers/AquariusThePour/contents/images/`.
+   That writes both pictures at 4K straight into
+   `system_files/usr/share/backgrounds/aquarius/`.
+
+   ⚠️ Say `gnome`. Plain `render-wallpaper.sh` with no argument also runs the old KDE half,
+   which writes a wallpaper package this line does not install.
 3. `git add`, `git commit`, `git push`. GitHub rebuilds the OS with the new background.
 
 You do **not** need to install anything for step 2 — the script uses Google Chrome, which is
@@ -92,13 +111,22 @@ because it's faster.)
 
 ## Changing a colour
 
-1. Change it in `tokens.md`. Always here first.
-2. Convert the hex code to the "red,green,blue" numbers KDE wants — `#8AB4FF` becomes
-   `138,180,255`. (Any "hex to RGB" web page does this, or ask Claude.)
-3. Change every place that colour appears in
-   `system_files/usr/share/color-schemes/AquariusDark.colors`. That file has a cheat sheet
-   at the top listing which token is which number.
-4. Push.
+The desktop's colours do not start here. They start in the shell's `theme/Ice.qml` and
+`theme/Midnight.qml`, in the `aquarius-shell` repository. So:
+
+1. **Change it in the shell first.** That is the only place a colour is really decided.
+2. **Write the new value into `tokens.md`**, in the same sitting. If the two ever disagree,
+   the shell is right and `tokens.md` is stale.
+3. **Find the copies of that colour in this repository and change them too.** There are only
+   a handful, and the "Where each piece of the design ends up" table above lists them all.
+   Grep for the old hex code before you decide you are finished.
+4. **Re-run whichever renderer that colour feeds** — `render-app-icons.sh`,
+   `render-plymouth-assets.sh`, `render-about-logo.sh`, `render-wallpaper.sh` — and commit
+   the pictures it writes along with the change.
+5. Push.
+
+There is no colour-scheme file to edit any more. The KDE line, and its
+`usr/share/color-schemes/AquariusDark.colors`, are gone.
 
 ---
 
@@ -154,7 +182,7 @@ To update Sora later: download the two files from that repository again, replace
 
 ## Still open
 
-**The OS still calls itself Bazzite** in "About this system" and in the terminal. Renaming
-it is deliberately a separate job with its own risks — the research is written up in
-[`../docs/os-release-branding-research.md`](../docs/os-release-branding-research.md) and it
-is tracked in `../../ROADMAP.md`. Nothing in this folder attempts it.
+**The `design-system/` folder is stale.** It is a mirror of the Claude Design project, and
+that project still carries the retired Starlight palette. It gets re-synced from the design
+side, not edited here — its own README says so, and nothing in this repository should read
+colours out of it. `tokens.md` is the record until the mirror catches up.

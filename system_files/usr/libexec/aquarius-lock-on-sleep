@@ -1,0 +1,81 @@
+#!/usr/bin/bash
+# =============================================================================
+# aquarius-lock-on-sleep — lock the screen just before the machine sleeps
+# =============================================================================
+# WHAT THIS IS FOR
+#
+# Close a laptop lid, pick Sleep from the Aquarius menu, or leave a machine
+# alone long enough that it suspends, and the screen should be locked when it
+# wakes up. Otherwise anybody who opens the lid is looking at your desktop.
+#
+# systemd runs this file just before it suspends the machine, because
+# aquarius-lock-on-sleep.service says `Before=sleep.target`. There is no
+# guessing and no timer: suspend genuinely waits for this to finish.
+#
+# -----------------------------------------------------------------------------
+# WHY IT LOOKS IN /run/user RATHER THAN ASKING WHO IS LOGGED IN
+# -----------------------------------------------------------------------------
+# This runs as root, from the system's own systemd, and it has to reach a
+# program running inside somebody's graphical session. The tidy-looking way
+# would be to ask `loginctl list-sessions` and read its table — but that table's
+# columns have changed shape between systemd versions, and a script that reads
+# it wrongly locks nothing and says nothing.
+#
+# /run/user does not change shape. systemd makes exactly one folder in there per
+# logged-in person, named with their user number, and deletes it when they log
+# out. So the folders that exist ARE the people who are logged in, and their
+# names ARE what we need to reach them.
+#
+# -----------------------------------------------------------------------------
+# WHAT IT ACTUALLY SAYS TO THE SHELL
+# -----------------------------------------------------------------------------
+#     qs ipc call lock lock
+#
+# The same one line the Super+L key binding runs. It does not start anything —
+# it sends a message to the Aquarius Shell that is already running in that
+# person's session, and the shell covers the screens. Which shell instance gets
+# the message comes from QS_CONFIG_PATH, which is why this sets it: root's
+# environment has no idea where the shell lives.
+#
+# If somebody is logged into GNOME instead, or into a text console, there is no
+# Aquarius Shell listening and the command fails harmlessly. That is not an
+# error worth failing a suspend over, so it is allowed to fail — GNOME does its
+# own locking, and a text console has nothing to show.
+# =============================================================================
+
+set -uo pipefail
+
+AQ_SHELL_DIR="/usr/share/aquarius/shell"
+
+# Everybody with a session open right now.
+for aq_runtime in /run/user/*; do
+    [ -d "${aq_runtime}" ] || continue
+
+    aq_uid="${aq_runtime##*/}"
+
+    # The folder name has to be a number. Anything else is not a session.
+    case "${aq_uid}" in
+        '' | *[!0-9]*) continue ;;
+    esac
+
+    # Real people only. Under 1000 is the machine's own plumbing — including the
+    # login screen's own account, which has no desktop to lock.
+    [ "${aq_uid}" -ge 1000 ] || continue
+
+    aq_user="$(id -nu "${aq_uid}" 2> /dev/null)" || continue
+    [ -n "${aq_user}" ] || continue
+
+    echo "aquarius-lock-on-sleep: asking ${aq_user}'s shell to lock"
+
+    # `runuser` drops from root to that person before running anything, so the
+    # message arrives as them — which matters, because `qs ipc` talks over a
+    # socket in their own runtime folder and would refuse a stranger.
+    runuser -u "${aq_user}" -- \
+        env "XDG_RUNTIME_DIR=${aq_runtime}" "QS_CONFIG_PATH=${AQ_SHELL_DIR}" \
+        qs ipc call lock lock \
+        || echo "aquarius-lock-on-sleep: ${aq_user} has no Aquarius Shell listening — nothing to lock"
+done
+
+# Always succeed. A suspend must not be refused because a lock did not happen;
+# the lines above say what did and did not, and the journal keeps them.
+exit 0

@@ -44,30 +44,55 @@
   TWO RULES THIS FILE OBEYS
   =============================================================================
   1. NO COLOURS IN THIS FILE. Colour in the Aquarius Desktop lives in the
-     shell's theme/Ice.qml and theme/Midnight.qml, and there is exactly ONE
-     other file allowed to hold a colour value: `themerc-override` next to this
-     one, which is how labwc's own desktop menu and title bars got the Aquarius
-     look on 2026-09-06. It is an exception because it has to be — labwc is a C
-     program reading a flat text file and cannot import QML, so somebody has to
-     write the numbers out twice — and every value in it is copied digit for
-     digit from Ice. Nothing else here, this file included, may name a colour.
-
-     What this file DOES carry is the FONT for those same surfaces (the <theme>
-     section below), because a font is not a colour and there is no themerc key
-     for it — labwc takes fonts from rc.xml and colours from the themerc.
+     shell's theme/Ice.qml and theme/Midnight.qml, and NOWHERE ELSE — not even
+     here, and not even in a themerc. There used to be one hand-written
+     exception, a file called themerc-override, holding a second copy of the
+     Ice palette. It is gone. In its place is generate-theme next to this file,
+     which READS the shell's palette and writes labwc's colours out for it. A
+     generated copy cannot drift from the palette, because it is made from it
+     every time the desktop starts.
 
   2. NO PATHS. The shell is started from the autostart file next to this one,
      with a bare `qs`, because /usr/bin/aquarius-session exports QS_CONFIG_PATH
      first. Nothing in this folder names a directory.
 
   =============================================================================
+  THIS FILE IS A TEMPLATE. THREE PARTS OF IT ARE WRITTEN BY A PROGRAM.
+  =============================================================================
+  labwc keeps one look in two places: colours come from a themerc, but the
+  corner radius, the fonts and which side the window buttons sit on are rc.xml
+  settings and there is no themerc key for any of them. All three have to change
+  while the desktop is running — the first two follow AQ_UI_SCALE like every
+  other size, and the third follows `aq keys mac` / `aq keys windows` — and this
+  file lives in /usr, which on an image-based operating system is read-only.
+
+  So generate-theme next to this file copies this file, rewrites the three
+  regions marked
+
+      AQ-GENERATED-BEGIN <name>   ...   AQ-GENERATED-END <name>
+
+  and writes the finished rc.xml into ~/.config/aquarius/labwc/, which is the
+  folder /usr/bin/aquarius-session then starts labwc with. Everything outside
+  those three regions — every binding, every comment, this one included — is
+  copied through untouched.
+
+  The values written between the markers here are the design at AQ_UI_SCALE=1
+  with Mac buttons, so this template is a correct, complete rc.xml on its own if
+  it is ever read directly. It is, in fact, read directly whenever generating
+  fails: the launcher falls back to this folder rather than refusing to start.
+
+  =============================================================================
   KEY BINDINGS ADDED BY US
   =============================================================================
     W-space     open or close the Aquarius search palette
     W-Return    a terminal
-    W-Tab       switch to the next window (hold Super, tap Tab)
-    W-S-Tab     switch to the previous window
+    W-Tab       open the Aquarius app switcher and step forward through it
+    W-S-Tab     the same, backwards
+    W-grave     cycle the windows of the app you are in, with no panel
+    A-Tab       the app switcher again, for the Windows keyboard style
+    A-S-Tab     the same, backwards
     W-S-e       leave the desktop and return to the login screen
+    W-l         lock the screen
 
   =============================================================================
   THE MOUSE BINDING ADDED BY US
@@ -104,70 +129,140 @@
 
   <!--
     =========================================================================
-    THE FONT labwc DRAWS ITS OWN SURFACES IN
+    THE HALF OF THE LOOK THAT LIVES IN rc.xml
     =========================================================================
-    The COLOURS of the desktop menu and the window title bars are in
-    `themerc-override` next to this file, which arrived in this image on
-    2026-09-06 and is the one file in this folder allowed to name a colour.
-    Their FONT is not in it: labwc takes theme colours from a themerc and fonts
-    from rc.xml, so the two halves of one look live in two files. That is
-    labwc's split, not ours, and it is why rule 1 above says "no colours" and
-    this section is still here.
+    labwc takes COLOURS from a themerc and everything below from here. That is
+    labwc's split, not ours, and it is why one design lives in two files.
 
-    Inter is the shell's own UI face — its theme/Theme.qml picks it as
-    `fontBody`, and every label in the bar, the dock, the menus and the panels
-    is drawn in it. Without these four lines labwc would draw its menu in
-    "sans", whatever that resolves to on the machine, and the desktop menu would
-    be in a different typeface from the shell menu two inches above it.
-
-    IF INTER IS NOT INSTALLED labwc falls back to its default on its own, which
-    is the same outcome the shell's Theme.pickFont() arranges for itself. This
-    image installs Sora, Inter and JetBrains Mono, so on AquariusOS it is
-    always there.
-
-    THE SIZES ARE THE SHELL'S, and labwc's <size> is in PIXELS
-    (labwc-config(5): "Font size in pixels. Default is 10."), which is the same
-    unit theme/Theme.qml uses — it sets font.pixelSize, never pointSize. So:
-
-      MenuItem   19  = Theme.fsBody     — one row of the Aquarius menu
-      MenuHeader 15  = Theme.fsCaption  — a menu title, quieter than its items
-      ActiveWindow / InactiveWindow
-                 15  = Theme.fsCaption  — the size the top bar draws its own
-                                          labels at, and a title bar is the same
-                                          kind of chrome as the bar
-
-    ⚠️ AQ_UI_SCALE DOES NOT REACH HERE. /usr/bin/aquarius-session exports that
-    variable and the shell multiplies every size by it; labwc knows nothing
-    about it. Set it and the shell grows while these do not. Written up as a
-    follow-up in themerc-override's header, alongside the Midnight problem,
-    because both want the same fix.
-
-    Attribute ORDER matters in labwc when a font is written on one line —
-    labwc-config(5) is explicit that `place` must come before `name` and `size`,
-    or the setting lands on every place at once. Child elements have no such
-    trap, so these are written as children.
+    All three settings in this section are written by generate-theme next to
+    this file. Read the template note at the top of this file for how that
+    works.
   -->
   <theme>
 
+    <!--
+      The name labwc looks the WINDOW BUTTONS up under.
+
+      This is not a colour scheme and it does not change the look on its own.
+      labwc reads its settings from the folder it was started with, but it looks
+      for the little round button PICTURES somewhere else entirely: in
+      themes/<this name>/labwc/, searched under XDG_DATA_HOME first, then
+      ~/.themes, then XDG_DATA_DIRS (labwc-theme(5)). generate-theme draws the
+      pictures into exactly that folder, so this name is the thread that ties
+      the two together. Change it here and the buttons vanish.
+
+      There is no themerc file in that folder and there does not need to be —
+      every colour and size is in the generated themerc-override instead.
+    -->
+    <name>Aquarius</name>
+
+    <!--
+      How round the top corners of a window are.
+
+      12 to match libadwaita's own fixed 12, so that a GTK application's rounded
+      window and the frame labwc draws around it agree instead of showing two
+      radii a pixel apart. labwc's own default is 8.
+
+      ⚠️ labwc clamps this to one less than the title bar height, so a very
+      small title bar quietly reduces it. At the sizes this design uses that
+      never happens (38 against 12).
+    -->
+    <!-- AQ-GENERATED-BEGIN corner-radius -->
+    <cornerRadius>12</cornerRadius>
+    <!-- AQ-GENERATED-END corner-radius -->
+
+    <!--
+      WHICH SIDE THE WINDOW BUTTONS SIT ON.
+
+      This follows the ONE choice made in the Welcome window and has no setting
+      of its own:
+
+        Mac      close, minimise, maximise  on the LEFT
+        Windows  minimise, maximise, close  on the RIGHT
+
+      Close is the outermost button either way — furthest from the title —
+      because it is the one press you cannot take back.
+
+      The syntax is labwc's: exactly one colon splits left from right, commas
+      separate the buttons within a side, and the names are labwc's rather than
+      English ones (`iconify` is minimise, `max` is maximise).
+
+      The switch is `aq keys mac` or `aq keys windows`, which writes the
+      keyboard style, re-runs generate-theme, sets GNOME's matching
+      button-layout so the two desktops agree, and tells labwc to re-read its
+      files. No logging out.
+    -->
+    <!-- AQ-GENERATED-BEGIN titlebar-layout -->
+    <titlebar>
+      <layout>close,iconify,max:</layout>
+    </titlebar>
+    <!-- AQ-GENERATED-END titlebar-layout -->
+
+    <!--
+      THE FONT labwc DRAWS ITS OWN SURFACES IN.
+
+      Inter is the shell's own UI face — its theme/Theme.qml picks it as
+      `fontBody`, and every label in the bar, the dock, the menus and the panels
+      is drawn in it. Without these lines labwc would draw its menu in "sans",
+      whatever that resolves to on the machine, and the desktop menu would be in
+      a different typeface from the shell menu two inches above it.
+
+      IF INTER IS NOT INSTALLED labwc falls back to its default on its own,
+      which is the same outcome the shell's Theme.pickFont() arranges for
+      itself. This image installs Sora, Inter and JetBrains Mono, so on
+      AquariusOS it is always there.
+
+      THE SIZES ARE THE SHELL'S, and labwc's <size> is in PIXELS
+      (labwc-config(5): "Font size in pixels. Default is 10."), which is the
+      same unit theme/Theme.qml uses — it sets font.pixelSize, never pointSize:
+
+        MenuItem   19  = Theme.fsBody     — one row of the Aquarius menu
+        MenuHeader 15  = Theme.fsCaption  — a menu title, quieter than its items
+        ActiveWindow / InactiveWindow
+                   13  — the window title, at weight `medium`. Smaller than the
+                         bar's own labels on purpose: a title bar should name a
+                         window, not announce it. labwc takes a WORD for the
+                         weight rather than a number; `medium` is Pango's 500,
+                         which is what the design asks for.
+
+      ⚠️ AQ_UI_SCALE REACHES THESE NOW, and it did not before. It used to be
+      that /usr/bin/aquarius-session exported that variable, the shell grew, and
+      labwc knew nothing about it — so a scaled desktop had an unscaled desktop
+      menu. generate-theme writes these numbers, so they scale with everything
+      else.
+
+      ⚠️ THE TITLE FONT AND THE TITLE BAR'S HEIGHT ARE CONNECTED, which is not
+      obvious. labwc 0.20 removed the setting that named a title bar height, and
+      works it out as max(font height, button height) + 2 x padding. The button
+      disc (20) is comfortably taller than this font, so the buttons are what
+      decide the height and the arithmetic in generate-theme holds. Make this
+      font much bigger and the title bar grows with it.
+
+      Attribute ORDER matters in labwc when a font is written on one line —
+      labwc-config(5) is explicit that `place` must come before `name` and
+      `size`, or the setting lands on every place at once. Child elements have
+      no such trap, so these are written as children.
+    -->
+    <!-- AQ-GENERATED-BEGIN fonts -->
     <font place="MenuItem">
       <name>Inter</name>
       <size>19</size>
     </font>
-
     <font place="MenuHeader">
       <name>Inter</name>
       <size>15</size>
     </font>
-
     <font place="ActiveWindow">
       <name>Inter</name>
-      <size>15</size>
+      <size>13</size>
+      <weight>medium</weight>
     </font>
-
     <font place="InactiveWindow">
       <name>Inter</name>
-      <size>15</size>
+      <size>13</size>
+      <weight>medium</weight>
     </font>
+    <!-- AQ-GENERATED-END fonts -->
 
   </theme>
 
@@ -217,37 +312,112 @@
       </action>
     </keybind>
 
+    <!-- ====================================================================== -->
+    <!-- BEGIN: the Aquarius app switcher. Added 2026-09-06.                     -->
+    <!-- ====================================================================== -->
     <!--
-      Switching windows with the Super key, so that Aquarius Keys' Mac mode
-      behaves the way a Mac does.
+      THE ONLY BLOCK IN THIS FILE THE APP SWITCHER OWNS. Everything it needs is
+      between this banner and the matching END banner further down, including
+      the one setting outside <keyboard>. Nothing else in the file was touched.
 
-      labwc already switches windows, on Alt+Tab, and that binding stays (it
-      comes from the <default /> above). This adds Super+Tab alongside it. The
-      reason is Aquarius Keys: in Mac mode the Command key is mapped to Super,
-      so a person pressing Command+Tab out of habit is really sending Super+Tab.
-      GNOME already does the right thing with that, so before this the same
-      keystroke worked on one AquariusOS desktop and did nothing on the other.
+      This block is the aquarius-shell repository's, copied across on
+      2026-09-06 — see the note about drift under the terminal binding above.
+      Change one, change both; build_files/check-labwc-drift.sh fails the build
+      if the two copies stop agreeing.
 
-      NextWindow and PreviousWindow are labwc's own actions for this, and they
-      are what Alt+Tab is bound to by default (labwc-actions(5), labwc 0.20).
-      They show the window switcher while the modifier is held, so holding Super
-      and tapping Tab walks along the list — the behaviour people expect from
-      this key. The Immediate variants skip that overlay and are meant for
-      bindings with no modifier, which is not this.
+      ======================================================================
+      WHAT THESE FIVE BINDINGS DO
+      ======================================================================
+      None of them launches a program. Each one sends a short message to the
+      shell that is ALREADY running, telling it to show its app switcher and
+      move the selection. `qs ipc call <target> <function>` is Quickshell's own
+      mechanism for that; the target "switcher" and its functions are declared
+      by the IpcHandler in the shell's components/switcher/AppSwitcher.qml.
 
-      These two bindings are the aquarius-shell repository's, copied across on
-      2026-09-06. They had been added there and never here, which is the same
-      drift that lost the right-click menu: this image ships its own hand-kept
-      copies of the labwc files, so a binding the shell repository gains does
-      not appear on a machine until somebody adds it here. Change one, change
-      both.
+      If a key seems to do nothing, ask the running shell what it offers:
+          qs ipc show
+
+      ======================================================================
+      WHY BOTH SUPER AND ALT ARE BOUND, ALL THE TIME
+      ======================================================================
+      AquariusOS asks "Mac or Windows?" once, at first login, and that answer
+      decides which physical key is which:
+
+        Mac style      Aquarius Keys swaps the two keys beside the space bar, so
+                       the key a Mac user reaches for with their thumb sends
+                       SUPER. Command+Tab arrives here as W-Tab. (The
+                       Windows-logo key becomes Option and sends Alt.)
+        Windows style  nothing is swapped and the remapper does not even run.
+                       Alt+Tab arrives here as A-Tab.
+
+      Binding both means this file never has to change when somebody runs
+      `aq keys mac` or `aq keys windows`. What DOES change is what the panel
+      lists — applications in the Mac style, windows in the Windows style — and
+      the shell reads that from ~/.config/aquarius/keys.conf itself, live, with
+      no restart. One question, asked once; no second setting anywhere.
+
+      ======================================================================
+      WHY labwc's OWN SWITCHER IS NOT USED ANY MORE
+      ======================================================================
+      These bindings used to be NextWindow and PreviousWindow, which are
+      labwc's own actions and draw labwc's own on-screen list. That list works,
+      but it is a plain list of window titles in labwc's theme, and it cannot
+      group five windows of one editor into one application the way a Mac does.
+      The Aquarius switcher is drawn by the shell, from the same icon theme and
+      the same colours as the dock, and it knows about applications.
+
+      labwc's list is switched off below, outside </keyboard>, so that nothing
+      can put two switchers on screen at once.
+
+      ======================================================================
+      HOW IT KNOWS YOU LET GO OF THE KEY
+      ======================================================================
+      It is not in this file, and that surprises people, so: the shell sees the
+      release ITSELF. Its panel asks the compositor for the keyboard while it is
+      on screen, and because the Super key on its own is bound to nothing here,
+      labwc passes the release of it straight through to whoever has the
+      keyboard — which by then is the panel. The whole explanation, and the two
+      approaches that were tried first, are in the aquarius-shell repository at
+      docs/app-switcher.md.
+
+      ⚠️ DO NOT ADD A BINDING FOR Super_L OR Alt_L HERE. Binding the modifier on
+      its own would make labwc swallow its press, and a swallowed press means a
+      swallowed release — which is the one event this whole feature depends on.
     -->
+
+    <!-- Mac keyboard style: Command+Tab and Command+Shift+Tab. -->
     <keybind key="W-Tab">
-      <action name="NextWindow" />
+      <action name="Execute" command="qs ipc call switcher next" />
     </keybind>
 
     <keybind key="W-S-Tab">
-      <action name="PreviousWindow" />
+      <action name="Execute" command="qs ipc call switcher prev" />
+    </keybind>
+
+    <!--
+      Command+` — step through the windows of the app you are already in,
+      without putting anything on screen. The key to the left of the 1 on a US
+      keyboard; labwc's name for it is "grave".
+    -->
+    <keybind key="W-grave">
+      <action name="Execute" command="qs ipc call switcher cycle" />
+    </keybind>
+
+    <!--
+      Windows keyboard style: Alt+Tab and Alt+Shift+Tab.
+
+      These REPLACE labwc's built-in Alt+Tab, which arrives from the
+      <default /> at the top of this section. When two keybinds name the same
+      key, labwc keeps the last one written down and drops the earlier — so
+      these lines, coming after it, are the ones that win. (Checked in labwc
+      0.20.2's own source: deduplicate_key_bindings() in src/config/rcxml.c.)
+    -->
+    <keybind key="A-Tab">
+      <action name="Execute" command="qs ipc call switcher next" />
+    </keybind>
+
+    <keybind key="A-S-Tab">
+      <action name="Execute" command="qs ipc call switcher prev" />
     </keybind>
 
     <!-- Leave the desktop and go back to the login screen, where GNOME is one
@@ -256,7 +426,62 @@
       <action name="Exit" />
     </keybind>
 
+    <!-- ==================================================================== -->
+    <!-- BEGIN: the lock screen (Super+L). Added 2026-09-06.                  -->
+    <!-- ==================================================================== -->
+    <!--
+      Lock the screen.
+
+      This does not launch a program. It sends a message to the Aquarius Shell,
+      which is already running, and that is the whole reason Super+L is
+      instant: there is no Qt to start and no QML to load, so the screens are
+      covered on the next frame rather than most of a second later, by which
+      time you have stood up and walked away.
+
+      The target "lock" and its function "lock" are declared by the IpcHandler
+      in the shell's lock/LockLayer.qml. Same mechanism, and the same trap, as
+      the search palette above: `qs ipc` takes NO configuration name, only the
+      target and the function, and it finds the right instance from
+      QS_CONFIG_PATH, which labwc inherited from /usr/bin/aquarius-session.
+
+      ONE BINDING COVERS BOTH KEYBOARD STYLES. In Aquarius Keys' Mac mode the
+      Command key is mapped to Super, so a person pressing Command+L is really
+      sending Super+L and lands here.
+
+      The password is checked by PAM, through the rules this image installs at
+      /etc/pam.d/aquarius-lock. Nothing in the shell checks a password itself.
+
+      If nothing happens, ask the running shell what it offers:
+          qs ipc show
+    -->
+    <keybind key="W-l">
+      <action name="Execute" command="qs ipc call lock lock" />
+    </keybind>
+    <!-- ==================================================================== -->
+    <!-- END: the lock screen                                                 -->
+    <!-- ==================================================================== -->
+
   </keyboard>
+
+  <!--
+    labwc's own window switcher, switched off.
+
+    The five bindings above no longer use NextWindow or PreviousWindow, so this
+    list should never appear on its own. This turns it off anyway, belt and
+    braces: if some future binding or a stray default ever reaches those actions
+    again, the result would be TWO switchers on screen at the same time, and
+    that is a confusing thing to debug from a screenshot.
+
+    `show="no"` on the <osd> element is labwc 0.20's spelling for it — checked
+    against labwc-config(5) at 0.20.2, the version this image builds. There is
+    no `<windowSwitcher show="">` attribute; the attribute belongs to <osd>.
+  -->
+  <windowSwitcher>
+    <osd show="no" />
+  </windowSwitcher>
+  <!-- ====================================================================== -->
+  <!-- END: the Aquarius app switcher                                          -->
+  <!-- ====================================================================== -->
 
   <mouse>
 

@@ -1,0 +1,83 @@
+# =============================================================================
+# aquarius-lock-on-sleep — lock the screen before the machine goes to sleep
+# =============================================================================
+# WHAT IT IS FOR
+#
+# A laptop lid closing, the Aquarius menu's Sleep row, the Sleep word on the
+# lock screen's own card, or the machine suspending on its own: all four end up
+# at the same place, systemd's sleep.target. This service is hooked onto that
+# target so the screen is locked on the way past.
+#
+# Without it, closing a lid and opening it again puts your desktop back on
+# screen with no password asked, which is the one thing a lock screen exists to
+# prevent.
+#
+# -----------------------------------------------------------------------------
+# WHY `Before=` MATTERS AND IS NOT DECORATION
+# -----------------------------------------------------------------------------
+# `WantedBy=sleep.target` means "run when the machine is about to sleep".
+# `Before=sleep.target` means "and FINISH before it actually does". Without the
+# second line, systemd is free to suspend the machine while this is still
+# talking to the shell — and then the screen is locked a fraction of a second
+# after the display has already gone, or not at all.
+#
+# Type=oneshot is the other half of that: systemd considers a oneshot service
+# finished when the program exits, so `Before=` has something real to wait for.
+#
+# -----------------------------------------------------------------------------
+# WHY IT IS A SYSTEM SERVICE AND NOT A USER ONE
+# -----------------------------------------------------------------------------
+# Almost everything else Aquarius runs is a USER service — one copy per person,
+# started when they log in. This one cannot be, because sleep.target belongs to
+# the system's own systemd and a user's systemd has no equivalent. (Third-party
+# programs exist to invent one; adding a daemon to make a target exist is a
+# larger thing than this needs.)
+#
+# So it runs as root, finds who is logged in, and drops down to them. The whole
+# of that is /usr/libexec/aquarius-lock-on-sleep, which is written out at
+# length — read it, it is the interesting half.
+#
+# -----------------------------------------------------------------------------
+# WHEN IT DOES NOTHING, AND WHY THAT IS FINE
+# -----------------------------------------------------------------------------
+# If the person at the machine is in GNOME rather than the Aquarius Desktop,
+# there is no Aquarius Shell to talk to, the command fails, and the script says
+# so and exits successfully anyway. GNOME locks itself on suspend; this is not
+# needed there and must not stop the machine sleeping.
+#
+# -----------------------------------------------------------------------------
+# HOW TO CHECK IT
+# -----------------------------------------------------------------------------
+#   systemctl status aquarius-lock-on-sleep    did it run last time?
+#   journalctl -u aquarius-lock-on-sleep       what it said
+#   systemctl start aquarius-lock-on-sleep     run it now, without sleeping
+#   systemctl mask aquarius-lock-on-sleep      turn it off
+#
+# It is switched on by a link shipped inside the read-only half of the system,
+# at /usr/lib/systemd/system/sleep.target.wants/, so an update always restores
+# it and `systemctl disable` has nothing in /etc to remove. `mask` is the way to
+# turn it off, the same arrangement as every other Aquarius service. See
+# build_files/aq-lib.sh.
+# =============================================================================
+
+[Unit]
+Description=Aquarius — lock the screen before the machine sleeps
+Documentation=file:///usr/libexec/aquarius-lock-on-sleep
+
+# Run when the machine is about to sleep, and FINISH before it does. Both lines
+# are needed; see the header.
+Before=sleep.target
+
+# Nothing to lock on a machine that never got as far as a desktop.
+ConditionPathIsDirectory=/usr/share/aquarius/shell
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/aquarius-lock-on-sleep
+
+# A lock that hangs must not become a machine that will not sleep. Ten seconds
+# is far more than sending one message over a socket needs.
+TimeoutStartSec=10
+
+[Install]
+WantedBy=sleep.target

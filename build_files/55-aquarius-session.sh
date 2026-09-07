@@ -471,8 +471,23 @@ chmod 0755 "${AQ_LAUNCHER}" /usr/libexec/aquarius-shell-start \
 # reads it.
 chmod 0644 /usr/libexec/aquarius-session-lib
 chmod 0644 "${AQ_SESSION_ENTRY}" "${AQ_PORTAL_CONF}"
-chmod 0644 "${AQ_LABWC_DIR}"/*
+# ⚠️ NOT EVERY FILE IN THE labwc FOLDER IS A SETTINGS FILE, and this line used
+# to assume they all were. `chmod 0644` over the whole folder took the
+# executable bit off generate-theme — the program that builds the window frame
+# out of the shell's palette — and the build then failed one step later saying
+# it was "missing or not executable". That is the right failure to have had: it
+# is exactly the fault the check below was written for. Five files in this
+# folder are READ by labwc; one is RUN, and it needs the bit.
+chmod 0644 "${AQ_LABWC_DIR}"/rc.xml "${AQ_LABWC_DIR}"/menu.xml \
+    "${AQ_LABWC_DIR}"/autostart "${AQ_LABWC_DIR}"/shutdown \
+    "${AQ_LABWC_DIR}"/environment
+chmod 0755 "${AQ_LABWC_DIR}"/generate-theme
 chmod 0755 "${AQ_LABWC_DIR}"
+
+# Printed, because "0644 on everything in the folder" is the obvious thing for
+# somebody to write here again, and a listing in the build log is how the next
+# person sees at a glance that one file is deliberately different.
+ls -l "${AQ_LABWC_DIR}" | sed 's/^/  /'
 
 # ==============================================================================
 # 5. Checking it — by running things, not by assuming
@@ -630,6 +645,7 @@ aq_feature_for_import() {
         Quickshell.Services.UPower)           echo "SERVICE_UPOWER" ;;
         Quickshell.Services.Mpris)            echo "SERVICE_MPRIS" ;;
         Quickshell.Services.Greetd)           echo "SERVICE_GREETD" ;;
+        Quickshell.Services.Pam)              echo "SERVICE_PAM" ;;
         *)                                    echo "UNKNOWN" ;;
     esac
 }
@@ -827,9 +843,10 @@ if [ "${AQ_SESSION_UNIT_FAILS}" -eq 0 ]; then
 fi
 
 say "The window manager's configuration"
-# SIX files now. menu.xml joined the list on the morning of 2026-09-06 and
-# themerc-override that afternoon, and the reason each was missing is the reason
-# this loop matters: AquariusOS does not stage the shell's session/labwc folder,
+# SIX files. menu.xml joined the list on the morning of 2026-09-06, and
+# generate-theme — the program that writes labwc's colours out of the shell's
+# palette — replaced the hand-written themerc-override that evening. The reason
+# each was missing when it was missing is the reason this loop matters: AquariusOS does not stage the shell's session/labwc folder,
 # it ships its own hand-maintained copies here. A file the shell repository adds
 # does NOT appear in this image until somebody adds it here by hand, and nothing
 # complains in the meantime.
@@ -840,7 +857,7 @@ say "The window manager's configuration"
 # is still worth having — it reads the FINISHED IMAGE, so it also catches a file
 # that exists in the repository and never got copied in — but it is no longer
 # the only thing standing between us and another silent drift.
-for aq_f in rc.xml menu.xml themerc-override autostart shutdown environment; do
+for aq_f in rc.xml menu.xml generate-theme autostart shutdown environment; do
     if [ -s "${AQ_LABWC_DIR}/${aq_f}" ]; then
         ok "${AQ_LABWC_DIR}/${aq_f}"
     else
@@ -868,32 +885,50 @@ aq_file_has "${AQ_LABWC_DIR}/rc.xml" 'qs ipc call search toggle' \
 aq_file_has "${AQ_LABWC_DIR}/rc.xml" '<action name="Exit" />' \
     "Super+Shift+E leaves the session"
 
-# Super+Tab and Super+Shift+Tab, copied from the shell repository on 2026-09-06.
-# In Mac mode, Aquarius Keys maps the Command key to Super, so somebody pressing
-# Command+Tab out of habit sends Super+Tab. GNOME answers that; before these two
-# bindings, our desktop did nothing at all, and the same keystroke behaving
-# differently on the two AquariusOS desktops is exactly the kind of small
-# wrongness that makes a machine feel unfinished.
+# THE APP SWITCHER'S FIVE KEYS (2026-09-06).
 #
-# This is the same drift that lost the right-click menu below: the shell
-# repository had these and the image did not, because the image keeps its own
-# hand-maintained copies of the labwc files.
+# Hold Command, tap Tab, let go, and a panel of the applications you have open
+# appears in the middle of the screen. BOTH keyboard profiles are bound at once,
+# on purpose:
+#
+#   Mac style      Aquarius Keys swaps the two keys beside the space bar, so
+#                  Command+Tab arrives at labwc as W-Tab.
+#   Windows style  nothing is swapped and the remapper does not even run, so
+#                  Alt+Tab arrives as A-Tab.
+#
+# Binding both means `aq keys mac` and `aq keys windows` never have to rebind
+# anything — only what the panel LISTS changes, and the shell reads that from
+# ~/.config/aquarius/keys.conf itself.
+#
+# These were labwc's own NextWindow and PreviousWindow until 2026-09-06. They now
+# send a message to the running shell, which draws its own panel: one that can
+# group five windows of an editor into one application icon, which labwc's list
+# of window titles cannot.
+#
+# The whole feature, including how the shell knows you let go of the modifier,
+# is written up in the aquarius-shell repository at docs/app-switcher.md.
 aq_file_has "${AQ_LABWC_DIR}/rc.xml" '<keybind key="W-Tab">' \
-    "Super+Tab is bound (Command+Tab in Mac mode)"
-aq_file_has "${AQ_LABWC_DIR}/rc.xml" '<action name="NextWindow" />' \
-    "and it walks forward through the windows"
+    "Command+Tab opens the app switcher (Mac keyboard style)"
 aq_file_has "${AQ_LABWC_DIR}/rc.xml" '<keybind key="W-S-Tab">' \
-    "Super+Shift+Tab is bound"
-aq_file_has "${AQ_LABWC_DIR}/rc.xml" '<action name="PreviousWindow" />' \
-    "and it walks back through them"
+    "and Command+Shift+Tab walks it backwards"
+aq_file_has "${AQ_LABWC_DIR}/rc.xml" '<keybind key="W-grave">' \
+    "Command+\` cycles one app's windows, with no panel"
+aq_file_has "${AQ_LABWC_DIR}/rc.xml" '<keybind key="A-Tab">' \
+    "Alt+Tab opens the same switcher (Windows keyboard style)"
+aq_file_has "${AQ_LABWC_DIR}/rc.xml" '<keybind key="A-S-Tab">' \
+    "and Alt+Shift+Tab walks it backwards"
+aq_file_has "${AQ_LABWC_DIR}/rc.xml" 'command="qs ipc call switcher next"' \
+    "and they reach the shell, rather than labwc's own switcher"
+aq_file_has "${AQ_LABWC_DIR}/rc.xml" '<osd show="no" />' \
+    "labwc's own window switcher is switched off, so there can only be one"
 aq_file_has "${AQ_LABWC_DIR}/autostart" 'aquarius-shell-start' \
     "the window manager starts the shell through the helper that reports failures"
 
 # ------------------------------------------------------------------------------
 # THE FONT labwc DRAWS ITS OWN MENU AND TITLE BARS IN
 # ------------------------------------------------------------------------------
-# labwc splits one look across two files: colours come from themerc-override,
-# fonts come from rc.xml's <theme> section. Miss the <theme> section and the
+# labwc splits one look across two files: colours come from a themerc, fonts
+# come from rc.xml's <theme> section. Miss the <theme> section and the
 # colours still land, so the desktop menu comes up in the right blue and the
 # wrong typeface — a difference nobody photographs and everybody feels. There is
 # no error either way; labwc simply falls back to "sans".
@@ -964,117 +999,326 @@ else
 fi
 
 # ==============================================================================
-# THE DESKTOP'S OWN COLOURS — themerc-override, new on 2026-09-06
+# THE DESKTOP'S OWN COLOURS — GENERATED, NOT TYPED OUT
 # ==============================================================================
-# THE BENCH NOTE THAT PRODUCED THIS FILE: "the right click menu does not have a
-# design yet". It did not. Two things on an Aquarius screen are drawn by labwc
-# and not by the shell — the menu that opens on a right-click of the wallpaper,
-# and the title bar and border around every window — and labwc was drawing both
-# in its own default Openbox grey, next to a shell that is entirely Ice blue.
+# THE BENCH NOTE THAT STARTED THIS: "the right click menu does not have a design
+# yet". It did not. Two things on an Aquarius screen are drawn by labwc and not
+# by the shell — the menu that opens on a right-click of the wallpaper, and the
+# title bar, border and buttons around every window — and labwc was drawing them
+# in its own default Openbox grey next to a shell that is entirely Ice blue.
 #
-# themerc-override is labwc's own mechanism for that: it is read on top of the
-# built-in theme, so it only has to name what is different. It lives in the same
-# folder as rc.xml because /usr/bin/aquarius-session starts labwc with
-# `-C <that folder>`, and labwc reads "<config-dir>/themerc-override" from there.
+# THE FIRST FIX, on the morning of 2026-09-06, was a hand-written file called
+# themerc-override holding a second copy of the shell's Ice palette. It worked
+# and it could never have been enough:
 #
-# WHAT IS CHECKED HERE, AND WHY EACH ONE IS A REAL FAILURE MODE
+#   ONE THEME    the shell follows the machine's light/dark setting and swaps
+#                between Ice and Midnight while it runs. A themerc is read once,
+#                at start-up. So a dark desktop had light title bars.
+#   ONE SIZE     AQ_UI_SCALE multiplies every number in the shell and reached
+#                nothing labwc drew, so a scaled desktop had an unscaled menu.
 #
-#   the file parses as key: value
-#       labwc's parse_config_line() splits on the FIRST colon. A line with no
-#       colon is skipped in silence.
+# THE FIX THAT REPLACED IT is /usr/share/aquarius/labwc/generate-theme. It READS
+# the shell's theme/Ice.qml or theme/Midnight.qml — the same two files the shell
+# itself is coloured from — and writes labwc's files out. /usr/bin/aquarius-session
+# runs it at login; the shell runs it again whenever the machine goes light or
+# dark, and then runs `labwc --reconfigure`; `aq keys` runs it when the window
+# buttons move sides.
 #
-#   no comment after a setting
-#       ⚠️ THIS IS THE TRAP IN THIS FILE FORMAT AND IT LOOKS LIKE NOTHING.
-#       labwc has no end-of-line comment syntax at all. process_line() returns
-#       early only when the FIRST character is '#'; everything else is split on
-#       the colon and the remainder — including anything somebody wrote after
-#       the value to explain it — becomes part of the value. So
-#           menu.width.min: 240   # the same width as the shell's menu
-#       sets the width to the whole of that text, which is not a number, and
-#       labwc discards it without a word. Every explanation in that file is
-#       therefore on its own line, and this is what keeps it that way.
+# ------------------------------------------------------------------------------
+# WHAT THIS SECTION CHECKS, AND WHY IT RUNS THE PROGRAM
+# ------------------------------------------------------------------------------
+# There is no hand-written file left to read, so reading a file would prove
+# nothing. Instead the build RUNS the generator, four times — Ice and Midnight,
+# at 1x and at 1.25x — and reads back what it wrote. That is the CONTENT
+# read-back rule this project has had since 2026-08-31, applied to a program
+# instead of to a file.
 #
-#   every colour is a well-formed #rrggbb or #rrggbbaa
-#       Same silence. A colour labwc cannot parse is a key that never took
-#       effect, and the surface keeps its default — one grey menu row in an
-#       otherwise blue menu, with nothing in any log.
+# Every value asserted below comes from the window-frame design sheet of
+# 2026-09-06, sections 3 to 5. A number here is the design, not a preference.
 #
-# The values themselves are checked in the OTHER repository: aquarius-shell's
-# tests/test-shell.sh section 15b pulls every colour out of its copy of this
-# file and fails unless that exact value appears in theme/Ice.qml. This image's
-# copy is held equal to that one by build_files/check-labwc-drift.sh, so the two
-# checks together mean a colour here is a colour in Ice.
-say "The colours labwc draws its own menu and title bars in"
+# ⚠️ THE PALETTE IS THE SHELL'S, AND IT MAY NOT BE IN THIS IMAGE. The shell is
+# fetched at a pinned commit at build time, and if that repository was private
+# when the image was built there is no shell here at all — which is a case this
+# script already handles everywhere else, and is not a failure. When the palette
+# is missing this section says so and is skipped; the drift check in CI runs the
+# same generator against a real clone of the shell and would catch anything this
+# skip lets through.
+say "The colours labwc draws its own menu, title bars and buttons in"
 
-AQ_THEMERC="${AQ_LABWC_DIR}/themerc-override"
-AQ_THEMERC_SETTINGS=0
-AQ_THEMERC_COLOURS=0
-AQ_THEMERC_BAD=0
+AQ_FRAME_GEN="${AQ_LABWC_DIR}/generate-theme"
+AQ_PALETTE_DIR="${AQ_SHELL_DIR}/theme"
 
-if [ -s "${AQ_THEMERC}" ]; then
-    while IFS= read -r aq_line || [ -n "${aq_line}" ]; do
-        # Trim both ends before looking at anything, so a stray trailing space
-        # is not reported as a broken colour.
-        aq_line="$(printf '%s' "${aq_line}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-
-        # A blank line, or a comment (first character '#'), is not a setting.
-        case "${aq_line}" in
-            '' | '#'*) continue ;;
-        esac
-
-        AQ_THEMERC_SETTINGS=$((AQ_THEMERC_SETTINGS + 1))
-
-        # No colon at all means labwc reads no key and no value.
-        case "${aq_line}" in
-            *:*) ;;
-            *)
-                bad "themerc-override has a line that is not 'key: value', so labwc ignores it: ${aq_line}"
-                AQ_THEMERC_BAD=1
-                continue
-                ;;
-        esac
-
-        aq_value="${aq_line#*:}"
-        aq_value="$(printf '%s' "${aq_value}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-
-        # A '#' anywhere in the value means either a colour or somebody's
-        # comment. A colour is the whole value and nothing else; anything else
-        # is the trap described above.
-        case "${aq_value}" in
-            *'#'*)
-                AQ_THEMERC_COLOURS=$((AQ_THEMERC_COLOURS + 1))
-                if printf '%s' "${aq_value}" | grep -Eq '^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$'; then
-                    :
-                else
-                    bad "themerc-override: '${aq_line}' — the value is not a plain #rrggbb or #rrggbbaa colour. Either the colour is malformed, or somebody wrote an explanation after it on the same line: labwc has no end-of-line comments, so that text becomes part of the value and the whole setting is thrown away in silence."
-                    AQ_THEMERC_BAD=1
-                fi
-                ;;
-        esac
-    done < "${AQ_THEMERC}"
-
-    echo "  themerc-override: ${AQ_THEMERC_SETTINGS} settings, ${AQ_THEMERC_COLOURS} of them colours"
-
-    if [ "${AQ_THEMERC_SETTINGS}" -lt 20 ]; then
-        bad "themerc-override has only ${AQ_THEMERC_SETTINGS} settings — the shipped file has around thirty, so most of the desktop's look is missing"
-        AQ_THEMERC_BAD=1
-    fi
-    if [ "${AQ_THEMERC_COLOURS}" -lt 10 ]; then
-        bad "themerc-override names only ${AQ_THEMERC_COLOURS} colours — the menu and the title bars between them need more than that, so one of the two is still labwc grey"
-        AQ_THEMERC_BAD=1
-    fi
-    if [ "${AQ_THEMERC_BAD}" -eq 0 ]; then
-        ok "every line is a setting labwc can read, and every colour is a well-formed #rrggbb or #rrggbbaa"
-    fi
-
-    # The two surfaces it exists for, asked about by name. A file that parses
-    # perfectly and styles neither is a file that did nothing.
-    aq_file_has "${AQ_THEMERC}" '^menu\.items\.bg\.color:' \
-        "the desktop right-click menu has our card colour rather than labwc's grey"
-    aq_file_has "${AQ_THEMERC}" '^window\.active\.title\.bg\.color:' \
-        "the focused window's title bar has our colour too"
+if [ ! -x "${AQ_FRAME_GEN}" ]; then
+    bad "${AQ_FRAME_GEN} is missing or not executable — nothing would give labwc the Aquarius look, and the desktop menu and every title bar would be back to Openbox grey"
+elif [ ! -r "${AQ_PALETTE_DIR}/Ice.qml" ] || [ ! -r "${AQ_PALETTE_DIR}/Midnight.qml" ]; then
+    echo "  note   the shell's palette is not in this image, so the generated"
+    echo "         theme cannot be read back here. CI checks it against a real"
+    echo "         clone of the shell (build_files/check-labwc-drift.sh)."
 else
-    bad "${AQ_THEMERC} is missing — labwc would draw the desktop menu and every title bar in its own default grey"
+    ok "${AQ_FRAME_GEN}"
+
+    AQ_FRAME_OUT="$(mktemp -d)"
+    AQ_FRAME_BUILT=1
+
+    for aq_case in "ice 1" "ice 1.25" "midnight 1" "midnight 1.25"; do
+        # shellcheck disable=SC2086
+        set -- ${aq_case}
+        aq_scheme="$1"
+        aq_scale="$2"
+
+        if python3 "${AQ_FRAME_GEN}" --quiet \
+                --scheme "${aq_scheme}" --scale "${aq_scale}" --buttons mac \
+                --palette-dir "${AQ_PALETTE_DIR}" \
+                --template-dir "${AQ_LABWC_DIR}" \
+                --config-out "${AQ_FRAME_OUT}/${aq_scheme}-${aq_scale}/config" \
+                --theme-out "${AQ_FRAME_OUT}/${aq_scheme}-${aq_scale}/theme" \
+                --gtk-out "${AQ_FRAME_OUT}/${aq_scheme}-${aq_scale}/gtk"; then
+            ok "the ${aq_scheme} theme builds at ${aq_scale}x"
+        else
+            bad "the generator failed for ${aq_scheme} at ${aq_scale}x — an installed machine would fall back to labwc's own grey"
+            AQ_FRAME_BUILT=0
+        fi
+    done
+
+    if [ "${AQ_FRAME_BUILT}" -eq 1 ]; then
+        # ----------------------------------------------------------------------
+        # Can labwc read what it wrote?
+        # ----------------------------------------------------------------------
+        # ⚠️ THE TRAP IN THIS FILE FORMAT LOOKS LIKE NOTHING. labwc has no
+        # end-of-line comment syntax at all: process_line() returns early only
+        # when the FIRST character is '#', and everything after the first colon
+        # becomes the value. So
+        #     menu.width.min: 240   # the same width as the shell's menu
+        # sets the width to that whole string, which is not a number, and labwc
+        # discards it without a word.
+        AQ_THEMERC_BAD=0
+        for aq_case in ice-1 ice-1.25 midnight-1 midnight-1.25; do
+            aq_t="${AQ_FRAME_OUT}/${aq_case}/config/themerc-override"
+            aq_n=0
+            while IFS= read -r aq_line || [ -n "${aq_line}" ]; do
+                aq_line="$(printf '%s' "${aq_line}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+                case "${aq_line}" in '' | '#'*) continue ;; esac
+                aq_n=$((aq_n + 1))
+
+                case "${aq_line}" in
+                    *:*) ;;
+                    *)
+                        bad "${aq_case}: '${aq_line}' is not 'key: value', so labwc ignores it"
+                        AQ_THEMERC_BAD=1
+                        continue
+                        ;;
+                esac
+
+                aq_value="${aq_line#*:}"
+                aq_value="$(printf '%s' "${aq_value}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+                case "${aq_value}" in
+                    *'#'*)
+                        if ! printf '%s' "${aq_value}" | grep -Eq '^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$'; then
+                            bad "${aq_case}: '${aq_line}' — the value is not a plain #rrggbb or #rrggbbaa colour. Either it is malformed, or somebody wrote an explanation after it on the same line: labwc has no end-of-line comments, so that text becomes part of the value and the whole setting is thrown away in silence."
+                            AQ_THEMERC_BAD=1
+                        fi
+                        ;;
+                esac
+            done < "${aq_t}"
+
+            if [ "${aq_n}" -lt 25 ]; then
+                bad "${aq_case}: only ${aq_n} settings — the design needs about thirty, so most of the desktop's look is missing"
+                AQ_THEMERC_BAD=1
+            fi
+        done
+        [ "${AQ_THEMERC_BAD}" -eq 0 ] \
+            && ok "every generated setting is one labwc can actually read"
+
+        # ----------------------------------------------------------------------
+        # The design sheet's own values, read back out of the finished files
+        # ----------------------------------------------------------------------
+        aq_themerc_is() {
+            # $1 = ice-1 / midnight-1 / …, $2 = the setting, $3 = the value,
+            # $4 = what it is for, in plain words
+            aq_f="${AQ_FRAME_OUT}/$1/config/themerc-override"
+            if grep -qxF "$2: $3" "${aq_f}"; then
+                ok "$1: $2 is $3 — $4"
+            else
+                bad "$1: $2 should be '$3' ($4) and is: $(grep -E "^$2:" "${aq_f}" || echo '(missing)')"
+            fi
+        }
+
+        # --- section 3, the frame, Ice ---------------------------------------
+        aq_themerc_is ice-1 window.active.title.bg.color "#F0F6FC" \
+            "the focused title bar is the same colour as the top bar"
+        aq_themerc_is ice-1 window.inactive.title.bg.color "#E4EDF6" \
+            "an unfocused one steps one rung down the surface ladder"
+        aq_themerc_is ice-1 window.active.label.text.color "#16273A" \
+            "the focused window's title is the primary ink"
+        aq_themerc_is ice-1 window.inactive.label.text.color "#7C90A4" \
+            "an unfocused title is the muted ink"
+        aq_themerc_is ice-1 window.active.border.color "#16273A2E" \
+            "the focused border is the strong hairline (ink at 18%)"
+        aq_themerc_is ice-1 window.inactive.border.color "#16273A1A" \
+            "an unfocused border is the plain hairline (ink at 10%)"
+        aq_themerc_is ice-1 border.width "1" \
+            "one pixel, the same weight as every other rule on screen"
+        aq_themerc_is ice-1 window.label.text.justify "Center" \
+            "the title is centred"
+
+        # --- section 4, the buttons ------------------------------------------
+        # THE TITLE BAR'S HEIGHT IS NOT A SETTING IN labwc 0.20. `titlebar.height`
+        # was removed; the height is max(font height, button height) + 2 x
+        # padding. So the two numbers below ARE the 38px title bar: 20 + 9 + 9.
+        aq_themerc_is ice-1 window.button.width "20" \
+            "a window button's disc is 20 across"
+        aq_themerc_is ice-1 window.button.height "20" \
+            "and 20 tall"
+        aq_themerc_is ice-1 window.button.spacing "8" \
+            "with 8 between two discs"
+        aq_themerc_is ice-1 window.titlebar.padding.width "12" \
+            "and 12 from the window's edge to the first one"
+        aq_themerc_is ice-1 window.titlebar.padding.height "9" \
+            "which is what makes the title bar 20 + 9 + 9 = 38 tall"
+
+        # --- section 5, the desktop menu -------------------------------------
+        aq_themerc_is ice-1 menu.width.min "240" \
+            "the desktop menu is one fixed width, like the shell's own menu"
+        aq_themerc_is ice-1 menu.width.max "240" \
+            "min and max together is how labwc fixes a width"
+        aq_themerc_is ice-1 menu.items.bg.color "#F7FBFE" \
+            "the menu card is the brightest paper"
+        aq_themerc_is ice-1 menu.items.text.color "#16273A" \
+            "its text is the primary ink"
+        aq_themerc_is ice-1 menu.items.active.bg.color "#2C8FC429" \
+            "the row under the pointer is a wash of the accent"
+        aq_themerc_is ice-1 menu.title.bg.color "#E4EDF6" \
+            "a menu title is a quiet band rather than labwc's startling blue"
+
+        # --- the Midnight column of the same tables ---------------------------
+        # This is the whole reason the hand-written file had to go: until now
+        # there was no Midnight at all.
+        aq_themerc_is midnight-1 window.active.title.bg.color "#152033" \
+            "on a dark desktop the focused title bar is Midnight's panel navy"
+        aq_themerc_is midnight-1 window.inactive.title.bg.color "#1B2940" \
+            "and an unfocused one steps down the same way Ice does"
+        aq_themerc_is midnight-1 window.active.label.text.color "#DCE9F4" \
+            "the title is Midnight's ice-blue ink"
+        aq_themerc_is midnight-1 window.inactive.label.text.color "#5C6E82" \
+            "and an unfocused title is its muted ink"
+        aq_themerc_is midnight-1 window.active.border.color "#DCF3FF29" \
+            "Midnight's hairlines are tinted ice blue, not white"
+        aq_themerc_is midnight-1 window.inactive.border.color "#DCF3FF14" \
+            "the quieter of the two"
+        aq_themerc_is midnight-1 menu.items.bg.color "#121C2E" \
+            "the dark menu card"
+        aq_themerc_is midnight-1 menu.items.text.color "#DCE9F4" \
+            "its ice-blue text"
+        aq_themerc_is midnight-1 menu.items.active.bg.color "#00BFFF1F" \
+            "and its accent wash, dialled back to 12% because Midnight's blue is brighter"
+
+        # --- the size knob really does reach the window frames ----------------
+        aq_themerc_is ice-1.25 window.button.width "25" \
+            "AQ_UI_SCALE reaches labwc now: a 20px button is 25px at 1.25x"
+        aq_themerc_is ice-1.25 menu.items.padding.x "20" \
+            "and so does the menu's own padding"
+
+        # --- rc.xml's half of the look ----------------------------------------
+        # The corner radius, the fonts and the button side are rc.xml settings,
+        # not theme settings — labwc offers no themerc key for any of them.
+        aq_file_has "${AQ_FRAME_OUT}/ice-1/config/rc.xml" \
+            '<cornerRadius>12</cornerRadius>' \
+            "a window's top corners are rounded by 12, matching libadwaita's own fixed 12"
+        aq_file_has "${AQ_FRAME_OUT}/ice-1.25/config/rc.xml" \
+            '<cornerRadius>15</cornerRadius>' \
+            "and that follows AQ_UI_SCALE too"
+        aq_file_has "${AQ_FRAME_OUT}/ice-1/config/rc.xml" \
+            '<layout>close,iconify,max:</layout>' \
+            "Mac style puts close, minimise and maximise on the LEFT, close outermost"
+        aq_file_has "${AQ_FRAME_OUT}/ice-1/config/rc.xml" \
+            '<name>Aquarius</name>' \
+            "rc.xml names the theme labwc looks the button pictures up under"
+        aq_file_has "${AQ_FRAME_OUT}/ice-1/config/rc.xml" \
+            '<weight>medium</weight>' \
+            "a window's title is drawn at weight medium, which is Pango's 500"
+
+        # Windows style, built on its own, because this is the half of `aq keys`
+        # that has nothing to do with the keyboard.
+        if python3 "${AQ_FRAME_GEN}" --quiet --scheme ice --scale 1 \
+                --buttons windows \
+                --palette-dir "${AQ_PALETTE_DIR}" \
+                --template-dir "${AQ_LABWC_DIR}" \
+                --config-out "${AQ_FRAME_OUT}/windows/config" \
+                --theme-out "${AQ_FRAME_OUT}/windows/theme" \
+                --gtk-out "${AQ_FRAME_OUT}/windows/gtk"; then
+            aq_file_has "${AQ_FRAME_OUT}/windows/config/rc.xml" \
+                '<layout>:iconify,max,close</layout>' \
+                "Windows style puts minimise, maximise and close on the RIGHT, close outermost"
+        else
+            bad "the generator failed for the Windows button layout — 'aq keys windows' would move the buttons in GNOME and not on our own desktop"
+        fi
+
+        # --- the button pictures ----------------------------------------------
+        # labwc looks these up BY EXACT NAME, in a theme folder rather than
+        # beside its settings. A missing one is not an error anywhere: labwc
+        # falls back to a bare built-in glyph with no disc behind it, and one
+        # button quietly stops matching the other two.
+        AQ_BUTTONS_MISSING=""
+        for aq_case in ice-1 ice-1.25 midnight-1 midnight-1.25; do
+            for aq_button in close iconify max max_toggled; do
+                for aq_state in "" "_hover"; do
+                    for aq_focus in active inactive; do
+                        aq_svg="${AQ_FRAME_OUT}/${aq_case}/theme/${aq_button}${aq_state}-${aq_focus}.svg"
+                        [ -s "${aq_svg}" ] \
+                            || AQ_BUTTONS_MISSING="${AQ_BUTTONS_MISSING} ${aq_case}/$(basename "${aq_svg}")"
+                    done
+                done
+            done
+        done
+        if [ -z "${AQ_BUTTONS_MISSING}" ]; then
+            ok "all 16 window button pictures exist for both themes, at 1x and at 1.25x"
+        else
+            bad "these window button pictures were not drawn:${AQ_BUTTONS_MISSING}"
+        fi
+
+        # The close button is the one that changes COLOUR rather than weight
+        # when the pointer is on it, and it is the only one that does. Read back
+        # by content, because a picture that exists and is the wrong colour is
+        # the failure a file-exists check cannot see.
+        aq_file_has "${AQ_FRAME_OUT}/ice-1/theme/close_hover-active.svg" \
+            '#C8463B' \
+            "the close button goes to the Ice danger red when the pointer is on it"
+        aq_file_has "${AQ_FRAME_OUT}/midnight-1/theme/close_hover-active.svg" \
+            '#E07B7B' \
+            "and to Midnight's own softer red on a dark desktop"
+        aq_file_has "${AQ_FRAME_OUT}/ice-1/theme/iconify_hover-active.svg" \
+            'fill-opacity="0.160"' \
+            "the other buttons only deepen their disc, from 10% to 16%"
+        aq_file_has "${AQ_FRAME_OUT}/ice-1/theme/close-inactive.svg" \
+            'opacity="0.450"' \
+            "and a window you are not in draws its whole button at 45%"
+
+        # --- the Midnight GTK exception ----------------------------------------
+        # Two properties, dark only. See the posture note in
+        # build_files/50-aquarius-desktop.sh for why this is allowed at all.
+        aq_file_has "${AQ_FRAME_OUT}/midnight-1/gtk/gtk-4.0/gtk.css" \
+            'background-color: #0B1220' \
+            "a dark desktop paints GTK window backgrounds Midnight navy"
+        aq_file_has "${AQ_FRAME_OUT}/midnight-1/gtk/gtk-4.0/gtk.css" \
+            'background-color: #152033' \
+            "and their header bars the panel navy"
+        aq_file_has "${AQ_FRAME_OUT}/midnight-1/gtk/gtk-3.0/gtk.css" \
+            'background-color: #0B1220' \
+            "older GTK applications get the same two properties"
+        if [ -e "${AQ_FRAME_OUT}/ice-1/gtk/gtk-4.0/gtk.css" ]; then
+            bad "the Ice theme wrote a GTK colour file — those two properties are Midnight's, and on a light desktop they would paint every GTK window navy"
+        else
+            ok "the Ice theme writes no GTK colour file, which is correct"
+        fi
+        AQ_GTK_LINES="$(grep -cE '^[a-z]' "${AQ_FRAME_OUT}/midnight-1/gtk/gtk-4.0/gtk.css" || true)"
+        if [ "${AQ_GTK_LINES}" -eq 2 ]; then
+            ok "the GTK file is exactly two rules and nothing else"
+        else
+            bad "the Midnight GTK file has ${AQ_GTK_LINES} rules. It is allowed exactly TWO — the window background and the header bar. Anything more is a GTK theme, which this project does not ship (see the posture note in build_files/50-aquarius-desktop.sh)."
+        fi
+    fi
+
+    rm -rf "${AQ_FRAME_OUT}"
 fi
 
 # ==============================================================================

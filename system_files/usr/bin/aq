@@ -10,8 +10,10 @@
 # RIGHT NOW IT DOES THREE THINGS: keyboard shortcut style, screen size, and
 # making camera files editable.
 #
-#     aq keys mac        use Mac-style shortcuts (Command-C to copy)
-#     aq keys windows    use the normal Linux ones (Control-C to copy)
+#     aq keys mac        Mac-style shortcuts (Command-C to copy), and the
+#                        window buttons on the LEFT
+#     aq keys windows    the normal Linux ones (Control-C to copy), and the
+#                        window buttons on the RIGHT
 #     aq keys status     which am I using, and is it working?
 #
 #     aq display scale 1.25   make everything on the screen 125% size
@@ -52,6 +54,11 @@ AQ_PROFILE_DIR="/usr/share/aquarius/keys"
 AQ_SERVICE="aquarius-keys.service"
 AQ_DISPLAY_HELPER="/usr/libexec/aquarius-display-scale"
 
+# The program that builds the Aquarius Desktop's window frame out of the shell's
+# palette. `aq keys` runs it because the window buttons move with the Mac /
+# Windows choice — see apply_window_buttons() below.
+AQ_FRAME_GENERATOR="/usr/share/aquarius/labwc/generate-theme"
+
 # -----------------------------------------------------------------------------
 # usage — printed by `aq`, `aq --help`, and anything it does not understand
 # -----------------------------------------------------------------------------
@@ -60,14 +67,19 @@ usage() {
 aq — the AquariusOS command
 
 USAGE
-    aq keys mac         Use Mac-style keyboard shortcuts.
+    aq keys mac         Use Mac-style keyboard shortcuts AND put the window
+                        buttons where a Mac has them.
                         Copy is Command-C, quit is Command-Q, search is
                         Command-Space. On a PC keyboard, "Command" is the key
                         next to the space bar (the one labelled Alt).
+                        Close, minimise and maximise sit on the LEFT of every
+                        title bar, with close on the outside.
 
-    aq keys windows     Use the normal Linux and Windows shortcuts.
+    aq keys windows     Use the normal Linux and Windows shortcuts AND put the
+                        window buttons where Windows has them.
                         Copy is Control-C. Nothing about your keyboard is
-                        changed at all.
+                        changed at all. Minimise, maximise and close sit on the
+                        RIGHT of every title bar, with close on the outside.
 
     aq keys status      Say which style is switched on, whether it is actually
                         running, how many keyboards it has hold of, and where
@@ -172,8 +184,10 @@ keys_usage() {
     cat << 'EOF'
 aq keys — choose how keyboard shortcuts work
 
-    aq keys mac         Mac-style. Copy is Command-C. (The AquariusOS default.)
-    aq keys windows     The normal Linux ones. Copy is Control-C.
+    aq keys mac         Mac-style. Copy is Command-C, and the window buttons
+                        sit on the LEFT. (The AquariusOS default.)
+    aq keys windows     The normal Linux ones. Copy is Control-C, and the window
+                        buttons sit on the RIGHT.
     aq keys status      What is switched on, and is it running?
 EOF
 }
@@ -226,11 +240,87 @@ EOF
     if [ "${mode}" = "mac" ]; then
         echo "  Copy is Command-C. Quit is Command-Q. Search is Command-Space."
         echo "  On a PC keyboard, Command is the key next to the space bar."
+        echo "  The window buttons sit on the LEFT of every title bar."
     else
         echo "  Copy is Control-C. Nothing is remapped; your keyboard is untouched."
+        echo "  The window buttons sit on the RIGHT of every title bar."
     fi
 
     apply
+    apply_window_buttons "${mode}"
+}
+
+# -----------------------------------------------------------------------------
+# apply_window_buttons — move the window buttons to the other side
+# -----------------------------------------------------------------------------
+# ONE SWITCH, NOT TWO. Royce's decision, 2026-09-06: which side the close,
+# minimise and maximise buttons sit on is NOT a setting of its own. It follows
+# the Mac-or-Windows choice made in the Welcome window, because somebody who
+# asked for a Mac keyboard is asking for a Mac-shaped computer, and being asked
+# the same question twice in two different words is worse than not being asked.
+#
+#   Mac      close, minimise, maximise   on the LEFT
+#   Windows  minimise, maximise, close   on the RIGHT
+#
+# Close is the outermost button either way — furthest from the title — because
+# it is the one press you cannot take back.
+#
+# ⚠️ THERE ARE TWO DESKTOPS AND BOTH HAVE TO BE TOLD, IN THEIR OWN LANGUAGE.
+# This is the same trap that lost Command+Tab on 2026-09-06: a thing set for one
+# desktop and not the other looks like a bug in whichever one you are using.
+#
+#   GNOME           a gsettings key, org.gnome.desktop.wm.preferences
+#                   button-layout. Its syntax puts a colon between the left
+#                   side and the right side.
+#   Aquarius        rc.xml's <theme><titlebar><layout>, which is written by
+#   Desktop         /usr/share/aquarius/labwc/generate-theme. That program reads
+#                   the same keys.conf this command just wrote, so it needs no
+#                   argument — and running it is also what redraws the buttons
+#                   at the right size and in the right theme.
+#
+# Both are applied here whichever desktop you happen to be sitting in, so
+# switching desktops later does not need this command run again.
+apply_window_buttons() {
+    local mode="$1"
+    local gnome_layout labwc_done=0
+
+    # --- the Aquarius Desktop ------------------------------------------------
+    # generate-theme rewrites the whole window frame — colours, sizes, buttons
+    # and which side they are on — and then tells a running labwc to re-read its
+    # files. If labwc is not running (you are in GNOME, or on SSH) that last
+    # part quietly does nothing and the new layout is picked up at the next
+    # login, which is exactly right.
+    if [ -x "${AQ_FRAME_GENERATOR}" ] && command -v python3 > /dev/null 2>&1; then
+        if python3 "${AQ_FRAME_GENERATOR}" --quiet --reconfigure; then
+            labwc_done=1
+        else
+            echo "  (The Aquarius Desktop's window buttons could not be moved."
+            echo "   They will be in the right place after your next login.)"
+        fi
+    fi
+
+    # --- GNOME ---------------------------------------------------------------
+    if [ "${mode}" = "mac" ]; then
+        gnome_layout="close,minimize,maximize:"
+    else
+        gnome_layout=":minimize,maximize,close"
+    fi
+
+    if command -v gsettings > /dev/null 2>&1; then
+        if gsettings set org.gnome.desktop.wm.preferences button-layout \
+                "${gnome_layout}" 2> /dev/null; then
+            if [ "${labwc_done}" -eq 1 ]; then
+                echo "  Window buttons moved on both desktops. No logout needed."
+            else
+                echo "  Window buttons moved in GNOME."
+            fi
+            return 0
+        fi
+    fi
+
+    echo "  (The window buttons could not be moved in GNOME right now, which is"
+    echo "   normal over SSH. They will be in the right place next time you log"
+    echo "   in at the screen.)"
 }
 
 # -----------------------------------------------------------------------------
@@ -275,6 +365,16 @@ status() {
         echo "  Set in    : nothing written yet, so the AquariusOS default (Mac) applies"
     fi
     echo "  Rules from: ${AQ_PROFILE_DIR}/${mode}.yaml"
+
+    # The window buttons follow this same setting — one switch, not two. Said
+    # here because "why are my close buttons on the wrong side" is the same
+    # question as "which keyboard style am I on", and the answer should not
+    # depend on knowing that.
+    if [ "${mode}" = "mac" ]; then
+        echo "  Buttons   : close, minimise, maximise on the LEFT of a title bar"
+    else
+        echo "  Buttons   : minimise, maximise, close on the RIGHT of a title bar"
+    fi
 
     local desktop="${XDG_CURRENT_DESKTOP:-not set}"
     echo "  Desktop   : ${desktop}"

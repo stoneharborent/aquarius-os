@@ -44,7 +44,16 @@ IMAGE_VARIANT_ID="aquarius-os"
 LOGO_ICON="aquarius-logo"
 # The Aquarius blue, written the way a terminal wants it. This is what colours
 # the logo in `neofetch` and friends.
-LOGO_COLOR="0;38;2;138;180;255"
+#
+# It is `aquariusBlue` at its ICE value, #2C8FC4 — the accent of the palette
+# AquariusOS boots into — written as the red, green and blue numbers a terminal
+# understands: 44, 143, 196. The `0;38;2;` in front is "plain text, and here
+# comes a 24-bit colour", which is the exact shape Bazzite used and the shape
+# every tool that reads this field expects.
+#
+# (Until 2026-09-06 this was 0;38;2;138;180;255 — the retired Starlight blue
+# #8AB4FF. That palette is gone; see branding/tokens.md.)
+LOGO_COLOR="0;38;2;44;143;196"
 
 IMAGE_NAME="${IMAGE_NAME:-aquarius-os}"
 IMAGE_VENDOR="${IMAGE_VENDOR:-stoneharborent}"

@@ -30,11 +30,15 @@ There were four of them, and all four said something other than AquariusOS:
 
 ### What you should see
 
-A near-black screen — the `void` colour, `#06070C`, the same one the whole
-design is built on. Just above the middle, the Aquarius mark with a soft blue
-glow around it and the word **AquariusOS** underneath. Below that, three blue
-dots with a pulse travelling left to right, so the screen is visibly alive
-rather than frozen.
+A deep-ocean navy screen — Midnight's `bg`, `#0B1220`, the same colour the
+desktop uses in dark mode, so the machine does not change colour between the
+boot screen and the desktop. Just above the middle, the Aquarius mark with a
+soft blue glow around it and the word **AquariusOS** underneath. Below that,
+three blue dots with a pulse travelling left to right, so the screen is visibly
+alive rather than frozen.
+
+(Until 2026-09-06 this was near-black `#06070C`, from the retired Starlight
+palette. `branding/tokens.md` is the record of what replaced it.)
 
 It is the same picture as step 02 of the "Boot to desktop · one journey" strip
 in `branding/design-system/AquariusOS Core Identity.html`, with the word added
@@ -59,7 +63,8 @@ Three steps, on the Mac:
 
 ```bash
 # 1. Change something. Either the mark itself…
-#      branding/logo.svg
+#      branding/logo-midnight.svg   (the boot screen is a dark screen, so it
+#                                    uses the Midnight drawing of the mark)
 #    …or the sizes and colours at the top of the render script.
 
 # 2. Re-draw the pictures.

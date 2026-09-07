@@ -3,7 +3,8 @@
 # Re-render the AquariusOS logo PNG from the SVG source
 # ==============================================================================
 # WHEN YOU NEED THIS
-#   Only when you have changed branding/logo.svg. The finished PNG is already
+#   Only when you have changed branding/logo.svg — which is the Ice drawing of
+#   the mark, the same file as branding/logo-ice.svg. The finished PNG is already
 #   committed, so a normal OS build never runs this.
 #
 # HOW TO RUN IT (on the Mac, from anywhere):
