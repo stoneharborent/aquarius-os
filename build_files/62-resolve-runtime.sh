@@ -938,6 +938,82 @@ aq_file_has /usr/libexec/aquarius-resolve-install 'libasound_module_pcm_pipewire
 aq_file_has /usr/bin/aq 'AQ_RESOLVE_INSTALLER\}" --sound' \
     "'aq resolve status' asks the same script about sound too"
 
+# ------------------------------------------------------------------------------
+# "Open With → DaVinci Resolve", from Files
+# ------------------------------------------------------------------------------
+# ⚠️ FEATURE 008 ITEM 9. Linux works out what a file is from a shared list of
+# file types, and that list has never heard of DaVinci Resolve — Blackmagic have
+# never registered one. So a `.drp` project arrives as "unknown", and an unknown
+# file cannot be offered an application to open it with.
+#
+# AquariusOS adds the missing name here. Copying the file in is not enough: the
+# desktop reads a single compiled list, and nothing consults
+# /usr/share/mime/packages at all, so `update-mime-database` has to be run and
+# its RESULT read back. A file that arrived and was never folded in is invisible
+# and silent, which is the exact shape of failure this repository keeps writing
+# checks for.
+say "DaVinci Resolve — Files knows what a Resolve project is"
+
+AQ_MIME_SRC=/usr/share/mime/packages/aquarius-resolve.xml
+if [ ! -r "${AQ_MIME_SRC}" ]; then
+    bad "${AQ_MIME_SRC} is missing — a .drp project would be an unknown file and Files could offer nothing to open it with"
+else
+    ok "the file type description is in the image"
+    # Well-formed first, because update-mime-database will not tell you clearly.
+    if python3 -c 'import sys, xml.etree.ElementTree as ET; ET.parse(sys.argv[1])' "${AQ_MIME_SRC}"; then
+        ok "and it is well-formed XML"
+    else
+        bad "${AQ_MIME_SRC} is not well-formed XML — the whole shared file-type list would fail to rebuild"
+    fi
+
+    if ! aq_have update-mime-database; then
+        echo "  update-mime-database is not here yet; installing shared-mime-info."
+        aq_dnf install shared-mime-info
+    fi
+
+    if update-mime-database /usr/share/mime; then
+        ok "the shared file-type list was rebuilt with it in"
+    else
+        bad "update-mime-database failed — nothing on the desktop would know what a .drp is"
+    fi
+
+    # THE READ-BACK. globs is the compiled list the desktop actually consults.
+    aq_file_has /usr/share/mime/globs \
+        '^application/x-davinci-resolve-project:\*\.drp$' \
+        "a file ending .drp is a DaVinci Resolve project, as far as the whole desktop is concerned"
+fi
+
+# The installer's half: the list of types, the entry rewriting, and — the one
+# that matters most — that everything except the project type keeps whatever it
+# opened with before. Offering Resolve in an Open With list and making it what a
+# double-click does are different things, and only the first was asked for.
+aq_file_has /usr/libexec/aquarius-resolve-install \
+    '^RESOLVE_MIME_TYPES=.*application/x-davinci-resolve-project' \
+    "the installer knows which file types to offer Resolve for"
+aq_file_has /usr/libexec/aquarius-resolve-install 'ensure_open_with\(\)' \
+    "and puts them on the app-menu entry Blackmagic's installer wrote"
+aq_file_has /usr/libexec/aquarius-resolve-install 'mime_defaults_restore' \
+    "⚠️ and puts every other file type's own application back, so a double-click still opens what it used to"
+
+# The launcher's half: a file handed over by Files reaches Resolve rather than
+# being read as a program to run, which is what used to happen and is why
+# "Open With → DaVinci Resolve" did nothing at all.
+aq_file_has "${AQ_LAUNCH}" 'uri_to_path' \
+    "the launcher turns the file:// address Files hands it into a plain path"
+aq_file_has "${AQ_LAUNCH}" '/opt/resolve/bin/resolve' \
+    "and names Resolve in front of a file, instead of trying to run the file"
+aq_file_has "${AQ_LAUNCH}" 'RUN_ARGS\[@\]' \
+    "each argument stays one argument, so a folder with a space in its name survives"
+
+# And it really works, on the two shapes of argument it will ever be handed.
+# --report stops before anything is started, so this is safe with no container.
+AQ_OPEN_URI="$("${AQ_LAUNCH}" --report 'file:///run/media/tester/Shoot%202026/Ep%203.drp' 2>&1 || true)"
+if printf '%s' "${AQ_OPEN_URI}" | grep -q 'interface at'; then
+    ok "the launcher still answers when it is handed a file, rather than falling over"
+else
+    bad "the launcher fails when Files hands it a project — 'Open With' would do nothing"
+fi
+
 # And the front door for changing it by hand.
 if /usr/bin/aq resolve scale > /tmp/aq-resolve-scale.txt 2>&1; then
     ok "'aq resolve scale' runs"

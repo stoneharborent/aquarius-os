@@ -619,6 +619,110 @@ report_sound() {
     fi
 }
 
+# ==============================================================================
+# "OPEN WITH → DAVINCI RESOLVE", FROM FILES
+# ==============================================================================
+# Added 2026-09-08, feature 008 item 9.
+#
+# WHAT A PERSON GETS. Double-clicking a `.drp` project in Files opens it in
+# Resolve. Right-clicking any ordinary video or audio file offers "DaVinci
+# Resolve" in its Open With list.
+#
+# THE TWO HALVES.
+#   1. The system has to KNOW what a .drp file is. Linux works that out from a
+#      shared list of file types which has never heard of Resolve, so
+#      AquariusOS adds the missing name in
+#      /usr/share/mime/packages/aquarius-resolve.xml, at build time.
+#   2. Resolve's app-menu entry has to SAY which types it can open. That is the
+#      MimeType line, and it goes on the entry Blackmagic's installer wrote,
+#      here, at the same moment the Exec line is repaired.
+#
+# ⚠️ AND RESOLVE MUST NOT BECOME THE DEFAULT FOR VIDEO. Saying "Resolve can open
+# this" and "double-clicking this should open Resolve" are different statements,
+# and only the first is wanted: nobody wants a fifteen-second professional
+# editor because they double-clicked a clip to glance at it. Whatever each type
+# opens with today is written down before the associations are added and put
+# back afterwards, so an install can never change what a double-click does. The
+# ONE exception is the Resolve project type, where Resolve becoming the default
+# is the entire point.
+#
+# The list below is the formats Resolve genuinely opens. It is deliberately not
+# "every video file that exists": a type Resolve cannot read has no business
+# appearing in its Open With list, because an application that opens and shows
+# nothing is worse than one that was never offered.
+RESOLVE_MIME_TYPES="application/x-davinci-resolve-project;video/mp4;video/quicktime;video/x-matroska;video/mpeg;video/mp2t;video/x-msvideo;video/dv;application/mxf;audio/x-wav;audio/x-aiff;audio/mpeg;audio/flac;"
+
+# The one type Resolve SHOULD own outright.
+RESOLVE_PROJECT_MIME="application/x-davinci-resolve-project"
+
+# Every type in the list, one per line, for the loops below.
+resolve_mime_list() {
+    printf '%s' "${RESOLVE_MIME_TYPES}" | tr ';' '\n' | grep -v '^$' || true
+}
+
+# Add the MimeType line to one app-menu entry, and make sure its Exec line can
+# actually be handed a file.
+#
+# ⚠️ SAFE WHEN IT DOES NOT MATCH, like everything else in this step. A line that
+# is not the shape we expect is left exactly as it was: an entry that does not
+# offer Open With is a small loss, an entry rewritten wrongly is a Resolve that
+# will not start.
+ensure_open_with() { # ensure_open_with <path-to-.desktop>
+    local entry="$1"
+    [ -w "${entry}" ] || return 0
+
+    # 1. The types. An entry with no MimeType gets ours; one that already has
+    #    ours is left alone; one with somebody else's has ours added to the end,
+    #    because MimeType is a list and taking somebody's entry away would be
+    #    rude and unnecessary.
+    if ! grep -q '^MimeType=' "${entry}"; then
+        sed -i "0,/^\[Desktop Entry\]/s##[Desktop Entry]\nMimeType=${RESOLVE_MIME_TYPES}#" "${entry}"
+    elif ! grep -q "^MimeType=.*${RESOLVE_PROJECT_MIME}" "${entry}"; then
+        sed -i "s#^\(MimeType=.*\)\$#\1${RESOLVE_MIME_TYPES}#" "${entry}"
+    fi
+
+    # 2. The Exec line has to have somewhere to PUT the file. `%u` is the
+    #    freedesktop code for "one file, as a URI"; without one of these codes
+    #    the desktop starts the application and quietly drops the file, which
+    #    looks exactly like Open With not working.
+    if ! grep -qE '^Exec=.*%[uUfF]( |$)' "${entry}"; then
+        sed -i 's#^\(Exec=.*[^ ]\)[[:space:]]*$#\1 %u#' "${entry}"
+    fi
+}
+
+# What each of our types opens with RIGHT NOW. One "type<tab>entry" line per
+# type that has an answer; nothing at all for a type that has none.
+#
+# xdg-mime is asked because it is the freedesktop project's own tool for the
+# question and it prints the answer and nothing else. A machine without it gets
+# no snapshot, which means no restore, which is the same as this feature not
+# existing — acceptable, and better than a wrong guess.
+mime_defaults_snapshot() {
+    command -v xdg-mime > /dev/null 2>&1 || return 0
+    local t was
+    while IFS= read -r t; do
+        [ "${t}" = "${RESOLVE_PROJECT_MIME}" ] && continue
+        was="$(xdg-mime query default "${t}" 2> /dev/null)"
+        [ -n "${was}" ] && printf '%s\t%s\n' "${t}" "${was}"
+    done < <(resolve_mime_list)
+    return 0
+}
+
+# Put those answers back, so that adding an association cannot have changed what
+# a double-click does.
+mime_defaults_restore() { # mime_defaults_restore <the snapshot text>
+    command -v xdg-mime > /dev/null 2>&1 || return 0
+    local line t was
+    while IFS= read -r line; do
+        [ -n "${line}" ] || continue
+        t="${line%%	*}"
+        was="${line#*	}"
+        [ -n "${t}" ] && [ -n "${was}" ] || continue
+        xdg-mime default "${was}" "${t}" > /dev/null 2>&1 || true
+    done <<< "${1}"
+    return 0
+}
+
 # ------------------------------------------------------------------------------
 # What this machine already has, and what the checker says is newest
 # ------------------------------------------------------------------------------
@@ -965,6 +1069,13 @@ if [ "${DRY_RUN}" = "1" ]; then
     sleep 0.3
     step 6 "Adding it to your apps"
     echo "  Pretending to write the app-menu entry."
+    # Not pretended: the list of file types Resolve would be offered for is a
+    # constant in this script, so printing it changes nothing and proves the
+    # list is still here. The .desktop file it goes on is what the rehearsal has
+    # no copy of.
+    echo "  The file types Files would offer Resolve for:"
+    resolve_mime_list | sed 's/^/      /'
+    echo "  Only the project type would become what a double-click opens."
     sleep 0.2
     step 7 "Matching Resolve to your screen"
     # Not pretended: the launcher really is asked what size it would use, which
@@ -1550,7 +1661,56 @@ if [ "${skipped}" -gt 0 ]; then
     echo "  Resolve will still start; the mouse pointer inside it may look wrong."
 fi
 
+# ------------------------------------------------------------------------------
+# And "Open With → DaVinci Resolve", from Files
+# ------------------------------------------------------------------------------
+# The long explanation is beside ensure_open_with near the top of this file.
+#
+# Done as a SECOND loop rather than inside the one above, because that one skips
+# an entry that is already ours — which is every entry on a machine that has had
+# Resolve set up before, and those are exactly the ones that still need this.
+#
+# ⚠️ ONLY THE ENTRY THAT STARTS RESOLVE ITSELF. Blackmagic install two smaller
+# programs beside it (the RAW Player and the control-panel setup) and neither
+# opens a project or a clip. The discriminator is the Exec line naming
+# /opt/resolve/bin/resolve, which is Resolve and nothing else.
+MIME_DEFAULTS_BEFORE="$(mime_defaults_snapshot)"
+opened=0
+RESOLVE_ENTRY_ID=""
+while IFS= read -r entry; do
+    [ -n "${entry}" ] || continue
+    grep -q '/opt/resolve/bin/resolve' "${entry}" || continue
+    ensure_open_with "${entry}"
+    if grep -q "^MimeType=.*${RESOLVE_PROJECT_MIME}" "${entry}"; then
+        opened=$((opened + 1))
+        RESOLVE_ENTRY_ID="$(basename "${entry}")"
+    fi
+done < <(find "${APPS_DIR}" -maxdepth 1 -type f \
+    \( -iname '*resolve*.desktop' \
+    -o -iname '*davinci*.desktop' \
+    -o -iname '*blackmagic*.desktop' \) 2> /dev/null | sort)
+
 update-desktop-database "${APPS_DIR}" > /dev/null 2>&1 || true
+
+if [ "${opened}" -gt 0 ]; then
+    echo "  Files can now open projects and footage with Resolve."
+    # The project type, and ONLY the project type, becomes Resolve's outright:
+    # double-clicking a .drp should open Resolve, because nothing else on any
+    # computer opens one.
+    if command -v xdg-mime > /dev/null 2>&1 && [ -n "${RESOLVE_ENTRY_ID}" ]; then
+        xdg-mime default "${RESOLVE_ENTRY_ID}" "${RESOLVE_PROJECT_MIME}" > /dev/null 2>&1 || true
+        echo "    Double-click a .drp project and it opens in Resolve."
+    fi
+    # ⚠️ AND EVERYTHING ELSE KEEPS THE APPLICATION IT ALREADY HAD. Offering
+    # Resolve in an Open With list and making it what a double-click does are
+    # different things, and only the first was asked for.
+    mime_defaults_restore "${MIME_DEFAULTS_BEFORE}"
+    echo "    Right-click a video or a sound file and Resolve is in Open With."
+    echo "    Nothing else changed about what a double-click does."
+else
+    echo "  No entry looked like the one that starts Resolve, so Files was not"
+    echo "  taught to open projects with it. Resolve itself is unaffected."
+fi
 
 # ==============================================================================
 # 7. Make sure Resolve still comes up at the size of your screen

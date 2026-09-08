@@ -102,8 +102,15 @@
 #
 # USAGE
 #   aquarius-resolve-launch [program-inside-the-container] [arguments…]
+#   aquarius-resolve-launch [a file to open]
 # With no arguments it starts Resolve. The app-menu entries are pointed at this
 # script by /usr/libexec/aquarius-resolve-install.
+#
+# An argument beginning /opt/resolve/ is a program inside the container — that
+# is how the Blackmagic RAW Player is started from the same machinery. Anything
+# else is a FILE to open, and Resolve is named in front of it. `file://…` URIs
+# are turned into plain paths, because that is what Files hands over and Resolve
+# does not understand a URI. See the block above the `exec` at the bottom.
 #
 #   aquarius-resolve-launch --report
 # Works out the size and the pointer, prints the one line it would print on a
@@ -272,6 +279,51 @@ if [ "${REPORT_ONLY}" = "1" ]; then
     exit 0
 fi
 
+# ------------------------------------------------------------------------------
+# A FILE HANDED TO US BY FILES — "Open With → DaVinci Resolve"
+# ------------------------------------------------------------------------------
+# Added 2026-09-08, feature 008 item 9.
+#
+# THE FAULT THIS FIXES. The app-menu entry ends in `%u`, which is the
+# freedesktop way of saying "put the file the person chose here". So opening a
+# project from Files reaches this script as an extra argument. Everything after
+# this script's name is passed straight to aquarius-resolve-run INSIDE the
+# container — and that script reads its FIRST argument as the program to run.
+#
+# So a file arriving on its own was read as a program, was not one, and Resolve
+# never opened. "Open With → DaVinci Resolve" simply did nothing.
+#
+# THE RULE, and it is one line: an argument that begins /opt/resolve/ is a
+# program inside the container (that is how the Blackmagic RAW Player and the
+# control-panel setup tool are launched from the same machinery). Anything else
+# is a FILE, and Resolve itself is named explicitly in front of it.
+#
+# AND file:// HAS TO BECOME A PATH. `%u` gives a URI, with spaces written as
+# %20; Resolve is a 2016-era X11 application that wants a plain path. The
+# conversion is deliberately narrow: strip `file://`, then turn each %XX back
+# into its character. Backslashes are doubled first, so that a path containing
+# one is not mangled by the same step.
+uri_to_path() { # uri_to_path <argument>
+    case "$1" in
+        file://*)
+            printf '%b' "$(printf '%s' "${1#file://}" \
+                | sed -e 's/\\/\\\\/g' -e 's/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\x\1/g')"
+            ;;
+        *) printf '%s' "$1" ;;
+    esac
+}
+
+RUN_ARGS=()
+if [ "$#" -gt 0 ]; then
+    case "$1" in
+        /opt/resolve/*) : ;;                     # already names a program
+        *) RUN_ARGS+=("/opt/resolve/bin/resolve") ;;
+    esac
+    for arg in "$@"; do
+        RUN_ARGS+=("$(uri_to_path "${arg}")")
+    done
+fi
+
 # `distrobox enter --additional-flags` takes ONE string, so the flags are joined
 # into one. None of these values can contain a space in practice — a cursor
 # theme name is a folder name — and joining is what distrobox's own documented
@@ -281,5 +333,8 @@ for f in "${ENV_FLAGS[@]}"; do
     EXTRA="${EXTRA}${EXTRA:+ }${f}"
 done
 
+# ⚠️ "${RUN_ARGS[@]}" and not ${RUN_ARGS[@]}: every argument stays exactly one
+# argument, so a drive called "Shoot 2026" or a project called "Ep 3 (final).drp"
+# arrives whole rather than as three arguments Resolve cannot make sense of.
 exec distrobox enter --name "${CONTAINER}" --additional-flags "${EXTRA}" \
-    -- /usr/bin/aquarius-resolve-run "$@"
+    -- /usr/bin/aquarius-resolve-run "${RUN_ARGS[@]}"

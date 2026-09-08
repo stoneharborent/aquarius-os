@@ -529,6 +529,47 @@ jobs:
           fi
 
       # ------------------------------------------------------------------------
+      # Files knows what a DaVinci Resolve project is
+      # ------------------------------------------------------------------------
+      # ⚠️ FEATURE 008 ITEM 9, 2026-09-08. Linux works out what a file is from a
+      # shared list of file types, and that list has never heard of Resolve —
+      # Blackmagic never registered one. So a `.drp` project is an "unknown"
+      # file, and an unknown file cannot be offered an application to open it
+      # with. AquariusOS adds the missing name.
+      #
+      # The file is checked HERE, on the runner, with the freedesktop project's
+      # own tools, in a temporary folder: a malformed one would not merely fail
+      # to add our type, it would stop the WHOLE shared list from rebuilding and
+      # take every other file type on the machine with it.
+      - name: Check the Resolve project file type is well formed
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libxml2-utils shared-mime-info
+          SRC=system_files/usr/share/mime/packages/aquarius-resolve.xml
+          echo "== is it XML at all? =="
+          xmllint --noout "${SRC}"
+          echo "  OK   ${SRC} is well-formed XML"
+          echo "== does the freedesktop tool accept it? =="
+          # In a temporary folder, so nothing on the runner is touched. The
+          # system's own definitions go in beside ours: update-mime-database
+          # wants a complete folder, not a single file.
+          TMP="$(mktemp -d)"
+          mkdir -p "${TMP}/packages"
+          cp /usr/share/mime/packages/freedesktop.org.xml "${TMP}/packages/"
+          cp "${SRC}" "${TMP}/packages/"
+          update-mime-database "${TMP}"
+          echo "  OK   the shared file-type list rebuilds with it in"
+          echo "== and .drp really became a Resolve project =="
+          if grep -qx 'application/x-davinci-resolve-project:\*.drp' "${TMP}/globs"; then
+            echo "  OK   a file ending .drp is a DaVinci Resolve project"
+          else
+            echo "::error::${SRC} did not teach the shared list that .drp is a Resolve project."
+            exit 1
+          fi
+          rm -rf "${TMP}"
+
+      # ------------------------------------------------------------------------
       # THE MARK IS ONE DRAWING, AND IT IS THE RIGHT ONE
       # ------------------------------------------------------------------------
       # Royce redrew the AquariusOS mark on 2026-09-06. The "A" is now three
@@ -6155,6 +6196,48 @@ jobs:
           grep -q 'AQ_RESOLVE_INSTALLER}" --sound' /usr/bin/aq \
             && ok "'aq resolve status' asks the same script about sound too" \
             || bad "'aq resolve status' no longer reports whether Resolve's sound can get out"
+
+          echo "== and that Files knows what a Resolve project is =="
+          # ⚠️ The shared list of file types has never heard of Resolve, so a
+          # .drp is an "unknown" file and an unknown file cannot be offered an
+          # application to open it with. AquariusOS adds the missing name at
+          # build time — and copying the file in is not enough, because the
+          # desktop reads a single compiled list. This reads that compiled list
+          # back out of the finished image, which is the only proof that counts.
+          [ -r /usr/share/mime/packages/aquarius-resolve.xml ] \
+            && ok "the file type description shipped in the image" \
+            || bad "/usr/share/mime/packages/aquarius-resolve.xml is missing — a .drp would be an unknown file"
+          grep -qx 'application/x-davinci-resolve-project:\*.drp' /usr/share/mime/globs \
+            && ok "the whole desktop knows a .drp is a DaVinci Resolve project" \
+            || bad "the compiled file-type list has no .drp — update-mime-database was never run, or ran before our file arrived"
+
+          # The installer's half.
+          for want in 'RESOLVE_MIME_TYPES=' 'ensure_open_with()' 'mime_defaults_restore'; do
+            grep -qF "${want}" /usr/libexec/aquarius-resolve-install \
+              && ok "the installer still has: ${want}" \
+              || bad "the installer has lost '${want}' — Open With would not be offered, or would change what a double-click does"
+          done
+          # ⚠️ THE ONE THAT MATTERS MOST. Offering Resolve in an Open With list
+          # and making it what a double-click opens are different statements,
+          # and only the first was asked for. Nobody wants a fifteen-second
+          # professional editor because they double-clicked a clip to glance at
+          # it. Everything but the project type keeps the application it had.
+          grep -qF 'MIME_DEFAULTS_BEFORE="$(mime_defaults_snapshot)"' /usr/libexec/aquarius-resolve-install \
+            && ok "what each file type opens with is written down before the associations are added" \
+            || bad "nothing remembers the existing defaults — installing Resolve could change what a double-click opens"
+
+          # The launcher's half: a file handed over by Files reaches Resolve,
+          # instead of being read as the name of a program to run — which is
+          # what used to happen, and is why "Open With" did nothing at all.
+          for want in uri_to_path /opt/resolve/bin/resolve 'RUN_ARGS[@]'; do
+            grep -qF "${want}" /usr/libexec/aquarius-resolve-launch \
+              && ok "the launcher still has: ${want}" \
+              || bad "the launcher has lost '${want}' — a project opened from Files would not reach Resolve"
+          done
+          OPENED="$(/usr/libexec/aquarius-resolve-launch --report 'file:///run/media/tester/Shoot%20A/Ep%203.drp' 2>&1 || true)"
+          printf '%s' "${OPENED}" | grep -q 'interface at' \
+            && ok "the launcher answers when it is handed a project, rather than falling over" \
+            || bad "the launcher fails when Files hands it a project — 'Open With → DaVinci Resolve' would do nothing"
 
           echo "== the way to update without a terminal =="
           DESKUP=/usr/share/applications/aquarius-update-resolve.desktop

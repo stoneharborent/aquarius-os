@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ============================================================================
+  A NAME FOR A DAVINCI RESOLVE PROJECT FILE
+  ============================================================================
+  PLAIN ENGLISH
+
+  Linux works out what a file is from a shared list of file types. That list
+  ships with the system and it does NOT know about DaVinci Resolve — Blackmagic
+  have never registered one, and nobody else has either. So a Resolve project,
+  a `.drp` file, arrives on this computer as "unknown", and an unknown file
+  cannot be offered an application to open it with.
+
+  This one small file adds the missing name. With it, a `.drp` in Files is a
+  "DaVinci Resolve project", double-clicking it opens Resolve, and right-click
+  → Open With offers Resolve on any video file.
+
+  WHERE THE NAME COMES FROM. There is no official one, so this uses the
+  ordinary convention for a type nobody has registered: `application/x-` and
+  then the product. If Blackmagic or the freedesktop project ever publish a
+  real one, this file is where it changes, and it changes in exactly one place.
+
+  WHAT IS DELIBERATELY NOT CLAIMED. Resolve also writes `.drt` timelines and
+  `.drb` bins. Both are things you IMPORT from inside Resolve, not things you
+  open a copy of Resolve with, so claiming them would put a "double-click this"
+  behaviour on files that have no such behaviour. Blackmagic RAW (`.braw`) is
+  footage rather than a project and is left to the video types on the Resolve
+  desktop entry.
+
+  HOW IT REACHES THE SYSTEM. The image build copies this into
+  /usr/share/mime/packages/ and then runs `update-mime-database /usr/share/mime`,
+  which folds every file in that folder into the one list the whole desktop
+  reads. build_files/62-resolve-runtime.sh reads the result back out.
+  ============================================================================
+-->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-davinci-resolve-project">
+    <comment>DaVinci Resolve project</comment>
+    <glob pattern="*.drp"/>
+    <!-- What Files draws when it has no icon of its own for this type. A
+         Resolve project is a video project, so the system's generic video
+         symbol is the honest choice; nothing here touches Blackmagic's own
+         application icon, which stays theirs (Royce's decision, 2026-09-08). -->
+    <generic-icon name="video-x-generic"/>
+  </mime-type>
+</mime-info>

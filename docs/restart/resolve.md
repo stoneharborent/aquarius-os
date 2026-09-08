@@ -325,6 +325,44 @@ drive.
 
 ---
 
+## Opening footage from Files
+
+Right-click a video or a sound file in Files and **DaVinci Resolve** is in the
+**Open With** list, the same as any other program on the computer. Double-click
+a **`.drp` project** and Resolve opens it.
+
+Three things about that, because each of them is a deliberate decision.
+
+**Resolve does not become what a double-click opens for video.** Being *offered*
+for a file and being what *happens* to a file are different things, and only the
+first is wanted — nobody wants a professional editor taking fifteen seconds to
+start because they double-clicked a clip to glance at it. Setting Resolve up
+writes down what each type of file opens with today and puts it back afterwards,
+so installing Resolve cannot change what a double-click does. If you *want*
+Resolve to be the one that opens a certain kind of file, right-click one →
+**Properties** → **Open With** → choose Resolve → **Set as Default**.
+
+**`.drp` is the exception, and it should be.** A Resolve project opens in
+Resolve, because nothing else on any computer opens one. Until this existed a
+`.drp` was an "unknown file" to Linux — Blackmagic have never registered the
+type with anybody, so AquariusOS registers it.
+
+**Only the formats Resolve can really read are offered**: MP4, MOV, MKV, MPEG,
+MTS, AVI, DV, MXF, WAV, AIFF, MP3, FLAC. An application that opens and then
+shows nothing is worse than one that was never offered.
+
+> **A reminder that has nothing to do with this.** The *free* Resolve on Linux
+> cannot open an ordinary phone or camera MP4 at all, and Studio opens it with
+> silent audio. Offering Resolve in the Open With list does not change that —
+> *[The two things about codecs](#the-two-things-about-codecs-that-nobody-can-fix-inside-resolve)*
+> is still the answer, and it is `Make Editor-Ready` on the right-click menu.
+
+**Dragging a clip from Files into the media pool** works through the same
+machinery and needs one more thing to be true: the drive has to be at the same
+path inside Resolve as outside it. That is what the section above checks.
+
+---
+
 ## Sound, with nothing to set
 
 Resolve's audio comes out of whatever your computer is set to play through, and
@@ -822,7 +860,8 @@ Resolve itself is unaffected.
 | `system_files/usr/share/aquarius/resolve/feed-sample.json` | A small committed cut of that feed, for `--dry-run` and for the build's checks. |
 | `system_files/usr/libexec/aquarius-resolve-update-notify` | The once-a-day job: asks the checker, sends at most one notification per release. |
 | `system_files/usr/lib/systemd/user/aquarius-resolve-update-check.{timer,service}` | What runs it, switched on from `/usr`. |
-| `system_files/usr/libexec/aquarius-resolve-launch` | The host-side launcher. Carries the desktop's settings in. `--report` says what it would do and starts nothing. |
+| `system_files/usr/libexec/aquarius-resolve-launch` | The host-side launcher. Carries the desktop's settings in, and turns a `file://` address from Files into a plain path for Resolve. `--report` says what it would do and starts nothing. |
+| `system_files/usr/share/mime/packages/aquarius-resolve.xml` | The missing name for a `.drp` project. Folded into the desktop's compiled list by `update-mime-database` at build time, in `62-resolve-runtime.sh`. |
 | `system_files/usr/share/aquarius/resolve/runtime.env` | **The one place the runtime image is named.** |
 | `system_files/usr/lib/udev/rules.d/75-aquarius-resolve.rules` | Dongles and control panels. |
 | `system_files/usr/lib/systemd/system/aquarius-resolve-cdi.service` | Graphics-card description, safety net only. |
