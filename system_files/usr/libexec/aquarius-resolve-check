@@ -1,0 +1,478 @@
+#!/usr/bin/python3
+# =============================================================================
+# aquarius-resolve-check — is there a newer DaVinci Resolve?
+# =============================================================================
+# PLAIN ENGLISH
+#
+# Blackmagic publish a list of everything they have ever released, as one file
+# on their website. This program downloads that list, finds the newest DaVinci
+# Resolve for Linux, compares it with the one installed on this computer, and
+# says one sentence:
+#
+#     DaVinci Resolve Studio 21.1 is available. You have 21.0.4.
+#     You have the newest DaVinci Resolve Studio (21.1).
+#
+# That is the whole job. It installs nothing, downloads nothing but that list,
+# and never touches Blackmagic's registration form.
+#
+# ⚠️ IT NEVER OFFERS THE WRONG EDITION. Resolve comes in a free version and a
+# paid one called Studio, they are different downloads, and installing the
+# wrong one over the top of the other is a genuinely bad afternoon. So this
+# looks only at the edition that is actually installed — which is recorded when
+# Resolve is set up — and if it cannot tell which edition that is, it says
+# nothing at all rather than guessing.
+#
+# ONE CHECKER, THREE FACES. `aq resolve check` in a terminal, the once-a-day
+# timer that sends the notification, and the "Update DaVinci Resolve" window
+# all run THIS program and follow what it says. None of them has a second
+# opinion about which version is newest, which is the same rule the installer
+# follows (see the header of aquarius-resolve-install).
+#
+# -----------------------------------------------------------------------------
+# HOW TO RUN IT
+# -----------------------------------------------------------------------------
+#   aquarius-resolve-check                  the sentence, for a person
+#   aquarius-resolve-check --json           the same answer as data
+#   aquarius-resolve-check --dry-run        no internet at all: read the small
+#                                           saved copy of the list that ships
+#                                           with AquariusOS
+#   aquarius-resolve-check --feed FILE      read the list from a file
+#   aquarius-resolve-check --edition studio --installed-version 21.0.4
+#                                           pretend, for testing. Both of these
+#                                           are how the build checks this
+#                                           program without a machine that has
+#                                           Resolve on it.
+#
+# WHAT IT EXITS WITH — this is the part the timer and the window read:
+#
+#   0    nothing to do. Either you have the newest one, or the question could
+#        not be answered (no internet, no record of what is installed). Both
+#        are quiet, ordinary outcomes and neither is an error.
+#   10   there IS a newer Resolve of your edition. The only exit code that
+#        means "tell somebody".
+#   1    something was actually wrong — a file that was asked for by name and
+#        could not be read, or an argument that makes no sense.
+#
+# -----------------------------------------------------------------------------
+# NOTES FOR WHOEVER MAINTAINS THIS
+# -----------------------------------------------------------------------------
+# THE FEED. https://www.blackmagicdesign.com/api/support/us/downloads.json is
+# public, needs no key, and is about 1.6 MB — roughly 1,200 entries covering
+# every product Blackmagic make. Each entry has a `name`, a `date`, and a
+# `urls` dictionary keyed by platform. `urls.Linux` is a list, and each item in
+# it carries:
+#
+#     product       "davinci-resolve" (free) or "davinci-resolve-studio"
+#     major/minor/releaseNum    the three numbers of the version
+#     beta          255 on a normal release. ANYTHING ELSE IS A BETA and is
+#                   ignored here — a beta is a deliberate choice somebody makes
+#                   on Blackmagic's site, never something an operating system
+#                   offers you on a Tuesday.
+#     downloadId    32 hex characters, which is what makes the download page
+#                   address:  .../support/download/<downloadId>/Linux
+#
+# It is fetched with `curl`, on a short timeout, exactly once a day at most.
+# Nothing about this program retries, follows a redirect it was not given, or
+# sends anything about the machine.
+#
+# THE SAVED COPY. /usr/share/aquarius/resolve/feed-sample.json is a small,
+# committed cut of the real feed — the Resolve Linux entries, both editions, a
+# few versions, plus one beta that is clearly marked as invented. It is what
+# --dry-run reads, and it is what the image build tests this program against,
+# so the parsing is proved on every build with no internet involved.
+#
+# WHY THE VERSION COMPARISON IS THREE INTEGERS AND NOT A STRING. "21.10" is
+# newer than "21.9" and sorts before it as text. Comparing (major, minor,
+# release) as numbers is the only way that is right, and it is why the recorded
+# version is parsed back into numbers here rather than compared as it was
+# written down.
+# =============================================================================
+
+import json
+import os
+import subprocess
+import sys
+
+FEED_URL = "https://www.blackmagicdesign.com/api/support/us/downloads.json"
+SAMPLE_FEED = "/usr/share/aquarius/resolve/feed-sample.json"
+DOWNLOAD_PAGE = "https://www.blackmagicdesign.com/support/download/%s/Linux"
+
+# The two products, and what a person calls them.
+EDITIONS = {
+    "free": ("davinci-resolve", "DaVinci Resolve"),
+    "studio": ("davinci-resolve-studio", "DaVinci Resolve Studio"),
+}
+
+# A normal release. Blackmagic put anything else here for a beta.
+NOT_A_BETA = 255
+
+EXIT_NOTHING_TO_DO = 0
+EXIT_UPDATE_AVAILABLE = 10
+EXIT_ERROR = 1
+
+
+# -----------------------------------------------------------------------------
+# Where the record of what is installed lives
+# -----------------------------------------------------------------------------
+# The same file aquarius-resolve-install writes and `aq resolve status` reads:
+# ~/.local/share/aquarius/resolve/installed.env. It is a plain NAME=value file.
+def record_path():
+    data_home = os.environ.get("XDG_DATA_HOME") or os.path.join(
+        os.path.expanduser("~"), ".local", "share"
+    )
+    return os.path.join(data_home, "aquarius", "resolve", "installed.env")
+
+
+def read_record():
+    """Everything the record says, as a dictionary. Missing file is not an error."""
+    values = {}
+    try:
+        with open(record_path(), "r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                name, _, value = line.partition("=")
+                values[name.strip()] = value.strip().strip("\"'")
+    except OSError:
+        return {}
+    return values
+
+
+# -----------------------------------------------------------------------------
+# Versions
+# -----------------------------------------------------------------------------
+def parse_version(text):
+    """"21.0.4" -> (21, 0, 4). Anything that is not three-or-fewer numbers -> None.
+
+    Missing parts count as zero, because Blackmagic write the first release of a
+    series as "21.1" and the next as "21.1.1" — the same number with the tail
+    left off.
+    """
+    if not text:
+        return None
+    parts = str(text).strip().split(".")
+    if len(parts) > 3:
+        return None
+    numbers = []
+    for part in parts:
+        if not part.isdigit():
+            return None
+        numbers.append(int(part))
+    while len(numbers) < 3:
+        numbers.append(0)
+    return tuple(numbers)
+
+
+def format_version(numbers):
+    """(21, 1, 0) -> "21.1";  (21, 0, 4) -> "21.0.4".
+
+    Blackmagic drop the third number when it is zero and so does everything a
+    person reads here, so that what the OS says matches what is on their page.
+    """
+    major, minor, release = numbers
+    if release == 0:
+        return "%d.%d" % (major, minor)
+    return "%d.%d.%d" % (major, minor, release)
+
+
+# -----------------------------------------------------------------------------
+# The feed
+# -----------------------------------------------------------------------------
+def fetch_feed(timeout=15):
+    """Download Blackmagic's list. Returns the parsed list, or None.
+
+    None is a perfectly ordinary answer: it means no internet, or their site is
+    having a bad day. Neither is worth alarming anybody about, so every caller
+    treats None as "say nothing and carry on".
+
+    curl rather than Python's own downloader because it is what the rest of this
+    feature already uses, it honours the machine's proxy settings, and its
+    timeouts are the ones an offline laptop needs — a check that hangs for two
+    minutes at login is a check people switch off.
+    """
+    try:
+        done = subprocess.run(
+            [
+                "curl",
+                "--silent",
+                "--show-error",
+                "--location",
+                "--max-time",
+                str(timeout),
+                "--connect-timeout",
+                "5",
+                "--user-agent",
+                "AquariusOS/aq-resolve-check",
+                FEED_URL,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout + 5,
+            errors="replace",
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode != 0 or not done.stdout.strip():
+        return None
+    try:
+        return json.loads(done.stdout)
+    except ValueError:
+        return None
+
+
+def read_feed_file(path):
+    """Read the list out of a file. Used by --feed and by --dry-run."""
+    with open(path, "r", encoding="utf-8", errors="replace") as handle:
+        return json.load(handle)
+
+
+def newest_release(feed, edition):
+    """The newest NON-BETA Linux release of one edition, or None.
+
+    Returns a dictionary: version numbers, the text to show, and the address of
+    Blackmagic's download page for it.
+    """
+    product = EDITIONS[edition][0]
+    best = None
+    if not isinstance(feed, dict):
+        return None
+    for entry in feed.get("downloads") or []:
+        if not isinstance(entry, dict):
+            continue
+        linux = (entry.get("urls") or {}).get("Linux") or []
+        for item in linux:
+            if not isinstance(item, dict):
+                continue
+            if item.get("product") != product:
+                continue
+            # ⚠️ Betas are ignored, always. 255 is what Blackmagic put on a
+            # normal release; anything else — including a missing value, which
+            # is what some non-Resolve products have — is not something this
+            # operating system offers anybody.
+            if item.get("beta") != NOT_A_BETA:
+                continue
+            try:
+                numbers = (
+                    int(item.get("major")),
+                    int(item.get("minor")),
+                    int(item.get("releaseNum")),
+                )
+            except (TypeError, ValueError):
+                continue
+            download_id = str(item.get("downloadId") or "")
+            candidate = {
+                "version": numbers,
+                "version_text": format_version(numbers),
+                "title": item.get("downloadTitle") or EDITIONS[edition][1],
+                "download_id": download_id,
+                "download_url": DOWNLOAD_PAGE % download_id if download_id else "",
+                "released": entry.get("date") or "",
+            }
+            if best is None or candidate["version"] > best["version"]:
+                best = candidate
+    return best
+
+
+# -----------------------------------------------------------------------------
+# The answer
+# -----------------------------------------------------------------------------
+def check(edition=None, installed_text=None, feed_path=None, offline=False):
+    """Work out what to say. Returns a dictionary; nothing here prints."""
+    answer = {
+        "edition": edition,
+        "edition_name": EDITIONS[edition][1] if edition in EDITIONS else "",
+        "installed": installed_text,
+        "latest": None,
+        "update_available": False,
+        "download_url": "",
+        "download_id": "",
+        "released": "",
+        "message": "",
+        "reason": "",
+    }
+
+    # What is installed. Asked of the record unless we were told.
+    if edition is None or installed_text is None:
+        record = read_record()
+        if edition is None:
+            edition = record.get("AQ_RESOLVE_EDITION") or None
+        if installed_text is None:
+            installed_text = record.get("AQ_RESOLVE_VERSION") or None
+        answer["edition"] = edition
+        answer["installed"] = installed_text
+
+    if edition not in EDITIONS:
+        answer["reason"] = "no-record"
+        answer["message"] = (
+            "AquariusOS has not written down which DaVinci Resolve is installed "
+            "on this computer, so there is nothing to compare against. Setting "
+            "Resolve up, or updating it, records it."
+        )
+        return answer
+    answer["edition_name"] = EDITIONS[edition][1]
+
+    installed_numbers = parse_version(installed_text)
+    if installed_numbers is None:
+        answer["reason"] = "no-record"
+        answer["message"] = (
+            "AquariusOS has not written down which version of %s is installed on "
+            "this computer, so there is nothing to compare against. Updating "
+            "Resolve records it." % EDITIONS[edition][1]
+        )
+        return answer
+
+    # The list itself.
+    if feed_path:
+        try:
+            feed = read_feed_file(feed_path)
+        except (OSError, ValueError) as exc:
+            answer["reason"] = "bad-feed"
+            answer["message"] = "That list of releases could not be read: %s" % exc
+            return answer
+    elif offline:
+        try:
+            feed = read_feed_file(SAMPLE_FEED)
+        except (OSError, ValueError) as exc:
+            answer["reason"] = "bad-feed"
+            answer["message"] = "The saved copy of the release list could not be read: %s" % exc
+            return answer
+    else:
+        feed = fetch_feed()
+        if feed is None:
+            answer["reason"] = "offline"
+            answer["message"] = (
+                "Blackmagic's list of releases could not be reached just now, so "
+                "there is nothing to report. This is usually no internet "
+                "connection, and it is not a problem with Resolve."
+            )
+            return answer
+
+    latest = newest_release(feed, edition)
+    if latest is None:
+        answer["reason"] = "not-in-feed"
+        answer["message"] = (
+            "No %s for Linux was found in Blackmagic's list of releases, which "
+            "is unexpected. Nothing is wrong with the copy you have installed."
+            % EDITIONS[edition][1]
+        )
+        return answer
+
+    answer["latest"] = latest["version_text"]
+    answer["download_url"] = latest["download_url"]
+    answer["download_id"] = latest["download_id"]
+    answer["released"] = latest["released"]
+
+    if latest["version"] > installed_numbers:
+        answer["update_available"] = True
+        answer["reason"] = "update"
+        answer["message"] = "%s %s is available. You have %s." % (
+            EDITIONS[edition][1],
+            latest["version_text"],
+            format_version(installed_numbers),
+        )
+    else:
+        answer["reason"] = "current"
+        answer["message"] = "You have the newest %s (%s)." % (
+            EDITIONS[edition][1],
+            format_version(installed_numbers),
+        )
+    return answer
+
+
+def usage():
+    print(
+        "aquarius-resolve-check — is there a newer DaVinci Resolve?\n"
+        "\n"
+        "    aquarius-resolve-check [--json] [--quiet]\n"
+        "    aquarius-resolve-check --dry-run        no internet: use the saved copy\n"
+        "    aquarius-resolve-check --feed FILE      read the release list from a file\n"
+        "    aquarius-resolve-check --edition free|studio\n"
+        "    aquarius-resolve-check --installed-version 21.0.4\n"
+        "\n"
+        "It exits 0 when there is nothing to do (including when the question could\n"
+        "not be answered), 10 when a newer Resolve of your edition exists, and 1\n"
+        "only when something was actually wrong.\n"
+        "\n"
+        "The friendly way in is:  aq resolve check"
+    )
+
+
+def main(argv):
+    as_json = False
+    quiet = False
+    offline = False
+    feed_path = None
+    edition = None
+    installed = None
+
+    args = list(argv[1:])
+    while args:
+        arg = args.pop(0)
+        if arg == "--json":
+            as_json = True
+        elif arg == "--quiet":
+            quiet = True
+        elif arg == "--dry-run":
+            offline = True
+        elif arg == "--feed":
+            if not args:
+                print("aquarius-resolve-check: --feed needs a file name.", file=sys.stderr)
+                return EXIT_ERROR
+            feed_path = args.pop(0)
+        elif arg.startswith("--feed="):
+            feed_path = arg.split("=", 1)[1]
+        elif arg == "--edition":
+            if not args:
+                print("aquarius-resolve-check: --edition needs free or studio.", file=sys.stderr)
+                return EXIT_ERROR
+            edition = args.pop(0)
+        elif arg.startswith("--edition="):
+            edition = arg.split("=", 1)[1]
+        elif arg == "--installed-version":
+            if not args:
+                print(
+                    "aquarius-resolve-check: --installed-version needs a version.",
+                    file=sys.stderr,
+                )
+                return EXIT_ERROR
+            installed = args.pop(0)
+        elif arg.startswith("--installed-version="):
+            installed = arg.split("=", 1)[1]
+        elif arg in ("-h", "--help"):
+            usage()
+            return EXIT_NOTHING_TO_DO
+        else:
+            print("aquarius-resolve-check: I do not understand '%s'." % arg, file=sys.stderr)
+            return EXIT_ERROR
+
+    if edition is not None and edition not in EDITIONS:
+        print(
+            "aquarius-resolve-check: --edition must be 'free' or 'studio'.",
+            file=sys.stderr,
+        )
+        return EXIT_ERROR
+
+    answer = check(
+        edition=edition,
+        installed_text=installed,
+        feed_path=feed_path,
+        offline=offline,
+    )
+
+    if answer["reason"] == "bad-feed" and (feed_path or offline):
+        # A file that was asked for by name and could not be read IS an error —
+        # unlike the internet not being there, somebody meant this to work.
+        print("aquarius-resolve-check: %s" % answer["message"], file=sys.stderr)
+        return EXIT_ERROR
+
+    if as_json:
+        print(json.dumps(answer, indent=1))
+    elif not quiet:
+        print(answer["message"])
+
+    return EXIT_UPDATE_AVAILABLE if answer["update_available"] else EXIT_NOTHING_TO_DO
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

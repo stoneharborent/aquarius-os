@@ -1,0 +1,248 @@
+{
+ "_aquarius_note": "A SMALL COPY of Blackmagic's public downloads feed (https://www.blackmagicdesign.com/api/support/us/downloads.json), cut down on 2026-09-08 to the DaVinci Resolve entries for Linux. The real feed is about 1.6 MB and around 1,200 entries; this is the handful the checker is tested against, so a build with no internet can still prove the checker picks the right version for each edition and ignores betas. Every entry here is real except the \"Public Beta\" one, which says so itself.",
+ "downloads": [
+  {
+   "_aquarius_note": "INVENTED BY US, not from Blackmagic. There was no DaVinci Resolve beta in the feed on 2026-09-08, and the checker has to be shown ignoring one. The download ids are all zeroes so nobody mistakes this for a real download.",
+   "name": "DaVinci Resolve 21.2 Public Beta 1",
+   "date": "08 Sep 2026",
+   "numericDate": 1789455610000,
+   "platforms": [
+    "Linux"
+   ],
+   "urls": {
+    "Linux": [
+     {
+      "releaseId": "00000000000000000000000000000000",
+      "downloadId": "00000000000000000000000000000000",
+      "downloadTitle": "DaVinci Resolve 21.2 Beta 1",
+      "product": "davinci-resolve",
+      "major": 21,
+      "minor": 2,
+      "releaseNum": 0,
+      "buildNum": 1,
+      "beta": 1
+     },
+     {
+      "releaseId": "00000000000000000000000000000000",
+      "downloadId": "00000000000000000000000000000001",
+      "downloadTitle": "DaVinci Resolve Studio 21.2 Beta 1",
+      "product": "davinci-resolve-studio",
+      "major": 21,
+      "minor": 2,
+      "releaseNum": 0,
+      "buildNum": 1,
+      "beta": 1
+     }
+    ]
+   }
+  },
+  {
+   "name": "DaVinci Resolve 21.1 Update",
+   "date": "Today",
+   "numericDate": 1788850810000,
+   "platforms": [
+    "Mac OS X",
+    "Windows",
+    "Linux",
+    "Windows ARM"
+   ],
+   "urls": {
+    "Linux": [
+     {
+      "releaseId": "59dd4eef1f4941c29fb8dc48b33f5c87",
+      "downloadId": "9ecf221a3a1f47cca35a4e4c34133865",
+      "downloadTitle": "DaVinci Resolve 21.1",
+      "product": "davinci-resolve",
+      "major": 21,
+      "minor": 1,
+      "releaseNum": 0,
+      "buildNum": 14,
+      "beta": 255
+     }
+    ]
+   }
+  },
+  {
+   "name": "DaVinci Resolve Studio 21.1 Update",
+   "date": "Today",
+   "numericDate": 1788850810000,
+   "platforms": [
+    "Mac OS X",
+    "Windows",
+    "Linux",
+    "Windows ARM"
+   ],
+   "urls": {
+    "Linux": [
+     {
+      "releaseId": "baf7c071c0524fbf8ccc961925c9f443",
+      "downloadId": "b9955d7104aa405bb491d924fd734a14",
+      "downloadTitle": "DaVinci Resolve Studio 21.1",
+      "product": "davinci-resolve-studio",
+      "major": 21,
+      "minor": 1,
+      "releaseNum": 0,
+      "buildNum": 14,
+      "beta": 255
+     }
+    ]
+   }
+  },
+  {
+   "name": "DaVinci Resolve 21.0.4 Update",
+   "date": "05 Aug 2026",
+   "numericDate": 1785913210000,
+   "platforms": [
+    "Mac OS X",
+    "Windows",
+    "Linux",
+    "Windows ARM"
+   ],
+   "urls": {
+    "Linux": [
+     {
+      "releaseId": "f1b3986a11634684b538ff3d1d4b55d6",
+      "downloadId": "651bbe286f4c4544b4ded9b343638f60",
+      "downloadTitle": "DaVinci Resolve 21.0.4",
+      "product": "davinci-resolve",
+      "major": 21,
+      "minor": 0,
+      "releaseNum": 4,
+      "buildNum": 5,
+      "beta": 255
+     }
+    ]
+   }
+  },
+  {
+   "name": "DaVinci Resolve Studio 21.0.4 Update",
+   "date": "05 Aug 2026",
+   "numericDate": 1785913210000,
+   "platforms": [
+    "Mac OS X",
+    "Windows",
+    "Linux",
+    "Windows ARM"
+   ],
+   "urls": {
+    "Linux": [
+     {
+      "releaseId": "5e8ed1f827564634984496004809d558",
+      "downloadId": "f6af677f3e3741f59a014b54445bd39e",
+      "downloadTitle": "DaVinci Resolve Studio 21.0.4",
+      "product": "davinci-resolve-studio",
+      "major": 21,
+      "minor": 0,
+      "releaseNum": 4,
+      "buildNum": 5,
+      "beta": 255
+     }
+    ]
+   }
+  },
+  {
+   "name": "DaVinci Resolve 21.0.3 Update",
+   "date": "22 Jul 2026",
+   "numericDate": 1784703610000,
+   "platforms": [
+    "Mac OS X",
+    "Windows",
+    "Linux",
+    "Windows ARM"
+   ],
+   "urls": {
+    "Linux": [
+     {
+      "releaseId": "f549d6da20df4cc98f57d4777d8c8a03",
+      "downloadId": "a77754710e824036a6d77cd344df1be1",
+      "downloadTitle": "DaVinci Resolve 21.0.3",
+      "product": "davinci-resolve",
+      "major": 21,
+      "minor": 0,
+      "releaseNum": 3,
+      "buildNum": 7,
+      "beta": 255
+     }
+    ]
+   }
+  },
+  {
+   "name": "DaVinci Resolve Studio 21.0.3 Update",
+   "date": "22 Jul 2026",
+   "numericDate": 1784703610000,
+   "platforms": [
+    "Mac OS X",
+    "Windows",
+    "Linux",
+    "Windows ARM"
+   ],
+   "urls": {
+    "Linux": [
+     {
+      "releaseId": "257ac6878ddf40dc8c8b72c3b65c0de3",
+      "downloadId": "60c57e20c37d488882dfea5b8d15355a",
+      "downloadTitle": "DaVinci Resolve Studio 21.0.3",
+      "product": "davinci-resolve-studio",
+      "major": 21,
+      "minor": 0,
+      "releaseNum": 3,
+      "buildNum": 7,
+      "beta": 255
+     }
+    ]
+   }
+  },
+  {
+   "name": "DaVinci Resolve 20.3.3",
+   "date": "13 May 2026",
+   "numericDate": 1778741010000,
+   "platforms": [
+    "Mac OS X",
+    "Windows",
+    "Linux",
+    "Windows ARM"
+   ],
+   "urls": {
+    "Linux": [
+     {
+      "releaseId": "ecc878f9c6aa45399296e75a464ac586",
+      "downloadId": "01cef5cca71c43a38ec7743085f44d1e",
+      "downloadTitle": "DaVinci Resolve 20.3.3",
+      "product": "davinci-resolve",
+      "major": 20,
+      "minor": 3,
+      "releaseNum": 3,
+      "buildNum": 10,
+      "beta": 255
+     }
+    ]
+   }
+  },
+  {
+   "name": "DaVinci Resolve Studio 20.3.3",
+   "date": "13 May 2026",
+   "numericDate": 1778741010000,
+   "platforms": [
+    "Mac OS X",
+    "Windows",
+    "Linux",
+    "Windows ARM"
+   ],
+   "urls": {
+    "Linux": [
+     {
+      "releaseId": "44720c1f672d4dce9e0fab7df33f928e",
+      "downloadId": "ad27248499354f5aa01ad1e940bfbf46",
+      "downloadTitle": "DaVinci Resolve Studio 20.3.3",
+      "product": "davinci-resolve-studio",
+      "major": 20,
+      "minor": 3,
+      "releaseNum": 3,
+      "buildNum": 10,
+      "beta": 255
+     }
+    ]
+   }
+  }
+ ]
+}
