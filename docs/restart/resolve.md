@@ -7,7 +7,7 @@
 ## The short version
 
 Open your apps, click **Install DaVinci Resolve**, pick the file you downloaded
-from Blackmagic, and wait about fifteen minutes. A window shows you the six
+from Blackmagic, and wait about fifteen minutes. A window shows you the seven
 steps as they happen. Resolve then sits in your dock like any other program, at
 the same size as everything else on your screen and with your own mouse pointer.
 
@@ -161,7 +161,7 @@ do, and then two lines about your computer:
 
 Then click **Install**.
 
-**Page two — the six steps.** A list, with a spinner on the step that is
+**Page two — the seven steps.** A list, with a spinner on the step that is
 happening and a tick on the ones that are done:
 
 1. Checking your graphics card
@@ -170,6 +170,10 @@ happening and a tick on the ones that are done:
 4. Building the container
 5. Installing DaVinci Resolve
 6. Adding it to your apps
+7. Matching Resolve to your screen
+
+(The window says "the environment Resolve runs in" for 3 and 4, not "Rocky
+Linux" — the names above are what they are, for whoever maintains this.)
 
 Underneath is a progress bar. During the download it fills properly, because
 that is the one step where there is a real number to report; the rest of the
@@ -221,7 +225,7 @@ own **Open DaVinci Resolve** button does the same thing.
 aq resolve install --gui --dry-run
 ```
 
-This opens the real window and walks through all six steps, and it **installs
+This opens the real window and walks through all seven steps, and it **installs
 nothing at all**: no container, no download, no Resolve, no change of any kind.
 It is how to look at the window after changing it, or to see what the setup is
 going to be like before committing fifteen minutes to it. It takes a few
@@ -344,19 +348,97 @@ Hollywood grades on Linux. The gap is only in the consumer formats.
 
 ## Keeping it up to date
 
-**A newer Resolve.** Download the new one from Blackmagic and run:
+*Rewritten 2026-09-08, when AquariusOS started doing this for you.*
+
+### The short version
+
+You will be told. About once a day, quietly, AquariusOS asks Blackmagic whether
+there is a newer DaVinci Resolve than yours. Almost every day the answer is no
+and you never know it happened. When the answer is yes, one notification
+appears:
+
+> **DaVinci Resolve Studio 21.1 is available**
+> You have 21.0.4. AquariusOS can fetch and install it — you fill in
+> Blackmagic's form, it does the rest.
+
+Click it and a window opens. Click **Update** and:
+
+1. **Blackmagic's download page opens** — the page for the version you already
+   have, free or Studio, so there is nothing to choose and nothing to get wrong.
+2. **You fill in their form.** A name and an email address. This is the one step
+   nobody else may do for you, and the reason why is at the end of this section.
+3. **Save the file in your Downloads folder and go and do something else.** The
+   window is watching that folder. The moment your download lands it takes over.
+4. **It installs over the top.** Your projects, your database, your settings and
+   your keyboard shortcuts are in your home folder and are never touched.
+5. **It checks Resolve against your screen**, and then says it is done.
+
+Resolve then opens at the size it opened at before, with your own mouse pointer.
+
+If you missed the notification, or you would rather not wait for it, **Update
+DaVinci Resolve** is in your apps beside Install and Remove, and does exactly
+the same thing.
+
+You are told about each new version once. Ignore 21.1 today and you are not
+pestered about 21.1 tomorrow — you are told about 21.2 when 21.2 exists.
+
+### The commands, if you prefer a terminal
 
 ```
-aq resolve update
+aq resolve check      is there a newer one? One sentence, then it stops.
+aq resolve update     the whole flow above, in a terminal
+aq resolve update --gui       the same thing in the window
+aq resolve update ~/Downloads/DaVinci_Resolve_Studio_21.1_Linux.zip
+                      skip the page: you already have the file
+aq resolve status     which edition and version you have now
 ```
 
-It installs over the top. Your projects, settings, keyboard shortcuts and
-databases live in your home folder and are not touched.
+`aq resolve check` says one of these:
 
-**A newer Rocky Linux underneath.** You do not have to do anything, and that is
-the point of Enterprise Linux — its library versions do not move, so a rebuild
-brings security fixes and nothing else. Removing and re-installing picks up the
-newest build:
+```
+DaVinci Resolve Studio 21.1 is available. You have 21.0.4.
+You have the newest DaVinci Resolve Studio (21.1).
+```
+
+With no internet it says so, calmly, and stops. That is not an error and it is
+not treated as one.
+
+### Why the form is still a form
+
+Blackmagic's licence lets **them** hand out DaVinci Resolve and nobody else —
+not AquariusOS, not any Linux, not any app store. So the file always comes from
+their page, which asks for a name and an email address.
+
+There are scripts on the internet that fill that form in for you and pull the
+file down directly. AquariusOS deliberately does not, for three reasons: it
+would bake your registration details into an operating system, it would break
+the day Blackmagic change the form, and it is a grey area against their terms.
+It is the same reason Resolve itself is not inside AquariusOS.
+
+So the form stays. What AquariusOS removes is everything either side of it —
+noticing the update exists, opening the right page, catching the file, putting
+it in the right place, and checking the result.
+
+### And the size it opens at
+
+The last step of every install and every update is called **Matching Resolve to
+your screen**, and it is a real step rather than a hope.
+
+The size itself cannot be lost: AquariusOS works it out fresh every single time
+Resolve starts, from whatever your desktop is set to right then (see
+*[Resolve's interface is still too small](#resolves-interface-is-still-too-small-or-too-big)*).
+What an update **can** break is the path to that — Blackmagic's installer writes
+its own entry into your apps each time it runs, and a fresh one would start
+Resolve directly, small and with the wrong pointer. So the step checks that
+every "DaVinci Resolve" in your apps still goes through AquariusOS, repairs any
+that does not, asks for the size it would use, and confirms that your own
+`aq resolve scale` choice was not touched. It says which of those it did.
+
+### A newer environment underneath
+
+You do not have to do anything, and that is the point of Enterprise Linux — its
+library versions do not move, so a rebuild brings security fixes and nothing
+else. Removing and re-installing picks up the newest build:
 
 ```
 aq resolve remove
@@ -373,7 +455,9 @@ decision somebody makes, not something that happens to you. It is one line in
 ## The other commands
 
 ```
-aq resolve status     is it installed, and can it see the graphics card
+aq resolve status     is it installed, which version, and can it see the card
+aq resolve check      is there a newer Resolve than the one you have
+aq resolve update     get a newer Resolve and install it (see above)
 aq resolve run        start Resolve (same as clicking the icon)
 aq resolve scale 1.5  how big Resolve's own interface is drawn
 aq resolve shell      a terminal INSIDE the environment Resolve runs in
@@ -382,15 +466,27 @@ aq resolve --help     all of the above, explained
 
 aq resolve install --gui         set it up in the window, from a terminal
 aq resolve install --dry-run     a rehearsal that installs nothing at all
+aq resolve update --gui          update it in the window
+aq resolve update --dry-run      a rehearsal that updates nothing at all
+aq resolve check --json          the same answer as data, for a script
+aq resolve check --dry-run       answer without asking Blackmagic, from the
+                                 small saved copy of their release list
 aq resolve remove --gui          remove it in the window
 aq resolve remove --purge        also delete your Resolve settings and projects
                                  database. Never the default.
 ```
 
 **`aq resolve status` is where to start when something is wrong.** It reports
-more than "is it installed": it asks *inside* the container whether the graphics
-card is visible, which is the question that actually matters and the one you
-cannot answer by looking from outside.
+more than "is it installed": it says which edition and version you have, and it
+asks *inside* the container whether the graphics card is visible, which is the
+question that actually matters and the one you cannot answer by looking from
+outside.
+
+**Three windows, one job each, and all three in your apps.** "Install DaVinci
+Resolve", "Update DaVinci Resolve" and "Remove DaVinci Resolve". Each is the
+same script underneath as the matching `aq resolve` command — one installer,
+several faces — so a window and a terminal can never disagree about your
+machine.
 
 **`aq resolve shell` puts you inside the environment Resolve runs in.** Your
 home folder is the same folder in there. `exit` brings you back. You do not need this in normal
@@ -606,7 +702,12 @@ Resolve itself is unaffected.
 | `build_files/62-resolve-runtime.sh` | The OS-image step. Checks everything below arrived. |
 | `system_files/usr/libexec/aquarius-resolve-install` | **The setup, on the host. The long one, and the only one.** |
 | `system_files/usr/libexec/aquarius-resolve-installer` | The window. GTK 4 + libadwaita, in Python. Runs the above; installs nothing itself. |
-| `system_files/usr/libexec/aquarius-resolve-launch` | The host-side launcher. Carries the desktop's settings in. |
+| `system_files/usr/libexec/aquarius-resolve-updater` | The "Update DaVinci Resolve" window. Same pieces, same progress channel, runs the same script with `--update`. |
+| `system_files/usr/libexec/aquarius-resolve-check` | **The only thing that decides what is newest.** Reads Blackmagic's release feed; `--json`, `--dry-run`, `--feed FILE`. |
+| `system_files/usr/share/aquarius/resolve/feed-sample.json` | A small committed cut of that feed, for `--dry-run` and for the build's checks. |
+| `system_files/usr/libexec/aquarius-resolve-update-notify` | The once-a-day job: asks the checker, sends at most one notification per release. |
+| `system_files/usr/lib/systemd/user/aquarius-resolve-update-check.{timer,service}` | What runs it, switched on from `/usr`. |
+| `system_files/usr/libexec/aquarius-resolve-launch` | The host-side launcher. Carries the desktop's settings in. `--report` says what it would do and starts nothing. |
 | `system_files/usr/share/aquarius/resolve/runtime.env` | **The one place the runtime image is named.** |
 | `system_files/usr/lib/udev/rules.d/75-aquarius-resolve.rules` | Dongles and control panels. |
 | `system_files/usr/lib/systemd/system/aquarius-resolve-cdi.service` | Graphics-card description, safety net only. |
@@ -660,7 +761,11 @@ never has a second opinion about the machine:
 ```
 aquarius-resolve-install --find-installer   the download it would use, or exit 1
 aquarius-resolve-install --gpu-summary      ok|warn|none, a tab, then a sentence
-aquarius-resolve-install --dry-run          walk all six steps, change nothing
+aquarius-resolve-install --dry-run          walk all seven steps, change nothing
+aquarius-resolve-install --update --dry-run rehearse an update, change nothing
+aquarius-resolve-check --dry-run           answer from the saved feed, offline
+aquarius-resolve-update-notify --dry-run   say what it would announce, send nothing
+aquarius-resolve-launch --report           the size and pointer, starting nothing
 ```
 
 **No password is asked for and none should be.** podman and distrobox here are
@@ -689,6 +794,64 @@ flagship feature of this operating system rests on three packages that are here
 by accident, and an accident can be undone by a change to a completely different
 step. Named here, that change fails in this step instead of shipping an icon
 that does nothing when clicked.
+
+### Updating, for whoever maintains this
+
+*Added 2026-09-08, feature 007 in `FEATURES.md`.*
+
+**The feed.** `https://www.blackmagicdesign.com/api/support/us/downloads.json` is
+public, needs no key, and is about 1.6 MB — roughly 1,200 entries covering every
+product Blackmagic make. Each has a `urls` dictionary keyed by platform;
+`urls.Linux[]` carries `product` (`davinci-resolve` or `davinci-resolve-studio`),
+`major`/`minor`/`releaseNum`, `beta` (255 on a normal release — **anything else
+is a beta and is ignored**), and a `downloadId`. The download page for an entry
+is `https://www.blackmagicdesign.com/support/download/<downloadId>/Linux`, which
+is the registration form, which is the one thing a person does.
+
+It is fetched with `curl` on a short timeout, at most once a day. Nothing sends
+anything about the machine, and nothing ever fetches the installer itself.
+
+**The fixture.** `feed-sample.json` is a cut of that feed made on 2026-09-08:
+both editions, four releases, and one beta that is **invented and says so in the
+file**, because there was no real Resolve beta in the feed that day and the
+checker has to be shown ignoring one. Every build runs the checker against it
+and asserts all four answers. Nothing in CI ever touches Blackmagic's site — a
+build that went red when somebody else's website had a bad day would teach
+people to ignore red ticks.
+
+**What is written down, and why there.** `aq resolve check` compares against
+`AQ_RESOLVE_EDITION` and `AQ_RESOLVE_VERSION` in
+`~/.local/share/aquarius/resolve/installed.env`, written at install and update
+time. Both are read off the **name of the file Blackmagic gave the person**
+(`DaVinci_Resolve_Studio_21.1_Linux.zip`). That is the only place both facts are
+stated by Blackmagic in a form readable without running their software; there is
+no documented, stable version file inside `/opt/resolve` that we have verified,
+and a wrong guess here means offering somebody the wrong edition of a 3 GB
+download. When the name does not say, the record is left **empty** and every
+face of the feature says "not written down" rather than guessing.
+
+**The timer.** `aquarius-resolve-update-check.timer` — 15 minutes after startup
+at the earliest, then daily, with an hour of random delay so every AquariusOS in
+the world does not knock on Blackmagic's door at the same second, and
+`Persistent=true` so a machine that was off catches up. It is switched on by a
+`.wants` link shipped in `/usr/lib/systemd/user/timers.target.wants/`, not by
+`systemctl enable`: the long reasoning is in `build_files/aq-lib.sh`, and the
+honest cost is that `systemctl --user disable` will not turn it off —
+`systemctl --user mask` does. The service will not even start on a machine with
+no `installed.env`, and the job stays silent when there is nothing new, when the
+check fails, and when it has already announced that version once.
+
+**The screen-matching step.** Step 7 of both flows, "Matching Resolve to your
+screen". The scale and pointer are computed at every launch and so cannot be
+lost by an update; what an update can break is the app-menu entry, which
+Blackmagic's installer rewrites each time it runs. The step re-checks every
+`*resolve*`/`*davinci*`/`*blackmagic*.desktop` in
+`~/.local/share/applications`, rewrites any that bypasses
+`aquarius-resolve-launch` exactly as step 6 does, hides one that cannot be
+rewritten **only when a working entry survives**, asks
+`aquarius-resolve-launch --report` for the line it would print, and compares a
+`cksum` of `~/.config/aquarius/resolve.conf` taken before Blackmagic's installer
+ran. Contents, never timestamps.
 
 ### Why Rocky 9 and not Rocky 10
 
@@ -786,7 +949,10 @@ Be clear about this, because a green tick is easy to over-read.
 | Neither image contains any Blackmagic software | Playback, export, colour |
 | Every script parses, the desktop entry validates, `aq resolve --help` and `status` run | Whether it is actually pleasant to use |
 | The window compiles, and Python inside the image can really import GTK 4 and libadwaita | **What the window looks like** |
-| The rehearsal's six `STEP` lines arrive in order and end in `DONE` | That the bar moves sensibly during a real download |
+| The rehearsal's seven `STEP` lines arrive in order and end in `DONE`, for installing and for updating | That the bar moves sensibly during a real download |
+| The update check picks the right version for each edition and ignores betas, against a saved feed | That Blackmagic's real feed still looks like that |
+| The daily timer is valid and switched on from `/usr`, and the job stays quiet with nothing installed | That a notification really appears, and that its button opens the window |
+| `aquarius-resolve-launch --report` answers on a machine with no Resolve | That the repaired app-menu entry really opens Resolve at the right size |
 | The desktop entry's `StartupWMClass` matches the window's application id | That the dock shows the right name and mark |
 
 There is no Resolve in CI — we may not distribute it — and no graphics card in a
