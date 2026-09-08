@@ -1298,29 +1298,81 @@ else
             'opacity="0.450"' \
             "and a window you are not in draws its whole button at 45%"
 
-        # --- the Midnight GTK exception ----------------------------------------
-        # Two properties, dark only. See the posture note in
+        # --- the GTK window chrome ---------------------------------------------
+        # GNOME's own applications draw their own title bar, so the labwc frame
+        # checked above never appears on Files, Settings, Ptyxis or Text Editor
+        # (found on the bench, 7 September 2026). The only thing that reaches
+        # them is a GTK stylesheet, and generate-theme writes one per user: the
+        # two window colours, and the three window buttons redrawn the way labwc
+        # draws them. See the posture note at the top of
         # build_files/50-aquarius-desktop.sh for why this is allowed at all.
-        aq_file_has "${AQ_FRAME_OUT}/midnight-1/gtk/gtk-4.0/gtk.css" \
-            'background-color: #0B1220' \
-            "a dark desktop paints GTK window backgrounds Midnight navy"
-        aq_file_has "${AQ_FRAME_OUT}/midnight-1/gtk/gtk-4.0/gtk.css" \
-            'background-color: #152033' \
-            "and their header bars the panel navy"
-        aq_file_has "${AQ_FRAME_OUT}/midnight-1/gtk/gtk-3.0/gtk.css" \
-            'background-color: #0B1220' \
-            "older GTK applications get the same two properties"
-        if [ -e "${AQ_FRAME_OUT}/ice-1/gtk/gtk-4.0/gtk.css" ]; then
-            bad "the Ice theme wrote a GTK colour file — those two properties are Midnight's, and on a light desktop they would paint every GTK window navy"
-        else
-            ok "the Ice theme writes no GTK colour file, which is correct"
-        fi
-        AQ_GTK_LINES="$(grep -cE '^[a-z]' "${AQ_FRAME_OUT}/midnight-1/gtk/gtk-4.0/gtk.css" || true)"
-        if [ "${AQ_GTK_LINES}" -eq 2 ]; then
-            ok "the GTK file is exactly two rules and nothing else"
-        else
-            bad "the Midnight GTK file has ${AQ_GTK_LINES} rules. It is allowed exactly TWO — the window background and the header bar. Anything more is a GTK theme, which this project does not ship (see the posture note in build_files/50-aquarius-desktop.sh)."
-        fi
+        #
+        # Since 7 September 2026 the file is written in BOTH schemes. It used to
+        # be Midnight only, and to be DELETED in light mode, so two checks that
+        # used to live here are gone on purpose: the one that insisted Ice write
+        # no file, and the one that counted the rules and allowed exactly two.
+        for AQ_GTK_CASE in \
+            "ice #EAF1F8 #F0F6FC #C8463B 0.100 0.160" \
+            "midnight #0B1220 #152033 #E07B7B 0.120 0.180"
+        do
+            # shellcheck disable=SC2086
+            set -- ${AQ_GTK_CASE}
+            AQ_GTK_SCHEME="$1"
+            AQ_GTK_BG="$2"
+            AQ_GTK_PANEL="$3"
+            AQ_GTK_DANGER="$4"
+            AQ_GTK_IDLE="$5"
+            AQ_GTK_HOVER="$6"
+            AQ_GTK_CSS="${AQ_FRAME_OUT}/${AQ_GTK_SCHEME}-1/gtk/gtk-4.0/gtk.css"
+
+            aq_file_has "${AQ_GTK_CSS}" \
+                "^window \{ background-color: ${AQ_GTK_BG}; \}$" \
+                "${AQ_GTK_SCHEME}: GTK window backgrounds are the palette's own ground"
+            aq_file_has "${AQ_GTK_CSS}" \
+                "^headerbar \{ background-color: ${AQ_GTK_PANEL}; \}$" \
+                "${AQ_GTK_SCHEME}: and their header bars are the panel colour"
+            # The disc lives on the picture inside the button, not on the button
+            # itself — that is how libadwaita builds it, checked against the
+            # stylesheet compiled into libadwaita on this image.
+            aq_file_has "${AQ_GTK_CSS}" \
+                "^windowcontrols > button > image \{$" \
+                "${AQ_GTK_SCHEME}: the three window buttons are redrawn as a round disc"
+            aq_file_has "${AQ_GTK_CSS}" \
+                ", ${AQ_GTK_IDLE}\);" \
+                "${AQ_GTK_SCHEME}: the disc sits at the design's resting opacity"
+            aq_file_has "${AQ_GTK_CSS}" \
+                "^windowcontrols > button:hover > image \{$" \
+                "${AQ_GTK_SCHEME}: the disc deepens under the pointer"
+            aq_file_has "${AQ_GTK_CSS}" \
+                ", ${AQ_GTK_HOVER}\);" \
+                "${AQ_GTK_SCHEME}: and it deepens to the design's hover opacity"
+            aq_file_has "${AQ_GTK_CSS}" \
+                "^windowcontrols > button\.close:hover > image \{$" \
+                "${AQ_GTK_SCHEME}: close is the only button that takes colour"
+            aq_file_has "${AQ_GTK_CSS}" \
+                "background-color: ${AQ_GTK_DANGER};" \
+                "${AQ_GTK_SCHEME}: and the colour it takes is the theme's danger red"
+            aq_file_has "${AQ_GTK_CSS}" \
+                "^windowcontrols > button:backdrop \{$" \
+                "${AQ_GTK_SCHEME}: the buttons fade on a window you are not in"
+            aq_file_has "${AQ_GTK_CSS}" \
+                "opacity: 0\.45;" \
+                "${AQ_GTK_SCHEME}: and they fade to the design's 45%"
+
+            # The GTK 3 twin. Hardly any GTK 3 applications are left, so it gets
+            # the same colours and the same three shapes under GTK 3's own names
+            # (button.titlebutton), and nothing more.
+            AQ_GTK3_CSS="${AQ_FRAME_OUT}/${AQ_GTK_SCHEME}-1/gtk/gtk-3.0/gtk.css"
+            aq_file_has "${AQ_GTK3_CSS}" \
+                "^window \{ background-color: ${AQ_GTK_BG}; \}$" \
+                "${AQ_GTK_SCHEME}: older GTK 3 applications get the same colours"
+            aq_file_has "${AQ_GTK3_CSS}" \
+                "^headerbar button\.titlebutton \{$" \
+                "${AQ_GTK_SCHEME}: and the same three window buttons"
+            aq_file_has "${AQ_GTK3_CSS}" \
+                "^headerbar button\.titlebutton\.close:hover \{$" \
+                "${AQ_GTK_SCHEME}: with close going red there too"
+        done
     fi
 
     rm -rf "${AQ_FRAME_OUT}"

@@ -50,7 +50,10 @@
 #   <config-out>/environment         copied, unchanged
 #   <theme-out>/*.svg                the round window buttons, one file per
 #                                    button per state
-#   <gtk-out>/gtk-4.0/gtk.css        Midnight only — see "GTK" below
+#   <gtk-out>/gtk-4.0/gtk.css        the window colours and the three window
+#                                    buttons for GNOME's own applications, which
+#                                    draw their own title bar — see "GTK" below.
+#                                    Written in BOTH light and dark.
 #   <gtk-out>/gtk-3.0/gtk.css        the same, for older applications
 #
 #   ⚠️ THE TWO OUTPUT FOLDERS ARE DIFFERENT FOLDERS, AND THAT IS labwc's RULE,
@@ -774,61 +777,299 @@ def build_rc_xml(template, scale, buttons):
 # =============================================================================
 # GTK — the one place AquariusOS colours somebody else's windows
 # =============================================================================
-# AquariusOS's posture is to work WITH GNOME's grain: accent colour, wallpaper,
-# fonts, a few extensions, and then stop. No GNOME Shell theme, no GTK theme, no
-# libadwaita patching. This is the ONE documented exception, and it is two
-# properties wide.
+# WHY IT IS NEEDED — found on the bench, 7 September 2026
 #
-# WHY IT IS NEEDED. In dark mode the shell turns Midnight — a deep navy — and
-# libadwaita's own dark theme is a neutral near-black. Put a Files window on a
-# Midnight desktop and the window is grey against navy: not broken, but plainly
-# from a different design. Two colours fix it, and nothing else here is touched:
-# no text colours, no buttons, no widget styling, no borders. Everything else
-# still comes from libadwaita and still tracks it.
+#   GNOME's own applications do not let labwc put a title bar on them. Files,
+#   Settings, Ptyxis, Text Editor, Image Viewer and Document Viewer all draw
+#   their own bar INSIDE the window and tell the compositor not to add one. So
+#   the Aquarius window frame this program builds — the navy bar, the round
+#   buttons, the 12px corners — appeared on nothing that came from GNOME. Those
+#   windows sat on an Aquarius desktop wearing libadwaita's grey bar and
+#   libadwaita's own flat buttons. Not broken; plainly from a different design.
 #
-# WHY IT IS WRITTEN INTO THE USER'S HOME RATHER THAN SHIPPED IN /etc.
-# The colours must apply in DARK ONLY — a navy window on the Ice light desktop
-# would be exactly the same mistake in the other direction. GTK's CSS has no
-# "only when dark" selector: a stylesheet is loaded or it is not. A file shipped
-# system-wide would therefore be on all the time. So this program puts the file
-# in place when the machine goes dark and takes it away again when it goes
-# light, which is the design sheet's own stated fallback.
+#   There is exactly one way to reach a window that draws its own bar, and it is
+#   GTK's own stylesheet. So this program writes one small stylesheet per user
+#   and GTK reads it at start-up.
+#
+# WHAT IS IN IT, AND WHAT IS DELIBERATELY NOT
+#
+#   In it:   the window background colour, the header-bar background colour, and
+#            the three window buttons redrawn as the design's "mix B" — a round
+#            disc of ink behind a glyph, deepening under the pointer, with only
+#            close taking colour, and the whole button faded on a window you are
+#            not in. The same picture labwc draws on every other window.
+#
+#   Not in it: text colours, widget theming, borders, the header bar's HEIGHT,
+#            and anything at all that is not window chrome. Everything else in a
+#            GNOME window still comes from libadwaita and still follows it.
+#
+#   That is design rule 9, as Royce widened it on 7 September 2026. Before that
+#   day this file was two colour properties, dark only, and was DELETED in light
+#   mode. It is now written in both schemes.
+#
+# WHY IT IS WRITTEN INTO THE USER'S HOME RATHER THAN SHIPPED IN /usr
+#
+#   The colours are different in Ice and in Midnight, and GTK's CSS has no
+#   "only when the desktop is dark" selector — a stylesheet is loaded or it is
+#   not. So the file has to be REWRITTEN every time somebody flips between light
+#   and dark, which means it has to live somewhere writable. On AquariusOS /usr
+#   is read-only, so the only place left is the user's own configuration folder.
+#
+#   ⚠️ THE HONEST LIMIT OF THAT. ~/.config/gtk-4.0/gtk.css is not the Aquarius
+#   session's private property — every GTK application this user runs reads it,
+#   including one started from the GNOME fallback session on the login screen.
+#   That is harmless (they are our palette's own quiet blues, and only chrome),
+#   but it does NOT follow GNOME's own light/dark switch: it keeps whichever
+#   scheme the Aquarius session wrote last. Somebody who logs into GNOME, in
+#   light mode, after leaving Aquarius in Midnight, gets navy window chrome
+#   until they visit the Aquarius session again. Fixing that properly needs a
+#   file GTK reloads per session, which GTK does not offer.
 #
 # ⚠️ IT WILL NOT OVERWRITE A FILE IT DID NOT WRITE. If gtk.css already exists
-# and does not carry the marker line below, this program leaves it exactly where
-# it is and says so. Somebody's own GTK customisation is theirs.
+# and does not carry one of the marker lines below, this program leaves it
+# exactly where it is and says so. Somebody's own GTK customisation is theirs.
+#
+# -----------------------------------------------------------------------------
+# THE SELECTORS, CHECKED AGAINST THE REAL LIBRARIES RATHER THAN REMEMBERED
+# -----------------------------------------------------------------------------
+# Every selector below was read out of the compiled stylesheet that ships inside
+# libadwaita on a Fedora 44 AquariusOS machine — `gresource extract
+# /usr/lib64/libadwaita-1.so.0 /org/gnome/Adwaita/styles/gtk.css` — and out of
+# GTK 4.22.4's own theme. What that says, word for word:
+#
+#     windowcontrols > button          { min-width: 24px; padding: 5px; }
+#     windowcontrols > button > image  { background-color: ...currentColor 10%;
+#                                        border-radius: 100%; padding: 4px; }
+#     windowcontrols > button:hover  > image  { ...currentColor 15% }
+#     windowcontrols > button:active > image  { ...currentColor 30% }
+#
+# So libadwaita ALREADY draws a round disc, and it draws it on the picture
+# (`image`) rather than on the button. That is the node this file colours, which
+# is why nothing here has to switch libadwaita's own disc off first.
+#
+# The three buttons are told apart by a CSS class each. That was confirmed by
+# reading the machine code of GTK 4.22.4's window-controls widget, where the
+# calls are literally `gtk_widget_add_css_class(button, "close")`, `"minimize"`
+# and `"maximize"`. There is no `titlebutton` class in GTK 4 any more — that one
+# was GTK 3's, and the GTK 3 half of this file still uses it.
+#
+# ⚠️ WHY THE BUTTON PICTURES ARE NOT REUSED HERE. This program already draws the
+# three buttons as SVG files for labwc, and pointing GTK at those very files
+# would have been the tidiest possible answer: one picture, two window managers.
+# It does not work. GTK's `-gtk-icon-source` property, the only way to hand a
+# file to a widget from CSS, is honoured only by GTK's own BUILT-IN icon nodes
+# (the check mark, the radio dot, the expander arrow, the sort indicator). A
+# window button's picture is a GtkImage, which draws a paintable it was handed
+# in C and never looks at the stylesheet for a source. Checked: in the whole of
+# GTK 4.22.4's theme and the whole of libadwaita's, `-gtk-icon-source` is never
+# once set on an `image` node. So the disc is rebuilt here in plain CSS and the
+# glyph inside it stays libadwaita's own. The colours, the opacities and the
+# sizes are the design; the exact stroke of the X is not.
+#
+# ⚠️ WHY THESE RULES WIN. GTK sorts stylesheets by PRIORITY before it looks at
+# how specific a selector is, and a file in the user's configuration folder is
+# loaded above the theme. So `windowcontrols > button > image` here beats
+# libadwaita's longer selectors, and there is no need to write anything longer
+# or to shout `!important`.
 
-GTK_MARKER = "AquariusOS Midnight — generated by generate-theme"
+# The line that says "we wrote this, so we may overwrite it".
+GTK_MARKER = "AquariusOS — generated by generate-theme"
+
+# The marker this file carried before 7 September 2026, when it was Midnight
+# only. Bench machines already have files stamped with it. Without this second
+# name every one of those accounts would keep its old two-line file for ever,
+# because the safety check above would decide the file was somebody else's.
+GTK_MARKER_OLD = "AquariusOS Midnight — generated by generate-theme"
+
+GTK_MARKERS = (GTK_MARKER, GTK_MARKER_OLD)
 
 
-def build_gtk_css(palette):
+def css_rgba(value, percent=100):
+    """
+    One palette colour, written the way both GTK 3 and GTK 4 read it.
+
+    `rgba(22, 39, 58, 0.100)` is chosen over `#16273A1A` and over GTK's own
+    `alpha()` helper because plain rgba() is the one spelling that every version
+    of GTK 3 and GTK 4 has always understood. There is no cleverness to go wrong
+    here on a future Fedora.
+    """
+    digits = rgb_of(value).lstrip("#")
+    red, green, blue = (int(digits[i:i + 2], 16) for i in (0, 2, 4))
+    if percent >= 100:
+        return "rgb(%d, %d, %d)" % (red, green, blue)
+    return "rgba(%d, %d, %d, %.3f)" % (red, green, blue, percent / 100.0)
+
+
+def build_gtk_css(palette, scheme):
+    """
+    The GTK 4 stylesheet: two window colours and three window buttons.
+
+    Sizes here are written WITHOUT AQ_UI_SCALE on purpose. Everywhere else in
+    this program a size is multiplied by the scale, because labwc counts in real
+    screen pixels. GTK does its own scaling: a number in a GTK stylesheet is a
+    logical pixel, and GTK multiplies it for the display. Multiplying it here as
+    well would make the buttons grow twice.
+    """
+    ink = palette["ink"]
+    idle = DISC_IDLE[scheme]
+    hover = DISC_HOVER[scheme]
+
     return "\n".join(
         [
             "/* %s. Do not edit; it is rewritten on every light/dark flip. */"
             % GTK_MARKER,
             "/*",
-            " * Two properties, and no more. This is the ONE exception to",
-            " * AquariusOS's no-GTK-theme posture, and it exists so that a Files",
-            " * or Settings window on a Midnight desktop is navy like everything",
-            " * else rather than libadwaita's neutral near-black.",
+            " * Scheme: %s. Colours from the shell's theme/%s.qml, which is the"
+            % (scheme, scheme.capitalize()),
+            " * only place any colour in this project is written down.",
             " *",
-            " * Colours come from the shell's theme/Midnight.qml. Nothing else in",
-            " * this file, ever — no text colours, no widget styling.",
+            " * This file styles WINDOW CHROME AND NOTHING ELSE: the window",
+            " * background, the header-bar background, and the three window",
+            " * buttons. It exists because GNOME applications draw their own",
+            " * title bar, so the Aquarius window frame never appears on them.",
+            " * No text colours, no widget theming, no header-bar height.",
             " */",
+            "",
+            "/* 1. The two window colours. */",
             "window { background-color: %s; }" % rgb_of(palette["bg"]),
             "headerbar { background-color: %s; }" % rgb_of(palette["panel"]),
+            "",
+            "/* 2. The three window buttons, drawn the way labwc draws them:",
+            " *    a %dpx round disc of ink at %d%%, glyph in ink, disc deepening"
+            % (BUTTON_DISC, idle),
+            " *    to %d%% under the pointer. Only close takes colour." % hover,
+            " *    libadwaita puts the disc on the picture, not on the button,",
+            " *    so `> image` is the node these rules colour.",
+            " */",
+            "windowcontrols > button > image {",
+            "  background-color: %s;" % css_rgba(ink, idle),
+            "  color: %s;" % css_rgba(ink),
+            "  border-radius: 100%;",
+            "  min-width: %dpx;" % BUTTON_GLYPH_BOX,
+            "  min-height: %dpx;" % BUTTON_GLYPH_BOX,
+            "  -gtk-icon-size: %dpx;" % BUTTON_GLYPH_BOX,
+            "  padding: %dpx;" % ((BUTTON_DISC - BUTTON_GLYPH_BOX) // 2),
+            "}",
+            "",
+            "/* Pointer on any of the three: the disc deepens. */",
+            "windowcontrols > button:hover > image {",
+            "  background-color: %s;" % css_rgba(ink, hover),
+            "}",
+            "",
+            "/* Pointer on close, and close only: the disc takes the theme's",
+            " * danger colour, because the one button you can press by accident",
+            " * and not undo should say so.",
+            " */",
+            "windowcontrols > button.close:hover > image {",
+            "  background-color: %s;" % rgb_of(palette["danger"]),
+            "  color: %s;" % rgb_of(palette["inkOnAccent"]),
+            "}",
+            "",
+            "/* A window you are not in: the whole button at %d%%, disc and"
+            % INACTIVE_OPACITY,
+            " * glyph together, exactly as the -inactive button pictures do.",
+            " *",
+            " * Honest limit: an application built the older way, without",
+            " * AdwToolbarView, already fades its whole header bar to a half",
+            " * when it loses focus, and the two fades multiply — its buttons",
+            " * come out fainter than %d%%. The applications this was written" % INACTIVE_OPACITY,
+            " * for (Files, Settings, Ptyxis, Text Editor) do not do that, so",
+            " * they land exactly here.",
+            " *",
+            " * The fade is put on the BUTTON rather than on the disc, so a",
+            " * pointer resting on an unfocused window still deepens the disc",
+            " * and still turns close red, faded — which is exactly what the",
+            " * *_hover-inactive button pictures show on every other window.",
+            " */",
+            "windowcontrols > button:backdrop {",
+            "  opacity: %.2f;" % (INACTIVE_OPACITY / 100.0),
+            "}",
+            "",
+        ]
+    )
+
+
+def build_gtk3_css(palette, scheme):
+    """
+    The same thing for GTK 3, which names everything differently.
+
+    GTK 3 has no `windowcontrols` node at all. Its window buttons are plain
+    buttons inside the header bar, marked `button.titlebutton`, plus one of
+    `.close`, `.minimize` or `.maximize` — and GTK 3 draws its disc on the
+    BUTTON, not on the picture inside it. So the same design is written out a
+    second time against those names. It is a short file and the buttons are done
+    properly rather than colours-only, because the shapes are the same three.
+
+    Hardly any GTK 3 applications are left on an AquariusOS machine, so this
+    half is deliberately not gold-plated: the disc, the hover, the red close and
+    the faded unfocused state, and nothing more.
+    """
+    ink = palette["ink"]
+    idle = DISC_IDLE[scheme]
+    hover = DISC_HOVER[scheme]
+
+    return "\n".join(
+        [
+            "/* %s. Do not edit; it is rewritten on every light/dark flip. */"
+            % GTK_MARKER,
+            "/*",
+            " * The GTK 3 twin of ~/.config/gtk-4.0/gtk.css. Same scheme (%s),"
+            % scheme,
+            " * same palette, same rule: window chrome only.",
+            " *",
+            " * GTK 3 names the window buttons `button.titlebutton` and draws",
+            " * their disc on the button itself, so these selectors do not look",
+            " * like the GTK 4 ones even though the picture is the same.",
+            " */",
+            "",
+            "window { background-color: %s; }" % rgb_of(palette["bg"]),
+            "headerbar { background-color: %s; }" % rgb_of(palette["panel"]),
+            "",
+            "headerbar button.titlebutton {",
+            "  background-image: none;",
+            "  background-color: %s;" % css_rgba(ink, idle),
+            "  color: %s;" % css_rgba(ink),
+            "  border: none;",
+            "  box-shadow: none;",
+            "  border-radius: 100%;",
+            "  min-width: %dpx;" % BUTTON_DISC,
+            "  min-height: %dpx;" % BUTTON_DISC,
+            "  padding: 0;",
+            "}",
+            "",
+            "headerbar button.titlebutton:hover {",
+            "  background-color: %s;" % css_rgba(ink, hover),
+            "}",
+            "",
+            "headerbar button.titlebutton.close:hover {",
+            "  background-color: %s;" % rgb_of(palette["danger"]),
+            "  color: %s;" % rgb_of(palette["inkOnAccent"]),
+            "}",
+            "",
+            "headerbar button.titlebutton:backdrop {",
+            "  opacity: %.2f;" % (INACTIVE_OPACITY / 100.0),
+            "}",
             "",
         ]
     )
 
 
 def apply_gtk_css(gtk_root, palette, scheme, report):
-    wanted = build_gtk_css(palette) if scheme == "midnight" else None
+    """
+    Put the stylesheet in place for both GTK 4 and GTK 3.
 
-    for folder in ("gtk-4.0", "gtk-3.0"):
+    Since 7 September 2026 this writes in BOTH schemes. There is no longer a
+    branch that removes the file in light mode — light has its own colours now,
+    and removing the file would take the round window buttons away with it.
+    """
+    builders = (
+        ("gtk-4.0", build_gtk_css),
+        ("gtk-3.0", build_gtk3_css),
+    )
+
+    for folder, builder in builders:
         path = os.path.join(gtk_root, folder, "gtk.css")
 
-        existing = None
         if os.path.exists(path):
             try:
                 with open(path, "r", encoding="utf-8") as handle:
@@ -837,24 +1078,19 @@ def apply_gtk_css(gtk_root, palette, scheme, report):
                 report("  note   could not read %s (%s); leaving it alone" % (path, problem))
                 continue
 
-            if GTK_MARKER not in existing:
+            if not any(marker in existing for marker in GTK_MARKERS):
                 report(
                     "  note   %s was not written by us, so it is left alone."
                     % path
                 )
                 report(
-                    "         The Midnight window colour is skipped for %s." % folder
+                    "         The Aquarius window colours are skipped for %s."
+                    % folder
                 )
                 continue
 
-        if wanted is None:
-            if existing is not None:
-                os.remove(path)
-                report("  light  removed %s" % path)
-            continue
-
-        write_file(path, wanted)
-        report("  dark   wrote %s" % path)
+        write_file(path, builder(palette, scheme))
+        report("  %-6s wrote %s" % (scheme, path))
 
 
 # =============================================================================
@@ -1045,7 +1281,7 @@ def main(argv):
     )
     parser.add_argument(
         "--gtk-out", default=None,
-        help="where to write (or remove) the Midnight GTK colours.",
+        help="where to write the GTK window colours and window buttons.",
     )
     parser.add_argument(
         "--reconfigure", action="store_true",
@@ -1126,7 +1362,7 @@ def main(argv):
             os.remove(os.path.join(theme_out, name))
     report("  drew %d button pictures" % len(wanted))
 
-    # -- the GTK exception -----------------------------------------------------
+    # -- the GTK chrome --------------------------------------------------------
     apply_gtk_css(gtk_out, palette, scheme, report)
 
     # -- tell labwc ------------------------------------------------------------

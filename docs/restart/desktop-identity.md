@@ -262,7 +262,7 @@ It reads whichever palette is in force and writes out:
 | `rc.xml` — with three settings filled in | `~/.config/aquarius/labwc/` |
 | `menu.xml`, `autostart`, `shutdown`, `environment` | copied there unchanged |
 | the round window buttons, as SVG | `~/.local/share/themes/Aquarius/labwc/` |
-| the dark-mode GTK window colour | `~/.config/gtk-4.0/gtk.css` + `gtk-3.0` |
+| the GTK window chrome — window colour, header-bar colour, and the three window buttons, in **both** light and dark | `~/.config/gtk-4.0/gtk.css` + `gtk-3.0` |
 
 `/usr/share/aquarius/labwc/` is the **template**. `/usr/bin/aquarius-session`
 runs the generator before starting labwc and then starts labwc with the
@@ -314,33 +314,64 @@ using — which is exactly how Command+Tab was lost earlier the same day.
 ### The one exception to the no-GTK-theme posture
 
 `build_files/50-aquarius-desktop.sh` says AquariusOS ships no GTK theme. There
-is now one narrow, named exception, and it is **two properties, in dark mode
-only**:
+is one narrow, named exception: **the chrome of a GTK window, and only the
+chrome.** Royce widened it on 7 September 2026; before that day it was two
+colours, in dark mode only, and the file was deleted in light mode.
+
+**What the bench showed.** GNOME's own applications — Files, Settings, Ptyxis,
+Text Editor, Image Viewer, Document Viewer — draw their own title bar *inside*
+the window and tell the window manager not to add one. So the Aquarius window
+frame described above appeared on none of them. They sat on an Aquarius desktop
+wearing libadwaita's grey bar and libadwaita's own flat buttons. The only thing
+that can reach a window like that is GTK's own stylesheet.
+
+**What the generated file now contains, in both light and dark:**
 
 ```css
-window    { background-color: #0B1220; }   /* Midnight bg    */
-headerbar { background-color: #152033; }   /* Midnight panel */
+/* Midnight shown; Ice is the same shape with Ice's colours. */
+window    { background-color: #0B1220; }   /* the palette's bg    */
+headerbar { background-color: #152033; }   /* the palette's panel */
+
+windowcontrols > button > image        { /* a 20px round disc of ink */ }
+windowcontrols > button:hover > image  { /* the disc deepens         */ }
+windowcontrols > button.close:hover > image { /* close alone goes red */ }
+windowcontrols > button:backdrop       { /* faded on a window you are not in */ }
 ```
 
-**Why.** In dark mode the shell turns Midnight, a deep navy, while libadwaita's
-own dark theme is a neutral near-black. A Files window on a Midnight desktop is
-grey against navy: not broken, plainly from a different design. Two colours fix
-it.
+and **nothing else**. No text colours. No widget theming. No borders. Not even
+the header bar's height.
 
-**Why it is not a treadmill.** No text colours, no buttons, no borders, no
-widget styling, and no selector that names a libadwaita internal — the two most
-stable selectors in GTK, set to two colours out of our own palette. If
-libadwaita changes everything else about how a window is drawn, these two lines
-are still either right or harmless. The build prints the exact `gtk4`, `gtk3`
-and `libadwaita` versions the assumption was made against.
+**Why the buttons are rebuilt in CSS rather than reusing the SVG files.** The
+generator already draws those three buttons as pictures for labwc, and pointing
+GTK at the same files would have been tidier. GTK will not do it: the only CSS
+property that hands a file to a widget, `-gtk-icon-source`, is read by GTK's own
+built-in icon shapes (the check mark, the expander arrow) and not by the kind of
+picture a window button uses. So the disc is redrawn in plain CSS and the little
+X, dash and square inside it stay GNOME's own. The colours, the opacities and
+the sizes are the design; the exact stroke of the X is not.
 
-**Why it is written into your home rather than shipped in `/etc`.** It must
-apply in **dark only**, and GTK's CSS has no "only when dark" selector — a
-stylesheet is loaded or it is not. A file shipped system-wide would be on all
-the time, and a navy window on the Ice light desktop is the same mistake in the
-other direction. So the generator writes the file when the machine goes dark and
-removes it when it goes light. It also refuses to touch a `gtk.css` it did not
-write itself, so anybody's own GTK customisation is left alone.
+**Why it is not a treadmill.** `window` and `headerbar` are the two most stable
+selectors in GTK. The button selectors are libadwaita's and GTK's internals, and
+they were read out of the libraries on a real Fedora 44 AquariusOS machine
+rather than remembered. If a future GNOME renames them, the buttons quietly go
+back to looking like GNOME's, which is where they started — nothing breaks.
+Design rule 9 says it out loud: **check Files on the bench after every Fedora
+bump.** The build prints the exact `gtk4`, `gtk3` and `libadwaita` versions the
+assumption was made against.
+
+**Why it is written into your home rather than shipped in `/etc`.** Ice and
+Midnight need different colours, and GTK's CSS has no "only when dark" selector
+— a stylesheet is loaded or it is not. So the file has to be rewritten every
+time you flip between light and dark, which means it has to live somewhere
+writable, and `/usr` on this operating system is read-only. The generator also
+refuses to touch a `gtk.css` it did not write itself, so anybody's own GTK
+customisation is left alone.
+
+**The honest limit.** `~/.config/gtk-4.0/gtk.css` is not the Aquarius session's
+private property — every GTK application you run reads it, including one started
+from the GNOME fallback session. That is harmless (it is only chrome, in our own
+quiet blues), but it does not follow GNOME's own light/dark switch: it keeps
+whichever scheme the Aquarius session wrote last.
 
 ### Two things labwc 0.20 cannot do
 
@@ -390,8 +421,9 @@ image — Ice and Midnight, at 1× and at 1.25× — and reads back every value 
 design sheet names: the title-bar colours, the border hairlines, the button
 sizes that add up to a 38px bar, the menu colours, the corner radius, both
 button layouts, all sixteen button pictures in each of the four combinations,
-and the two-property GTK file (which must exist for Midnight and must *not*
-exist for Ice). Never a timestamp — the tooling that packages a bootable image
+and the GTK chrome file for **both** schemes — its two window colours, and a
+rule for each of the three window buttons with its pointer and unfocused states.
+Never a timestamp — the tooling that packages a bootable image
 flattens every clock.
 
 `build_files/check-labwc-drift.sh` does the same thing across the two
@@ -430,18 +462,29 @@ Do these in the Aquarius Desktop (not GNOME):
    slightly. The disc under **close** should go red, with a white ×. Holding the
    mouse down will not darken it further; labwc has no pressed state, and that
    is expected rather than a fault.
-6. **Right-click the wallpaper.** The menu should look like the menu under the
+6. **Open Files, and look at its header bar.** This is the check for the GTK
+   half, added 2026-09-07, and it is the one that was missing before. Files
+   draws its own bar, so there is no labwc frame here — but the bar should be
+   the same colour as the bar at the top of the screen, and the three buttons in
+   its top corner should be **round discs**, not GNOME's flat ones. Put the
+   pointer on close: the disc goes **red**. Put it on minimise or maximise: the
+   disc only deepens. Now click another window without closing Files — every one
+   of Files' buttons should **fade**. Then flip the desktop between light and
+   dark and do all of it again: it must look right in **both**, because the file
+   behind it is rewritten on every flip. Settings, Ptyxis and Text Editor should
+   match Files exactly.
+7. **Right-click the wallpaper.** The menu should look like the menu under the
    Aquarius mark in the top bar — same card colour, same hairline, same accent
    wash on the row under the pointer, same typeface.
-7. **Flip the colour scheme in Quick Settings.** A Resolve window's title bar
+8. **Flip the colour scheme in Quick Settings.** A Resolve window's title bar
    and the desktop menu should change with the shell, in place, **without
    logging out**. In dark mode a Files window should be navy rather than grey.
    Flip back and it should return to Ice.
-8. **Run `aq keys windows` in a terminal.** The buttons should move to the right
+9. **Run `aq keys windows` in a terminal.** The buttons should move to the right
    of the title bar — in a GTK window *and* in the labwc frame — without logging
    out. `aq keys mac` puts them back on the left.
 
-If step 7 or step 8 does nothing, the first place to look is
+If step 8 or step 9 does nothing, the first place to look is
 `~/.local/state/aquarius-session/session.log`, and the second is
 `~/.config/aquarius/labwc/themerc-override`, which is the file the generator
 wrote and which says at the top which theme and which size it was built for.

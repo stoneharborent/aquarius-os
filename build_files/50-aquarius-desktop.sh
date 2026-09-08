@@ -22,36 +22,56 @@
 #
 # ⚠️ TWO NAMED EXCEPTIONS SINCE 2026-09-06, BOTH NARROW ON PURPOSE.
 #
-# EXCEPTION 2 — TWO PROPERTIES OF GTK CSS, IN DARK MODE ONLY.
-# This is the one place AquariusOS colours somebody else's windows, and it is
-# two lines long:
+# EXCEPTION 2 — THE CHROME OF A GTK WINDOW, AND ONLY THE CHROME.
+# This is the one place AquariusOS colours somebody else's windows. Royce
+# widened it on 7 September 2026; until that day it was two colour properties,
+# in dark mode only, and the file was deleted in light mode. What it covers now:
 #
-#     window    { background-color: #0B1220; }   Midnight `bg`
-#     headerbar { background-color: #152033; }   Midnight `panel`
+#     the window background      the palette's `bg`
+#     the header-bar background  the palette's `panel`
+#     the three window buttons   close, minimize and maximize, redrawn as the
+#                                design's round ink discs, with their pointer
+#                                and unfocused states
 #
-# WHY. In dark mode the Aquarius shell turns Midnight, a deep navy, and
-# libadwaita's own dark theme is a neutral near-black. Put a Files window on a
-# Midnight desktop and the window is grey against navy — not broken, plainly
-# from a different design. Two colours fix it.
+# and nothing else at all. No text colours. No widget theming. No borders. Not
+# even the header bar's height.
 #
-# WHY IT IS NOT A TREADMILL. There is nothing of GNOME's here to keep up with.
-# No text colours, no buttons, no borders, no widget styling, no selectors that
-# name a libadwaita internal — the two most stable selectors in GTK, set to two
-# colours out of our own palette. If libadwaita changes everything else about
-# how a window is drawn, these two lines are still either right or harmless.
+# WHY THE COLOURS. In dark mode the Aquarius shell turns Midnight, a deep navy,
+# and libadwaita's own dark theme is a neutral near-black. Put a Files window on
+# a Midnight desktop and the window is grey against navy — not broken, plainly
+# from a different design.
 #
-# WHY IT IS NOT SHIPPED AS A FILE IN /etc. Because it must apply in DARK ONLY,
-# and GTK's CSS has no "only when dark" selector — a stylesheet is loaded or it
-# is not. A file shipped system-wide would be on all the time, and a navy window
-# on the Ice light desktop is the same mistake in the other direction. So the
-# file is WRITTEN when the machine goes dark and REMOVED when it goes light, by
-# /usr/share/aquarius/labwc/generate-theme, into ~/.config/gtk-4.0/gtk.css and
-# its gtk-3.0 twin. That program also refuses to touch a gtk.css it did not
-# write, so somebody's own GTK customisation is left alone.
+# WHY THE BUTTONS, AND WHY ONLY SINCE 7 SEPTEMBER. Because of what the bench
+# showed that day: GNOME's own applications draw their own title bar, inside the
+# window, and tell the compositor not to add one. So the Aquarius window frame —
+# the navy bar, the round buttons, the 12px corners, all of it generated from
+# the palette — appeared on NOTHING that came from GNOME. Files, Settings,
+# Ptyxis and Text Editor all kept libadwaita's own bar and libadwaita's own flat
+# buttons. There is exactly one way to reach a window that draws its own bar,
+# and it is GTK's stylesheet.
 #
-# The colours come from the shell's theme/Midnight.qml, like every other colour
-# in this project. build_files/55-aquarius-session.sh reads the generated file
-# back and fails the build if it is ever more than those two rules.
+# WHY IT IS STILL NOT A TREADMILL. The two colours use the two most stable
+# selectors in GTK. The buttons use `windowcontrols > button > image` and the
+# `.close` class, which were not remembered — they were read out of the
+# stylesheet compiled into the libadwaita on this very image, and out of GTK's
+# own window-controls code. If libadwaita renames them, the buttons quietly go
+# back to looking like GNOME's, which is where they started. Nothing breaks.
+# Design rule 9 says it plainly: check Files on the bench after every Fedora
+# bump. That is what the version read-back further down this file is for.
+#
+# WHY IT IS NOT SHIPPED AS A FILE IN /etc. Because Ice and Midnight need
+# DIFFERENT colours, and GTK's CSS has no "only when dark" selector — a
+# stylesheet is loaded or it is not. So the file has to be rewritten on every
+# light/dark flip, which means it has to sit somewhere writable, and on this OS
+# /usr is read-only. /usr/share/aquarius/labwc/generate-theme writes it into
+# ~/.config/gtk-4.0/gtk.css and its gtk-3.0 twin, in BOTH schemes. That program
+# refuses to touch a gtk.css it did not write, so somebody's own GTK
+# customisation is left alone.
+#
+# The colours come from the shell's theme/Ice.qml and theme/Midnight.qml, like
+# every other colour in this project. build_files/55-aquarius-session.sh
+# generates both schemes and reads the result back, so a rule that goes missing
+# fails the build.
 #
 # EXCEPTION 1 — THE APP ICONS.
 # This list used to say "no icon theme" as well, and now AquariusOS does ship
@@ -1089,18 +1109,24 @@ fi
 # ------------------------------------------------------------------------------
 # WHICH GTK THIS IMAGE ACTUALLY HAS
 # ------------------------------------------------------------------------------
-# The narrow exception at the top of this file — two properties of GTK CSS, in
-# dark mode only — is written against GTK and libadwaita as they are IN THIS
+# The narrow exception at the top of this file — the chrome of a GTK window, and
+# only the chrome — is written against GTK and libadwaita as they are IN THIS
 # IMAGE, not as they were in whatever version somebody remembered. So the
 # versions are printed here, into the build log, where a person looking at a
 # window that came out the wrong colour six months from now can see exactly what
 # the assumption was made against.
 #
-# It is a version READ-BACK, not a version requirement: nothing here pins GTK,
-# and the two selectors used (`window` and `headerbar`) are the two most stable
-# ones in GTK. This exists so that if they ever DO stop working, the log says
-# what changed.
-say "Which GTK the two-property dark-mode exception is written against"
+# It matters more since 7 September 2026 than it did before. `window` and
+# `headerbar` are the two most stable selectors in GTK and are unlikely ever to
+# move. The window-button selectors — `windowcontrols > button > image` and the
+# `.close` class — are libadwaita's and GTK's own internals, and design rule 9
+# says so out loud: they are not a stable contract, so check Files on the bench
+# after every Fedora bump.
+#
+# It is a version READ-BACK, not a version requirement: nothing here pins GTK.
+# This exists so that if the selectors ever DO stop working, the log says what
+# changed.
+say "Which GTK the window-chrome exception is written against"
 for aq_pkg in gtk4 gtk3 libadwaita; do
     aq_ver="$(rpm -q --queryformat '%{VERSION}-%{RELEASE}' "${aq_pkg}" 2> /dev/null || true)"
     if [ -n "${aq_ver}" ]; then
@@ -1110,7 +1136,7 @@ for aq_pkg in gtk4 gtk3 libadwaita; do
     fi
 done
 if rpm -q gtk4 > /dev/null 2>&1 && rpm -q libadwaita > /dev/null 2>&1; then
-    ok "GTK 4 and libadwaita are both here, which is what the dark-mode exception styles"
+    ok "GTK 4 and libadwaita are both here, which is what the window-chrome exception styles"
 else
     bad "gtk4 or libadwaita is missing from this image — GNOME's own applications could not run, so something far bigger than the window colour is wrong"
 fi

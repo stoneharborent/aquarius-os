@@ -3628,30 +3628,55 @@ jobs:
               && ok "and a window you are not in draws its whole button at 45%" \
               || bad "an unfocused window's buttons are not faded"
 
-            # THE ONE EXCEPTION TO THE NO-GTK-THEME POSTURE: two properties, in
-            # dark mode only. It must exist for Midnight and must NOT exist for
-            # Ice — a navy window on the Ice light desktop is the same mistake in
-            # the other direction.
-            grep -q 'background-color: #0B1220' "${FRAME_OUT}/midnight-1/gtk/gtk-4.0/gtk.css" \
-              && ok "a dark desktop paints GTK window backgrounds Midnight navy" \
-              || bad "the Midnight GTK file does not set the window background — a Files window would stay libadwaita grey against navy"
-            grep -q 'background-color: #152033' "${FRAME_OUT}/midnight-1/gtk/gtk-4.0/gtk.css" \
-              && ok "and their header bars the panel navy" \
-              || bad "the Midnight GTK file does not set the header bar colour"
-            grep -q 'background-color: #0B1220' "${FRAME_OUT}/midnight-1/gtk/gtk-3.0/gtk.css" \
-              && ok "older GTK applications get the same two properties" \
-              || bad "the gtk-3.0 twin of the Midnight GTK file is missing or wrong"
-            if [ -e "${FRAME_OUT}/ice-1/gtk/gtk-4.0/gtk.css" ]; then
-              bad "the Ice theme wrote a GTK colour file — those two properties are Midnight's, and on a light desktop they would paint every GTK window navy"
-            else
-              ok "the Ice theme writes no GTK colour file, which is correct"
-            fi
-            GTK_RULES="$(grep -cE '^[a-z]' "${FRAME_OUT}/midnight-1/gtk/gtk-4.0/gtk.css" || true)"
-            if [ "${GTK_RULES}" -eq 2 ]; then
-              ok "the GTK file is exactly two rules and nothing else"
-            else
-              bad "the Midnight GTK file has ${GTK_RULES} rules. It is allowed exactly TWO — the window background and the header bar. Anything more is a GTK theme, which this project does not ship."
-            fi
+            # THE ONE EXCEPTION TO THE NO-GTK-THEME POSTURE: the chrome of a
+            # GTK window, and only the chrome. GNOME's own applications draw
+            # their own title bar, so the labwc frame checked above never
+            # appears on Files, Settings, Ptyxis or Text Editor (bench,
+            # 2026-09-07). This stylesheet is the only thing that reaches them.
+            #
+            # Since 2026-09-07 it is written in BOTH schemes. Two checks that
+            # used to be here are gone on purpose: the one that insisted Ice
+            # write no file, and the one that counted the rules and allowed
+            # exactly two. Both are now wrong.
+            for GTK_CASE in \
+              "ice #EAF1F8 #F0F6FC #C8463B 0.100 0.160" \
+              "midnight #0B1220 #152033 #E07B7B 0.120 0.180"
+            do
+              # shellcheck disable=SC2086
+              set -- ${GTK_CASE}
+              GTK_SCHEME="$1"; GTK_BG="$2"; GTK_PANEL="$3"
+              GTK_DANGER="$4"; GTK_IDLE="$5"; GTK_HOVER="$6"
+              GTK_CSS="${FRAME_OUT}/${GTK_SCHEME}-1/gtk/gtk-4.0/gtk.css"
+              GTK_CSS3="${FRAME_OUT}/${GTK_SCHEME}-1/gtk/gtk-3.0/gtk.css"
+
+              grep -qF "window { background-color: ${GTK_BG}; }" "${GTK_CSS}" \
+                && ok "${GTK_SCHEME}: GTK window backgrounds are the palette's ground (${GTK_BG})" \
+                || bad "${GTK_SCHEME}: the GTK stylesheet does not set the window background — a Files window would match nothing around it"
+              grep -qF "headerbar { background-color: ${GTK_PANEL}; }" "${GTK_CSS}" \
+                && ok "${GTK_SCHEME}: and their header bars are the panel colour (${GTK_PANEL})" \
+                || bad "${GTK_SCHEME}: the GTK stylesheet does not set the header-bar colour"
+              grep -qF "windowcontrols > button > image {" "${GTK_CSS}" \
+                && grep -qF ", ${GTK_IDLE});" "${GTK_CSS}" \
+                && ok "${GTK_SCHEME}: the three window buttons get their round disc at rest" \
+                || bad "${GTK_SCHEME}: the GTK stylesheet does not redraw the window buttons as discs"
+              grep -qF "windowcontrols > button:hover > image {" "${GTK_CSS}" \
+                && grep -qF ", ${GTK_HOVER});" "${GTK_CSS}" \
+                && ok "${GTK_SCHEME}: and the disc deepens under the pointer" \
+                || bad "${GTK_SCHEME}: the GTK stylesheet does not deepen the disc on hover"
+              grep -qF "windowcontrols > button.close:hover > image {" "${GTK_CSS}" \
+                && grep -qF "background-color: ${GTK_DANGER};" "${GTK_CSS}" \
+                && ok "${GTK_SCHEME}: and close, and only close, goes the danger red (${GTK_DANGER})" \
+                || bad "${GTK_SCHEME}: the GTK stylesheet does not turn the close button red"
+              grep -qF "windowcontrols > button:backdrop {" "${GTK_CSS}" \
+                && grep -qF "opacity: 0.45;" "${GTK_CSS}" \
+                && ok "${GTK_SCHEME}: and every button fades to 45% on a window you are not in" \
+                || bad "${GTK_SCHEME}: the GTK stylesheet does not fade the buttons on an unfocused window"
+              grep -qF "window { background-color: ${GTK_BG}; }" "${GTK_CSS3}" \
+                && grep -qF "headerbar button.titlebutton {" "${GTK_CSS3}" \
+                && grep -qF "headerbar button.titlebutton.close:hover {" "${GTK_CSS3}" \
+                && ok "${GTK_SCHEME}: older GTK 3 applications get the same colours and buttons" \
+                || bad "${GTK_SCHEME}: the gtk-3.0 twin is missing or wrong"
+            done
           fi
           rm -rf "${FRAME_OUT}"
 
