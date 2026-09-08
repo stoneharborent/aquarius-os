@@ -5646,7 +5646,8 @@ jobs:
 
           echo "== the scripts =="
           for f in /usr/libexec/aquarius-resolve-install \
-                   /usr/libexec/aquarius-resolve-launch; do
+                   /usr/libexec/aquarius-resolve-launch \
+                   /usr/libexec/aquarius-resolve-update-notify; do
             if [ -x "$f" ]; then ok "$(basename "$f") is present and runnable"
             else bad "$f is missing or not runnable"; fi
             if bash -n "$f" 2>/tmp/syn.txt; then ok "$(basename "$f") is valid shell"
@@ -5662,13 +5663,14 @@ jobs:
             bad "aquarius_ui cannot be imported — every AquariusOS window would fail to open"; cat /tmp/ui.txt
           fi
 
-          echo "== the installer and uninstaller windows =="
+          echo "== the installer, uninstaller and updater windows =="
           # "Install DaVinci Resolve" in the app grid opens a real application
           # window, not a terminal. It is Python against GTK 4 and libadwaita,
           # so three things have to be true, and a missing one shows up as an
           # icon that does nothing when clicked.
           for GUI in /usr/libexec/aquarius-resolve-installer \
-                     /usr/libexec/aquarius-resolve-uninstaller; do
+                     /usr/libexec/aquarius-resolve-uninstaller \
+                     /usr/libexec/aquarius-resolve-updater; do
             if [ -x "${GUI}" ]; then ok "$(basename "${GUI}") is present and runnable"
             else bad "${GUI} is missing or not runnable — its app-grid entry would do nothing"; fi
             if python3 -c 'import py_compile, sys; py_compile.compile(sys.argv[1], cfile="/tmp/aq-gui-check.pyc", doraise=True)' "${GUI}" 2>/tmp/py.txt; then
@@ -5714,8 +5716,12 @@ jobs:
           for f in /usr/libexec/aquarius-resolve-install \
                    /usr/libexec/aquarius-resolve-installer \
                    /usr/libexec/aquarius-resolve-uninstaller \
+                   /usr/libexec/aquarius-resolve-updater \
+                   /usr/libexec/aquarius-resolve-check \
+                   /usr/libexec/aquarius-resolve-update-notify \
                    /usr/share/applications/aquarius-install-resolve.desktop \
-                   /usr/share/applications/aquarius-remove-resolve.desktop; do
+                   /usr/share/applications/aquarius-remove-resolve.desktop \
+                   /usr/share/applications/aquarius-update-resolve.desktop; do
             [ -r "$f" ] || continue
             if grep -vE '^[[:space:]]*#' "$f" | grep -qi 'rocky'; then
               bad "$(basename "$f") names Rocky Linux where a person can see it:"
@@ -5770,7 +5776,7 @@ jobs:
           echo "== the progress channel the window reads =="
           # The window and the installer script have to agree on a handful of
           # structured lines, and the only way to know they still do is to run
-          # them. --dry-run walks all six steps and installs nothing at all, so
+          # them. --dry-run walks all seven steps and installs nothing at all, so
           # this is safe here: no graphics card, no download, no network.
           #
           # It is also what Royce runs on the bench to look at the window
@@ -5785,14 +5791,14 @@ jobs:
           echo "       --- what came back on the progress channel ---"
           sed 's/^/       /' /tmp/progress.txt
 
-          # In order, 1..6, and nothing skipped. The window draws its list of
+          # In order, 1..7, and nothing skipped. The window draws its list of
           # steps from these, so a gap here is a window that never ticks a box.
           n=0
           while IFS= read -r line; do
             case "${line}" in
               "STEP "*)
                 n=$((n + 1))
-                want="STEP ${n}/6 "
+                want="STEP ${n}/7 "
                 case "${line}" in
                   "${want}"*) : ;;
                   *) bad "expected a line starting '${want}' and got: ${line}" ;;
@@ -5800,10 +5806,19 @@ jobs:
                 ;;
             esac
           done < /tmp/progress.txt
-          if [ "${n}" = "6" ]; then
-            ok "all six steps were announced, in order"
+          if [ "${n}" = "7" ]; then
+            ok "all seven steps were announced, in order"
           else
-            bad "the rehearsal announced ${n} steps, not 6"
+            bad "the rehearsal announced ${n} steps, not 7"
+          fi
+          # ⚠️ THE LAST ONE BY NAME. Step 7 is Royce's 2026-09-08 requirement —
+          # that a new version comes up at the screen's proper size — and it is
+          # the step most easily dropped by somebody tidying the flow, because
+          # everything still installs without it.
+          if grep -q '^STEP 7/7 Matching Resolve to your screen$' /tmp/progress.txt; then
+            ok "the flow ends by checking Resolve opens at the size of your screen"
+          else
+            bad "the flow no longer ends with 'Matching Resolve to your screen'"
           fi
           if grep -q '^PERCENT ' /tmp/progress.txt; then
             ok "PERCENT lines are sent — the bar can fill rather than only pulse"
@@ -5820,6 +5835,193 @@ jobs:
             bad "--dry-run changed something. It must change nothing at all."
           else
             ok "the rehearsal changed nothing, which is the whole point of it"
+          fi
+
+          echo "== is there a newer Resolve? the update check =="
+          # ⚠️ TESTED AGAINST A FILE, NOT AGAINST BLACKMAGIC. A build that
+          # reached out to somebody else's website would go red whenever their
+          # site had a bad day, which teaches people to ignore red ticks.
+          # feed-sample.json is a small committed cut of their real list — both
+          # editions, a few versions, one clearly-marked invented beta — so the
+          # PARSING is proved on every build with no network at all.
+          CHECK=/usr/libexec/aquarius-resolve-check
+          FEED=/usr/share/aquarius/resolve/feed-sample.json
+          if [ -x "${CHECK}" ]; then ok "aquarius-resolve-check is present and runnable"
+          else bad "${CHECK} is missing — nothing would ever notice a new Resolve"; fi
+          if python3 -c 'import py_compile,sys; py_compile.compile(sys.argv[1], cfile="/tmp/c.pyc", doraise=True)' "${CHECK}" 2>/tmp/py.txt; then
+            ok "aquarius-resolve-check is valid Python"
+          else
+            bad "${CHECK} has a syntax error"; cat /tmp/py.txt
+          fi
+          if python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "${FEED}" 2>/dev/null; then
+            ok "the saved copy of Blackmagic's release list is valid JSON"
+          else
+            bad "${FEED} is missing or not valid JSON — --dry-run would fail and nothing here could be tested"
+          fi
+          # ⚠️ `|| rc=$?` IS NOT OPTIONAL: the checker exits 10 on purpose when
+          # there is something newer, which is the answer being tested for.
+          rc=0
+          OUT="$("${CHECK}" --feed "${FEED}" --edition studio --installed-version 21.0.4)" || rc=$?
+          echo "       studio 21.0.4 -> ${OUT} (exit ${rc})"
+          if [ "${rc}" = "10" ] && printf '%s' "${OUT}" | grep -q 'DaVinci Resolve Studio 21.1 is available'; then
+            ok "an out-of-date Studio is offered Studio 21.1, and exits 10 so the timer knows"
+          else
+            bad "the check did not offer Studio 21.1 to a Studio 21.0.4 machine"
+          fi
+          rc=0
+          OUT="$("${CHECK}" --feed "${FEED}" --edition studio --installed-version 21.1)" || rc=$?
+          echo "       studio 21.1   -> ${OUT} (exit ${rc})"
+          if [ "${rc}" = "0" ] && printf '%s' "${OUT}" | grep -q 'newest DaVinci Resolve Studio'; then
+            ok "an up-to-date machine is told so, and exits 0 so nothing is announced"
+          else
+            bad "the check did not say an up-to-date Studio machine was up to date"
+          fi
+          rc=0
+          OUT="$("${CHECK}" --feed "${FEED}" --edition free --installed-version 20.3.3)" || rc=$?
+          echo "       free 20.3.3   -> ${OUT}"
+          # THE ONE THAT MATTERS MOST: never offer a free user Studio, or the
+          # other way round. They are different licences and different downloads.
+          if printf '%s' "${OUT}" | grep -q '^DaVinci Resolve 21\.1 is available'; then
+            ok "a free copy is offered the free 21.1, never Studio"
+          else
+            bad "the check offered a free copy something other than the newest free Resolve"
+          fi
+          # The saved feed carries a 21.2 beta for BOTH editions. If betas were
+          # ever counted, every answer above would have said 21.2.
+          if printf '%s' "${OUT}" | grep -q '21\.2'; then
+            bad "the check offered the 21.2 BETA — betas must be ignored"
+          else
+            ok "the beta in the saved feed is ignored, as it must be"
+          fi
+          if "${CHECK}" --dry-run >/tmp/checkdry.txt 2>&1; then
+            ok "'aquarius-resolve-check --dry-run' runs with no network at all"
+            sed 's/^/       /' /tmp/checkdry.txt
+          else
+            bad "'aquarius-resolve-check --dry-run' failed"; cat /tmp/checkdry.txt
+          fi
+          if aq resolve check >/tmp/aqcheck.txt 2>&1; then
+            ok "'aq resolve check' runs on a machine with nothing installed"
+            sed 's/^/       /' /tmp/aqcheck.txt
+          else
+            bad "'aq resolve check' failed where Resolve is not installed — it must be quiet, not alarming"
+            cat /tmp/aqcheck.txt
+          fi
+
+          echo "== the once-a-day check, and the notification it sends =="
+          NOTIFY=/usr/libexec/aquarius-resolve-update-notify
+          if "${NOTIFY}" --dry-run >/tmp/notify.txt 2>&1; then
+            ok "the daily check's rehearsal runs"
+            sed 's/^/       /' /tmp/notify.txt
+          else
+            bad "'aquarius-resolve-update-notify --dry-run' failed"; cat /tmp/notify.txt
+          fi
+          # With no Resolve installed it must say so and send nothing. That is
+          # the state of this container and of every machine that never uses it.
+          if grep -q 'not set up on this computer' /tmp/notify.txt; then
+            ok "with no Resolve installed it says so and sends nothing"
+          else
+            bad "the daily check did not stay quiet on a machine with no Resolve"
+          fi
+          if grep -q 'ANNOUNCED=' "${NOTIFY}"; then
+            ok "it remembers the version it announced, so nobody is nagged twice about one release"
+          else
+            bad "nothing remembers what was announced — the same version would be announced every day"
+          fi
+          # ⚠️ SWITCHED ON FROM /usr, NOT /etc. A link in /etc can be deleted by
+          # a local `disable`, and this kind of operating system then preserves
+          # that deletion for ever. The long version is in build_files/aq-lib.sh.
+          TLINK=/usr/lib/systemd/user/timers.target.wants/aquarius-resolve-update-check.timer
+          if [ -L "${TLINK}" ] && [ -e "${TLINK}" ]; then
+            ok "the daily check is switched on from /usr ($(readlink "${TLINK}"))"
+          else
+            bad "${TLINK} is missing or dangling — the timer would never start"
+          fi
+          if [ -e /etc/systemd/user/timers.target.wants/aquarius-resolve-update-check.timer ]; then
+            bad "the daily check is ALSO switched on through /etc — an update could lose that"
+          else
+            ok "nothing switches the daily check on through /etc"
+          fi
+          for want in 'OnUnitActiveSec=1d' 'Persistent=true' 'RandomizedDelaySec='; do
+            if grep -q "${want}" /usr/lib/systemd/user/aquarius-resolve-update-check.timer; then
+              ok "the timer says ${want}"
+            else
+              bad "the timer no longer says ${want}"
+            fi
+          done
+
+          echo "== the update flow walks the same channel =="
+          # Seven steps, in order, ending in DONE. A window drawing seven rows
+          # against a script sending six is a bar that never finishes.
+          if /usr/libexec/aquarius-resolve-install --update --dry-run --progress-fd 3 \
+               3>/tmp/up.txt >/tmp/updry.txt 2>&1; then
+            ok "the update rehearsal ran"
+            sed 's/^/       /' /tmp/up.txt
+          else
+            bad "'aquarius-resolve-install --update --dry-run' does not run"; cat /tmp/updry.txt
+          fi
+          n=0
+          while IFS= read -r line; do
+            case "${line}" in
+              "STEP "*)
+                n=$((n + 1))
+                case "${line}" in
+                  "STEP ${n}/7 "*) : ;;
+                  *) bad "expected 'STEP ${n}/7 ' and got: ${line}" ;;
+                esac
+                ;;
+            esac
+          done < /tmp/up.txt
+          if [ "${n}" = "7" ]; then ok "the update announced all seven steps, in order"
+          else bad "the update rehearsal announced ${n} steps, not 7"; fi
+          if [ "$(tail -1 /tmp/up.txt)" = "DONE" ]; then
+            ok "the update rehearsal ends with DONE"
+          else
+            bad "the update rehearsal did not end with DONE"
+          fi
+          # The rehearsal really asks the update check, offline, rather than
+          # pretending to — which is what proves the two still fit together.
+          if grep -q 'What the update check says' /tmp/updry.txt; then
+            ok "the update rehearsal really asks the update check"
+          else
+            bad "the update rehearsal no longer asks the update check"
+          fi
+
+          echo "== and that Resolve still comes up at the size of the screen =="
+          # --report asks the launcher what it would hand Resolve and starts
+          # nothing, which is what the last step of every install and update
+          # asks. It has to work on a machine with no Resolve and no screen.
+          REPORT="$(/usr/libexec/aquarius-resolve-launch --report 2>&1 || true)"
+          echo "       ${REPORT}"
+          if printf '%s' "${REPORT}" | grep -q 'interface at'; then
+            ok "'aquarius-resolve-launch --report' answers even with no Resolve installed"
+          else
+            bad "'--report' printed no scale line, so the screen-matching step would have nothing to ask"
+          fi
+          for want in 'step 7 "Matching Resolve to your screen"' 'aquarius-resolve-launch --report' 'conf_fingerprint'; do
+            if grep -qF "${want}" /usr/libexec/aquarius-resolve-install; then
+              ok "the installer still has: ${want}"
+            else
+              bad "the installer has lost '${want}' — the new version could come up the wrong size"
+            fi
+          done
+
+          echo "== the way to update without a terminal =="
+          DESKUP=/usr/share/applications/aquarius-update-resolve.desktop
+          if [ ! -r "${DESKUP}" ]; then
+            bad "${DESKUP} is missing — there would be no 'Update DaVinci Resolve' in the app grid"
+          else
+            cat "${DESKUP}" | sed 's/^/       /'
+            if desktop-file-validate "${DESKUP}"; then
+              ok "it passes freedesktop's own validator"
+            else
+              bad "it is not a valid desktop entry — the app grid would silently ignore it"
+            fi
+            grep -q '^Exec=/usr/libexec/aquarius-resolve-updater$' "${DESKUP}" \
+              && ok "it opens the update window" \
+              || bad "it does not point at /usr/libexec/aquarius-resolve-updater"
+            grep -q '^StartupWMClass=org.aquariusos.ResolveUpdater$' "${DESKUP}" \
+              && ok "the desktop can tell which window belongs to it" \
+              || bad "StartupWMClass does not match the window's application id"
           fi
 
           echo "== the two questions the window asks before it starts =="

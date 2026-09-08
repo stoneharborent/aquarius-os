@@ -208,7 +208,8 @@ fi
 say "DaVinci Resolve — the files"
 
 for f in /usr/libexec/aquarius-resolve-install \
-    /usr/libexec/aquarius-resolve-launch; do
+    /usr/libexec/aquarius-resolve-launch \
+    /usr/libexec/aquarius-resolve-update-notify; do
     if [ ! -f "${f}" ]; then
         bad "${f} is missing"
         continue
@@ -265,7 +266,8 @@ rm -f /tmp/aq-ui-check.pyc
 # The two windows. Same idea as the scripts above, different language:
 # py_compile parses them and writes byte-code without running a line.
 for AQ_GUI in /usr/libexec/aquarius-resolve-installer \
-    /usr/libexec/aquarius-resolve-uninstaller; do
+    /usr/libexec/aquarius-resolve-uninstaller \
+    /usr/libexec/aquarius-resolve-updater; do
     if [ ! -f "${AQ_GUI}" ]; then
         bad "${AQ_GUI} is missing — the app-grid entry would do nothing"
         continue
@@ -309,13 +311,14 @@ rm -f /tmp/aq-gui-check.pyc
 # build can ask is "is it still written the way we fixed it". It is worth
 # asking, because Adw.StatusPage is the obvious widget to reach for here and
 # somebody will reach for it again.
-say "DaVinci Resolve — every page of both windows carries the Aquarius mark"
+say "DaVinci Resolve — every page of all three windows carries the Aquarius mark"
 aq_file_has "${AQ_UI}" 'def hero\(' \
     "the shared window pieces own the hero helper (the mark, the heading, the line under it)"
 aq_file_has "${AQ_UI}" 'def status_glyph\(' \
     "and the small tick/warning glyph that goes beside a heading"
 for AQ_GUI in /usr/libexec/aquarius-resolve-installer \
-    /usr/libexec/aquarius-resolve-uninstaller; do
+    /usr/libexec/aquarius-resolve-uninstaller \
+    /usr/libexec/aquarius-resolve-updater; do
     [ -r "${AQ_GUI}" ] || continue
     AQ_NAME="$(basename "${AQ_GUI}")"
     # Looking for the CALL — "Adw.StatusPage(" with its bracket — and not for
@@ -360,8 +363,12 @@ AQ_LEAK=0
 for f in /usr/libexec/aquarius-resolve-install \
     /usr/libexec/aquarius-resolve-installer \
     /usr/libexec/aquarius-resolve-uninstaller \
+    /usr/libexec/aquarius-resolve-updater \
+    /usr/libexec/aquarius-resolve-check \
+    /usr/libexec/aquarius-resolve-update-notify \
     /usr/share/applications/aquarius-install-resolve.desktop \
-    /usr/share/applications/aquarius-remove-resolve.desktop; do
+    /usr/share/applications/aquarius-remove-resolve.desktop \
+    /usr/share/applications/aquarius-update-resolve.desktop; do
     [ -r "${f}" ] || continue
     if grep -vE '^[[:space:]]*#' "${f}" | grep -qi 'rocky'; then
         bad "$(basename "${f}") names Rocky Linux in something a person reads:"
@@ -372,7 +379,7 @@ done
 [ "${AQ_LEAK}" -eq 0 ] && ok "nothing a person reads names another Linux"
 
 # The window and the script have to agree on the progress lines, and the only
-# way to know they still do is to run them. --dry-run walks all six steps and
+# way to know they still do is to run them. --dry-run walks all seven steps and
 # installs nothing, so this is safe in a build container with no graphics card,
 # no download and no network.
 say "DaVinci Resolve — the progress channel between the two"
@@ -386,11 +393,17 @@ fi
 echo "  What it said on the progress channel:"
 sed 's/^/       /' /tmp/aq-progress.txt
 EXPECTED_STEPS="$(grep -c '^STEP ' /tmp/aq-progress.txt || true)"
-if [ "${EXPECTED_STEPS}" = "6" ]; then
-    ok "all six steps were announced"
+if [ "${EXPECTED_STEPS}" = "7" ]; then
+    ok "all seven steps were announced"
 else
-    bad "the rehearsal announced ${EXPECTED_STEPS} steps, not 6 — the window's list would not match"
+    bad "the rehearsal announced ${EXPECTED_STEPS} steps, not 7 — the window's list would not match"
 fi
+# ⚠️ THE LAST ONE BY NAME. Step 7 is Royce's 2026-09-08 requirement — that the
+# new version comes up at the screen's proper size — and it is the step most
+# likely to be quietly dropped by somebody tidying the flow, because everything
+# still installs without it.
+aq_file_has /tmp/aq-progress.txt '^STEP 7/7 Matching Resolve to your screen$' \
+    "the flow ends by checking Resolve still opens at the size of your screen"
 if [ "$(tail -1 /tmp/aq-progress.txt)" = "DONE" ]; then
     ok "it finished with DONE, which is what moves the window to its last page"
 else
@@ -401,6 +414,246 @@ if grep -q '^PERCENT ' /tmp/aq-progress.txt; then
 else
     bad "no PERCENT line was sent — the progress bar would never fill"
 fi
+# ------------------------------------------------------------------------------
+# Is there a newer Resolve? — the checker, proved against a saved feed
+# ------------------------------------------------------------------------------
+# ⚠️ WHY THIS IS TESTED AGAINST A FILE AND NOT AGAINST BLACKMAGIC. A build that
+# reached out to somebody else's website would fail whenever their site was
+# having a bad day, which is a build that teaches people to ignore red ticks.
+# /usr/share/aquarius/resolve/feed-sample.json is a small committed cut of their
+# real list — both editions, a few versions, and one clearly-marked invented
+# beta — so the PARSING is proved on every build with no network involved.
+#
+# What the network part does is checked by the bench, once, by unplugging it.
+say "DaVinci Resolve — is there a newer one? (the update check)"
+AQ_CHECK=/usr/libexec/aquarius-resolve-check
+AQ_FEED=/usr/share/aquarius/resolve/feed-sample.json
+
+if [ ! -f "${AQ_CHECK}" ]; then
+    bad "${AQ_CHECK} is missing — nothing would ever notice a new Resolve"
+else
+    chmod 0755 "${AQ_CHECK}"
+    if [ -x "${AQ_CHECK}" ]; then
+        ok "aquarius-resolve-check is present and runnable"
+    else
+        bad "${AQ_CHECK} is not runnable"
+    fi
+    if python3 -c 'import py_compile, sys; py_compile.compile(sys.argv[1], cfile="/tmp/aq-check.pyc", doraise=True)' "${AQ_CHECK}"; then
+        ok "aquarius-resolve-check is valid Python"
+    else
+        bad "${AQ_CHECK} has a syntax error"
+    fi
+fi
+rm -f /tmp/aq-check.pyc
+
+if [ ! -r "${AQ_FEED}" ]; then
+    bad "${AQ_FEED} is missing — the update check could not be tested, and --dry-run would fail"
+else
+    if python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("  %d entries in the saved feed" % len(d["downloads"]))' "${AQ_FEED}"; then
+        ok "the saved copy of Blackmagic's release list is valid JSON"
+    else
+        bad "${AQ_FEED} is not valid JSON"
+    fi
+fi
+
+if [ -x "${AQ_CHECK}" ] && [ -r "${AQ_FEED}" ]; then
+    # THE THREE QUESTIONS THAT MATTER, asked with the edition and the installed
+    # version supplied, so no machine state is involved and the answers are the
+    # same on every build for ever.
+    #
+    #   1. An out-of-date Studio is told about the newest STUDIO.
+    #   2. An up-to-date one is told it is up to date — and exits 0, which is
+    #      what stops the timer sending a notification.
+    #   3. A free copy is told about the newest FREE one, never Studio.
+    #
+    # And in every case the invented 21.2 BETA in the saved feed must be
+    # ignored: an operating system does not put somebody on a beta on a Tuesday.
+    # ⚠️ `|| AQ_CHECK_RC=$?` IS NOT OPTIONAL. These scripts run under `set -e`,
+    # and this program exits 10 on purpose when there is something newer — which
+    # is the answer we are testing for. Written the obvious way, the build would
+    # stop dead on the line that proves the feature works.
+    AQ_CHECK_RC=0
+    AQ_CHECK_OUT="$("${AQ_CHECK}" --feed "${AQ_FEED}" --edition studio --installed-version 21.0.4)" \
+        || AQ_CHECK_RC=$?
+    echo "  studio 21.0.4 -> ${AQ_CHECK_OUT} (exit ${AQ_CHECK_RC})"
+    if [ "${AQ_CHECK_RC}" = "10" ] \
+        && printf '%s' "${AQ_CHECK_OUT}" | grep -q 'DaVinci Resolve Studio 21.1 is available'; then
+        ok "an out-of-date Studio is offered Studio 21.1, and it exits 10 so the timer knows"
+    else
+        bad "the check did not offer Studio 21.1 to a Studio 21.0.4 machine"
+    fi
+
+    AQ_CHECK_RC=0
+    AQ_CHECK_OUT="$("${AQ_CHECK}" --feed "${AQ_FEED}" --edition studio --installed-version 21.1)" \
+        || AQ_CHECK_RC=$?
+    echo "  studio 21.1   -> ${AQ_CHECK_OUT} (exit ${AQ_CHECK_RC})"
+    if [ "${AQ_CHECK_RC}" = "0" ] \
+        && printf '%s' "${AQ_CHECK_OUT}" | grep -q 'newest DaVinci Resolve Studio'; then
+        ok "an up-to-date machine is told so, and exits 0 so nothing is announced"
+    else
+        bad "the check did not say an up-to-date Studio machine was up to date"
+    fi
+
+    AQ_CHECK_RC=0
+    AQ_CHECK_OUT="$("${AQ_CHECK}" --feed "${AQ_FEED}" --edition free --installed-version 20.3.3)" \
+        || AQ_CHECK_RC=$?
+    echo "  free 20.3.3   -> ${AQ_CHECK_OUT}"
+    if printf '%s' "${AQ_CHECK_OUT}" | grep -q '^DaVinci Resolve 21\.1 is available'; then
+        ok "a free copy is offered the free 21.1 — never Studio, which is a different licence"
+    else
+        bad "the check offered a free copy something other than the newest free Resolve"
+    fi
+
+    # The beta, named explicitly. The saved feed contains a 21.2 beta for BOTH
+    # editions, so if betas were ever counted, every answer above would say 21.2.
+    if printf '%s' "${AQ_CHECK_OUT}" | grep -q '21\.2'; then
+        bad "the check offered the 21.2 BETA in the saved feed — betas must be ignored"
+    else
+        ok "the 21.2 beta in the saved feed is ignored, as it must be"
+    fi
+
+    # --dry-run must work with no arguments at all and no network: it is what
+    # the once-a-day job runs in a rehearsal, and what a person on the bench can
+    # run with the network unplugged.
+    if "${AQ_CHECK}" --dry-run > /tmp/aq-check-dry.txt 2>&1; then
+        ok "'aquarius-resolve-check --dry-run' runs with no network at all"
+        sed 's/^/       /' /tmp/aq-check-dry.txt
+    else
+        bad "'aquarius-resolve-check --dry-run' failed:"
+        sed 's/^/       /' /tmp/aq-check-dry.txt
+    fi
+    rm -f /tmp/aq-check-dry.txt
+fi
+
+# The once-a-day job that turns that answer into one notification.
+say "DaVinci Resolve — the once-a-day check and its notification"
+AQ_NOTIFY=/usr/libexec/aquarius-resolve-update-notify
+if [ ! -x "${AQ_NOTIFY}" ]; then
+    bad "${AQ_NOTIFY} is missing or not runnable — nobody would ever be told about a new Resolve"
+else
+    # In a build container nothing is installed, so the rehearsal must say so
+    # and stop. That is also the state of every machine that never uses Resolve.
+    if "${AQ_NOTIFY}" --dry-run > /tmp/aq-notify-dry.txt 2>&1; then
+        ok "'aquarius-resolve-update-notify --dry-run' runs"
+        sed 's/^/       /' /tmp/aq-notify-dry.txt
+    else
+        bad "'aquarius-resolve-update-notify --dry-run' failed:"
+        sed 's/^/       /' /tmp/aq-notify-dry.txt
+    fi
+    aq_file_has /tmp/aq-notify-dry.txt 'not set up on this computer' \
+        "with no Resolve installed it says so and sends nothing"
+    rm -f /tmp/aq-notify-dry.txt
+    aq_file_has "${AQ_NOTIFY}" 'ANNOUNCED=' \
+        "it remembers the version it announced, so nobody is told twice about one release"
+fi
+# notify-send is what sends it. It comes from libnotify, which step 55 installs
+# for the session; named here so that dropping it there fails in the step whose
+# name says why it matters.
+aq_installed libnotify
+
+AQ_TIMER=/usr/lib/systemd/user/aquarius-resolve-update-check.timer
+AQ_TIMER_SVC=/usr/lib/systemd/user/aquarius-resolve-update-check.service
+AQ_TIMER_LINK=/usr/lib/systemd/user/timers.target.wants/aquarius-resolve-update-check.timer
+for unit in "${AQ_TIMER}" "${AQ_TIMER_SVC}"; do
+    if [ -r "${unit}" ]; then
+        ok "$(basename "${unit}") is installed"
+    else
+        bad "${unit} is missing — the daily check would never run"
+    fi
+done
+aq_file_has "${AQ_TIMER_SVC}" '^ExecStart=/usr/libexec/aquarius-resolve-update-notify$' \
+    "the service runs the check-and-notify job"
+aq_file_has "${AQ_TIMER_SVC}" '^ConditionPathExists=%h/\.local/share/aquarius/resolve/installed\.env$' \
+    "it does not even start on a machine that has never set Resolve up"
+aq_file_has "${AQ_TIMER}" '^OnUnitActiveSec=1d$' \
+    "it asks about once a day, not more"
+aq_file_has "${AQ_TIMER}" '^RandomizedDelaySec=' \
+    "with a random delay, so every AquariusOS does not knock on Blackmagic's door at once"
+aq_file_has "${AQ_TIMER}" '^Persistent=true$' \
+    "a machine that was switched off catches up rather than waiting another day"
+aq_file_has "${AQ_TIMER}" '^WantedBy=timers\.target$' \
+    "the timer belongs to timers.target, which every user session reaches"
+
+# ⚠️ SWITCHED ON FROM /usr, NOT /etc. The long version is in aq-lib.sh next to
+# aq_unit_is_on_from_usr: a link in /etc can be deleted by a local `disable`,
+# and this kind of operating system then preserves that deletion for ever.
+if [ -L "${AQ_TIMER_LINK}" ]; then
+    echo "  ${AQ_TIMER_LINK} -> $(readlink "${AQ_TIMER_LINK}")"
+    if [ -e "${AQ_TIMER_LINK}" ]; then
+        ok "the daily check is switched on from /usr, so an update always restores it"
+    else
+        bad "the 'switched on' link for the daily check is dangling — it points at nothing"
+    fi
+else
+    bad "${AQ_TIMER_LINK} is missing — the timer would be installed but never start"
+fi
+if [ -e /etc/systemd/user/timers.target.wants/aquarius-resolve-update-check.timer ]; then
+    bad "the daily check is ALSO switched on through /etc — a build step ran an enable. See aq-lib.sh."
+else
+    ok "nothing switches the daily check on through /etc (an update could lose that)"
+fi
+
+# systemd's own reader, where the build stage has it. Advisory: it complains
+# about things that are true only on a running machine, so only a parse failure
+# is worth failing a build over, and that shows up as a line saying so.
+if aq_have systemd-analyze; then
+    systemd-analyze verify --user "${AQ_TIMER}" > /tmp/aq-timer-check.txt 2>&1 || true
+    if [ -s /tmp/aq-timer-check.txt ]; then
+        echo "  NOTE: systemd-analyze had something to say about the timer:"
+        sed 's/^/         /' /tmp/aq-timer-check.txt
+    else
+        ok "systemd is happy with aquarius-resolve-update-check.timer"
+    fi
+    rm -f /tmp/aq-timer-check.txt
+fi
+
+# ------------------------------------------------------------------------------
+# The update flow walks the same channel
+# ------------------------------------------------------------------------------
+# `aq resolve update` is the same script in a different mode, so the window that
+# reads it can be the same shape. Seven steps, in order, ending in DONE — a
+# window drawing seven rows against a script sending six is a bar that never
+# finishes.
+say "DaVinci Resolve — the update flow's side of the progress channel"
+if /usr/libexec/aquarius-resolve-install --update --dry-run --progress-fd 3 \
+    3> /tmp/aq-update-progress.txt > /tmp/aq-update-dryrun.txt 2>&1; then
+    ok "the update rehearsal ran"
+else
+    bad "'aquarius-resolve-install --update --dry-run' does not run"
+    cat /tmp/aq-update-dryrun.txt
+fi
+echo "  What it said on the progress channel:"
+sed 's/^/       /' /tmp/aq-update-progress.txt
+AQ_UPDATE_N=0
+while IFS= read -r line; do
+    case "${line}" in
+        "STEP "*)
+            AQ_UPDATE_N=$((AQ_UPDATE_N + 1))
+            case "${line}" in
+                "STEP ${AQ_UPDATE_N}/7 "*) : ;;
+                *) bad "expected a line starting 'STEP ${AQ_UPDATE_N}/7 ' and got: ${line}" ;;
+            esac
+            ;;
+    esac
+done < /tmp/aq-update-progress.txt
+if [ "${AQ_UPDATE_N}" = "7" ]; then
+    ok "the update announced all seven steps, in order"
+else
+    bad "the update rehearsal announced ${AQ_UPDATE_N} steps, not 7"
+fi
+if [ "$(tail -1 /tmp/aq-update-progress.txt)" = "DONE" ]; then
+    ok "it finished with DONE, which is what moves the window to its last page"
+else
+    bad "the update rehearsal did not end with DONE"
+fi
+aq_file_has /tmp/aq-update-progress.txt '^STEP 7/7 Matching Resolve to your screen$' \
+    "an update ends by checking Resolve still opens at the size of your screen"
+# The rehearsal really asks the update check (offline, against the saved feed),
+# so this proves the two programs still fit together.
+aq_file_has /tmp/aq-update-dryrun.txt 'What the update check says' \
+    "the update rehearsal really asks the update check, rather than pretending to"
+rm -f /tmp/aq-update-progress.txt /tmp/aq-update-dryrun.txt
+
 # ------------------------------------------------------------------------------
 # The removing side of the same channel
 # ------------------------------------------------------------------------------
@@ -466,6 +719,31 @@ aq_file_has "${AQ_LAUNCH}" 'aquarius-display-scale --effective-scale' \
 aq_file_has "${AQ_LAUNCH}" 'XCURSOR_THEME=' "your cursor theme is carried in"
 aq_file_has "${AQ_LAUNCH}" 'XCURSOR_SIZE=' "so is its size"
 aq_file_has "${AQ_LAUNCH}" 'XCURSOR_PATH=' "and where to find the theme from inside"
+
+# ⚠️ AND IT HAS TO BE ABLE TO SAY WHAT IT WOULD DO WITHOUT DOING IT. --report
+# is what the last step of every install and update ("Matching Resolve to your
+# screen") asks, and what a person on the bench can run to see the answer. It
+# must work on a machine with no Resolve and no screen, which is exactly what a
+# build container is — if it ever needed the container to exist, that step would
+# quietly stop checking anything.
+aq_file_has "${AQ_LAUNCH}" 'REPORT_ONLY' \
+    "the launcher can report its size and pointer without starting Resolve"
+AQ_REPORT="$("${AQ_LAUNCH}" --report 2>&1 || true)"
+echo "  What it says it would hand Resolve: ${AQ_REPORT}"
+if printf '%s' "${AQ_REPORT}" | grep -q 'interface at'; then
+    ok "'aquarius-resolve-launch --report' answers, on a machine with no Resolve at all"
+else
+    bad "'--report' did not print its scale line, so the 'Matching Resolve to your screen' step would have nothing to ask"
+fi
+
+# And the step itself, in the installer, by name. Grepped rather than run,
+# because the running of it needs an app-menu entry and a container.
+aq_file_has /usr/libexec/aquarius-resolve-install 'step 7 "Matching Resolve to your screen"' \
+    "the installer really has the step that checks Resolve against your screen"
+aq_file_has /usr/libexec/aquarius-resolve-install 'aquarius-resolve-launch --report' \
+    "that step asks the launcher what size it would use"
+aq_file_has /usr/libexec/aquarius-resolve-install 'conf_fingerprint' \
+    "and checks your own size setting was not touched, by its contents rather than its clock"
 
 # The helper has to actually answer, with a number, on a machine with no screen
 # at all — which is what a build container is, and what running Resolve from
@@ -582,6 +860,31 @@ else
     fi
 fi
 
+# The way to update it, which is a window too. An operating system that can be
+# updated only by remembering a command has said something it did not mean to.
+AQ_DESKTOP_UP=/usr/share/applications/aquarius-update-resolve.desktop
+if [ ! -r "${AQ_DESKTOP_UP}" ]; then
+    bad "${AQ_DESKTOP_UP} is missing — there would be no way to update Resolve without a terminal"
+else
+    aq_file_has "${AQ_DESKTOP_UP}" '^Exec=/usr/libexec/aquarius-resolve-updater$' \
+        "the Update entry points at the update window"
+    aq_file_has "${AQ_DESKTOP_UP}" '^Terminal=false$' \
+        "it opens its own window rather than expecting a terminal"
+    aq_file_has "${AQ_DESKTOP_UP}" '^StartupWMClass=org\.aquariusos\.ResolveUpdater$' \
+        "the desktop knows which window belongs to this entry"
+    # It wears the Aquarius mark. Install and Remove have their own drawn "DR +"
+    # and "DR −" icons; a third drawing is a design decision for Royce, not one
+    # to invent in a build script, so this asks for the mark the image already
+    # installs and says so out loud rather than leaving a mystery.
+    aq_file_has "${AQ_DESKTOP_UP}" '^Icon=aquarius-logo$' \
+        "it wears the Aquarius mark"
+    if desktop-file-validate "${AQ_DESKTOP_UP}"; then
+        ok "the Update entry passes freedesktop's own validator"
+    else
+        bad "${AQ_DESKTOP_UP} is not a valid desktop entry — it would never appear in the app grid"
+    fi
+fi
+
 # The USB rules for licence dongles and control panels. These have to be on the
 # host: Resolve's own installer writes them inside the container, where they
 # apply to nothing, and AquariusOS's system folder is read-only so nothing can
@@ -611,6 +914,21 @@ else
         "'aq resolve install --gui' knows where the window is"
     aq_file_has /usr/bin/aq 'AQ_RESOLVE_UNINSTALLER_GUI=/usr/libexec/aquarius-resolve-uninstaller' \
         "'aq resolve remove --gui' knows where its window is"
+    aq_file_has /usr/bin/aq 'AQ_RESOLVE_UPDATER_GUI=/usr/libexec/aquarius-resolve-updater' \
+        "'aq resolve update --gui' knows where its window is"
+    aq_file_has /usr/bin/aq 'AQ_RESOLVE_CHECK=/usr/libexec/aquarius-resolve-check' \
+        "'aq resolve check' knows where the checker is"
+    # Run it. A machine with no Resolve installed must be told so calmly and
+    # exit 0 — this is the state of every build container and of every machine
+    # that has not set Resolve up, so it is the answer most people will see.
+    if /usr/bin/aq resolve check > /tmp/aq-resolve-check.txt 2>&1; then
+        ok "'aq resolve check' runs on a machine with nothing installed"
+        sed 's/^/       /' /tmp/aq-resolve-check.txt
+    else
+        bad "'aq resolve check' failed where Resolve is not installed — it must be quiet, not alarming"
+        cat /tmp/aq-resolve-check.txt
+    fi
+    rm -f /tmp/aq-resolve-check.txt
     # Run it for real. A help screen that crashes is a help screen nobody can
     # read at the moment they most need it.
     if /usr/bin/aq resolve --help > /tmp/aq-resolve-help.txt 2>&1; then
@@ -629,10 +947,16 @@ else
         # exceed 64 KB, and would then look like a change to a different file
         # breaking this one. Writing it the safe way round costs nothing.
         head -20 /tmp/aq-resolve-help.txt | sed 's/^/       /'
+        # A command nobody can discover is a command nobody uses.
+        aq_file_has /tmp/aq-resolve-help.txt 'aq resolve check' \
+            "the help text tells people 'aq resolve check' exists"
+        aq_file_has /tmp/aq-resolve-help.txt 'aq resolve update' \
+            "and 'aq resolve update'"
     else
         bad "'aq resolve --help' does not run"
         cat /tmp/aq-resolve-help.txt
     fi
+    rm -f /tmp/aq-resolve-help.txt
 fi
 
 # ------------------------------------------------------------------------------
