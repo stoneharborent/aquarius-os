@@ -23,9 +23,10 @@
 #
 #     aq resolve install      set up DaVinci Resolve
 #     aq resolve status       is it installed, and can it see the graphics card
+#     aq resolve check        is there a newer Resolve than the one you have
 #     aq resolve run          start it
 #     aq resolve shell        a terminal inside the environment it runs in
-#     aq resolve update       install a newer Resolve over the top
+#     aq resolve update       get and install a newer Resolve, start to finish
 #     aq resolve remove       remove Resolve and that environment
 #     aq resolve scale 1.5    how big Resolve's own interface is drawn
 #     aq apps list            which creator apps you have
@@ -100,7 +101,8 @@ USAGE
     aq display status   What each screen is, what size it is set to, and where
                         that answer came from.
 
-    aq resolve …        DaVinci Resolve: set it up, start it, check on it.
+    aq resolve …        DaVinci Resolve: set it up, keep it up to date, start
+                        it, check on it.
                         Run 'aq resolve --help' for the whole list. Resolve runs
                         inside its own protected environment on this computer,
                         that is the only way it works reliably on Linux — the
@@ -688,6 +690,8 @@ AQ_RESOLVE_INSTALLER=/usr/libexec/aquarius-resolve-install
 AQ_RESOLVE_INSTALLER_GUI=/usr/libexec/aquarius-resolve-installer
 AQ_RESOLVE_UNINSTALLER_GUI=/usr/libexec/aquarius-resolve-uninstaller
 AQ_RESOLVE_LAUNCHER=/usr/libexec/aquarius-resolve-launch
+AQ_RESOLVE_CHECK=/usr/libexec/aquarius-resolve-check
+AQ_RESOLVE_UPDATER_GUI=/usr/libexec/aquarius-resolve-updater
 
 resolve_usage() {
     cat << 'EOF'
@@ -710,12 +714,26 @@ aq resolve — DaVinci Resolve on AquariusOS
     aq resolve run  Start Resolve. (You can also just click it in your apps.)
 
     aq resolve status
-                    Is it installed, what is it running in, and can it see
-                    the graphics card. Start here when something is wrong.
+                    Is it installed, which version, what is it running in, and
+                    can it see the graphics card. Start here when something is
+                    wrong.
+
+    aq resolve check
+                    Is there a newer DaVinci Resolve than the one you have? It
+                    looks only at your edition — free or Studio — and says one
+                    sentence. With no internet it says so and stops. Add --json
+                    for the same answer as data. AquariusOS also asks this once
+                    a day on its own and tells you if the answer changes.
 
     aq resolve update [file]
-                    Install a newer Resolve over the top of the old one, from a
-                    new download. Your projects and settings are untouched.
+                    Get a newer Resolve and install it over the top of the old
+                    one. With no file this is the whole job: it opens the
+                    download page for the edition you already have, waits for
+                    the file to arrive in Downloads, installs it, and checks
+                    Resolve still opens at the size of your screen. Your
+                    projects and settings are untouched throughout.
+                    --gui does it in a window, which is what "Update DaVinci
+                    Resolve" in your apps opens.
 
     aq resolve shell
                     A terminal INSIDE the environment Resolve lives in. For
@@ -803,6 +821,20 @@ resolve_status() {
     if [ -r "${record}" ]; then
         # shellcheck source=/dev/null
         . "${record}"
+        # Which Resolve this actually is, in the words a person uses for it.
+        # Written down at install and update time by aquarius-resolve-install,
+        # read off the name of the file Blackmagic gave them. Empty means "we
+        # do not know", which is said plainly rather than guessed at.
+        case "${AQ_RESOLVE_EDITION:-}" in
+            studio) echo "  Edition  : DaVinci Resolve Studio${AQ_RESOLVE_VERSION:+ ${AQ_RESOLVE_VERSION}}" ;;
+            free) echo "  Edition  : DaVinci Resolve, the free version${AQ_RESOLVE_VERSION:+ ${AQ_RESOLVE_VERSION}}" ;;
+            *)
+                echo "  Edition  : not written down. The file this was installed"
+                echo "             from was not named the way Blackmagic name"
+                echo "             theirs, so 'aq resolve check' has nothing to"
+                echo "             compare against."
+                ;;
+        esac
         echo "  Set up on: ${AQ_RESOLVE_INSTALLED_AT:-unknown}"
         echo "  From     : ${AQ_RESOLVE_SOURCE:-unknown}"
         echo "  Runtime  : ${AQ_RESOLVE_DIGEST:-unknown}"
@@ -1067,17 +1099,60 @@ resolve() {
             }
             "${AQ_RESOLVE_INSTALLER}" ${passthrough[@]+"${passthrough[@]}"}
             ;;
+        check)
+            shift
+            # One checker, three faces: this, the once-a-day timer, and the
+            # "Update DaVinci Resolve" window all run the same program, so none
+            # of them can have its own opinion about what is newest.
+            [ -x "${AQ_RESOLVE_CHECK}" ] || {
+                echo "aq: ${AQ_RESOLVE_CHECK} is missing from this system." >&2
+                return 1
+            }
+            # It exits 10 when there is something newer, which is how the timer
+            # and the window tell the two outcomes apart. A person typing this
+            # into a terminal has already read the sentence, so 10 is turned
+            # back into a plain success here.
+            "${AQ_RESOLVE_CHECK}" "$@"
+            case "$?" in
+                0 | 10) return 0 ;;
+                *) return 1 ;;
+            esac
+            ;;
         update)
             shift
+            # Updating is installing again over the top: Blackmagic's installer
+            # replaces what is in /opt/resolve and leaves your settings and
+            # projects, which live in your home folder, alone. What the update
+            # flow adds is everything AROUND that — finding out that a newer one
+            # exists, opening the page for YOUR edition, waiting for the file,
+            # and checking Resolve still comes up at your screen's size.
+            #
+            # --gui is the only argument `aq` itself acts on, exactly as with
+            # install: everything else goes to the script, so there is one place
+            # arguments are understood and it is not this file.
+            local want_gui=0 arg
+            local -a passthrough=()
+            for arg in "$@"; do
+                if [ "${arg}" = "--gui" ]; then
+                    want_gui=1
+                else
+                    passthrough+=("${arg}")
+                fi
+            done
+
+            if [ "${want_gui}" = "1" ]; then
+                [ -x "${AQ_RESOLVE_UPDATER_GUI}" ] || {
+                    echo "aq: ${AQ_RESOLVE_UPDATER_GUI} is missing from this system." >&2
+                    return 1
+                }
+                exec "${AQ_RESOLVE_UPDATER_GUI}" ${passthrough[@]+"${passthrough[@]}"}
+            fi
+
             [ -x "${AQ_RESOLVE_INSTALLER}" ] || {
                 echo "aq: ${AQ_RESOLVE_INSTALLER} is missing from this system." >&2
                 return 1
             }
-            # Updating is installing again over the top: Blackmagic's installer
-            # replaces what is in /opt/resolve and leaves your settings and
-            # projects, which live in your home folder, alone. There is nothing
-            # for a separate update path to do that this does not.
-            "${AQ_RESOLVE_INSTALLER}" --update "$@"
+            "${AQ_RESOLVE_INSTALLER}" --update ${passthrough[@]+"${passthrough[@]}"}
             ;;
         run)
             shift

@@ -104,9 +104,26 @@
 #   aquarius-resolve-launch [program-inside-the-container] [arguments…]
 # With no arguments it starts Resolve. The app-menu entries are pointed at this
 # script by /usr/libexec/aquarius-resolve-install.
+#
+#   aquarius-resolve-launch --report
+# Works out the size and the pointer, prints the one line it would print on a
+# real launch, and STARTS NOTHING. Added 2026-09-08 so that the last step of
+# every install and update — "Matching Resolve to your screen" — can ask this
+# script what it would do instead of assuming, and so that the image build can
+# ask the same question on a machine with no screen and no Resolve.
 # ==============================================================================
 
 set -uo pipefail
+
+# --report is handled before anything else, including the "is Resolve set up?"
+# question below: reporting what size would be used is a fair question on a
+# machine where Resolve is not installed at all, which is exactly what a build
+# container is.
+REPORT_ONLY=0
+if [ "${1:-}" = "--report" ] || [ "${1:-}" = "--dry-run" ]; then
+    REPORT_ONLY=1
+    shift
+fi
 
 RUNTIME_ENV=/usr/share/aquarius/resolve/runtime.env
 CONTAINER="aquarius-resolve"
@@ -121,8 +138,9 @@ fi
 # ------------------------------------------------------------------------------
 # A message, not a silent nothing. This script is reached by clicking an icon,
 # and an icon that does nothing when clicked is the worst outcome there is.
-if ! command -v distrobox > /dev/null 2>&1 \
-    || ! podman container exists "${CONTAINER}" 2> /dev/null; then
+if [ "${REPORT_ONLY}" = "0" ] \
+    && { ! command -v distrobox > /dev/null 2>&1 \
+        || ! podman container exists "${CONTAINER}" 2> /dev/null; }; then
     msg="DaVinci Resolve is not set up on this computer yet.
 
 Open your apps and click \"Install DaVinci Resolve\", or run
@@ -244,7 +262,15 @@ esac
 # Said out loud, because a launcher that silently changes how an application
 # looks is a launcher nobody can debug. This goes to the terminal when started
 # from one, and nowhere at all when started from an icon.
-echo "aquarius-resolve-launch: interface at ${SCALE}x (${QT_VARIABLE}), pointer ${CURSOR_THEME} at ${CURSOR_SIZE}px" >&2
+REPORT_LINE="aquarius-resolve-launch: interface at ${SCALE}x (${QT_VARIABLE}), pointer ${CURSOR_THEME} at ${CURSOR_SIZE}px"
+echo "${REPORT_LINE}" >&2
+
+# --report: that was the whole question. Printed on stdout this time, because
+# something is reading it, and then we stop without starting anything.
+if [ "${REPORT_ONLY}" = "1" ]; then
+    printf '%s\n' "${REPORT_LINE}"
+    exit 0
+fi
 
 # `distrobox enter --additional-flags` takes ONE string, so the flags are joined
 # into one. None of these values can contain a space in practice — a cursor

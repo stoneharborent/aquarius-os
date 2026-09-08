@@ -19,6 +19,7 @@
 #      container from it.
 #   5. Runs Blackmagic's installer inside that container.
 #   6. Puts "DaVinci Resolve" in your apps.
+#   7. Makes sure that entry opens Resolve at the size of your screen.
 #
 # Nothing about the operating system is changed. Everything lives in one
 # container that `aq resolve remove` deletes without trace.
@@ -78,8 +79,9 @@
 #     4  Setting that environment up
 #     5  Installing DaVinci Resolve
 #     6  Adding it to your apps
+#     7  Matching Resolve to your screen
 #
-# ⚠️ NOTE THE WORDING. None of the six says "Rocky Linux" any more, and that is
+# ⚠️ NOTE THE WORDING. None of the seven says "Rocky Linux" any more, and that is
 # Royce's rule from the bench test on 2026-09-04: a person installing a video
 # editor is not helped by being told which Linux is inside the box. The comments
 # in this file still say Rocky, because whoever maintains it does need to know.
@@ -104,9 +106,31 @@
 # AND A REHEARSAL:
 #
 #     aquarius-resolve-install --dry-run
-#         Walks all six steps, changing nothing at all. It is how the window
+#         Walks all seven steps, changing nothing at all. It is how the window
 #         gets looked at without reinstalling Resolve, and it is what CI runs to
 #         prove the lines above still arrive in the right order.
+#
+# UPDATING walks the same seven steps, because updating IS installing again over
+# the top: Blackmagic's own installer replaces what is in /opt/resolve and
+# leaves the person's projects, database and settings — which are in their home
+# folder — completely alone. What updating adds is at step 2:
+#
+#     aquarius-resolve-install --update
+#         With no file given, this asks aquarius-resolve-check which version is
+#         newest FOR THE EDITION ALREADY INSTALLED, opens that exact download
+#         page rather than Blackmagic's general one, and then waits for a file
+#         whose name matches that version to appear in Downloads.
+#
+# ⚠️ AND STEP 7 EXISTS BECAUSE OF WHAT AN UPDATE CAN BREAK (Royce, 2026-09-08).
+# The size Resolve opens at is not baked in anywhere — aquarius-resolve-launch
+# reads it from the live desktop at every single launch — so an update cannot
+# lose the setting. What an update CAN break is the PATH: Blackmagic's installer
+# writes its own app-menu entry every time it runs, and a fresh entry goes
+# straight into the container without our launcher, which is a Resolve that
+# opens small on a 4K screen with the wrong mouse pointer. So the last step of
+# every install and every update checks the entry still goes through us, fixes
+# it if it does not, asks the launcher to report the size it would use, and
+# confirms nobody has touched ~/.config/aquarius/resolve.conf.
 # ==============================================================================
 
 set -uo pipefail
@@ -183,9 +207,10 @@ if [ -n "${PROGRESS_FD}" ]; then
     fi
 fi
 
-# Installing walks six steps; removing walks three. Both use the same channel
-# and the same words for it, which is what lets one window read either.
-STEP_TOTAL=6
+# Installing and updating walk seven steps; removing walks three. All of them
+# use the same channel and the same words for it, which is what lets one window
+# read any of the three.
+STEP_TOTAL=7
 [ "${MODE}" = "remove" ] && STEP_TOTAL=3
 
 progress() {
@@ -335,6 +360,126 @@ find_installer() {
         return 0
     }
     return 1
+}
+
+# ==============================================================================
+# WHICH RESOLVE IS THIS? — reading the edition and version off the file name
+# ==============================================================================
+# Added 2026-09-08, for "Resolve keeps itself current". Until then nothing wrote
+# down which Resolve was installed, because nothing needed to know. Checking for
+# a newer one needs to know two things: free or Studio, and which version.
+#
+# ⚠️ WHY THE FILE NAME IS THE SOURCE OF TRUTH, AND NOT SOMETHING INSIDE
+#    /opt/resolve. This is a judgement, so it is written down rather than
+#    assumed:
+#
+#   * Blackmagic name their Linux download with both facts in it, and they have
+#     for years:  DaVinci_Resolve_Studio_21.1_Linux.zip
+#     It is stated by Blackmagic, in a form that can be read without running any
+#     of their software, on the very file the person just downloaded and we are
+#     about to install. That is the strongest evidence available to us.
+#   * There is no documented, stable file inside /opt/resolve that states the
+#     version — there are candidates, but "a file that seems to have the version
+#     in it" is a guess, and a wrong guess here means offering somebody the
+#     wrong edition of a 3 GB download. This operating system would rather say
+#     "I do not know" than get that wrong.
+#   * Asking inside the container also means starting the container, which turns
+#     a question into a ten-second job.
+#
+# So: if the name says it, we record it. If the name does not say it, the record
+# is left EMPTY on purpose and `aq resolve check` says, in plain English, that it
+# has nothing to compare against. Empty is an honest answer; a guess is not.
+#
+# Both functions take a path or a file name and print nothing at all when they
+# cannot tell.
+edition_from_name() { # edition_from_name <path-or-name>
+    local name
+    name="$(basename "${1:-}")"
+    case "${name}" in
+        *[Ss]tudio*) printf 'studio' ;;
+        DaVinci_Resolve*) printf 'free' ;;
+        *) printf '' ;;
+    esac
+}
+
+version_from_name() { # version_from_name <path-or-name>
+    # The number between "Resolve" (or "Resolve_Studio") and "_Linux": one, two
+    # or three parts, e.g. 21, 21.1 or 21.0.4. Anything else prints nothing.
+    basename "${1:-}" \
+        | sed -n 's/^DaVinci_Resolve\(_Studio\)\?_\([0-9]\+\(\.[0-9]\+\)\{0,2\}\)_.*$/\2/p' \
+        | head -1
+}
+
+# ------------------------------------------------------------------------------
+# What this machine already has, and what the checker says is newest
+# ------------------------------------------------------------------------------
+# The record is a plain NAME=value file. It is READ with sed rather than sourced,
+# because sourcing a file from somebody's home folder into a script that then
+# runs commands is a habit worth not having.
+record_value() { # record_value <NAME>
+    [ -r "${RECORD}" ] || return 0
+    sed -n "s/^${1}=//p" "${RECORD}" 2> /dev/null | tail -1
+}
+
+# One field out of aquarius-resolve-check --json. That output is printed one
+# key per line, so this is a line match and not a JSON parser — and if the shape
+# ever changes, this prints nothing and the flow falls back to what it did
+# before knowing anything, which is still a working update.
+json_field() { # json_field <name> <json text>
+    printf '%s\n' "${2}" \
+        | sed -n "s/^[[:space:]]*\"${1}\": \"\([^\"]*\)\".*/\1/p" | head -1
+}
+
+CHECK=/usr/libexec/aquarius-resolve-check
+INSTALLED_EDITION="$(record_value AQ_RESOLVE_EDITION)"
+INSTALLED_VERSION="$(record_value AQ_RESOLVE_VERSION)"
+
+# The person's own choice of how big Resolve's interface is drawn, written by
+# `aq resolve scale`. Nothing in an install or an update has any business
+# changing it, so it is fingerprinted BEFORE Blackmagic's installer runs and
+# compared again at step 7. Contents, never a timestamp — the same rule the
+# build scripts follow, and for the same reason: a clock proves nothing.
+RESOLVE_CONF="${XDG_CONFIG_HOME:-${HOME}/.config}/aquarius/resolve.conf"
+conf_fingerprint() {
+    if [ -r "${RESOLVE_CONF}" ]; then
+        cksum < "${RESOLVE_CONF}"
+    else
+        echo "none"
+    fi
+}
+CONF_BEFORE="$(conf_fingerprint)"
+WANT_VERSION=""
+WANT_URL=""
+
+# The download an UPDATE should use, which is not quite the same question as
+# "is there a Resolve download in Downloads":
+#
+#   1. If the checker told us which version is newest, a file whose name carries
+#      that version wins outright — that is the one the person has just been
+#      sent to fetch.
+#   2. Otherwise take the newest Resolve download as usual, EXCEPT the one this
+#      machine already installed from. Without that exception, "update" would
+#      cheerfully reinstall the identical version from the file still sitting in
+#      Downloads and report success, which is the most confusing possible
+#      outcome of clicking Update.
+find_update_installer() {
+    local found ver
+    if [ -n "${WANT_VERSION}" ]; then
+        found="$(find_one "DaVinci_Resolve*_${WANT_VERSION}_Linux.run")"
+        [ -n "${found}" ] || found="$(find_one "DaVinci_Resolve*_${WANT_VERSION}_Linux*.zip")"
+        if [ -n "${found}" ]; then
+            printf '%s' "${found}"
+            return 0
+        fi
+    fi
+    found="$(find_installer || true)"
+    [ -n "${found}" ] || return 1
+    ver="$(version_from_name "${found}")"
+    if [ -n "${INSTALLED_VERSION}" ] && [ -n "${ver}" ] \
+        && [ "${ver}" = "${INSTALLED_VERSION}" ]; then
+        return 1
+    fi
+    printf '%s' "${found}"
 }
 
 # ==============================================================================
@@ -531,7 +676,7 @@ fi
 # ==============================================================================
 # The rehearsal
 # ==============================================================================
-# --dry-run walks the same six steps and changes nothing whatsoever. It exists
+# --dry-run walks the same seven steps and changes nothing whatsoever. It exists
 # for two reasons: so the installer window can be looked at and adjusted without
 # reinstalling Resolve, and so CI can prove the structured lines above still
 # come out in the right order on every build. It touches no container, no
@@ -539,10 +684,14 @@ fi
 if [ "${DRY_RUN}" = "1" ]; then
     echo ""
     echo "=================================================================="
-    echo " A REHEARSAL — nothing is being installed"
+    if [ "${MODE}" = "update" ]; then
+        echo " A REHEARSAL — nothing is being updated"
+    else
+        echo " A REHEARSAL — nothing is being installed"
+    fi
     echo "=================================================================="
     echo ""
-    echo "This walks through the same six steps a real setup goes through, so"
+    echo "This walks through the same seven steps a real setup goes through, so"
     echo "that the window can be looked at, without touching DaVinci Resolve,"
     echo "your container, or anything you have downloaded."
     echo ""
@@ -550,7 +699,21 @@ if [ "${DRY_RUN}" = "1" ]; then
     gpu_summary | sed 's/^[a-z]*\t/  /'
     sleep 0.3
     step 2 "Finding your download"
-    echo "  Pretending a download was found in ${DOWNLOADS}."
+    if [ "${MODE}" = "update" ]; then
+        # Really asked, not pretended — with --dry-run, so it reads the small
+        # saved copy of Blackmagic's list of releases that ships with
+        # AquariusOS and never touches the internet. This is the same program
+        # `aq resolve check` and the once-a-day timer ask, so a rehearsal shows
+        # exactly the sentence a real update would act on.
+        if [ -x "${CHECK}" ]; then
+            echo "  What the update check says (from the saved copy of"
+            echo "  Blackmagic's list, so this rehearsal needs no internet):"
+            "${CHECK}" --dry-run 2>&1 | sed 's/^/    /' || true
+        fi
+        echo "  Pretending to open that download page and wait for the file."
+    else
+        echo "  Pretending a download was found in ${DOWNLOADS}."
+    fi
     sleep 0.3
     step 3 "Downloading the environment Resolve runs in"
     for p in 0 25 50 75 100; do
@@ -567,10 +730,26 @@ if [ "${DRY_RUN}" = "1" ]; then
     step 6 "Adding it to your apps"
     echo "  Pretending to write the app-menu entry."
     sleep 0.2
+    step 7 "Matching Resolve to your screen"
+    # Not pretended: the launcher really is asked what size it would use, which
+    # is the one part of this step that changes nothing and is therefore safe to
+    # do for real. It is also the part most worth proving on every build.
+    if [ -x /usr/libexec/aquarius-resolve-launch ]; then
+        echo "  $(/usr/libexec/aquarius-resolve-launch --report 2>&1)"
+    else
+        echo "  The AquariusOS launcher is not on this system to ask."
+    fi
+    echo "  Pretending to check the app-menu entry goes through that launcher."
+    echo "  Pretending to check your own size setting was not touched."
+    sleep 0.2
     progress "DONE"
     echo ""
     echo "Rehearsal finished. Nothing was installed and nothing was changed."
-    echo "The real thing is:   aq resolve install"
+    if [ "${MODE}" = "update" ]; then
+        echo "The real thing is:   aq resolve update"
+    else
+        echo "The real thing is:   aq resolve install"
+    fi
     echo ""
     exit 0
 fi
@@ -587,6 +766,17 @@ else
 fi
 echo "=================================================================="
 echo ""
+if [ "${MODE}" = "update" ]; then
+    # Said out loud before anything happens, because "which edition am I about
+    # to be sent to download?" is the one question a person cannot answer for
+    # themselves from a browser window full of buttons.
+    case "${INSTALLED_EDITION}" in
+        studio) echo "You have DaVinci Resolve Studio${INSTALLED_VERSION:+ ${INSTALLED_VERSION}}, and that is the one this updates." ;;
+        free) echo "You have the free DaVinci Resolve${INSTALLED_VERSION:+ ${INSTALLED_VERSION}}, and that is the one this updates." ;;
+        *) echo "AquariusOS has not written down which DaVinci Resolve you have, so take care to download the same one you already use." ;;
+    esac
+    echo ""
+fi
 echo "DaVinci Resolve is made by Blackmagic Design. Their licence does not"
 echo "allow anyone else to hand out the installer, so you download it from"
 echo "them and this does the rest."
@@ -754,6 +944,38 @@ mkdir -p "${DOWNLOADS}" 2> /dev/null || true
 # find_one and find_installer are defined once, near the top, so that this and
 # `--find-installer` cannot ever pick different files.
 
+# ------------------------------------------------------------------------------
+# UPDATING: which version are we actually looking for, and whose page do we open?
+# ------------------------------------------------------------------------------
+# `aq resolve update` with no file is the guided flow, and the thing that makes
+# it guided is that it knows the answer to both questions BEFORE opening a
+# browser:
+#
+#   * WHICH EDITION. Free and Studio are different downloads and installing one
+#     over the other is a bad afternoon. The edition was written down when
+#     Resolve was set up, and aquarius-resolve-check only ever looks at that one.
+#   * WHICH VERSION. Knowing it means we can open the download page for that
+#     exact release rather than Blackmagic's general product page, and then wait
+#     for a file whose NAME matches it — so the old download still sitting in
+#     Downloads is not mistaken for the new one.
+#
+# All of that is one question asked of one program, which is the same rule the
+# rest of this feature follows: aquarius-resolve-check is the only thing that
+# decides what is newest, and the terminal, the timer and the window all ask it.
+#
+# If the check cannot answer — no internet, no record of what is installed — this
+# falls back to exactly what it did before: Blackmagic's product page, and any
+# Resolve download that appears. Updating still works; it is simply less clever.
+WANT_VERSION=""
+WANT_URL=""
+if [ "${MODE}" = "update" ] && [ -z "${INPUT}" ] && [ -x "${CHECK}" ]; then
+    CHECK_JSON="$("${CHECK}" --json 2> /dev/null || true)"
+    WANT_VERSION="$(json_field latest "${CHECK_JSON}")"
+    WANT_URL="$(json_field download_url "${CHECK_JSON}")"
+    CHECK_SAYS="$(json_field message "${CHECK_JSON}")"
+    [ -n "${CHECK_SAYS}" ] && echo "${CHECK_SAYS}"
+fi
+
 if [ -n "${INPUT}" ]; then
     if [ ! -e "${INPUT}" ]; then
         fail "There is no file at ${INPUT}. Choose the file you downloaded from Blackmagic and try again."
@@ -763,19 +985,37 @@ if [ -n "${INPUT}" ]; then
         exit 1
     fi
     INSTALLER="${INPUT}"
+elif [ "${MODE}" = "update" ]; then
+    INSTALLER="$(find_update_installer || true)"
 else
     INSTALLER="$(find_installer || true)"
 fi
 
 if [ -z "${INSTALLER}" ]; then
     echo "------------------------------------------------------------------"
-    echo " Now download DaVinci Resolve"
+    if [ "${MODE}" = "update" ]; then
+        echo " Now download the new DaVinci Resolve"
+    else
+        echo " Now download DaVinci Resolve"
+    fi
     echo "------------------------------------------------------------------"
     echo "Opening Blackmagic's download page in your browser."
     echo ""
-    echo "  * Choose DaVinci Resolve for LINUX. The free version is fine; if"
-    echo "    you have bought Studio, that works here too and is the one worth"
-    echo "    having on Linux — see the notes at the end."
+    if [ "${MODE}" = "update" ]; then
+        # The page for the edition already installed, and — where the check
+        # could answer — for the exact release. There is nothing to choose.
+        echo "  * The page that opens is the one for the version of DaVinci"
+        if [ -n "${WANT_VERSION}" ]; then
+            echo "    Resolve you already have, updated to ${WANT_VERSION}. Take the LINUX"
+        else
+            echo "    Resolve you already have. Take the LINUX"
+        fi
+        echo "    download; do not change to the other edition."
+    else
+        echo "  * Choose DaVinci Resolve for LINUX. The free version is fine; if"
+        echo "    you have bought Studio, that works here too and is the one worth"
+        echo "    having on Linux — see the notes at the end."
+    fi
     echo "  * They ask for a name and an email address."
     echo "  * Save the file in your Downloads folder."
     echo "  * Then LEAVE IT ALONE. Do not open it and do not run it."
@@ -786,7 +1026,13 @@ if [ -z "${INSTALLER}" ]; then
     echo "      inside the container this script builds, which is the whole"
     echo "      point of this script."
     echo ""
-    xdg-open "https://www.blackmagicdesign.com/products/davinciresolve" > /dev/null 2>&1 &
+    # ⚠️ THE FORM IS THE ONE HUMAN STEP AND IT STAYS THAT WAY. All that happens
+    # here is that a browser is opened at a page. Nothing fills that form in,
+    # nothing fetches the file behind it, and nothing of Blackmagic's is ever
+    # carried in this operating system. Their licence lets them hand out their
+    # installer and nobody else, and automating their registration form would
+    # bake somebody's details into an OS and break the day they change it.
+    xdg-open "${WANT_URL:-https://www.blackmagicdesign.com/products/davinciresolve}" > /dev/null 2>&1 &
 
     # Re-name step 2 while we sit here. The window shows whatever this says, so
     # somebody who clicked Install with nothing downloaded reads "Waiting for
@@ -798,7 +1044,9 @@ if [ -z "${INSTALLER}" ]; then
     echo ""
     ticks=0
     while :; do
-        if INSTALLER="$(find_installer)"; then
+        if [ "${MODE}" = "update" ]; then
+            INSTALLER="$(find_update_installer)" && [ -n "${INSTALLER}" ] && break
+        elif INSTALLER="$(find_installer)"; then
             break
         fi
         sleep 3
@@ -1050,23 +1298,159 @@ fi
 update-desktop-database "${APPS_DIR}" > /dev/null 2>&1 || true
 
 # ==============================================================================
-# 7. Write down what was done
+# 7. Make sure Resolve still comes up at the size of your screen
+# ==============================================================================
+# ⚠️ ROYCE, 2026-09-08: "the new version has to come up at the screen's proper
+# size." This step is that promise, checked rather than hoped for.
+#
+# THE THING THAT CANNOT BREAK: the size itself is not stored anywhere. Every
+# time Resolve starts, /usr/libexec/aquarius-resolve-launch reads the size the
+# desktop is running at RIGHT THEN and hands it to Resolve, along with the mouse
+# pointer. An update cannot lose a setting that is worked out fresh each time.
+#
+# THE THING THAT CAN BREAK: the path to that launcher. Blackmagic's installer
+# writes its own app-menu entry every time it runs, and distrobox exports it
+# again, so an update can leave behind an entry that steps into the container
+# directly. It starts Resolve — and Resolve comes up small on a 4K screen with
+# the wrong pointer, which looks exactly like the bug we fixed in September.
+#
+# So three questions, all answered out loud:
+#   1. Does every "DaVinci Resolve" in your apps go through our launcher? Any
+#      that does not is rewritten the same way step 6 rewrites them, and if one
+#      cannot be rewritten it is hidden — but only when a working entry exists,
+#      because hiding the only way to start Resolve would be worse than a
+#      Resolve that opens small.
+#   2. Can the launcher work out a size and say so? It is asked, with --report,
+#      which prints its line and starts nothing.
+#   3. Is your own choice of size still there? `aq resolve scale` writes
+#      ~/.config/aquarius/resolve.conf and nothing in an update has any business
+#      touching it. The file is fingerprinted before Blackmagic's installer runs
+#      and compared here.
+step 7 "Matching Resolve to your screen"
+echo ""
+echo "------------------------------------------------------------------"
+echo " Making sure Resolve opens at the size of your screen"
+echo "------------------------------------------------------------------"
+
+# --- 1. every entry goes through our launcher ---------------------------------
+ours=0
+bypass_list=()
+while IFS= read -r entry; do
+    [ -n "${entry}" ] || continue
+    if grep -q 'aquarius-resolve-launch' "${entry}"; then
+        ours=$((ours + 1))
+        continue
+    fi
+    # Not ours. Try the same rewrite step 6 does — it is the fix, not a
+    # workaround, and doing it here means an update repairs what an update broke.
+    if grep -qE "^Exec=.*distrobox-enter .*-n +${CONTAINER}( |$)" "${entry}"; then
+        sed -i -E "s#^Exec=.*-n +${CONTAINER} +(-e|--) +#Exec=/usr/libexec/aquarius-resolve-launch #" "${entry}"
+    fi
+    if grep -q 'aquarius-resolve-launch' "${entry}"; then
+        ours=$((ours + 1))
+        echo "  Repaired ${entry##*/} — it now opens Resolve at your screen's size."
+    else
+        bypass_list+=("${entry}")
+    fi
+done < <(find "${APPS_DIR}" -maxdepth 1 -type f \
+    \( -iname '*resolve*.desktop' \
+    -o -iname '*davinci*.desktop' \
+    -o -iname '*blackmagic*.desktop' \) 2> /dev/null | sort)
+
+if [ "${#bypass_list[@]}" -gt 0 ]; then
+    if [ "${ours}" -gt 0 ]; then
+        for entry in "${bypass_list[@]}"; do
+            if ! grep -q '^NoDisplay=true$' "${entry}"; then
+                # Into the [Desktop Entry] group, never appended to the end of
+                # the file where a [Desktop Action] group might own it.
+                sed -i '0,/^\[Desktop Entry\]/s//[Desktop Entry]\nNoDisplay=true/' "${entry}"
+            fi
+            echo "  Hid ${entry##*/} — it opened Resolve the wrong way round, and"
+            echo "  the entry that opens it at your screen's size is still there."
+        done
+    else
+        echo "  ⚠️  ${#bypass_list[@]} app-menu entry(ies) do not go through the"
+        echo "      AquariusOS launcher, and there is no other one to use, so they"
+        echo "      have been left alone. Resolve will start; it may open small on"
+        echo "      a big screen, with the wrong mouse pointer. Fix it with:"
+        echo "          aq resolve install"
+    fi
+else
+    echo "  ${ours} app-menu entry(ies), all going through the AquariusOS launcher."
+fi
+update-desktop-database "${APPS_DIR}" > /dev/null 2>&1 || true
+
+# --- 2. the launcher can still work out a size --------------------------------
+# --report asks the question and starts nothing. Its answer is the same line it
+# prints on a real launch, so what is printed here is what Resolve will get.
+if [ -x /usr/libexec/aquarius-resolve-launch ]; then
+    LAUNCH_REPORT="$(/usr/libexec/aquarius-resolve-launch --report 2>&1)"
+    if printf '%s' "${LAUNCH_REPORT}" | grep -q 'interface at'; then
+        echo "  ${LAUNCH_REPORT}"
+    else
+        echo "  ⚠️  The launcher could not say what size it would use. Resolve will"
+        echo "      still start. Check with:  aq resolve scale"
+    fi
+else
+    echo "  ⚠️  The AquariusOS launcher is missing from this system, which is a"
+    echo "      fault in the operating system rather than in anything you did."
+fi
+
+# --- 3. your own size setting is untouched ------------------------------------
+CONF_AFTER="$(conf_fingerprint)"
+if [ "${CONF_BEFORE}" = "${CONF_AFTER}" ]; then
+    if [ "${CONF_AFTER}" = "none" ]; then
+        echo "  You have no size setting of your own, so Resolve follows the desktop."
+    else
+        echo "  Your own size setting in ${RESOLVE_CONF} is untouched."
+    fi
+else
+    echo "  ⚠️  ${RESOLVE_CONF} changed while this ran, which nothing here should"
+    echo "      have done. Check it with:  aq resolve scale"
+fi
+
+# ==============================================================================
+# 8. Write down what was done
 # ==============================================================================
 # So that `aq resolve status` can answer "what am I actually running?" without
-# guessing, and so that a support conversation has facts in it.
+# guessing, so that a support conversation has facts in it, and — since
+# 2026-09-08 — so that `aq resolve check` knows which edition and which version
+# to compare against Blackmagic's list of releases.
+#
+# The edition and the version are read off the name of the file Blackmagic gave
+# the person. The long reasoning for that is beside edition_from_name near the
+# top of this script; the short version is that it is the only place both facts
+# are stated by Blackmagic in a form we can read without running their software,
+# and an empty answer here is better than a guessed one.
 mkdir -p "${RECORD_DIR}" 2> /dev/null || true
 DIGEST="$(podman image inspect --format '{{index .RepoDigests 0}}' "${IMAGE}" 2> /dev/null || echo 'unknown')"
+RECORDED_EDITION="$(edition_from_name "${INSTALLER}")"
+RECORDED_VERSION="$(version_from_name "${INSTALLER}")"
 {
-    echo "# Written by aquarius-resolve-install. Read by 'aq resolve status'."
+    echo "# Written by aquarius-resolve-install. Read by 'aq resolve status'"
+    echo "# and by 'aq resolve check'."
     echo "AQ_RESOLVE_INSTALLED_AT=$(date -Is)"
     echo "AQ_RESOLVE_IMAGE=${IMAGE}"
     echo "AQ_RESOLVE_DIGEST=${DIGEST}"
     echo "AQ_RESOLVE_GPU_METHOD=${GPU_METHOD}"
     echo "AQ_RESOLVE_SOURCE=$(basename "${INSTALLER}")"
+    # free or studio. Empty when the file name did not say, and everything that
+    # reads this treats empty as "do not know", never as "free".
+    echo "AQ_RESOLVE_EDITION=${RECORDED_EDITION}"
+    echo "AQ_RESOLVE_VERSION=${RECORDED_VERSION}"
+    echo "AQ_RESOLVE_VERSION_FROM=the name of the file downloaded from Blackmagic"
 } > "${RECORD}"
 
+if [ -z "${RECORDED_VERSION}" ] || [ -z "${RECORDED_EDITION}" ]; then
+    echo ""
+    echo "NOTE: the file you gave this was not named the way Blackmagic name"
+    echo "      their downloads, so AquariusOS could not write down which"
+    echo "      version of Resolve this is. Everything works; the only thing"
+    echo "      lost is being told when a newer one comes out."
+fi
+
 # ==============================================================================
-# 8. Done
+# 9. Done
 # ==============================================================================
 progress "DONE"
 echo ""
