@@ -757,6 +757,54 @@ case "${AQ_EFFECTIVE}" in
     *) ok "'--effective-scale' answers with a number even where there are no screens" ;;
 esac
 
+# ------------------------------------------------------------------------------
+# And the window fits the screen — the labwc rule
+# ------------------------------------------------------------------------------
+# ⚠️ THE FAULT THIS ENDS, from docs/restart/resolve.md §"The window is bigger
+# than the screen": Resolve sizes its own window and on a 4K display sometimes
+# opened one whose edges, close button included, were off the screen.
+#
+# The fix is a window rule in the Aquarius Desktop's labwc configuration, and it
+# is the ONLY rule in that file that names an application. It is checked here,
+# in the Resolve step, rather than in the desktop step, because it is a Resolve
+# feature that happens to be written in a desktop file — somebody tidying
+# rc.xml would have no reason to know it mattered.
+#
+# READ AS XML, not grepped for. A reworded comment, a different indentation or a
+# line break in a different place must not be able to make this pass or fail.
+# The same rule must be in the aquarius-shell repository's copy of rc.xml;
+# build_files/check-labwc-drift.sh is what proves that, in CI.
+say "DaVinci Resolve — the window fits the screen"
+AQ_RC=/usr/share/aquarius/labwc/rc.xml
+if [ ! -r "${AQ_RC}" ]; then
+    bad "${AQ_RC} is missing — the Aquarius Desktop would have no window rules at all"
+else
+    if AQ_RULE="$(python3 - "${AQ_RC}" << 'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+root = ET.parse(sys.argv[1]).getroot()
+for rule in root.findall("./windowRules/windowRule"):
+    if (rule.get("identifier") or "").lower() == "resolve":
+        print(",".join((action.get("name") or "") for action in rule.findall("action")))
+        sys.exit(0)
+sys.exit(1)
+PY
+    )"; then
+        echo "  The rule for Resolve runs: ${AQ_RULE}"
+        case ",${AQ_RULE}," in
+            *,FitToOutput,*) ok "a window bigger than the screen is shrunk to the screen (FitToOutput)" ;;
+            *) bad "the Resolve window rule has no FitToOutput — a window larger than the screen would stay larger than the screen" ;;
+        esac
+        case ",${AQ_RULE}," in
+            *,Maximize,*) ok "and Resolve then fills the screen it opened on (Maximize)" ;;
+            *) bad "the Resolve window rule has no Maximize — Resolve would not open at the size of the screen" ;;
+        esac
+    else
+        bad "rc.xml has no <windowRule identifier=\"resolve\"> — Resolve could open with its edges off a 4K screen again"
+    fi
+fi
+
 # And the front door for changing it by hand.
 if /usr/bin/aq resolve scale > /tmp/aq-resolve-scale.txt 2>&1; then
     ok "'aq resolve scale' runs"

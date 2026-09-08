@@ -6005,6 +6005,32 @@ jobs:
             fi
           done
 
+          echo "== and that Resolve's window fits the screen =="
+          # ⚠️ The fault this ends: Resolve sizes its own window and on a 4K
+          # display sometimes opened one whose edges — close button included —
+          # were off the screen. The Aquarius Desktop's labwc configuration has
+          # one window rule, and Resolve is the only application it names.
+          #
+          # Read as XML, so a reworded comment or a different indentation cannot
+          # make this pass or fail by accident. The identical rule has to be in
+          # the aquarius-shell repository's copy of rc.xml too — that is what
+          # the shell_tests job's drift check proves.
+          #
+          # Written as `python3 -c` on one line rather than as a heredoc: this
+          # whole check is ALREADY inside a heredoc (the SCRIPT block above),
+          # and a nested one would need its terminator at the very start of a
+          # line, which this file's indentation cannot give it.
+          RULE="$(python3 -c 'import sys, xml.etree.ElementTree as ET; rules = ET.parse(sys.argv[1]).getroot().findall("./windowRules/windowRule"); mine = [r for r in rules if (r.get("identifier") or "").lower() == "resolve"]; print(",".join((a.get("name") or "") for a in mine[0].findall("action")) if mine else "")' /usr/share/aquarius/labwc/rc.xml || true)"
+          echo "       the rule for Resolve runs: ${RULE:-(none)}"
+          case ",${RULE}," in
+            *,FitToOutput,*) ok "a window bigger than the screen is shrunk to the screen" ;;
+            *) bad "rc.xml's Resolve window rule has no FitToOutput — Resolve could open larger than the display again" ;;
+          esac
+          case ",${RULE}," in
+            *,Maximize,*) ok "and Resolve then fills the screen it opened on" ;;
+            *) bad "rc.xml's Resolve window rule has no Maximize — Resolve would not open at the size of the screen" ;;
+          esac
+
           echo "== the way to update without a terminal =="
           DESKUP=/usr/share/applications/aquarius-update-resolve.desktop
           if [ ! -r "${DESKUP}" ]; then

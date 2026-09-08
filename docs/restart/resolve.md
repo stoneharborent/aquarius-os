@@ -601,11 +601,30 @@ aquarius-resolve-launch: interface at 1.25x (scale-factor), pointer Adwaita at 3
 
 ### The window is bigger than the screen
 
-Resolve sizes its own window, and on a 4K display it occasionally opens one
-whose edges — including its close button — are off the display.
+**This does not happen any more, since 8 September 2026.**
 
-Start it once at 100%, get a window you can see, and set the size properly
-afterwards:
+It used to. Resolve sizes its own window, and on a 4K display it occasionally
+opened one whose edges — including its close button — were off the screen, so
+there was nothing to grab and nowhere to click.
+
+The Aquarius Desktop now has one rule that names one application, and Resolve is
+it: when its window first appears, the desktop shrinks it to the screen if
+Resolve asked for something larger, and then maximises it. Resolve fills your
+display like a program that knew what display it was on. After that the window
+is yours — move it, resize it, put it on the second monitor, and nothing
+interferes again.
+
+Two things worth knowing:
+
+- **It happens once, when Resolve opens.** It is not a setting Resolve has to
+  agree with and there is nothing to switch on.
+- **On GNOME it does not happen**, because the rule belongs to the Aquarius
+  Desktop's window manager and GNOME is a different one. GNOME is the fallback
+  desktop; if you are in it and Resolve opens off-screen, the paragraph below
+  still works.
+
+**If it ever happens anyway**, start Resolve once at 100%, get a window you can
+see, and set the size properly afterwards:
 
 ```
 aq resolve scale 1
@@ -620,6 +639,10 @@ AQUARIUS_RESOLVE_SCALE=1 /usr/libexec/aquarius-resolve-launch
 You can also drive any window from the keyboard, whether or not you can see its
 edges: hold **Super** and drag anywhere in the window to move it, or Super and
 right-drag to resize it.
+
+And say so, because it would mean the rule did not match. The rule finds Resolve
+by the name its window gives itself, `resolve`; it is written at the bottom of
+`/usr/share/aquarius/labwc/rc.xml` with the full explanation above it.
 
 ### The mouse pointer inside Resolve looks wrong
 

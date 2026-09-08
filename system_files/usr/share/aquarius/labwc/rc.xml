@@ -114,6 +114,13 @@
   "W" is labwc's letter for Super (the Windows / Command key). Its other
   modifiers are S=shift, C=control, A=alt.
 
+  =============================================================================
+  ONE WINDOW RULE
+  =============================================================================
+  DaVinci Resolve opens maximised and never larger than the screen. It is the
+  only application named by name in this file, and the reason is written out
+  in full above the rule itself, at the bottom.
+
   Format reference: labwc-config(5) and labwc-actions(5), both installed on
   this machine — type `man 5 labwc-config`.
   =============================================================================
@@ -543,5 +550,65 @@
     </context>
 
   </mouse>
+
+  <!--
+    =========================================================================
+    DaVinci RESOLVE OPENS AT THE SIZE OF THE SCREEN. Added 2026-09-08.
+    =========================================================================
+    THE FAULT THIS ENDS. DaVinci Resolve decides for itself how big its own
+    window should be, and on Royce's 4K screen it sometimes decides on a
+    window whose edges — including its close button — are off the display.
+    docs/restart/resolve.md used to carry a section called "The window is
+    bigger than the screen" telling people how to climb out of it by hand.
+
+    Nothing inside Resolve can fix it: it is Resolve remembering a size from
+    a screen it is no longer on. The window manager can, because the window
+    manager is the thing that actually places the window.
+
+    WHAT THE TWO LINES DO, in the order they happen:
+
+      FitToOutput   If Resolve asks for a window bigger than the screen it
+                    lands on, shrink it to the screen and change nothing
+                    else. This is what keeps "never larger than the screen"
+                    true after somebody un-maximises the window later:
+                    un-maximising gives a window back the size it asked for,
+                    and by then that size fits.
+      Maximize      Then fill that screen, the way a program that knew about
+                    the screen would have opened in the first place.
+
+    Both run ONCE, when the window first appears. labwc has exactly one
+    window-rule event and it is "on first map"
+    (include/window-rules.h in labwc 0.20.2, the version this image builds).
+    Nothing is imposed on Resolve after that: move it, resize it, send it to
+    the other monitor, and labwc leaves it alone from then on.
+
+    WHICH SCREEN. Maximize fills the output the window opened on — the
+    primary display on a one-screen machine, the active one on a desk with
+    two. labwc has no "primary output" to name here, and writing a specific
+    output name (HDMI-A-1 and so on) would be right on one computer and
+    wrong on every other.
+
+    HOW THE MATCH WORKS. `identifier` is the app_id for a Wayland window and
+    the WM_CLASS for an X11 one (labwc-config(5) at 0.20.2). Resolve is an
+    X11 program — it has no Wayland version on any Linux — and the class it
+    declares is `resolve`. That is the same name Blackmagic's own desktop
+    entry puts in StartupWMClass and the same name the Mac key rules use for
+    it in /usr/share/aquarius/keys/mac.yaml. Matching is case-insensitive and
+    understands `*` and `?`; this rule uses neither, so it matches Resolve
+    and nothing else on the machine.
+
+    IF THE BENCH EVER SEES RESOLVE GROW BACK OUT of the screen after it has
+    opened, the stronger lever is `ignoreConfigureRequest="yes"` on this same
+    rule, which stops an X11 window moving or resizing itself at all. It is
+    deliberately NOT set, because it would also take away the times Resolve
+    resizes its own window for a good reason, and a mild fault is better than
+    a heavy-handed fix nobody has yet needed.
+  -->
+  <windowRules>
+    <windowRule identifier="resolve">
+      <action name="FitToOutput" />
+      <action name="Maximize" direction="both" />
+    </windowRule>
+  </windowRules>
 
 </labwc_config>
