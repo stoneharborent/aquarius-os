@@ -103,6 +103,11 @@
 #     aquarius-resolve-install --gpu-summary
 #         Prints one line: a word (ok / warn / none), a tab, then a sentence.
 #
+#     aquarius-resolve-install --drives
+#         Says, in plain English, whether every drive plugged into this
+#         computer is visible INSIDE the container at the same path. Changes
+#         nothing. `aq resolve status` prints exactly this, and so does step 7.
+#
 # AND A REHEARSAL:
 #
 #     aquarius-resolve-install --dry-run
@@ -131,6 +136,12 @@
 # every install and every update checks the entry still goes through us, fixes
 # it if it does not, asks the launcher to report the size it would use, and
 # confirms nobody has touched ~/.config/aquarius/resolve.conf.
+#
+# ⚠️ AND SINCE 2026-09-08 IT ALSO CHECKS YOUR DRIVES. Step 7 is where the
+# question "does Resolve line up with THIS computer?" is asked, and a drive that
+# sits at a different path inside the container than outside it is the same kind
+# of fault as a window that opens the wrong size — invisible until a project
+# comes up with its media offline. See report_drives further down.
 # ==============================================================================
 
 set -uo pipefail
@@ -168,6 +179,7 @@ while [ $# -gt 0 ]; do
         --dry-run) DRY_RUN=1 ;;
         --gpu-summary) QUERY="gpu" ;;
         --find-installer) QUERY="find" ;;
+        --drives) QUERY="drives" ;;
         --progress-fd)
             shift
             PROGRESS_FD="${1:-}"
@@ -410,6 +422,142 @@ version_from_name() { # version_from_name <path-or-name>
         | head -1
 }
 
+# ==============================================================================
+# YOUR DRIVES ARE IN THE SAME PLACES INSIDE
+# ==============================================================================
+# WHY THIS MATTERS MORE THAN IT SOUNDS, and it is worth the paragraph.
+#
+# An external drive plugged into this computer appears at a path like
+#
+#     /run/media/royce/SHOOT-2026
+#
+# Resolve runs inside a container. If that same drive is NOT at that same path
+# in there, then everything that joins the two halves of the machine breaks at
+# once and none of it says why:
+#
+#   * dragging a clip out of Files and into the media pool does nothing;
+#   * "Open With → DaVinci Resolve" opens Resolve with nothing in it;
+#   * a project made yesterday comes up with every clip offline, because a
+#     Resolve project stores the FULL PATH of each piece of media.
+#
+# It normally works, and it works because distrobox binds /run/media, /media
+# and /mnt from the host into the container, at the same paths, WHEN THOSE
+# FOLDERS EXIST at the moment the container is created. That last clause is the
+# whole risk: a computer with no drive ever plugged in has no /run/media, so
+# there is nothing to bind, and the first drive somebody plugs in afterwards is
+# invisible inside — silently.
+#
+# So it is checked rather than assumed, on every install and every update, and
+# `aq resolve status` asks the same question.
+#
+# HOW IT IS TESTED WITHOUT A DRIVE OR A CONTAINER. Two environment variables
+# replace the two facts this needs, so a build machine with no drives and no
+# Resolve can still walk every outcome:
+#
+#     AQ_RESOLVE_FAKE_DRIVES          the drives the HOST has, separated by
+#                                     colons. Setting it to an empty string is
+#                                     meaningful: it means "no drives at all".
+#     AQ_RESOLVE_FAKE_DRIVES_INSIDE   which of those the CONTAINER can see.
+#
+# Both are honoured only when they are SET, empty or not — hence the
+# `${VAR+set}` test rather than a test on the value.
+# ==============================================================================
+
+# The drives this computer has mounted right now, one path per line.
+#
+# The three folders are the only places a drive is ever mounted on AquariusOS:
+# /run/media (where the desktop mounts what you plug in), /media (where an older
+# habit or a system service might), and /mnt (where somebody mounts something by
+# hand). They are also exactly the three distrobox shares, which is not a
+# coincidence — it is why this check has a chance of passing.
+#
+# findmnt is asked first because it knows what is really mounted; /proc/mounts
+# is the fallback for a machine where util-linux has been trimmed.
+host_drives() {
+    if [ -n "${AQ_RESOLVE_FAKE_DRIVES+set}" ]; then
+        printf '%s' "${AQ_RESOLVE_FAKE_DRIVES}" | tr ':' '\n' | grep -v '^$' || true
+        return 0
+    fi
+    {
+        if command -v findmnt > /dev/null 2>&1; then
+            findmnt --list --noheadings --output TARGET 2> /dev/null || true
+        else
+            awk '{ print $2 }' /proc/mounts 2> /dev/null || true
+        fi
+    } | grep -E '^(/run/media|/media|/mnt)/.+' | sort -u || true
+}
+
+# Can the container see that same path? Asked INSIDE, because asking outside
+# would only tell us what we already know.
+#
+# ⚠️ `test -d`, not `ls`. A drive can be mounted and unreadable by this user, and
+# the question here is "is the path there", which is the one that decides
+# whether a Resolve project relinks.
+drive_visible_inside() { # drive_visible_inside <path>
+    if [ -n "${AQ_RESOLVE_FAKE_DRIVES_INSIDE+set}" ]; then
+        printf '%s' "${AQ_RESOLVE_FAKE_DRIVES_INSIDE}" | tr ':' '\n' \
+            | grep -Fxq -- "${1}"
+        return
+    fi
+    distrobox enter --name "${CONTAINER}" -- test -d "${1}" > /dev/null 2>&1
+}
+
+# The whole answer, in plain English, on stdout. Never fails: a drive that
+# cannot be reached is a sentence, not an error, because an install must not
+# stop over it.
+report_drives() {
+    local drives=() missing=() d total
+    while IFS= read -r d; do
+        [ -n "${d}" ] && drives+=("${d}")
+    done < <(host_drives)
+
+    total="${#drives[@]}"
+    if [ "${total}" -eq 0 ]; then
+        echo "  No extra drives are plugged in, so there is nothing to line up."
+        echo "  A drive you plug in later appears inside Resolve at the same place"
+        echo "  it appears in Files, with nothing to set."
+        return 0
+    fi
+
+    for d in "${drives[@]}"; do
+        drive_visible_inside "${d}" || missing+=("${d}")
+    done
+
+    if [ "${#missing[@]}" -eq 0 ]; then
+        if [ "${total}" -eq 1 ]; then
+            echo "  Your drive is visible inside Resolve at the same path:"
+        else
+            echo "  Your ${total} drives are visible inside Resolve at the same paths:"
+        fi
+        for d in "${drives[@]}"; do
+            echo "      ${d}"
+        done
+        echo "  So dragging media in from Files works, and a project that points"
+        echo "  at that path finds its media."
+        return 0
+    fi
+
+    if [ "${#missing[@]}" -eq "${total}" ] && [ "${total}" -eq 1 ]; then
+        echo "  ⚠️  Your drive cannot be reached from inside Resolve:"
+    else
+        echo "  ⚠️  ${#missing[@]} of your ${total} drives cannot be reached from inside Resolve:"
+    fi
+    for d in "${missing[@]}"; do
+        echo "        ${d}"
+    done
+    echo ""
+    echo "  Resolve cannot open anything stored there, and a project that already"
+    echo "  points at one of those paths would come up with its media offline."
+    echo ""
+    echo "  The usual cause is that the folder was not on this computer when"
+    echo "  Resolve's environment was built, so there was nothing to share. With"
+    echo "  the drive plugged in, build the environment again — your projects,"
+    echo "  settings and keyboard customisations are all kept:"
+    echo "        aq resolve remove"
+    echo "        aq resolve install"
+    return 0
+}
+
 # ------------------------------------------------------------------------------
 # What this machine already has, and what the checker says is newest
 # ------------------------------------------------------------------------------
@@ -483,7 +631,7 @@ find_update_installer() {
 }
 
 # ==============================================================================
-# The two questions, answered and gone
+# The three questions, answered and gone
 # ==============================================================================
 case "${QUERY}" in
     gpu)
@@ -496,6 +644,23 @@ case "${QUERY}" in
             exit 0
         fi
         exit 1
+        ;;
+    drives)
+        # Asked by `aq resolve status`, and by step 7 of every install and
+        # update — the same code, so a terminal and a window can never give two
+        # different answers about the same drives.
+        #
+        # runtime.env is read here rather than at the top, because the block up
+        # there deliberately skips itself for a question, so that asking one on
+        # a broken image still answers instead of stopping. A missing file only
+        # means the container keeps its default name, which is the right one.
+        if [ -r "${RUNTIME_ENV}" ]; then
+            # shellcheck source=/dev/null
+            . "${RUNTIME_ENV}"
+            CONTAINER="${AQ_RESOLVE_CONTAINER:-aquarius-resolve}"
+        fi
+        report_drives
+        exit 0
         ;;
 esac
 
@@ -741,6 +906,25 @@ if [ "${DRY_RUN}" = "1" ]; then
     fi
     echo "  Pretending to check the app-menu entry goes through that launcher."
     echo "  Pretending to check your own size setting was not touched."
+    # Not pretended either, WHEN THERE IS SOMETHING TO PRETEND WITH. Listing the
+    # drives this computer has mounted changes nothing, so a rehearsal on a real
+    # machine shows the real answer. On a build machine — no drives, no
+    # container — the two AQ_RESOLVE_FAKE_DRIVES variables described beside
+    # report_drives stand in, so the rehearsal still walks the wording.
+    echo ""
+    echo "  Your drives, inside and out"
+    if [ -n "${AQ_RESOLVE_FAKE_DRIVES+set}" ]; then
+        report_drives
+    elif [ -n "$(host_drives)" ] \
+        && command -v podman > /dev/null 2>&1 \
+        && podman container exists "${CONTAINER}" 2> /dev/null; then
+        report_drives
+    else
+        # Deliberately not silent: "nothing to say" and "did not look" are
+        # different answers and a rehearsal must not blur them.
+        echo "  Not asked — this rehearsal has no set-up Resolve to ask, so the"
+        echo "  answer would be about nothing. A real install asks it for real."
+    fi
     sleep 0.2
     progress "DONE"
     echo ""
@@ -1408,6 +1592,17 @@ else
     echo "  ⚠️  ${RESOLVE_CONF} changed while this ran, which nothing here should"
     echo "      have done. Check it with:  aq resolve scale"
 fi
+
+# --- 4. your drives are in the same places inside -----------------------------
+# The long explanation is beside report_drives near the top of this file. The
+# short one: a Resolve project stores the FULL PATH of every clip, so a drive
+# sitting at a different path inside the container than outside it breaks
+# dragging media in from Files, "Open With → DaVinci Resolve", and every relink
+# — all of them silently. distrobox normally gets this right; this says so out
+# loud, and names the drive and the fix when it has not.
+echo ""
+echo "  Your drives, inside and out"
+report_drives
 
 # ==============================================================================
 # 8. Write down what was done

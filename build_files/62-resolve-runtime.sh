@@ -805,6 +805,82 @@ PY
     fi
 fi
 
+# ------------------------------------------------------------------------------
+# Your drives are in the same places inside
+# ------------------------------------------------------------------------------
+# ⚠️ WHY THIS IS A BUILD CHECK AND NOT ONLY A BENCH ONE. A Resolve project
+# stores the FULL PATH of every clip. If an external drive is at
+# /run/media/royce/SHOOT-2026 outside the container and nowhere inside it, then
+# dragging media in from Files does nothing, "Open With → DaVinci Resolve"
+# opens an empty Resolve, and yesterday's project comes up with its media
+# offline. None of those say why, and all three look like Resolve being broken.
+#
+# There are no drives on a build machine and no container to ask, so the two
+# facts the check needs are handed to it instead — that is what the two
+# AQ_RESOLVE_FAKE_DRIVES variables are for, and they are documented beside
+# report_drives in the installer. What is proved here is the WORDING and the
+# ARITHMETIC for all three outcomes, which is the part that can silently rot.
+say "DaVinci Resolve — your drives are in the same places inside"
+
+aq_drives() { # aq_drives <host-list> <inside-list>
+    AQ_RESOLVE_FAKE_DRIVES="$1" AQ_RESOLVE_FAKE_DRIVES_INSIDE="$2" \
+        /usr/libexec/aquarius-resolve-install --drives 2>&1
+}
+
+# No drives at all: the state of a laptop with nothing plugged in, and of this
+# build machine. It must be a calm sentence, never a warning.
+AQ_DRIVES_NONE="$(aq_drives "" "")"
+echo "  With no drives plugged in:"
+printf '%s\n' "${AQ_DRIVES_NONE}" | sed 's/^/    /'
+if printf '%s' "${AQ_DRIVES_NONE}" | grep -q 'No extra drives are plugged in'; then
+    ok "a machine with no drives is told so plainly, with no warning"
+else
+    bad "the drives check does not handle a machine with no drives"
+fi
+if printf '%s' "${AQ_DRIVES_NONE}" | grep -q 'cannot be reached'; then
+    bad "a machine with no drives is warned about drives it does not have"
+else
+    ok "and it warns about nothing"
+fi
+
+# One drive, visible inside. The everyday answer.
+AQ_DRIVES_OK="$(aq_drives "/run/media/tester/SHOOT" "/run/media/tester/SHOOT")"
+echo "  With one drive that IS visible inside:"
+printf '%s\n' "${AQ_DRIVES_OK}" | sed 's/^/    /'
+if printf '%s' "${AQ_DRIVES_OK}" | grep -q 'is visible inside Resolve at the same path'; then
+    ok "one drive that lines up is reported as lining up"
+else
+    bad "the drives check does not say a drive is visible when it is"
+fi
+
+# One drive of two, missing. The fault this whole check exists for. It has to
+# NAME the drive and say what to do, not merely disapprove.
+AQ_DRIVES_BAD="$(aq_drives "/run/media/tester/A:/run/media/tester/B" "/run/media/tester/A")"
+echo "  With one drive of two missing inside:"
+printf '%s\n' "${AQ_DRIVES_BAD}" | sed 's/^/    /'
+if printf '%s' "${AQ_DRIVES_BAD}" | grep -q '1 of your 2 drives cannot be reached'; then
+    ok "a missing drive is counted correctly against the ones that are there"
+else
+    bad "the drives check miscounts, or does not notice, a drive that is missing inside"
+fi
+if printf '%s' "${AQ_DRIVES_BAD}" | grep -q '/run/media/tester/B'; then
+    ok "and it names the drive, rather than saying something is wrong somewhere"
+else
+    bad "the drives check does not name the drive that is missing"
+fi
+if printf '%s' "${AQ_DRIVES_BAD}" | grep -q 'aq resolve install'; then
+    ok "and it ends with what to do about it"
+else
+    bad "the drives check names a problem and no way out of it"
+fi
+
+# And the step really carries it. Grepped in the rehearsal's own output, which
+# is the copy a person would see.
+aq_file_has /tmp/aq-dryrun.txt '^  Your drives, inside and out$' \
+    "step 7 of every install and update asks about your drives"
+aq_file_has /usr/bin/aq 'AQ_RESOLVE_INSTALLER\}" --drives' \
+    "'aq resolve status' asks the same question of the same script, rather than working out its own answer"
+
 # And the front door for changing it by hand.
 if /usr/bin/aq resolve scale > /tmp/aq-resolve-scale.txt 2>&1; then
     ok "'aq resolve scale' runs"

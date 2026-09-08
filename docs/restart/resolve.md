@@ -273,6 +273,58 @@ says the mode is unsupported, go to
 
 ---
 
+## Your drives are in the same places inside
+
+Plug in an external drive and it appears in Files at a path like
+
+```
+/run/media/royce/SHOOT-2026
+```
+
+Resolve, running in its own environment, has to see that drive **at that exact
+path** — not a similar one, the same one. A Resolve project writes down the full
+path of every clip in it, so if the two halves of the computer disagree about
+where a drive is, then dragging footage from Files into the media pool does
+nothing, "Open With → DaVinci Resolve" opens an empty Resolve, and yesterday's
+project comes up with every clip offline. None of that says why, and all of it
+looks like Resolve being broken.
+
+It normally just works: the environment is given your `/run/media`, `/media` and
+`/mnt` folders at the same paths, and your home folder too. What can go wrong is
+a computer that had **never had a drive plugged in** when Resolve was set up —
+there was no `/run/media` yet, so there was nothing to share, and the first drive
+plugged in afterwards is invisible in there.
+
+So AquariusOS checks instead of assuming. Every install and every update ends by
+listing your drives and asking, inside the environment, whether each one is
+there. You can ask the same question at any time:
+
+```
+aq resolve status
+```
+
+Near the bottom it says one of three things:
+
+- **"No extra drives are plugged in"** — nothing to line up, and a drive you plug
+  in later appears in there at the same place it appears in Files.
+- **"Your 3 drives are visible inside Resolve at the same paths"**, and lists
+  them. This is the answer you want.
+- **A named drive that cannot be reached**, with the fix: plug the drive in, then
+
+  ```
+  aq resolve remove
+  aq resolve install
+  ```
+
+  which builds the environment again with the drive's folder there to share.
+  Your projects, settings and keyboard customisations are all kept.
+
+**A drive that is only sometimes plugged in is fine.** What has to exist when
+Resolve is set up is the *folder* the drives appear under, not any particular
+drive.
+
+---
+
 ## The bench list for the size and the pointer, Royce
 
 Five minutes, in this order. It is worth doing them as a list, because the two
@@ -778,12 +830,16 @@ Three things about that are deliberate:
 - **Unknown lines are ignored, not shown.** A line added to the script in future
   cannot break a window built before it.
 
-**Two questions and a rehearsal**, all answered by the same script, so the window
-never has a second opinion about the machine:
+**Three questions and a rehearsal**, all answered by the same script, so the
+window never has a second opinion about the machine:
 
 ```
 aquarius-resolve-install --find-installer   the download it would use, or exit 1
 aquarius-resolve-install --gpu-summary      ok|warn|none, a tab, then a sentence
+aquarius-resolve-install --drives           are your drives visible inside, at
+                                            the same paths? Changes nothing.
+                                            `aq resolve status` prints this, and
+                                            so does step 7.
 aquarius-resolve-install --dry-run          walk all seven steps, change nothing
 aquarius-resolve-install --update --dry-run rehearse an update, change nothing
 aquarius-resolve-check --dry-run           answer from the saved feed, offline

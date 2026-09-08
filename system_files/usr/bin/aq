@@ -902,6 +902,32 @@ resolve_status() {
     echo "    If Resolve is running, the answer that counts is its own:"
     echo "      Preferences → System → Memory and GPU → GPU processing mode"
     echo "      It should say CUDA, with your card listed underneath."
+
+    # --------------------------------------------------------------------------
+    # Can it see your drives, at the same paths?
+    # --------------------------------------------------------------------------
+    # The same class of question as the graphics card, and the same rule: ask
+    # INSIDE, because anything else is a guess made from outside.
+    #
+    # It matters because a Resolve project stores the FULL PATH of every clip.
+    # A drive at /run/media/royce/SHOOT-2026 outside and nowhere inside means
+    # dragging media in from Files does nothing, "Open With → DaVinci Resolve"
+    # opens an empty Resolve, and yesterday's project comes up with its media
+    # offline — none of which says why.
+    #
+    # ⚠️ THE ANSWER IS NOT WORKED OUT HERE. /usr/libexec/aquarius-resolve-install
+    # --drives owns it, because the same wording has to appear at step 7 of
+    # every install and update, and a terminal and a window must never give two
+    # different answers about the same drives.
+    echo ""
+    echo "  Can it see your drives, at the same places?"
+    if [ -x "${AQ_RESOLVE_INSTALLER}" ]; then
+        "${AQ_RESOLVE_INSTALLER}" --drives 2>&1 | sed 's/^  /    /'
+    else
+        echo "    The AquariusOS Resolve helper is missing from this system,"
+        echo "    which is a fault in the operating system rather than in"
+        echo "    anything you did."
+    fi
 }
 
 # =============================================================================

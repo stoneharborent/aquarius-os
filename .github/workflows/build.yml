@@ -6031,6 +6031,61 @@ jobs:
             *) bad "rc.xml's Resolve window rule has no Maximize — Resolve would not open at the size of the screen" ;;
           esac
 
+          echo "== and that your drives are in the same places inside =="
+          # ⚠️ WHY THIS IS WORTH A BUILD CHECK. A Resolve project stores the
+          # FULL PATH of every clip. A drive at /run/media/royce/SHOOT outside
+          # the container and nowhere inside it means dragging media in from
+          # Files does nothing, "Open With → DaVinci Resolve" opens an empty
+          # Resolve, and yesterday's project comes up with its media offline.
+          # None of those say why; all three look like Resolve being broken.
+          #
+          # There are no drives here and no container to ask, so the two facts
+          # the check needs are handed to it — that is what the two
+          # AQ_RESOLVE_FAKE_DRIVES variables are for, and they are documented
+          # beside report_drives in the installer. What is proved here is the
+          # wording and the arithmetic of all three outcomes.
+          drives() {   # drives <what the host has> <what the container sees>
+            AQ_RESOLVE_FAKE_DRIVES="$1" AQ_RESOLVE_FAKE_DRIVES_INSIDE="$2" \
+              /usr/libexec/aquarius-resolve-install --drives 2>&1
+          }
+          NONE="$(drives "" "")"
+          echo "       --- no drives plugged in ---"
+          printf '%s\n' "${NONE}" | sed 's/^/       /'
+          printf '%s' "${NONE}" | grep -q 'No extra drives are plugged in' \
+            && ok "a machine with no drives is told so plainly" \
+            || bad "the drives check does not handle a machine with no drives at all"
+          printf '%s' "${NONE}" | grep -q 'cannot be reached' \
+            && bad "a machine with no drives is warned about drives it does not have" \
+            || ok "and it warns about nothing"
+
+          GOOD="$(drives /run/media/tester/SHOOT /run/media/tester/SHOOT)"
+          echo "       --- one drive, visible inside ---"
+          printf '%s\n' "${GOOD}" | sed 's/^/       /'
+          printf '%s' "${GOOD}" | grep -q 'is visible inside Resolve at the same path' \
+            && ok "one drive that lines up is reported as lining up" \
+            || bad "the drives check does not say a drive is visible when it is"
+
+          BADD="$(drives /run/media/tester/A:/run/media/tester/B /run/media/tester/A)"
+          echo "       --- two drives, one missing inside ---"
+          printf '%s\n' "${BADD}" | sed 's/^/       /'
+          printf '%s' "${BADD}" | grep -q '1 of your 2 drives cannot be reached' \
+            && ok "a missing drive is counted correctly against the ones that are there" \
+            || bad "the drives check miscounts, or does not notice, a drive missing inside"
+          printf '%s' "${BADD}" | grep -q '/run/media/tester/B' \
+            && ok "and it names the drive rather than saying something is wrong somewhere" \
+            || bad "the drives check does not name the drive that is missing"
+          printf '%s' "${BADD}" | grep -q 'aq resolve install' \
+            && ok "and it ends with what to do about it" \
+            || bad "the drives check names a problem and no way out of it"
+
+          # And step 7 really carries it, in the rehearsal a person would see.
+          grep -q '^  Your drives, inside and out$' /tmp/dryrun.txt \
+            && ok "step 7 of every install and update asks about your drives" \
+            || bad "step 7 no longer asks whether your drives are visible inside"
+          grep -q 'AQ_RESOLVE_INSTALLER}" --drives' /usr/bin/aq \
+            && ok "'aq resolve status' asks the same script, so the two cannot disagree" \
+            || bad "'aq resolve status' no longer asks about drives, or works out its own answer"
+
           echo "== the way to update without a terminal =="
           DESKUP=/usr/share/applications/aquarius-update-resolve.desktop
           if [ ! -r "${DESKUP}" ]; then
