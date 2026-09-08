@@ -1,0 +1,52 @@
+# ==============================================================================
+# AquariusOS — ask about once a day whether DaVinci Resolve is newer
+# ==============================================================================
+# PLAIN ENGLISH
+#
+# This is the part that WAITS. It does nothing itself: it asks systemd to start
+# aquarius-resolve-update-check.service about once a day, and that service is
+# what asks Blackmagic the question and sends a notification if the answer is
+# interesting.
+#
+# WHY THE TIMES ARE THE WAY THEY ARE
+#
+#   OnStartupSec=15min    Not at login. The first fifteen minutes after somebody
+#                         sits down are the minutes they are opening a project
+#                         and the machine is busiest, and a version check is the
+#                         least urgent thing on this computer.
+#   OnUnitActiveSec=1d    Then once a day. Resolve updates a few times a year;
+#                         checking more often would be noise with a network cost.
+#   RandomizedDelaySec=1h A different minute on every machine. Blackmagic's
+#                         website should not see every AquariusOS in the world
+#                         knock at the same second.
+#   Persistent=true       A machine that was switched off when the day rolled
+#                         over does the missed check shortly after it comes back,
+#                         rather than waiting another full day.
+#
+# ⚠️ IT IS SWITCHED ON FROM /usr, NOT FROM /etc. The "wants" link lives at
+# /usr/lib/systemd/user/timers.target.wants/, which is replaced whole by every
+# operating-system update. A link in /etc can be deleted by a local `disable`,
+# and this kind of operating system then preserves that deletion forever — the
+# service would be off on that one machine for good, and no image could switch
+# it back on. Royce hit exactly that on the bench. The long version is in
+# build_files/aq-lib.sh next to aq_unit_is_on_from_usr.
+#
+# THE HONEST COST OF THAT: `systemctl --user disable` will not turn this off,
+# because there is nothing in /etc to remove. This does:
+#
+#     systemctl --user mask aquarius-resolve-update-check.timer
+# ==============================================================================
+
+[Unit]
+Description=Ask about once a day whether DaVinci Resolve is newer
+Documentation=https://github.com/stoneharborent/aquarius-os/blob/main/docs/restart/resolve.md
+
+[Timer]
+OnStartupSec=15min
+OnUnitActiveSec=1d
+RandomizedDelaySec=1h
+Persistent=true
+Unit=aquarius-resolve-update-check.service
+
+[Install]
+WantedBy=timers.target

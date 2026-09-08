@@ -1,0 +1,55 @@
+# ==============================================================================
+# AquariusOS — look once for a newer DaVinci Resolve
+# ==============================================================================
+# PLAIN ENGLISH
+#
+# The job that runs when the once-a-day timer next door goes off. It asks
+# Blackmagic whether there is a newer DaVinci Resolve than the one on this
+# computer and, if there is, sends one desktop notification about it. Then it
+# stops. Nothing of ours runs the rest of the time.
+#
+# It says nothing at all when Resolve is not installed, when the answer is "you
+# already have the newest one", when there is no internet, or when it has
+# already announced that same version once. The reasoning for every one of those
+# silences is in /usr/libexec/aquarius-resolve-update-notify.
+#
+# ⚠️ IT DOES NOT INSTALL ANYTHING AND IT NEVER WILL. Blackmagic's licence lets
+# them hand out their installer and nobody else, so a person filling in their
+# form is the one step that cannot be automated — and should not be. All this
+# does is tell you it is worth doing.
+#
+# ⚠️ IT IS A USER SERVICE, NOT A SYSTEM ONE. It runs as the person, reads their
+# own record of what they installed, and sends a notification to their own
+# desktop. Nothing here needs root and nothing here asks for a password.
+#
+# TO TURN IT OFF for good on one machine:
+#     systemctl --user mask aquarius-resolve-update-check.timer
+# `disable` will not do it: the "switched on" link is shipped in /usr, where an
+# operating-system update always restores it and nothing local can remove it.
+# The long explanation is in build_files/aq-lib.sh.
+# ==============================================================================
+
+[Unit]
+Description=Look for a newer DaVinci Resolve
+Documentation=https://github.com/stoneharborent/aquarius-os/blob/main/docs/restart/resolve.md
+
+# Nothing to do on a machine that has never set Resolve up. The check itself
+# stops just as quietly, so this is a saving rather than a safety net — but it
+# means the vast majority of machines never even start the job.
+ConditionPathExists=%h/.local/share/aquarius/resolve/installed.env
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/aquarius-resolve-update-notify
+
+# Asking a website a question must never fight the video editor somebody is
+# actually using the machine for.
+Nice=10
+IOSchedulingClass=idle
+
+# ⚠️ WHY THE TIMEOUT IS GENEROUS. When there IS something newer, the notification
+# has a button on it, and the only way to have a button is for notify-send to
+# stay alive until somebody clicks it or the notification closes. That wait is
+# capped at an hour inside the script; this is simply longer than that cap, so
+# systemd never kills a notification a person is looking at.
+TimeoutStartSec=2h

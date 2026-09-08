@@ -1,0 +1,188 @@
+#!/usr/bin/bash
+# ==============================================================================
+# aquarius-resolve-update-notify — tell somebody, once, that Resolve is newer
+# ==============================================================================
+# PLAIN ENGLISH
+#
+# This runs about once a day, quietly, in the background. It asks
+# /usr/libexec/aquarius-resolve-check whether there is a newer DaVinci Resolve
+# than the one on this computer, and:
+#
+#   * if there is not — it says nothing and stops. Which is almost every day.
+#   * if there is — it sends ONE desktop notification with a button on it, and
+#     the button opens the "Update DaVinci Resolve" window.
+#
+# It is started by aquarius-resolve-update-check.timer. Nothing of ours is
+# running the rest of the time.
+#
+# ⚠️ IT NEVER NAGS. The version it announced is written down, and it will not
+# announce that same version again, ever. If somebody ignores 21.1 today they
+# are not told about 21.1 again tomorrow; they are told about 21.2 when 21.2
+# exists. A notification people learn to dismiss without reading is worse than
+# no notification at all.
+#
+# THREE OTHER THINGS IT WILL NOT DO
+#   * It says nothing when DaVinci Resolve is not installed. There is nothing to
+#     update and nothing to say.
+#   * It says nothing when the check fails — no internet, Blackmagic's site
+#     having a bad day. "Could not check for updates" is a notification that
+#     helps nobody and worries somebody.
+#   * It says nothing in a rehearsal (--dry-run), which is how the image build
+#     runs it.
+#
+# USAGE
+#   aquarius-resolve-update-notify              the real thing
+#   aquarius-resolve-update-notify --dry-run    say what it WOULD do, send
+#                                               nothing, remember nothing, and
+#                                               never touch the internet
+# ==============================================================================
+
+set -uo pipefail
+
+: "${HOME:=/tmp}"
+
+CHECK=/usr/libexec/aquarius-resolve-check
+UPDATE_WINDOW=/usr/libexec/aquarius-resolve-updater
+STATE_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/aquarius/resolve"
+RECORD="${STATE_DIR}/installed.env"
+# The version last announced. One line, no ceremony.
+ANNOUNCED="${STATE_DIR}/update-announced"
+
+DRY_RUN=0
+case "${1:-}" in
+    --dry-run) DRY_RUN=1 ;;
+    "") ;;
+    -h | --help)
+        echo "aquarius-resolve-update-notify [--dry-run]"
+        echo ""
+        echo "Checks once whether a newer DaVinci Resolve exists and, if it does,"
+        echo "sends one desktop notification about it. Run by"
+        echo "aquarius-resolve-update-check.timer, about once a day."
+        exit 0
+        ;;
+    *)
+        echo "aquarius-resolve-update-notify: I do not understand '${1}'." >&2
+        exit 1
+        ;;
+esac
+
+say() { [ "${DRY_RUN}" = "1" ] && echo "$*"; return 0; }
+
+# ------------------------------------------------------------------------------
+# Is Resolve even here?
+# ------------------------------------------------------------------------------
+# The record is written when Resolve is set up. No record, nothing to compare,
+# nothing to say. This is also what makes the timer harmless on the very many
+# machines that will never install Resolve at all.
+if [ ! -r "${RECORD}" ]; then
+    say "DaVinci Resolve is not set up on this computer, so there is nothing to check."
+    exit 0
+fi
+
+if [ ! -x "${CHECK}" ]; then
+    echo "aquarius-resolve-update-notify: ${CHECK} is missing from this system." >&2
+    exit 1
+fi
+
+# ------------------------------------------------------------------------------
+# Ask the one program that is allowed to have an opinion about this
+# ------------------------------------------------------------------------------
+# --json for the fields, and the EXIT CODE for the answer: 10 means there is
+# something newer, and nothing else does. In a rehearsal it reads the saved copy
+# of Blackmagic's list instead of the internet.
+if [ "${DRY_RUN}" = "1" ]; then
+    ANSWER="$("${CHECK}" --json --dry-run 2> /dev/null)"
+else
+    ANSWER="$("${CHECK}" --json 2> /dev/null)"
+fi
+RC=$?
+
+json_field() { # json_field <name>
+    printf '%s\n' "${ANSWER}" \
+        | sed -n "s/^[[:space:]]*\"${1}\": \"\([^\"]*\)\".*/\1/p" | head -1
+}
+
+if [ "${RC}" != "10" ]; then
+    say "Nothing to announce. The check said: $(json_field message)"
+    exit 0
+fi
+
+LATEST="$(json_field latest)"
+EDITION_NAME="$(json_field edition_name)"
+INSTALLED="$(json_field installed)"
+
+if [ -z "${LATEST}" ] || [ -z "${EDITION_NAME}" ]; then
+    say "The check said there is an update but did not say which. Saying nothing."
+    exit 0
+fi
+
+# ------------------------------------------------------------------------------
+# Have we already said this?
+# ------------------------------------------------------------------------------
+LAST=""
+[ -r "${ANNOUNCED}" ] && LAST="$(tr -d '[:space:]' < "${ANNOUNCED}")"
+if [ "${LAST}" = "${LATEST}" ]; then
+    say "${EDITION_NAME} ${LATEST} has already been announced once. Saying nothing."
+    exit 0
+fi
+
+SUMMARY="${EDITION_NAME} ${LATEST} is available"
+BODY="You have ${INSTALLED:-an older version}. AquariusOS can fetch and install it — you fill in Blackmagic's form, it does the rest."
+
+if [ "${DRY_RUN}" = "1" ]; then
+    echo "Would send one notification:"
+    echo "  ${SUMMARY}"
+    echo "  ${BODY}"
+    echo "Would remember ${LATEST} so this is never announced twice."
+    exit 0
+fi
+
+# ------------------------------------------------------------------------------
+# Say it, once
+# ------------------------------------------------------------------------------
+if ! command -v notify-send > /dev/null 2>&1; then
+    # No notification tool. Say it into the journal rather than silently doing
+    # nothing, and do NOT write the "announced" file — so a machine that grows a
+    # notification tool later still gets told.
+    echo "aquarius-resolve-update-notify: ${SUMMARY}. ${BODY}"
+    exit 0
+fi
+
+# Remember it BEFORE sending. If something goes wrong between here and the
+# notification appearing, the worst case is one missed announcement; the
+# alternative — remembering afterwards — risks announcing the same version every
+# single day, which is the failure people actually notice and resent.
+mkdir -p "${STATE_DIR}" 2> /dev/null || true
+printf '%s\n' "${LATEST}" > "${ANNOUNCED}" 2> /dev/null || true
+
+# ⚠️ THE BUTTON. `notify-send --action` has only existed since libnotify 0.8,
+# and it needs `--wait`: notify-send stays alive until the notification is
+# closed, and prints the name of whatever was clicked. Where that is not
+# available the notification still appears, without a button, and its body says
+# where to find the window instead. A missing button is a smaller loss than a
+# notification that does not appear.
+#
+# `timeout` is there so that a notification server which keeps notifications on
+# screen forever cannot leave this process sitting around all week. An hour is
+# far longer than anybody stares at a notification, and after it the "Update
+# DaVinci Resolve" entry in the apps is still exactly where it always is.
+if notify-send --help 2>&1 | grep -q -- '--action'; then
+    CLICKED="$(timeout 3600 notify-send \
+        --app-name="AquariusOS" \
+        --icon=aquarius-logo \
+        --wait \
+        --action=update="Update Resolve" \
+        "${SUMMARY}" "${BODY}" 2> /dev/null)"
+    if [ "${CLICKED}" = "update" ] && [ -x "${UPDATE_WINDOW}" ]; then
+        exec "${UPDATE_WINDOW}"
+    fi
+else
+    notify-send \
+        --app-name="AquariusOS" \
+        --icon=aquarius-logo \
+        "${SUMMARY}" \
+        "${BODY} Open \"Update DaVinci Resolve\" in your apps." \
+        > /dev/null 2>&1 || true
+fi
+
+exit 0
