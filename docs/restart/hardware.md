@@ -329,6 +329,28 @@ rfkill list
 fixes it. `Hard blocked: yes` means a physical switch or a BIOS setting did,
 and no amount of software will help until that is changed.
 
+### A different piece of hardware that goes missing the same way
+
+Everything above is about a chip that is present but has no firmware. There is a
+second shape of the same story on this board, and it is worth knowing because it
+looks nothing like a hardware fault from the outside.
+
+On 7 September 2026 an external drive on a Thunderbolt dock became **invisible**
+— not "would not mount", but absent from Files, the dock and every list of
+disks. The drive was fine. What had failed was the motherboard chip that runs
+the fast USB-C sockets: its driver gave up during boot
+(`probe with driver thunderbolt failed with error -110`), so nothing plugged
+into those sockets existed as far as the computer was concerned.
+
+If a USB4 or Thunderbolt device is missing entirely, start with
+
+```
+aq usb4 status
+```
+
+and read [`usb4.md`](usb4.md), not this page. Ordinary USB sockets are a
+different thing and are not affected.
+
 ### If it is still broken
 
 Roll back to the previous image and tell Fable which of the three commands

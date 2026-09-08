@@ -168,6 +168,18 @@ USAGE
                         which looks small on a big monitor, and cannot black
                         out. Any copy already made is removed.
 
+    aq usb4 status      The chip that runs this computer's fast USB-C sockets
+                        (USB4 / Thunderbolt): is its driver attached, and what
+                        does the Thunderbolt device list say? Run this first
+                        when a drive on a Thunderbolt dock, or a USB4 SSD, does
+                        not appear at all.
+
+    aq usb4 retry       Ask the computer to attach that driver again. Needs an
+                        administrator, so put 'sudo' in front of it. Safe to
+                        run at any time; it leaves a working chip alone. If it
+                        does not help, the next thing to try is a full
+                        power-off — shut down, wait ten seconds, switch on.
+
     aq --help           This message.
     aq --version        Which AquariusOS this is.
 
@@ -2164,6 +2176,90 @@ update() {
     esac
 }
 
+# =============================================================================
+# aq usb4 — the chip that runs the fast USB-C sockets
+# =============================================================================
+# WHAT THIS IS FOR, IN PLAIN ENGLISH
+#
+# A modern PC has a chip on the board that runs its fast USB-C sockets — the
+# ones a Thunderbolt dock, a USB4 SSD or an eGPU plugs into. Linux needs a
+# driver attached to that chip, exactly as it does for a graphics card. When
+# the driver fails to attach, EVERYTHING on those sockets disappears: not
+# "fails to mount", but invisible, because nothing is running the socket it is
+# plugged into. That happened on Royce's bench PC on 7 September 2026 and it
+# looked exactly like a broken drive.
+#
+#   aq usb4 status   look; no password needed
+#   sudo aq usb4 retry   try again; needs an administrator
+#
+# Both are thin wrappers around /usr/libexec/aquarius-usb4-rescue, which has the
+# whole story in its header. Plain-English guide: docs/restart/usb4.md
+# =============================================================================
+AQ_USB4_RESCUE="/usr/libexec/aquarius-usb4-rescue"
+
+usb4_usage() {
+    cat << 'EOF'
+aq usb4 — the chip that runs this computer's fast USB-C sockets
+
+    aq usb4 status        Is the USB4 / Thunderbolt driver attached, and what
+                          does the Thunderbolt device list say? Changes
+                          nothing and needs no password.
+
+    sudo aq usb4 retry    Ask the computer to attach that driver again, and
+                          reset the chip once if asking is not enough. Safe at
+                          any time: a chip that already has its driver is left
+                          alone.
+
+WHEN TO USE THIS
+    A drive on a Thunderbolt or USB4 dock does not appear at all — not in
+    Files, not in the dock, nowhere. Ordinary USB sockets are a different
+    thing and are not affected by any of this.
+
+IF RETRY DOES NOT HELP
+    Shut the computer down, wait ten seconds, and switch it on. A restart is
+    not the same thing: a restart usually leaves that chip powered, and a chip
+    that has locked up needs the power taken away. See docs/restart/usb4.md.
+EOF
+}
+
+usb4() {
+    # The help is written out here rather than in the rescue program, so it
+    # still answers on an image where that program is somehow missing.
+    case "${1:-}" in
+        -h | --help | help)
+            usb4_usage
+            return 0
+            ;;
+    esac
+
+    if [ ! -x "${AQ_USB4_RESCUE}" ]; then
+        echo "aq: this copy of AquariusOS has no USB4 rescue at" >&2
+        echo "    ${AQ_USB4_RESCUE}. That is a fault in the operating" >&2
+        echo "    system, not in anything you typed." >&2
+        return 1
+    fi
+    case "${1:-}" in
+        status | "") "${AQ_USB4_RESCUE}" --status ;;
+        retry | rescue)
+            # The same shape as 'aq login use': check first and say what to
+            # type, rather than surprising somebody with a password box.
+            if [ "$(id -u)" -ne 0 ]; then
+                echo "aq: re-attaching the USB4 driver needs an administrator." >&2
+                echo "    Try:  sudo aq usb4 retry" >&2
+                echo "    To just look, no password needed:  aq usb4 status" >&2
+                return 1
+            fi
+            "${AQ_USB4_RESCUE}" --rescue
+            ;;
+        *)
+            echo "aq: '${1}' is not something 'aq usb4' knows how to do." >&2
+            echo >&2
+            usb4_usage >&2
+            return 1
+            ;;
+    esac
+}
+
 # -----------------------------------------------------------------------------
 # Which subcommand?
 # -----------------------------------------------------------------------------
@@ -2205,6 +2301,10 @@ case "${1:-}" in
     update)
         shift
         update "$@"
+        ;;
+    usb4)
+        shift
+        usb4 "$@"
         ;;
     keys)
         case "${2:-}" in

@@ -1,0 +1,82 @@
+# =============================================================================
+# aquarius-usb4-rescue.service — try the USB4 / Thunderbolt controller again
+#                                when it did not come up
+# =============================================================================
+# WHAT THIS IS FOR
+#
+# The chip that runs a PC's fast USB-C sockets needs a driver, like a graphics
+# card does. On Royce's bench PC on 7 September 2026 that driver gave up during
+# boot:
+#
+#     thunderbolt 0000:70:00.0: probe with driver thunderbolt failed with error -110
+#
+# and every drive on the Thunderbolt dock vanished — not "failed to mount", but
+# invisible, because nothing was running the sockets they were plugged into.
+#
+# This service runs /usr/libexec/aquarius-usb4-rescue, which asks the kernel to
+# try that driver again, and resets the chip once if asking is not enough. The
+# whole story, and the honest limits of it, are in that program's header and in
+# docs/restart/usb4.md.
+#
+# -----------------------------------------------------------------------------
+# ⚠️ WHY THERE IS NO [Install] SECTION, AND NO .wants SYMLINK
+# -----------------------------------------------------------------------------
+# An [Install] section is the answer to "which target should pull this in when
+# somebody enables it" — and nothing enables this. It is started by a udev rule
+# instead: /usr/lib/udev/rules.d/76-aquarius-usb4.rules says that when a PCI
+# device of class 0x0c0340 (a USB4 host interface) appears, systemd should start
+# this service.
+#
+# That is on purpose, and it is not a gap somebody should fill in later:
+#
+#   * It runs ONLY on a machine that actually has such a chip. A .wants symlink
+#     would start it on every machine, every boot, to find nothing and say so.
+#   * It still runs at EVERY boot on a machine that does have one, because
+#     systemd-udev replays an "add" event for hardware that is already present
+#     each time the machine starts ("coldplug").
+#   * The rule file lives in the read-only half of the system, so an update
+#     always restores it and no local change can silently lose it — the same
+#     property the /usr .wants symlinks give our other services (see the note
+#     beside aq_unit_is_on_from_usr in build_files/aq-lib.sh).
+#
+# The off switch, as for every other AquariusOS unit, is
+#     sudo systemctl mask aquarius-usb4-rescue.service
+#
+# -----------------------------------------------------------------------------
+# WHY After=systemd-modules-load.service
+# -----------------------------------------------------------------------------
+# The rescue's first act is to make sure the `thunderbolt` driver is loaded at
+# all. Starting after the step that loads the machine's modules means it is
+# usually asking a question that is already answered, rather than racing it.
+# `After=` creates no dependency: this service can never be the reason anything
+# else fails to start.
+#
+# IT CANNOT HURT A HEALTHY MACHINE. Its first act is to look at every USB4
+# controller and leave alone every one that already has a driver — which is all
+# of them, on almost every boot. It then exits 0, having written nothing.
+# =============================================================================
+[Unit]
+Description=Retry the USB4 / Thunderbolt controller if its driver did not attach
+Documentation=file:///usr/libexec/aquarius-usb4-rescue
+Documentation=https://github.com/stoneharborent/aquarius-os/blob/main/docs/restart/usb4.md
+After=systemd-modules-load.service
+# Nothing to run if the program is not in this image.
+ConditionPathExists=/usr/libexec/aquarius-usb4-rescue
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/aquarius-usb4-rescue
+RemainAfterExit=no
+# It waits up to 15 seconds for the kernel to finish its own attempt, then makes
+# up to three tries with a reset between them. 120 seconds is a generous outer
+# bound that still guarantees it can never sit there forever.
+TimeoutStartSec=120
+# A rescue must never be the reason a boot goes wrong. The program already exits
+# 0 in service mode whatever happens; this is the belt to that pair of braces.
+SuccessExitStatus=0 1
+StandardOutput=journal
+StandardError=journal
+
+# ⚠️ NO [Install] SECTION. On purpose — see the long note above. It is started
+# by /usr/lib/udev/rules.d/76-aquarius-usb4.rules, which fires at every boot of
+# a machine that has a USB4 controller and on no machine that does not.

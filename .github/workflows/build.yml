@@ -453,6 +453,29 @@ jobs:
         run: ./tests/test-greeter-watchdog.sh
 
       # ------------------------------------------------------------------------
+      # The USB4 / Thunderbolt rescue actually retries, and leaves working
+      # hardware alone
+      # ------------------------------------------------------------------------
+      # ⚠️ THE BENCH FAULT OF 7 SEPTEMBER 2026. Royce's external drive stopped
+      # being discoverable. Nothing was wrong with the drive, the dock, the
+      # cable or the auto-mounting machinery: the chip that runs the fast USB-C
+      # sockets did not get its driver —
+      #
+      #     thunderbolt 0000:70:00.0: probe with driver thunderbolt failed with error -110
+      #
+      # — so everything plugged into those sockets was invisible to the whole
+      # computer. /usr/libexec/aquarius-usb4-rescue asks the kernel to try
+      # again.
+      #
+      # This runs it against a fake set of kernel files, on both sides: it must
+      # RETRY a chip with no driver (bind, reset, bind) and must LEAVE ALONE
+      # every chip that already has one — because resetting a working USB4
+      # controller would take out somebody's dock, screen and drive at once, in
+      # the name of fixing them. Before the build, because it takes a second.
+      - name: Check the USB4 rescue retries, and leaves working chips alone
+        run: ./tests/test-usb4-rescue.sh
+
+      # ------------------------------------------------------------------------
       # The app icons are all present, and are the sizes they claim
       # ------------------------------------------------------------------------
       # Before the build, because it takes a second and reads the same files the
@@ -2238,6 +2261,22 @@ jobs:
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" -c '
               set -e
               bash /tmp/t/tests/test-greeter-watchdog.sh /usr/libexec/aquarius-greeter-watchdog
+            '
+
+      # The USB4 rescue, run against the copy actually installed in the finished
+      # image, exactly as the two tests above are. Same reason: a program that
+      # is proved to work in the repository and arrives broken (or does not
+      # arrive at all) on Royce's machine has been proved nothing about. Same
+      # test file, given the installed path, so the two can never drift.
+      - name: Check the USB4 rescue in the finished image
+        run: |
+          set -euo pipefail
+          podman run --rm --pull=never \
+            -v "${GITHUB_WORKSPACE}/tests/test-usb4-rescue.sh:/tmp/t/tests/test-usb4-rescue.sh:ro" \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" -c '
+              set -e
+              bash /tmp/t/tests/test-usb4-rescue.sh /usr/libexec/aquarius-usb4-rescue
             '
 
       # The app icons, read back out of the FINISHED image — every icon, in both

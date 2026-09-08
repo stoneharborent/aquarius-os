@@ -1,0 +1,66 @@
+# ==============================================================================
+# Start the USB4 rescue on a machine that actually has a USB4 controller
+# ==============================================================================
+# PLAIN ENGLISH
+#
+# udev is the part of Linux that notices hardware. Every time a piece of
+# hardware turns up, udev reads every rule file like this one and does what the
+# matching rules say. This file has one rule, and it says:
+#
+#     when a PCI device whose class is 0x0c0340 is added,
+#     start aquarius-usb4-rescue.service
+#
+# 0x0c0340 is the number that means "USB4 host interface" — the chip on the
+# board that runs the fast USB-C sockets, the ones a Thunderbolt dock or a USB4
+# SSD plugs into. Every such chip announces itself with that number, whoever
+# made it, so this is a better thing to look for than a list of vendor numbers
+# that would go out of date.
+#
+# What the rescue then does — and the bench fault on 7 September 2026 that it
+# exists for — is written out at length in the program's own header,
+# /usr/libexec/aquarius-usb4-rescue, and in docs/restart/usb4.md.
+#
+# ------------------------------------------------------------------------------
+# ⚠️ THIS FILE IS THE "SWITCHED ON" MECHANISM. THERE IS DELIBERATELY NO
+#    .wants SYMLINK FOR THIS SERVICE.
+# ------------------------------------------------------------------------------
+# Every other AquariusOS service is switched on by a symlink shipped under /usr
+# (the long explanation is beside aq_unit_is_on_from_usr in
+# build_files/aq-lib.sh). This one is not, on purpose, and it is worth
+# understanding why so nobody "fixes" it later by adding one.
+#
+# The rescue should run on a machine that HAS a USB4 controller, and should not
+# exist at all on a machine that does not. A .wants symlink would start it on
+# every machine, every boot, including laptops and handhelds with no such chip,
+# where it would find nothing and say so — noise in every journal forever.
+#
+# udev gives us exactly the "only if the hardware is there" behaviour for free.
+# The one thing a newcomer worries about here is: "surely this only fires when
+# somebody plugs the chip in, and nobody plugs in a chip that is soldered to the
+# board?" — and the answer is no. At every boot, systemd-udev walks all the
+# hardware that is ALREADY present and replays an "add" event for each piece of
+# it. That is called coldplug, it is how most of the hardware on a Linux machine
+# gets set up, and it means this rule fires on every boot of a machine with the
+# chip and on no boot of a machine without it.
+#
+# And because this file lives in /usr/lib/udev/rules.d — the read-only half of
+# the system, replaced whole at every update — no local change can lose it, and
+# no `systemctl disable` can turn it off. `sudo systemctl mask
+# aquarius-usb4-rescue.service` is the off switch, exactly as for our other
+# units.
+#
+# ------------------------------------------------------------------------------
+# WHAT EACH PIECE OF THE LINE MEANS
+# ------------------------------------------------------------------------------
+#   ACTION=="add"            only when hardware appears (which includes the
+#                            coldplug replay at every boot), never on removal
+#   SUBSYSTEM=="pci"         a chip on the board, not a USB stick
+#   ATTR{class}=="0x0c0340"  it is a USB4 host interface
+#   TAG+="systemd"           tell systemd this device exists, which is what
+#                            makes the next line possible at all
+#   ENV{SYSTEMD_WANTS}+=     "when this device turns up, please start this
+#                            service" — systemd's own supported way for a piece
+#                            of hardware to pull in a unit
+# ==============================================================================
+
+ACTION=="add", SUBSYSTEM=="pci", ATTR{class}=="0x0c0340", TAG+="systemd", ENV{SYSTEMD_WANTS}+="aquarius-usb4-rescue.service"

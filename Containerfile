@@ -543,6 +543,42 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/build_files/78-rfkill.sh
 
+# 7i. When the USB4 / Thunderbolt chip does not wake up, try it again — instead
+#     of leaving every drive on a dock invisible.
+#
+#     ⚠️ THE BENCH BUG OF 7 SEPTEMBER 2026. The chip that runs the fast USB-C
+#     sockets needs a driver like a graphics card does, and on the twelfth boot
+#     in a row it did not get one:
+#
+#         thunderbolt 0000:70:00.0: probe with driver thunderbolt failed with error -110
+#
+#     -110 means "nothing answered in time". Every USB4 socket then went quiet,
+#     and Royce's USB4 SSD on its Thunderbolt dock was INVISIBLE — no udisks
+#     object, nothing for step 7f's automount agent to mount, nothing in
+#     `lsblk`. The mounting machinery was healthy; there was no drive for it to
+#     see.
+#
+#     What ships is a program that asks the kernel to attach that driver again,
+#     and resets the chip once if asking is not enough, plus `aq usb4 status`
+#     and `sudo aq usb4 retry`. It is a retry, not a cure: a chip whose firmware
+#     has genuinely locked up comes back only with a full power-off.
+#
+#     ⚠️ NOT SWITCHED ON BY A .wants SYMLINK, ON PURPOSE. A udev rule starts it
+#     when a PCI device of class 0x0c0340 turns up, which udev replays at every
+#     boot for hardware already present — so it runs on machines that have the
+#     chip and on no machine that does not. This step fails the build if an
+#     [Install] section or a .wants symlink ever appears.
+#
+#     The program, the rule and the unit all arrived with system_files at step
+#     5; this step reads them, and runs the program's --dry-run, which is
+#     designed to work in a container with no such hardware. It also asks for
+#     `bolt` by name — Fedora's Thunderbolt device manager, which `aq usb4
+#     status` and the docs both use — rather than trusting that GNOME keeps
+#     pulling it in.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache/libdnf5 \
+    /ctx/build_files/79-usb4-rescue.sh
+
 # 7e. The gaming layer: Steam, Proton's supporting cast, gamescope, gamemode,
 #     MangoHud, the 32-bit graphics libraries a Windows game needs, and the
 #     Xbox controller drivers. In BOTH images — this machine is meant to be a

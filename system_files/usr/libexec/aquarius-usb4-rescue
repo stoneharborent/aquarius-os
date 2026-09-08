@@ -1,0 +1,540 @@
+#!/usr/bin/bash
+# =============================================================================
+# aquarius-usb4-rescue — when the USB4 / Thunderbolt chip does not wake up,
+#                        try it again instead of leaving your drives invisible
+# =============================================================================
+# WHAT THIS IS FOR, IN PLAIN ENGLISH
+#
+# Modern desktop boards have a chip on them that runs the fast USB-C sockets —
+# the ones a Thunderbolt dock, a Thunderbolt/USB4 SSD or an eGPU plugs into.
+# Linux calls that chip the "USB4 host router", and it needs a driver, exactly
+# like a graphics card does. The driver is called `thunderbolt`.
+#
+# Everything you plug into those sockets hangs off that one chip. If the chip
+# does not come up, NOTHING plugged into it comes up either: no drive, no
+# dock, no screen through the dock. And there is no error anywhere a normal
+# person would look. The drive is simply not there. It does not appear in
+# Files, the Aquarius dock shows nothing, and `lsblk` lists nothing — because
+# as far as the rest of the computer is concerned, you never plugged anything
+# in.
+#
+# -----------------------------------------------------------------------------
+# THE BENCH FAULT THIS EXISTS FOR — 7 SEPTEMBER 2026
+# -----------------------------------------------------------------------------
+# Royce's bench PC (MSI MAG X870 TOMAHAWK WIFI, BIOS 1.A70) has an ASMedia
+# ASM4242 USB4 host router. His Corsair EX400U USB4 SSD lives on a Satechi
+# Thunderbolt 5 CubeDock plugged into it. On eleven boots in a row it worked:
+# the drive turned up as `nvme2` through a PCIe tunnel and mounted by itself.
+#
+# On the twelfth boot the kernel said this, and only this:
+#
+#     thunderbolt 0000:70:00.0: enabling device (0000 -> 0002)
+#     thunderbolt 0000:70:00.0: probe with driver thunderbolt failed with error -110
+#
+# `-110` is the number Linux uses for "I asked and nothing answered in time"
+# (five seconds, in this case). The driver gave up, the chip was left with no
+# driver at all, and so every USB4 socket on the machine went quiet. `boltctl
+# list` showed both the dock and the drive as "disconnected". The drive was
+# invisible everywhere.
+#
+# NOTHING WAS WRONG WITH THE DRIVE, THE DOCK, THE CABLE, OR THE MOUNTING
+# MACHINERY. udisks2, the polkit rule and the aquarius-automount agent (see
+# 76-automount.sh) were all healthy. There was simply no drive for them to see.
+# An earlier boot on the same machine also logged a burst of "timeout reading
+# config space", so this controller is known to be flaky at startup.
+#
+# -----------------------------------------------------------------------------
+# WHAT THIS PROGRAM DOES ABOUT IT
+# -----------------------------------------------------------------------------
+# Linux will happily be told to try a driver again. That is all this is. For
+# every USB4 host router on the machine that has NO driver attached:
+#
+#   1. Make sure the `thunderbolt` driver is loaded at all (`modprobe`). It
+#      normally is; asking twice costs nothing.
+#   2. Wait a little (about 15 seconds), in case the kernel is still in the
+#      middle of its first attempt. Never fight the kernel — a probe that is
+#      still running will finish on its own, and then there is nothing to do.
+#   3. Then, up to three times: write the chip's address into the driver's
+#      `bind` file, which means "please try this device again". If it still
+#      does not take, and the kernel says this device can be reset, reset it
+#      (which power-cycles that one chip, and nothing else on the machine) and
+#      try the bind once more.
+#
+# Every step prints a line beginning `[usb4-rescue]`, so the whole story is in
+# the machine's own log:
+#
+#     journalctl -b -u aquarius-usb4-rescue
+#
+# -----------------------------------------------------------------------------
+# ⚠️ THE HONEST LIMIT — READ THIS BEFORE TRUSTING IT
+# -----------------------------------------------------------------------------
+# A rebind and a reset ask the chip to start again FROM SOFTWARE. If the chip's
+# own firmware has genuinely locked up, nothing software can say will reach it,
+# and the only thing that clears it is taking the power away: shut the computer
+# down, wait ten seconds, switch it on. (A restart is not the same thing — a
+# restart usually leaves that chip powered.)
+#
+# So this is a retry, not a cure. It costs a few seconds at boot on a machine
+# where the driver is already attached, which is almost every machine, and it
+# is worth having for the boot where it is not.
+#
+# ⚠️ AND: AS OF 7 SEPTEMBER 2026 THIS HAS NEVER BEEN SEEN TO RESCUE A REAL
+# MACHINE. It was written the day the fault was diagnosed and its logic is
+# tested against a fake set of files (tests/test-usb4-rescue.sh), which is not
+# the same as a bench PC showing a bind that works. Until Royce sees one, the
+# docs must say so. docs/restart/usb4.md says so.
+#
+# -----------------------------------------------------------------------------
+# HOW IT IS SWITCHED ON — AND WHY THERE IS NO `.wants` LINK
+# -----------------------------------------------------------------------------
+# Every other AquariusOS service is switched on by a symlink shipped under /usr
+# (see the long note beside aq_unit_is_on_from_usr in build_files/aq-lib.sh).
+# This one is different on purpose: it should run only on a machine that HAS a
+# USB4 host router, and only once that chip is known to the system.
+#
+# So it is started by a udev rule instead —
+# /usr/lib/udev/rules.d/76-aquarius-usb4.rules — which says: when a PCI device
+# whose class is 0x0c0340 (the number that means "USB4 host interface") is
+# added, start aquarius-usb4-rescue.service. At every boot systemd-udev replays
+# the "added" event for hardware that was already there ("coldplug"), so this
+# fires on every boot of a machine with the chip, and on no boot of a machine
+# without it. That replay is the switch-on mechanism; it needs no /usr symlink
+# and no `systemctl enable`, and an update cannot lose it because the rule file
+# lives in the read-only half of the system.
+#
+# -----------------------------------------------------------------------------
+# RUNNING IT BY HAND
+# -----------------------------------------------------------------------------
+#   aq usb4 status                                what the chips look like now
+#   sudo aq usb4 retry                            try again, now
+#   /usr/libexec/aquarius-usb4-rescue --status    the same, the long way
+#   sudo /usr/libexec/aquarius-usb4-rescue --rescue
+#   /usr/libexec/aquarius-usb4-rescue --dry-run   say what it would do, do
+#                                                 nothing (what the build runs)
+#   /usr/libexec/aquarius-usb4-rescue --help      this header
+#
+# With no arguments at all it is in SERVICE MODE, which is how the service runs
+# it. Service mode always exits 0, even when the rescue did not work: a thing
+# whose job is to rescue a boot must never be the reason a boot goes red.
+# `--rescue`, typed by a person, exits 1 if a chip is still without a driver —
+# because a person needs to be told it did not work.
+#
+# Plain-English guide: docs/restart/usb4.md
+# =============================================================================
+
+set -uo pipefail
+
+# -----------------------------------------------------------------------------
+# Where to look, and the knobs the tests turn
+# -----------------------------------------------------------------------------
+# ⚠️ AQ_SYSFS_ROOT exists for ONE reason: so tests/test-usb4-rescue.sh can run
+# this program for real, against a temporary folder of fake files, without being
+# root and without touching the machine it runs on. It is never set in normal
+# use, and unset every path below is exactly what it always was.
+#
+# /sys is the kernel's own folder of files-that-are-really-hardware. Reading a
+# file in there asks the kernel a question; writing one tells it to do something.
+AQ_SYSFS_ROOT="${AQ_SYSFS_ROOT:-/sys}"
+AQ_PCI_DEVICES="${AQ_SYSFS_ROOT}/bus/pci/devices"
+AQ_TB_DRIVER="${AQ_SYSFS_ROOT}/bus/pci/drivers/thunderbolt"
+
+# The number PCI uses for "USB4 host interface". Every USB4 host router on
+# every board announces itself with exactly this class, whoever made it —
+# ASMedia, Intel, AMD — so this is what we look for rather than a list of
+# vendor numbers that would go stale.
+AQ_USB4_CLASS="0x0c0340"
+
+# How long to let the kernel finish its own attempt before we interfere, and
+# how long to wait after a reset for the chip to come back. The tests set both
+# to 0 so they run in a second instead of a minute.
+AQ_WAIT="${AQ_USB4_WAIT:-15}"
+AQ_SETTLE="${AQ_USB4_SETTLE:-2}"
+
+# How many bind attempts. Three is a guess made of nothing: one retry looks
+# unlucky, ten looks like flailing.
+AQ_ATTEMPTS="${AQ_USB4_ATTEMPTS:-3}"
+
+# The command that loads the driver. The tests replace it with `true`.
+AQ_MODPROBE="${AQ_USB4_MODPROBE:-modprobe}"
+
+# -----------------------------------------------------------------------------
+# Talking
+# -----------------------------------------------------------------------------
+# Everything goes to plain stdout, which systemd puts in the journal. The tag
+# is there so `journalctl -b | grep usb4-rescue` finds the whole story at once.
+say() { echo "[usb4-rescue] $*"; }
+
+# -----------------------------------------------------------------------------
+# aq_sleep <seconds> — a wait that the tests can turn off
+# -----------------------------------------------------------------------------
+aq_sleep() {
+    [ "${1}" -gt 0 ] 2> /dev/null || return 0
+    sleep "${1}"
+}
+
+# -----------------------------------------------------------------------------
+# aq_routers — every USB4 host router on this machine, in address order
+# -----------------------------------------------------------------------------
+# Each PCI device has a folder under /sys/bus/pci/devices named after its
+# address (its "BDF" — bus:device.function, e.g. 0000:70:00.0), and inside it a
+# file called `class` holding the number above. That is the whole search.
+aq_routers() {
+    local dir class
+    for dir in "${AQ_PCI_DEVICES}"/*; do
+        [ -d "${dir}" ] || continue
+        [ -r "${dir}/class" ] || continue
+        class="$(cat "${dir}/class" 2> /dev/null)"
+        if [ "${class}" = "${AQ_USB4_CLASS}" ]; then
+            basename "${dir}"
+        fi
+    done | sort
+}
+
+# -----------------------------------------------------------------------------
+# aq_is_bound <bdf> — does this chip have a driver attached right now?
+# -----------------------------------------------------------------------------
+# When a driver takes a device, the kernel puts a symlink called `driver` in the
+# device's folder, pointing at the driver. No symlink, no driver. That is the
+# single fact this whole program turns on.
+aq_is_bound() {
+    [ -e "${AQ_PCI_DEVICES}/${1}/driver" ]
+}
+
+# -----------------------------------------------------------------------------
+# aq_bound_driver <bdf> — the NAME of the attached driver, or "" for none
+# -----------------------------------------------------------------------------
+aq_bound_driver() {
+    local link="${AQ_PCI_DEVICES}/${1}/driver"
+    [ -e "${link}" ] || return 0
+    basename "$(readlink -f "${link}" 2> /dev/null || echo "")"
+}
+
+# -----------------------------------------------------------------------------
+# aq_reset_method <bdf> — how (if at all) the kernel says this chip can be reset
+# -----------------------------------------------------------------------------
+# `reset_method` lists the ways available, e.g. "pm bus". An empty file means
+# the kernel knows no safe way to reset this device, and we must not try.
+aq_reset_method() {
+    local file="${AQ_PCI_DEVICES}/${1}/reset_method"
+    [ -r "${file}" ] || return 0
+    tr -d '\n' < "${file}" 2> /dev/null
+}
+
+# -----------------------------------------------------------------------------
+# aq_write <file> <value> — one write into /sys, which is how you tell the
+#                           kernel to do something
+# -----------------------------------------------------------------------------
+# It reports whether it worked and never stops the program: a refused write is
+# information, not a crash.
+aq_write() {
+    local file="$1" value="$2" err=""
+    if err="$( { printf '%s\n' "${value}" > "${file}"; } 2>&1 )"; then
+        return 0
+    fi
+    say "    the kernel refused that write: ${err:-no reason given}"
+    return 1
+}
+
+# -----------------------------------------------------------------------------
+# aq_wait_for_bind <bdf> — give the kernel its own chance first
+# -----------------------------------------------------------------------------
+# A driver probe that is STILL RUNNING will finish by itself, and interrupting
+# it would be the worst thing we could do. So we look now, and then once a
+# second until the patience runs out.
+aq_wait_for_bind() {
+    local bdf="$1" waited=0
+    aq_is_bound "${bdf}" && return 0
+    while [ "${waited}" -lt "${AQ_WAIT}" ]; do
+        sleep 1
+        waited=$((waited + 1))
+        if aq_is_bound "${bdf}"; then
+            say "    the kernel finished on its own after ${waited}s — nothing for us to do"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# -----------------------------------------------------------------------------
+# aq_rescue_one <bdf> — the retry, for one chip. 0 if it ends up bound.
+# -----------------------------------------------------------------------------
+aq_rescue_one() {
+    local bdf="$1" attempt=1 method=""
+
+    say "  ${bdf}: no driver is attached. Trying to attach one."
+
+    if ! aq_wait_for_bind "${bdf}"; then
+        say "    still no driver after waiting ${AQ_WAIT}s. Asking the driver to take it."
+    else
+        return 0
+    fi
+
+    while [ "${attempt}" -le "${AQ_ATTEMPTS}" ]; do
+        say "    attempt ${attempt} of ${AQ_ATTEMPTS}: writing ${bdf} into ${AQ_TB_DRIVER}/bind"
+        aq_write "${AQ_TB_DRIVER}/bind" "${bdf}" || true
+        if aq_is_bound "${bdf}"; then
+            say "    it took. ${bdf} now has the ${AQ_TB_DRIVER##*/} driver attached."
+            return 0
+        fi
+
+        # The bind did not take. If the kernel offers a way to power-cycle this
+        # one chip, use it and try once more. This touches nothing else: the
+        # chip is alone on its PCI bus, behind a downstream port of its own.
+        method="$(aq_reset_method "${bdf}")"
+        if [ -n "${method}" ]; then
+            say "    that did not take. Resetting the chip (the kernel offers: ${method})."
+            aq_write "${AQ_PCI_DEVICES}/${bdf}/reset" "1" || true
+            aq_sleep "${AQ_SETTLE}"
+            say "    trying the bind again after the reset."
+            aq_write "${AQ_TB_DRIVER}/bind" "${bdf}" || true
+            if aq_is_bound "${bdf}"; then
+                say "    it took after the reset. ${bdf} now has a driver attached."
+                return 0
+            fi
+        else
+            say "    that did not take, and the kernel offers no way to reset this chip"
+            say "    (its reset_method file is empty), so there is nothing further to try."
+        fi
+
+        attempt=$((attempt + 1))
+    done
+
+    say "  ${bdf}: STILL HAS NO DRIVER after ${AQ_ATTEMPTS} attempts."
+    say "  Anything plugged into this machine's USB4 / Thunderbolt sockets will not"
+    say "  appear. The one thing left to try is a full power-off: shut the computer"
+    say "  down, wait ten seconds, switch it on. A restart is not the same thing."
+    say "  See docs/restart/usb4.md."
+    return 1
+}
+
+# -----------------------------------------------------------------------------
+# --status — what the chips look like, changing nothing
+# -----------------------------------------------------------------------------
+aq_status() {
+    local routers bdf driver method found=0
+
+    echo "USB4 / Thunderbolt controllers on this computer"
+    echo "(a 'host router' is the chip that runs the fast USB-C sockets)"
+    echo
+
+    routers="$(aq_routers)"
+    if [ -z "${routers}" ]; then
+        echo "  None. This computer has no USB4 / Thunderbolt controller, so there is"
+        echo "  nothing for the AquariusOS USB4 rescue to do. Ordinary USB sockets are"
+        echo "  a different thing entirely and are not affected."
+        echo
+        return 0
+    fi
+
+    while read -r bdf; do
+        [ -n "${bdf}" ] || continue
+        found=1
+        driver="$(aq_bound_driver "${bdf}")"
+        method="$(aq_reset_method "${bdf}")"
+        echo "  ${bdf}"
+        if [ -n "${driver}" ]; then
+            echo "    driver attached : yes (${driver}) — this chip is working"
+        else
+            echo "    driver attached : NO — anything plugged into the USB4 sockets is invisible"
+            echo "                      Try:  sudo aq usb4 retry"
+        fi
+        echo "    can be reset by : ${method:-nothing the kernel knows about}"
+    done <<< "${routers}"
+
+    if [ "${found}" -eq 1 ]; then
+        echo
+    fi
+
+    if command -v boltctl > /dev/null 2>&1; then
+        echo "What the Thunderbolt device manager sees (boltctl list):"
+        boltctl list 2>&1 | sed 's/^/  /'
+        echo
+        echo "  'disconnected' beside every device, with no driver attached above, is"
+        echo "  the fault this rescue exists for. See docs/restart/usb4.md."
+    else
+        echo "boltctl is not on this computer, so there is no device list to print."
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# --dry-run — the rehearsal the build runs
+# -----------------------------------------------------------------------------
+# It writes NOTHING. It is designed to run inside a build container, which has
+# no USB4 controller and no real /sys to speak of, and to exit 0 there — so the
+# build can prove this program loads and states its rules without needing the
+# hardware.
+aq_dry_run() {
+    local routers bdf
+
+    echo "aquarius-usb4-rescue --dry-run"
+    echo "Nothing is written and nothing is changed. This is the rehearsal the build runs."
+    echo
+    echo "What it does when it runs for real:"
+    echo "  * looks under ${AQ_PCI_DEVICES} for every device whose class is ${AQ_USB4_CLASS}"
+    echo "    (the PCI number meaning 'USB4 host interface' — the chip that runs the"
+    echo "    fast USB-C sockets, whoever made it)"
+    echo "  * leaves alone every one that already has a driver attached"
+    echo "  * for one with NO driver attached:"
+    echo "      - runs '${AQ_MODPROBE} thunderbolt' in case the driver is not loaded"
+    echo "      - waits up to ${AQ_WAIT}s in case the kernel is still probing it"
+    echo "      - then up to ${AQ_ATTEMPTS} times: writes the address into"
+    echo "        ${AQ_TB_DRIVER}/bind"
+    echo "      - and if that does not take and the kernel says the chip can be"
+    echo "        reset, writes 1 to its 'reset' file, waits ${AQ_SETTLE}s, and binds again"
+    echo "  * never touches anything else: a USB4 host router sits alone on its own"
+    echo "    PCI bus, so resetting it affects that chip and nothing more"
+    echo "  * in service mode it always exits 0, because a rescue must never be the"
+    echo "    reason a boot fails; '--rescue' typed by a person exits 1 if a chip is"
+    echo "    still without a driver, so the person knows it did not work"
+    echo
+    echo "The honest limit: a chip whose own firmware has locked up comes back only"
+    echo "with a full power-off — shut down, wait ten seconds, switch on."
+    echo
+
+    routers="$(aq_routers)"
+    if [ -z "${routers}" ]; then
+        echo "On THIS machine right now: no device of class ${AQ_USB4_CLASS} exists, so a"
+        echo "real run would find nothing to do and exit immediately. (That is the"
+        echo "expected answer inside a build container.)"
+        return 0
+    fi
+
+    echo "On THIS machine right now:"
+    while read -r bdf; do
+        [ -n "${bdf}" ] || continue
+        if aq_is_bound "${bdf}"; then
+            echo "  ${bdf} — has a driver attached; a real run would leave it alone"
+        else
+            echo "  ${bdf} — has NO driver; a real run would try to attach one"
+        fi
+    done <<< "${routers}"
+    return 0
+}
+
+# -----------------------------------------------------------------------------
+# The rescue itself
+# -----------------------------------------------------------------------------
+# <mode> is "service" (started by udev at boot) or "cli" (a person typed it).
+# The only difference is the exit code.
+aq_rescue() {
+    local mode="$1" routers bdf unbound=0 failed=0
+
+    routers="$(aq_routers)"
+    if [ -z "${routers}" ]; then
+        say "this computer has no USB4 / Thunderbolt controller — nothing to do"
+        return 0
+    fi
+
+    # Which ones need help? Say the whole picture first, so the journal shows
+    # what was seen and not only what was done.
+    while read -r bdf; do
+        [ -n "${bdf}" ] || continue
+        if aq_is_bound "${bdf}"; then
+            say "  ${bdf}: already has the $(aq_bound_driver "${bdf}") driver — leaving it alone"
+        else
+            unbound=$((unbound + 1))
+        fi
+    done <<< "${routers}"
+
+    if [ "${unbound}" -eq 0 ]; then
+        say "every USB4 controller on this computer has its driver. Nothing to rescue."
+        return 0
+    fi
+
+    say "${unbound} USB4 controller(s) have no driver attached. That is the fault where"
+    say "drives on a Thunderbolt dock or a USB4 SSD are invisible. Trying to fix it."
+
+    # Load the driver in case it is simply not loaded. `modprobe` on a module
+    # that is already in is a no-op, so this is safe to run every time; and if
+    # it fails we carry on regardless, because the bind below is what actually
+    # matters and it will say so itself if the driver is missing.
+    say "  making sure the 'thunderbolt' driver is loaded (${AQ_MODPROBE} thunderbolt)"
+    "${AQ_MODPROBE}" thunderbolt > /dev/null 2>&1 \
+        || say "    ${AQ_MODPROBE} said no — carrying on anyway; it is usually already loaded"
+
+    while read -r bdf; do
+        [ -n "${bdf}" ] || continue
+        aq_is_bound "${bdf}" && continue
+        aq_rescue_one "${bdf}" || failed=$((failed + 1))
+    done <<< "${routers}"
+
+    if [ "${failed}" -eq 0 ]; then
+        say "every USB4 controller now has a driver. Plugged-in drives should appear."
+        return 0
+    fi
+
+    if [ "${mode}" = "service" ]; then
+        # ⚠️ ALWAYS 0 IN SERVICE MODE. See the header. A red line in
+        # `systemctl status` for the rest of a machine's life, because a rescue
+        # could not rescue something, helps nobody.
+        say "finished with ${failed} controller(s) still unrescued. Exiting 0 anyway:"
+        say "a rescue must never be the reason a boot goes wrong."
+        return 0
+    fi
+
+    return 1
+}
+
+# -----------------------------------------------------------------------------
+# Root, and the one exception to needing it
+# -----------------------------------------------------------------------------
+# Writing into /sys is telling the kernel to do something, and only root may.
+# The exception is a test run: when AQ_SYSFS_ROOT points somewhere other than
+# the real /sys, every "write" lands in a temporary folder of ordinary files and
+# there is nothing to protect. Same arrangement, and same reason, as
+# AQ_GREETER_WATCHDOG_ROOT in aquarius-greeter-watchdog.
+aq_needs_root() {
+    [ "${AQ_SYSFS_ROOT}" = "/sys" ] && [ "$(id -u)" -ne 0 ]
+}
+
+aq_refuse_politely() {
+    echo "aquarius-usb4-rescue: this has to be run by an administrator, because it" >&2
+    echo "                      asks the kernel to re-attach a driver." >&2
+    echo "                      Try:  sudo aq usb4 retry" >&2
+    echo "                      To just LOOK at what is going on, no password needed:" >&2
+    echo "                            aq usb4 status" >&2
+}
+
+# =============================================================================
+# Which mode?
+# =============================================================================
+case "${1:-}" in
+    -h | --help | help)
+        # Print this file's own header, stripped of the leading "# ". Exactly
+        # the trick aquarius-automount uses, written for bash rather than
+        # Python: skip line 1 (the #! line), print every comment line after it,
+        # stop at the first line that is not a comment.
+        awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
+        exit 0
+        ;;
+    --status | status)
+        aq_status
+        exit 0
+        ;;
+    --dry-run)
+        aq_dry_run
+        exit 0
+        ;;
+    --rescue | rescue)
+        if aq_needs_root; then
+            aq_refuse_politely
+            exit 1
+        fi
+        aq_rescue cli
+        exit $?
+        ;;
+    "")
+        # Service mode — this is what aquarius-usb4-rescue.service runs.
+        if aq_needs_root; then
+            aq_refuse_politely
+            exit 0
+        fi
+        aq_rescue service
+        exit 0
+        ;;
+    *)
+        echo "aquarius-usb4-rescue: '$1' is not something this understands." >&2
+        echo "                      Try --help, --status, --rescue or --dry-run." >&2
+        exit 1
+        ;;
+esac
