@@ -160,16 +160,20 @@ git log -1 --format='    %h  %ad  %s' --date=short
 say "Copying the parts that run"
 install -d -m 0755 "${AQ_DEST}"
 
-# greeter/ is the login screen — this repository's SECOND entry point. It shares
-# theme/ and the Aquarius mark with the desktop and is otherwise its own thing.
-# It travels with the shell rather than living here because it IS the shell,
-# wearing a different hat, and the two must never disagree about a colour.
+# greeter.qml (at the repo root, beside shell.qml) is the login screen's ENTRY
+# point, and greeter/ holds its pieces. The entry sits at the root on purpose:
+# Quickshell treats the folder of the file it is given as the config folder and
+# discards imports that escape it, so an entry inside greeter/ could not reach
+# ../theme or the Aquarius mark and the login screen failed to draw (fixed
+# 2026-09-07). Both must travel: the root greeter.qml AND the greeter/ folder.
+# It shares theme/ and the mark with the desktop because it IS the shell wearing
+# a different hat, and the two must never disagree about a colour.
 #
 # lock/ is the LOCK screen, and it is a different case from greeter/ again: it
 # is not a separate entry point at all. shell.qml holds it, so it is already
 # loaded and waiting the moment you log in, which is the whole reason Super+L is
 # instant. It has to come across or Super+L would do nothing at all.
-for aq_part in shell.qml components services theme assets greeter lock; do
+for aq_part in shell.qml greeter.qml components services theme assets greeter lock; do
     if [ ! -e "/src/${aq_part}" ]; then
         bad "the shell repository has no '${aq_part}' — its layout changed and this script has not caught up"
         continue
