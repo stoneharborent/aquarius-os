@@ -1,0 +1,859 @@
+#!/usr/bin/python3
+# =============================================================================
+# aquarius-resolve-updater — the "Update DaVinci Resolve" window
+# =============================================================================
+# PLAIN ENGLISH
+#
+# This is what opens when somebody clicks "Update DaVinci Resolve" in their
+# apps, or the button on the notification that says a newer one exists. It is
+# the third window in the Resolve family and it is built out of the same pieces
+# as the other two: the same step rows, the same Details log, the same Aquarius
+# mark at the top of every page.
+#
+# It shows two facts and one button:
+#
+#     On this computer     DaVinci Resolve Studio 21.0.4
+#     Newest from them     DaVinci Resolve Studio 21.1
+#     [ Update ]
+#
+# Clicking Update opens Blackmagic's download page for THAT edition, waits for
+# the file to land in Downloads, installs it over the top, and finishes by
+# checking that Resolve still opens at the size of the screen.
+#
+# ⚠️ THIS WINDOW DOES NOT UPDATE ANYTHING, and that is the same rule the
+# installer window follows. Every last piece of work — asking what is newest,
+# opening the right page, waiting, running Blackmagic's installer, repairing the
+# app-menu entry — is done by:
+#
+#     /usr/libexec/aquarius-resolve-install --update
+#
+# ...which is exactly what `aq resolve update` runs in a terminal. One updater,
+# two faces. If you are tempted to do "just this one bit" here in Python, put it
+# in the script instead and both faces get it.
+#
+# ⚠️ AND THE FORM STAYS MANUAL, ON PURPOSE. Blackmagic's licence lets them hand
+# out their installer and nobody else, so their registration page is the one
+# step a person does. Automating it would bake somebody's registration details
+# into an operating system and break the day Blackmagic change the form. What
+# AquariusOS removes is everything either side of it.
+#
+# =============================================================================
+# THE PROGRESS CHANNEL — the contract with that script
+# =============================================================================
+# Identical to the installer window's, because it is the same script:
+#
+#   STEP <n>/<total> <text>   step n has begun; <text> is its name, shown as-is.
+#   PERCENT <0-100>           how far through the CURRENT step, where there is a
+#                             real number. No PERCENT is not a stall.
+#   DONE                      finished. Once, last.
+#   FAIL <text>               stopped, and <text> says why.
+#
+# Anything else on that pipe is ignored, so a line added to the script in future
+# cannot break a window built before it. The same list is at the top of
+# aquarius-resolve-install: CHANGE ONE, CHANGE BOTH.
+#
+# =============================================================================
+# THE THREE PAGES
+# =============================================================================
+#   1  Choose      what you have, what is newest, what will happen, Update.
+#   2  Updating    the seven steps, a bar, Details, Cancel. Becomes the failure
+#                  page in place if anything goes wrong — same log, still there.
+#   3  Done        "DaVinci Resolve is up to date", Open it, Close.
+#
+# To look at this window without updating anything:
+#       aq resolve update --gui --dry-run
+# =============================================================================
+
+import os
+import re
+import signal
+import subprocess
+import sys
+import threading
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
+
+# The shared pieces every AquariusOS window is built out of. The folder is not
+# on Python's search path, so we say where it is.
+sys.path.insert(0, "/usr/lib/aquarius/python")
+import aquarius_ui  # noqa: E402
+from aquarius_ui import ACTIVE, DONE, FAILED, PENDING  # noqa: E402,F401
+
+APP_ID = "org.aquariusos.ResolveUpdater"
+CLI = "/usr/libexec/aquarius-resolve-install"
+CHECK = "/usr/libexec/aquarius-resolve-check"
+LAUNCHER = "/usr/libexec/aquarius-resolve-launch"
+RUNTIME_ENV = "/usr/share/aquarius/resolve/runtime.env"
+
+# The step names drawn before anything starts. The script sends its own wording
+# with every STEP line and that wins the moment it arrives; this list is only so
+# that the page is not empty for the first second.
+#
+# ⚠️ NO NAME OF ANOTHER LINUX APPEARS IN ANY OF THESE — Royce's rule from the
+# 2026-09-04 bench test. The comments in the scripts still say Rocky, because
+# whoever maintains this needs to know. What a user reads says "environment".
+DEFAULT_STEPS = [
+    "Checking your graphics card",
+    "Finding your download",
+    "Downloading the environment Resolve runs in",
+    "Setting that environment up",
+    "Installing DaVinci Resolve",
+    "Adding it to your apps",
+    "Matching Resolve to your screen",
+]
+
+StepRow = aquarius_ui.StepRow
+
+
+# -----------------------------------------------------------------------------
+# What this machine knows, asked of the same programs the terminal asks
+# -----------------------------------------------------------------------------
+def record_values():
+    """What was written down when Resolve was installed or last updated."""
+    data_home = os.environ.get("XDG_DATA_HOME") or os.path.join(
+        GLib.get_home_dir(), ".local", "share"
+    )
+    path = os.path.join(data_home, "aquarius", "resolve", "installed.env")
+    values = {}
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                name, _, value = line.partition("=")
+                values[name.strip()] = value.strip().strip("\"'")
+    except OSError:
+        return {}
+    return values
+
+
+def resolve_installed():
+    """Is the container there? Asked of podman, which is the only real answer."""
+    container = "aquarius-resolve"
+    try:
+        with open(RUNTIME_ENV, "r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("AQ_RESOLVE_CONTAINER="):
+                    container = line.split("=", 1)[1].strip().strip("\"'")
+    except OSError:
+        pass
+    try:
+        done = subprocess.run(
+            ["podman", "container", "exists", container],
+            capture_output=True,
+            timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return done.returncode == 0
+
+
+def ask_check(offline=False):
+    """Run the update check and return what it found, as a dictionary.
+
+    THE SAME PROGRAM `aq resolve check` and the once-a-day timer run. This
+    window has no opinion of its own about which version is newest, which is
+    what stops three faces of one feature ever disagreeing.
+    """
+    argv = [CHECK, "--json"]
+    if offline:
+        argv.append("--dry-run")
+    try:
+        out = subprocess.run(
+            argv, capture_output=True, text=True, timeout=45, errors="replace"
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    text = out.stdout.strip()
+    if not text:
+        return {}
+    try:
+        import json
+
+        return json.loads(text)
+    except ValueError:
+        return {}
+
+
+class UpdaterWindow(Adw.ApplicationWindow):
+    def __init__(self, app, dry_run=False):
+        super().__init__(application=app)
+        self.dry_run = dry_run
+        self.proc = None
+        self.cancelled = False
+        self.finished = False
+        self.step_rows = []
+        self._determinate = False
+        self._pulse_source = None
+        self.current_step = 0
+        self.step_total = len(DEFAULT_STEPS)
+        self.download_url = ""
+
+        self.set_title("Update DaVinci Resolve")
+        self.set_default_size(620, 640)
+
+        self.stack = Gtk.Stack(
+            transition_type=Gtk.StackTransitionType.CROSSFADE,
+            transition_duration=180,
+            vexpand=True,
+        )
+        self.stack.add_named(self._build_choose_page(), "choose")
+        self.stack.add_named(self._build_working_page(), "working")
+        self.stack.add_named(self._build_done_page(), "done")
+
+        header = Adw.HeaderBar()
+        self.header_title = Adw.WindowTitle(title="Update DaVinci Resolve", subtitle="")
+        header.set_title_widget(self.header_title)
+
+        toolbar = Adw.ToolbarView()
+        toolbar.add_top_bar(header)
+        toolbar.set_content(self.stack)
+        self.set_content(toolbar)
+
+        # Escape closes the window where closing is harmless, and deliberately
+        # not while an update is running: a stray key press must not be able to
+        # abandon a job halfway through. Cancel is a button you have to mean.
+        keys = Gtk.EventControllerKey()
+        keys.connect("key-pressed", self._on_key)
+        self.add_controller(keys)
+        self.connect("close-request", self._on_close_request)
+
+        self._refresh_choose_page()
+
+    # -- page 1: what you have, what is newest ------------------------------
+
+    def _build_choose_page(self):
+        mark, title, blurb = aquarius_ui.hero(
+            "Update DaVinci Resolve",
+            "AquariusOS opens Blackmagic's download page for the version of "
+            "Resolve you already have, waits for the file, and installs it over "
+            "the top. Your projects, database and settings are not touched.",
+        )
+
+        # What will happen, before it happens — including, honestly, the one
+        # part that is not ours to do.
+        plan = aquarius_ui.numbered_steps(
+            [
+                (
+                    "Blackmagic's page opens",
+                    "The page for your edition, so there is nothing to choose.",
+                ),
+                (
+                    "You fill in their form",
+                    "A name and an email address. This is the one step nobody "
+                    "else may do for you — see the note below.",
+                ),
+                (
+                    "AquariusOS takes over",
+                    "It notices your download arriving and installs it into the "
+                    "same environment Resolve already runs in.",
+                ),
+                (
+                    "Resolve is checked against your screen",
+                    "So the new version opens at the size the old one did, with "
+                    "your own mouse pointer.",
+                ),
+            ]
+        )
+
+        group = Adw.PreferencesGroup()
+
+        self.have_row = Adw.ActionRow(title="On this computer")
+        self.have_row.set_subtitle_lines(0)
+        self.have_icon = Gtk.Image()
+        self.have_icon.set_valign(Gtk.Align.CENTER)
+        self.have_row.add_prefix(self.have_icon)
+        group.add(self.have_row)
+
+        self.latest_row = Adw.ActionRow(title="Newest from Blackmagic")
+        self.latest_row.set_subtitle_lines(0)
+        self.latest_row.set_subtitle("Asking…")
+        self.latest_icon = Gtk.Image()
+        self.latest_icon.set_valign(Gtk.Align.CENTER)
+        self.latest_row.add_prefix(self.latest_icon)
+        group.add(self.latest_row)
+
+        self.update_button = aquarius_ui.pill_button("Update", suggested=True)
+        self.update_button.connect("clicked", self._on_update_clicked)
+        self.update_button.set_sensitive(False)
+
+        close_button = aquarius_ui.pill_button("Not now")
+        close_button.connect("clicked", lambda _b: self.close())
+
+        buttons = aquarius_ui.button_row([close_button, self.update_button])
+
+        # The honest small print, shut by default. It is the reason the form is
+        # still a form, and it is worth being able to read once.
+        why_manual = aquarius_ui.expander_note(
+            "Why do I still have to fill in their form?",
+            "Blackmagic's licence lets them hand out DaVinci Resolve and nobody "
+            "else — not AquariusOS, not any Linux, not any app store. So the "
+            "download always comes from them, through the page that asks for a "
+            "name and an email address.\n\n"
+            "There are scripts on the internet that fill that form in for you. "
+            "AquariusOS does not do that, on purpose: it would bake your "
+            "registration details into an operating system, it would break the "
+            "day Blackmagic change the page, and it is a grey area against their "
+            "terms. What AquariusOS removes instead is everything either side — "
+            "knowing an update exists, opening the right page, catching the file, "
+            "installing it into the right place, and checking the result.",
+        )
+
+        self.choose_note = aquarius_ui.body_label("")
+        self.choose_note.set_visible(False)
+
+        return aquarius_ui.page(
+            [mark, title, blurb, plan, group, buttons, why_manual, self.choose_note]
+        )
+
+    def _refresh_choose_page(self):
+        """Ask the machine and Blackmagic, off the main thread so nothing hangs."""
+
+        def work():
+            installed = resolve_installed()
+            record = record_values()
+            answer = ask_check(offline=self.dry_run)
+            GLib.idle_add(self._apply_facts, installed, record, answer)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _apply_facts(self, installed, record, answer):
+        editions = {
+            "studio": "DaVinci Resolve Studio",
+            "free": "DaVinci Resolve, the free version",
+        }
+        edition = record.get("AQ_RESOLVE_EDITION", "")
+        version = record.get("AQ_RESOLVE_VERSION", "")
+
+        # ⚠️ THE MIRROR OF WHAT THE INSTALLER WINDOW DOES FOR THE REVERSE CASE.
+        # "Update DaVinci Resolve" is only useful when Resolve is there, so a
+        # machine without it gets told so plainly and the button stays off,
+        # exactly as "Remove DaVinci Resolve" does when there is nothing to
+        # remove. In a rehearsal the button is live, because the whole point of
+        # the rehearsal is to look at the window.
+        if not installed:
+            self.have_row.set_subtitle(
+                "DaVinci Resolve is not set up on this computer. Open \"Install "
+                "DaVinci Resolve\" in your apps first."
+            )
+            self._set_icon(self.have_icon, ok=False)
+            self.latest_row.set_subtitle("Nothing to compare against yet.")
+            self._set_icon(self.latest_icon, ok=False)
+            self.update_button.set_sensitive(self.dry_run)
+            return GLib.SOURCE_REMOVE
+
+        if edition in editions and version:
+            self.have_row.set_subtitle("%s %s" % (editions[edition], version))
+            self._set_icon(self.have_icon, ok=True)
+        else:
+            self.have_row.set_subtitle(
+                "DaVinci Resolve is installed, but AquariusOS did not write down "
+                "which version — the file it was installed from was not named the "
+                "way Blackmagic name theirs. Updating anyway is safe, and it "
+                "records the version this time."
+            )
+            self._set_icon(self.have_icon, ok=False)
+
+        message = answer.get("message") or (
+            "Blackmagic's list of releases could not be reached just now. You can "
+            "still update; their page will open as usual."
+        )
+        self.latest_row.set_subtitle(message)
+        self._set_icon(self.latest_icon, ok=not answer.get("update_available"))
+        self.download_url = answer.get("download_url") or ""
+
+        # There is always something a person can do here — even "you have the
+        # newest one" leaves updating available, because somebody may be
+        # reinstalling the same version deliberately after something went wrong.
+        self.update_button.set_sensitive(True)
+        if answer.get("update_available"):
+            self.update_button.set_label("Update")
+            self.update_button.grab_focus()
+            self.set_default_widget(self.update_button)
+        else:
+            self.update_button.set_label("Update anyway")
+        return GLib.SOURCE_REMOVE
+
+    def _set_icon(self, image, ok):
+        if ok:
+            image.set_from_icon_name("emblem-ok-symbolic")
+            image.remove_css_class("warning")
+            image.add_css_class("success")
+        else:
+            image.set_from_icon_name("dialog-information-symbolic")
+            image.remove_css_class("success")
+            image.add_css_class("warning")
+
+    # -- page 2: updating ---------------------------------------------------
+
+    def _build_working_page(self):
+        # ⚠️ THIS PAGE IS ALSO THE END OF THE STORY WHEN THINGS GO WRONG. A run
+        # that fails, or that somebody cancels, stays right here, because the
+        # Details log is here and taking it away at the moment it matters would
+        # be the wrong thing to do. So it is a page a person can be left looking
+        # at, and it is built out of the same hero as every other page.
+        mark, self.working_title, self.working_blurb = aquarius_ui.hero(
+            "Updating DaVinci Resolve",
+            "Blackmagic's page opens in your browser. Fill in their form, save "
+            "the file, and leave the rest to this window.",
+            style="title-2",
+        )
+
+        self.working_status = aquarius_ui.status_glyph()
+        self.working_status.set_visible(False)
+        heading = aquarius_ui.heading_row(self.working_status, self.working_title)
+
+        self.steps_group = Adw.PreferencesGroup()
+        self._build_step_rows(DEFAULT_STEPS)
+
+        self.bar = Gtk.ProgressBar()
+        self.bar.set_show_text(False)
+        self.bar.set_margin_top(4)
+
+        self.log = aquarius_ui.LogPane()
+        self.details = self.log.widget
+
+        self.page_button = aquarius_ui.link_button(
+            "https://www.blackmagicdesign.com/products/davinciresolve",
+            "Open the download page again",
+            "In case the browser did not open, or the tab was closed",
+        )
+        self.page_button.set_halign(Gtk.Align.CENTER)
+        self.page_button.set_visible(False)
+
+        self.cancel_button = Gtk.Button(label="Cancel")
+        self.cancel_button.connect("clicked", self._on_cancel_clicked)
+
+        self.copy_button = aquarius_ui.copy_button("Copy details", self.log.text)
+        self.copy_button.set_visible(False)
+
+        self.retry_button = Gtk.Button(label="Try again")
+        self.retry_button.add_css_class("suggested-action")
+        self.retry_button.connect("clicked", self._on_retry_clicked)
+        self.retry_button.set_visible(False)
+
+        self.working_close = Gtk.Button(label="Close")
+        self.working_close.connect("clicked", lambda _b: self.close())
+        self.working_close.set_visible(False)
+
+        self.working_buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        self.working_buttons.set_halign(Gtk.Align.CENTER)
+        self.working_buttons.set_margin_top(4)
+        for widget in (
+            self.copy_button,
+            self.working_close,
+            self.retry_button,
+            self.cancel_button,
+        ):
+            self.working_buttons.append(widget)
+
+        return aquarius_ui.page(
+            [
+                mark,
+                heading,
+                self.working_blurb,
+                self.steps_group,
+                self.bar,
+                self.page_button,
+                self.details,
+                self.working_buttons,
+            ],
+            spacing=14,
+        )
+
+    def _build_step_rows(self, titles):
+        for row in self.step_rows:
+            self.steps_group.remove(row)
+        self.step_rows = []
+        for title in titles:
+            row = StepRow(title)
+            self.steps_group.add(row)
+            self.step_rows.append(row)
+        self.step_total = len(titles)
+
+    # -- page 3: done -------------------------------------------------------
+
+    def _build_done_page(self):
+        """The last page.
+
+        ⚠️ NOT an Adw.StatusPage, and it must never become one: that widget
+        cannot be given the Aquarius mark, which is how three AquariusOS windows
+        ended up with a last page that was blank at the top on 2026-09-04. Every
+        page here is built from aquarius_ui.hero().
+        """
+        mark, self.done_title, self.done_blurb = aquarius_ui.hero(
+            "DaVinci Resolve is up to date.",
+            "Your projects, database and settings are exactly as you left them, "
+            "and the file you downloaded can be deleted.",
+        )
+
+        self.done_status = aquarius_ui.status_glyph()
+        aquarius_ui.set_status_glyph(self.done_status, ok=True)
+        heading = aquarius_ui.heading_row(self.done_status, self.done_title)
+
+        self.done_tips = aquarius_ui.body_label(
+            "It opens at the size your desktop is set to, with your own mouse "
+            "pointer — that was checked as part of the update.\n\n"
+            "Worth a look the first time you open a new version: Preferences → "
+            "System → Memory and GPU, where the GPU processing mode should say "
+            "CUDA and your card should be listed."
+        )
+        self.done_tips.set_margin_top(6)
+
+        open_button = aquarius_ui.pill_button("Open DaVinci Resolve", suggested=True)
+        open_button.connect("clicked", self._on_open_clicked)
+        self.open_button = open_button
+
+        close_button = aquarius_ui.pill_button("Close")
+        close_button.connect("clicked", lambda _b: self.close())
+
+        buttons = aquarius_ui.button_row([open_button, close_button], margin_top=0)
+
+        return aquarius_ui.page(
+            [mark, heading, self.done_blurb, buttons, self.done_tips],
+            maximum_size=560,
+            spacing=12,
+        )
+
+    # -- running the update -------------------------------------------------
+
+    def _on_update_clicked(self, _button):
+        self.choose_note.set_visible(False)
+        self.log.clear()
+        self.cancelled = False
+        self.finished = False
+        self.current_step = 0
+        self._build_step_rows(DEFAULT_STEPS)
+        self.bar.set_fraction(0.0)
+        self.details.set_expanded(False)
+        self.cancel_button.set_visible(True)
+        self.copy_button.set_visible(False)
+        self.retry_button.set_visible(False)
+        self.working_close.set_visible(False)
+        self.working_title.set_label("Updating DaVinci Resolve")
+        self.working_title.remove_css_class("error")
+        self.working_status.set_visible(False)
+        self.working_blurb.set_label(
+            "Blackmagic's page opens in your browser. Fill in their form, save "
+            "the file, and leave the rest to this window."
+        )
+        if self.download_url:
+            self.page_button.set_uri(self.download_url)
+        self.page_button.set_visible(True)
+        self.header_title.set_subtitle("Updating")
+        self.stack.set_visible_child_name("working")
+        self._determinate = False
+        self._pulse_source = GLib.timeout_add(120, self._pulse)
+        self._start_process()
+
+    def _start_process(self):
+        argv = [CLI, "--update"]
+        if self.dry_run:
+            argv.append("--dry-run")
+        read_fd, write_fd = os.pipe()
+        argv += ["--progress-fd", str(write_fd)]
+
+        self._append_log("$ %s\n" % " ".join(argv))
+        try:
+            # start_new_session puts the script in a process group of its own,
+            # which is what makes Cancel able to stop podman and distrobox
+            # underneath it rather than orphaning them.
+            self.proc = subprocess.Popen(
+                argv,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                pass_fds=(write_fd,),
+                start_new_session=True,
+                text=True,
+                errors="replace",
+                bufsize=1,
+            )
+        except OSError as exc:
+            os.close(read_fd)
+            os.close(write_fd)
+            self._show_failure("The update could not be started: %s" % exc)
+            return
+        os.close(write_fd)
+
+        threading.Thread(target=self._read_log, daemon=True).start()
+        threading.Thread(target=self._read_progress, args=(read_fd,), daemon=True).start()
+        threading.Thread(target=self._wait_for_exit, daemon=True).start()
+
+    def _read_log(self):
+        for line in self.proc.stdout:
+            GLib.idle_add(self._append_log, line)
+        try:
+            self.proc.stdout.close()
+        except OSError:
+            pass
+
+    def _read_progress(self, read_fd):
+        with os.fdopen(read_fd, "r", errors="replace") as pipe:
+            for line in pipe:
+                GLib.idle_add(self._handle_progress, line.strip())
+
+    def _wait_for_exit(self):
+        code = self.proc.wait()
+        GLib.idle_add(self._process_exited, code)
+
+    # -- reacting to the script ---------------------------------------------
+
+    def _handle_progress(self, line):
+        # Anything unrecognised is dropped on purpose, so a line added to the
+        # script in future cannot break this window.
+        match = re.match(r"^STEP (\d+)/(\d+) (.*)$", line)
+        if match:
+            n, total, text = int(match.group(1)), int(match.group(2)), match.group(3)
+            if total != self.step_total:
+                self._build_step_rows(
+                    [DEFAULT_STEPS[i] if i < len(DEFAULT_STEPS) else "" for i in range(total)]
+                )
+            self.current_step = n
+            for i, row in enumerate(self.step_rows, start=1):
+                if i < n:
+                    row.set_state(DONE)
+                elif i == n:
+                    row.set_title(text)
+                    row.set_state(ACTIVE)
+                else:
+                    row.set_state(PENDING)
+            self.header_title.set_subtitle("Step %d of %d" % (n, total))
+            self._determinate = False
+            self.bar.set_fraction(self._overall(0.0))
+            return GLib.SOURCE_REMOVE
+
+        match = re.match(r"^PERCENT (\d+)$", line)
+        if match:
+            self._determinate = True
+            self.bar.set_fraction(self._overall(min(100, int(match.group(1))) / 100.0))
+            return GLib.SOURCE_REMOVE
+
+        if line == "DONE":
+            self.finished = True
+            for row in self.step_rows:
+                row.set_state(DONE)
+            self.bar.set_fraction(1.0)
+            return GLib.SOURCE_REMOVE
+
+        if line.startswith("FAIL "):
+            self._show_failure(line[5:].strip())
+        return GLib.SOURCE_REMOVE
+
+    def _overall(self, within):
+        """Where the bar sits: whole steps done, plus progress inside this one."""
+        if self.step_total <= 0:
+            return 0.0
+        base = max(0, self.current_step - 1)
+        return min(1.0, (base + within) / float(self.step_total))
+
+    def _pulse(self):
+        if self.finished or self.cancelled:
+            return GLib.SOURCE_REMOVE
+        if not self._determinate:
+            self.bar.pulse()
+        return GLib.SOURCE_CONTINUE
+
+    def _append_log(self, text):
+        return self.log.append(text)
+
+    def _process_exited(self, code):
+        self.proc = None
+        if self.cancelled:
+            return GLib.SOURCE_REMOVE
+        if self.finished and code == 0:
+            self.header_title.set_subtitle("")
+            self.stack.set_visible_child_name("done")
+            self.open_button.grab_focus()
+            self.set_default_widget(self.open_button)
+            return GLib.SOURCE_REMOVE
+        if not self._on_failure_page():
+            self._show_failure(
+                "The update stopped before it finished (it ended with code %d). "
+                "The details below say where." % code
+            )
+        return GLib.SOURCE_REMOVE
+
+    def _on_failure_page(self):
+        return self.retry_button.get_visible()
+
+    def _show_failure(self, message):
+        self.finished = False
+        self.stack.set_visible_child_name("working")
+        self.header_title.set_subtitle("Stopped")
+        self.working_title.set_label("The update did not finish")
+        self.working_title.add_css_class("error")
+        self.working_status.set_visible(True)
+        aquarius_ui.set_status_glyph(self.working_status, ok=False)
+        self.working_blurb.set_label(
+            message
+            + "\n\nThe DaVinci Resolve you already had is still installed and "
+            "still works, and your projects and settings were never touched. It "
+            "is safe to try again."
+        )
+        for row in self.step_rows:
+            if row.state == ACTIVE:
+                row.set_state(FAILED)
+        self.bar.set_fraction(0.0)
+        self._determinate = True
+        self.details.set_expanded(True)
+        self.cancel_button.set_visible(False)
+        self.copy_button.set_visible(True)
+        self.retry_button.set_visible(True)
+        self.working_close.set_visible(True)
+        self.retry_button.grab_focus()
+        self.set_default_widget(self.retry_button)
+        return GLib.SOURCE_REMOVE
+
+    # -- the buttons --------------------------------------------------------
+
+    def _on_retry_clicked(self, _button):
+        self.header_title.set_subtitle("")
+        self.choose_note.set_label(
+            "The last attempt did not finish. The Resolve you had is untouched — "
+            "start again when you are ready."
+        )
+        self.choose_note.set_visible(True)
+        self.stack.set_visible_child_name("choose")
+        self._refresh_choose_page()
+
+    def _on_cancel_clicked(self, _button):
+        if self.proc is None:
+            self.close()
+            return
+        self.cancelled = True
+        self._stop_process()
+        self.header_title.set_subtitle("Stopped")
+        self.working_title.set_label("Update stopped")
+        self.working_status.set_visible(True)
+        aquarius_ui.set_status_glyph(self.working_status, ok=False)
+        self.working_blurb.set_label(
+            "The DaVinci Resolve you already had is still installed and still "
+            "works. Nothing of yours was touched."
+        )
+        for row in self.step_rows:
+            if row.state == ACTIVE:
+                row.set_state(PENDING)
+        self.bar.set_fraction(0.0)
+        self._determinate = True
+        self.cancel_button.set_visible(False)
+        self.copy_button.set_visible(True)
+        self.retry_button.set_visible(True)
+        self.working_close.set_visible(True)
+        self.retry_button.grab_focus()
+
+    def _stop_process(self):
+        """Signal the whole process group, so podman and distrobox stop too."""
+        proc = self.proc
+        if proc is None:
+            return
+        try:
+            group = os.getpgid(proc.pid)
+        except OSError:
+            return
+        try:
+            os.killpg(group, signal.SIGTERM)
+        except OSError:
+            return
+
+        def escalate():
+            if proc.poll() is None:
+                try:
+                    os.killpg(group, signal.SIGKILL)
+                except OSError:
+                    pass
+            return GLib.SOURCE_REMOVE
+
+        GLib.timeout_add_seconds(5, escalate)
+
+    def _on_open_clicked(self, _button):
+        # The same front door the app-menu entry uses, so Resolve gets the size
+        # and the pointer aquarius-resolve-launch carries in.
+        target = LAUNCHER if os.access(LAUNCHER, os.X_OK) else None
+        argv = [target] if target else ["aq", "resolve", "run"]
+        if self.dry_run:
+            self._append_log("(rehearsal: would have started %s)\n" % " ".join(argv))
+            return
+        try:
+            subprocess.Popen(argv, start_new_session=True)
+        except OSError as exc:
+            aquarius_ui.set_status_glyph(self.done_status, ok=False)
+            self.done_blurb.set_label(
+                "Resolve is up to date, but this window could not start it: %s\n"
+                "Open it from your apps instead." % exc
+            )
+            return
+        self.close()
+
+    def _on_key(self, _controller, keyval, _keycode, _state):
+        if keyval == Gdk.KEY_Escape:
+            if self.stack.get_visible_child_name() != "working" or self.proc is None:
+                self.close()
+                return True
+        return False
+
+    def _on_close_request(self, _window):
+        # Closing the window while it is working stops the work. Leaving an
+        # invisible update running would be worse than either finishing it or
+        # stopping it, because nothing would ever tell the person how it went.
+        if self.proc is not None:
+            self.cancelled = True
+            self._stop_process()
+        return False
+
+
+class UpdaterApp(Adw.Application):
+    def __init__(self, dry_run=False):
+        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.NON_UNIQUE)
+        self.dry_run = dry_run
+
+    def do_activate(self):
+        window = self.props.active_window
+        if window is None:
+            window = UpdaterWindow(self, self.dry_run)
+        window.present()
+
+
+def main(argv):
+    dry_run = os.environ.get("AQ_RESOLVE_DRY_RUN") == "1"
+    for arg in argv[1:]:
+        if arg == "--dry-run":
+            dry_run = True
+        elif arg in ("-h", "--help"):
+            print(
+                "aquarius-resolve-updater — the Update DaVinci Resolve window\n"
+                "\n"
+                "    aquarius-resolve-updater [--dry-run]\n"
+                "\n"
+                "    --dry-run   walk through the window without updating anything\n"
+                "\n"
+                "It runs %s --update, which is the same script\n"
+                "'aq resolve update' runs in a terminal. Nothing is installed by\n"
+                "this window itself." % CLI
+            )
+            return 0
+        else:
+            print("aquarius-resolve-updater: I do not understand '%s'." % arg, file=sys.stderr)
+            return 1
+
+    if not os.access(CLI, os.X_OK):
+        print(
+            "aquarius-resolve-updater: %s is missing from this system.\n"
+            "That is a fault in AquariusOS, not in anything you did." % CLI,
+            file=sys.stderr,
+        )
+        return 1
+
+    GLib.set_prgname(APP_ID)
+    GLib.set_application_name("Update DaVinci Resolve")
+    app = UpdaterApp(dry_run=dry_run)
+    return app.run([argv[0]])
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

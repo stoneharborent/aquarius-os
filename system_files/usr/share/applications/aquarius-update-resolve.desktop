@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Update DaVinci Resolve
+GenericName=Video Editor Update
+Comment=Get the newest DaVinci Resolve and install it over the one you have. Your projects and settings are not touched
+Exec=/usr/libexec/aquarius-resolve-updater
+TryExec=/usr/libexec/aquarius-resolve-updater
+Icon=aquarius-logo
+Terminal=false
+StartupNotify=true
+StartupWMClass=org.aquariusos.ResolveUpdater
+Categories=AudioVideo;Video;AudioVideoEditing;
+Keywords=davinci;resolve;blackmagic;update;upgrade;newer;version;video;editor;
