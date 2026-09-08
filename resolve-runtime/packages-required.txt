@@ -129,6 +129,13 @@ gdk-pixbuf2
 librsvg2
 
 # --- Everything else Resolve links against -----------------------------------
+# ⚠️ dbus-libs IS ALSO WHAT TALKS TO THE DESKTOP'S SHARED FILE PICKER, added to
+# this comment 2026-09-08 so nobody trims it as "just a library". When Resolve's
+# own Qt carries the xdg-desktop-portal plug-in, the host-side launcher switches
+# it on and Qt then asks the desktop's portal — over D-Bus, on the session bus
+# distrobox shares from /run/user/<id> — to draw Open, Save and Render To. That
+# conversation is this library. There is no "portal client" package to add: the
+# portal is a D-Bus service on the HOST, and the client half is Qt's own.
 dbus-libs
 expat
 zlib

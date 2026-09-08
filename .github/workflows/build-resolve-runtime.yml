@@ -343,6 +343,25 @@ jobs:
             if [ -x "$f" ]; then ok "$f is present and runnable"; else bad "$f is missing"; fi
             if bash -n "$f"; then ok "$(basename "$f") is valid shell"; else bad "$f has a syntax error"; fi
           done
+
+          echo ""
+          echo "== and the run script does not wipe out the shared file picker =="
+          # ⚠️ FEATURE 008 ITEM 5, 2026-09-08, and it is a one-character trap.
+          #
+          # The host-side launcher looks inside this container for Qt's
+          # xdg-desktop-portal plug-in and, if Blackmagic's own Qt carries it,
+          # passes QT_QPA_PLATFORMTHEME=xdgdesktopportal in — which makes
+          # Resolve's Open, Save and Render-To dialogs the same shared picker
+          # Files and Firefox use.
+          #
+          # aquarius-resolve-run used to say `export QT_QPA_PLATFORMTHEME=`,
+          # emptying it one line before Resolve starts. With that line back, the
+          # feature would report itself working and do nothing at all.
+          if grep -qF 'export QT_QPA_PLATFORMTHEME="${QT_QPA_PLATFORMTHEME:-}"' /usr/bin/aquarius-resolve-run; then
+            ok "an inherited platform theme is kept, so the shared file picker survives"
+          else
+            bad "aquarius-resolve-run does not keep an inherited QT_QPA_PLATFORMTHEME — the desktop's shared file picker would be switched off one line before Resolve starts"
+          fi
           if [ -s /usr/share/aquarius-resolve/README ]; then
             ok "the README a person can read from inside is there"
           else

@@ -325,6 +325,56 @@ drive.
 
 ---
 
+## The Open and Save windows
+
+When Resolve asks you for a file — Import, Save As, Render To — it can show one
+of two things, and **AquariusOS finds out which and tells you** rather than
+leaving you to discover it:
+
+```
+aq resolve status
+```
+
+Near the bottom it says one of these.
+
+**"The desktop's shared picker."** The same window Files, Firefox and the
+Aquarius Editor open: your places in the sidebar, your recent folders, the
+keyboard shortcuts you already use. Nothing to set up — the OS switched it on
+because it found that Resolve's own copy of Qt could do it.
+
+**"Resolve's own."** Qt's plain file window, which looks and behaves like
+nothing else on the computer. **This is Blackmagic's decision, not a limitation
+of AquariusOS, and no operating system can change it.** Resolve carries its own
+Qt inside `/opt/resolve/libs`, built by Blackmagic; the shared picker needs one
+small plug-in to be inside that copy, and if Blackmagic did not build it there
+is nothing on the outside to switch on. Everything still works. It just looks
+like Resolve rather than like the rest of the computer.
+
+The OS checks every single time Resolve starts, so this answer follows a Resolve
+update on its own. `aquarius-resolve-launch --report` prints it in one line, and
+so does the last step of every install and update.
+
+**To force it either way**, put one line in `~/.config/aquarius/resolve.conf`:
+
+```
+file_dialogs=own       always Resolve's own windows
+file_dialogs=shared    always ask for the shared picker
+file_dialogs=auto      look, and decide. The default, and what happens with no
+                       line at all.
+```
+
+`shared` on a Resolve that cannot do it is harmless — Qt asks for a plug-in that
+is not there, prints a line nobody sees, and carries on with its own window. It
+is worth trying once on the bench after any Resolve update.
+
+> **Two things this does not change.** Resolve's **Media Storage** browser on the
+> Media page is part of the application, exactly as it is in every editor, and it
+> stays; it is not a file dialog. And nothing here restyles Resolve's own
+> interface, which is Blackmagic's, identical on every platform, and the
+> industry's standard.
+
+---
+
 ## The keys inside Resolve match the rest of the computer
 
 AquariusOS asks once, at first login, whether you want Mac keys or Windows keys.
@@ -956,7 +1006,8 @@ aquarius-resolve-install --dry-run          walk all seven steps, change nothing
 aquarius-resolve-install --update --dry-run rehearse an update, change nothing
 aquarius-resolve-check --dry-run           answer from the saved feed, offline
 aquarius-resolve-update-notify --dry-run   say what it would announce, send nothing
-aquarius-resolve-launch --report           the size and pointer, starting nothing
+aquarius-resolve-launch --report           the size, the pointer and which file
+                                            picker, starting nothing
 ```
 
 **No password is asked for and none should be.** podman and distrobox here are

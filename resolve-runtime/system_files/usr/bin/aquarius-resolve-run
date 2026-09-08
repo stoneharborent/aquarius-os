@@ -31,8 +31,20 @@ export QT_QPA_PLATFORM=xcb
 # Qt also tries to load a "platform theme" plugin to match the desktop it thinks
 # it is on. The desktop outside is GNOME or the Aquarius Desktop; the plugin for
 # either of those is not installed in here, and Qt's complaint about it looks
-# alarming and means nothing. Emptying these two stops it looking.
-export QT_QPA_PLATFORMTHEME=
+# alarming and means nothing. Emptying these stops it looking.
+#
+# ⚠️ BUT NOT IF THE HOST ASKED FOR ONE. Changed 2026-09-08, feature 008 item 5.
+# The host-side launcher looks inside this container for Qt's
+# xdg-desktop-portal plug-in — /opt/resolve/libs/plugins/platformthemes/
+# libqxdgdesktopportal.so, which is Blackmagic's file, in Blackmagic's copy of
+# Qt — and if it is there it passes QT_QPA_PLATFORMTHEME=xdgdesktopportal in.
+# That makes Resolve's Open, Save and Render-To dialogs the same shared picker
+# Files and Firefox use, over the session bus the host already shares with us.
+#
+# A plain `export QT_QPA_PLATFORMTHEME=` here would wipe that out one line
+# before Resolve starts, and the whole feature would silently do nothing. So the
+# value is KEPT when something set it, and emptied when nothing did.
+export QT_QPA_PLATFORMTHEME="${QT_QPA_PLATFORMTHEME:-}"
 export QT_STYLE_OVERRIDE=
 
 # ------------------------------------------------------------------------------

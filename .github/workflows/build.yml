@@ -6250,6 +6250,55 @@ jobs:
             && ok "the launcher answers when it is handed a project, rather than falling over" \
             || bad "the launcher fails when Files hands it a project — 'Open With → DaVinci Resolve' would do nothing"
 
+          echo "== and which file picker Resolve will open =="
+          # ⚠️ FEATURE 008 ITEM 5, built as auto-detection rather than as a bench
+          # experiment somebody has to remember to run. Resolve's Open, Save and
+          # Render-To windows are Qt's own and look like nothing else on the
+          # computer. Qt can be asked for the desktop's shared picker instead —
+          # the same one Files and Firefox use, over xdg-desktop-portal on the
+          # session bus distrobox already shares — but ONLY if the plug-in that
+          # does it is inside Blackmagic's own copy of Qt. Whether it is there is
+          # their decision; ours is to look and to say which one you are getting.
+          #
+          # There is no Resolve here, so the answer is stood in for, and both
+          # states are walked.
+          dialogs() { AQ_RESOLVE_FAKE_PORTAL_PLUGIN="$1" /usr/libexec/aquarius-resolve-launch --report 2>/dev/null || true; }
+          SHARED="$(dialogs yes)"
+          echo "       with the plug-in:    ${SHARED}"
+          printf '%s' "${SHARED}" | grep -q "file dialogs: the desktop's shared picker" \
+            && ok "the shared picker is switched on when Blackmagic's Qt can do it" \
+            || bad "the launcher does not switch to the shared picker even when the plug-in is there"
+          OWN="$(dialogs no)"
+          echo "       without it:          ${OWN}"
+          printf '%s' "${OWN}" | grep -q "file dialogs: Resolve's own" \
+            && ok "and Resolve's own dialogs are reported honestly when it cannot" \
+            || bad "the launcher does not say plainly that Resolve is using its own file dialogs"
+          # Naming a plug-in that is not there makes Qt warn at every start and
+          # change nothing, which is the worst of both.
+          printf '%s' "${OWN}" | grep -q 'xdgdesktopportal' \
+            && bad "the launcher would still ask Qt for a plug-in that is not in Resolve's Qt" \
+            || ok "and asks Qt for nothing at all in that case"
+          for want in 'libqxdgdesktopportal.so' 'conf_value file_dialogs'; do
+            grep -qF "${want}" /usr/libexec/aquarius-resolve-launch \
+              && ok "the launcher still has: ${want}" \
+              || bad "the launcher has lost '${want}' — the picker would stop being detected, or stop being overridable"
+          done
+          grep -q 'file dialogs: ' /usr/bin/aq \
+            && ok "'aq resolve status' reads the same answer off the same launcher" \
+            || bad "'aq resolve status' no longer says which file picker Resolve opens"
+          # 'aq resolve scale' rewrites resolve.conf, so a key missing from the
+          # list it carries across is a key deleted behind somebody's back.
+          grep -qE 'qt_variable\|file_dialogs' /usr/bin/aq \
+            && ok "'aq resolve scale' carries the file-picker setting across when it rewrites resolve.conf" \
+            || bad "'aq resolve scale' would delete a file_dialogs= line from resolve.conf"
+          # ⚠️ THE OTHER HALF OF THIS IS IN THE OTHER IMAGE, and it is not
+          # checkable from here: aquarius-resolve-run, inside the runtime
+          # container, must KEEP an inherited QT_QPA_PLATFORMTHEME instead of
+          # emptying it, or the launcher's flag is wiped out one line before
+          # Resolve starts and the whole feature silently does nothing.
+          # build-resolve-runtime.yml checks that, in the image it belongs to.
+          echo "       (the container's half of this is checked by build-resolve-runtime.yml)"
+
           echo "== the way to update without a terminal =="
           DESKUP=/usr/share/applications/aquarius-update-resolve.desktop
           if [ ! -r "${DESKUP}" ]; then

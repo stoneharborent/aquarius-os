@@ -113,11 +113,12 @@
 # does not understand a URI. See the block above the `exec` at the bottom.
 #
 #   aquarius-resolve-launch --report
-# Works out the size and the pointer, prints the one line it would print on a
-# real launch, and STARTS NOTHING. Added 2026-09-08 so that the last step of
-# every install and update — "Matching Resolve to your screen" — can ask this
-# script what it would do instead of assuming, and so that the image build can
-# ask the same question on a machine with no screen and no Resolve.
+# Works out the size, the pointer and which file picker Resolve will get, prints
+# the one line it would print on a real launch, and STARTS NOTHING. Added
+# 2026-09-08 so that the last step of every install and update — "Matching
+# Resolve to your screen" — can ask this script what it would do instead of
+# assuming, and so that the image build can ask the same question on a machine
+# with no screen and no Resolve.
 # ==============================================================================
 
 set -uo pipefail
@@ -266,10 +267,80 @@ case "${QT_VARIABLE}" in
         ;;
 esac
 
+# ------------------------------------------------------------------------------
+# WHICH FILE PICKER RESOLVE OPENS
+# ------------------------------------------------------------------------------
+# Added 2026-09-08, feature 008 item 5, as auto-detection rather than a bench
+# experiment somebody has to remember to run.
+#
+# THE QUESTION. When Resolve opens a file dialog — Import, Save As, Render To —
+# it draws Qt's own, which looks and behaves like nothing else on the computer:
+# different sidebar, different shortcuts, no "Recent", no places you set up in
+# Files. That is the loudest remaining seam between Resolve and the OS.
+#
+# Qt CAN be asked to use the desktop's shared picker instead — the same one
+# Files, Firefox and the Aquarius Editor use — through xdg-desktop-portal on
+# the session bus, which distrobox already shares (/run/user/<your id>). Qt does
+# it by loading a "platform theme" plug-in called libqxdgdesktopportal.so.
+#
+# ⚠️ WHETHER THAT PLUG-IN EXISTS IS BLACKMAGIC'S DECISION, NOT OURS. Resolve
+# carries its own Qt, built by Blackmagic, in /opt/resolve/libs. If they built
+# the portal plug-in, it is in there and this works. If they did not — or if
+# they built their dialogs with Qt's DontUseNativeDialog flag — then no
+# operating system on earth can change it, and saying otherwise would be a lie
+# in the documentation.
+#
+# So the OS LOOKS, every launch, and says which one you are getting. Nobody has
+# to run an experiment; the answer is on the report line and in
+# `aq resolve status`.
+#
+# THE OVERRIDE, for the bench: ~/.config/aquarius/resolve.conf
+#     file_dialogs=own       never ask for the shared picker
+#     file_dialogs=shared    ask for it whether or not the plug-in was found
+#     file_dialogs=auto      look, and decide. The default.
+PORTAL_PLUGIN="/opt/resolve/libs/plugins/platformthemes/libqxdgdesktopportal.so"
+
+# One question, asked once per launch, because entering the container costs
+# about a second and this script runs every time somebody clicks the icon.
+portal_plugin_present() {
+    [ -n "${AQ_RESOLVE_FAKE_PORTAL_PLUGIN+set}" ] && {
+        [ "${AQ_RESOLVE_FAKE_PORTAL_PLUGIN}" = "yes" ]
+        return
+    }
+    command -v distrobox > /dev/null 2>&1 || return 1
+    command -v podman > /dev/null 2>&1 || return 1
+    podman container exists "${CONTAINER}" 2> /dev/null || return 1
+    distrobox enter --name "${CONTAINER}" -- test -f "${PORTAL_PLUGIN}" \
+        > /dev/null 2>&1
+}
+
+FILE_DIALOGS="$(conf_value file_dialogs)"
+[ -n "${FILE_DIALOGS}" ] || FILE_DIALOGS="auto"
+case "${FILE_DIALOGS}" in
+    shared) USE_PORTAL=1 ;;
+    own) USE_PORTAL=0 ;;
+    *)
+        if portal_plugin_present; then USE_PORTAL=1; else USE_PORTAL=0; fi
+        ;;
+esac
+
+if [ "${USE_PORTAL}" = "1" ]; then
+    # Qt reads this name and loads the matching plug-in out of its own plug-in
+    # folder. The D-Bus session it then talks to is the host's, because
+    # distrobox shares /run/user/<your id> and the address that names it.
+    ENV_FLAGS+=(--env "QT_QPA_PLATFORMTHEME=xdgdesktopportal")
+    DIALOG_WORDS="the desktop's shared picker"
+else
+    # Deliberately nothing. Setting the variable to a plug-in that is not there
+    # makes Qt print a warning at every start and change nothing, which is the
+    # worst of both.
+    DIALOG_WORDS="Resolve's own"
+fi
+
 # Said out loud, because a launcher that silently changes how an application
 # looks is a launcher nobody can debug. This goes to the terminal when started
 # from one, and nowhere at all when started from an icon.
-REPORT_LINE="aquarius-resolve-launch: interface at ${SCALE}x (${QT_VARIABLE}), pointer ${CURSOR_THEME} at ${CURSOR_SIZE}px"
+REPORT_LINE="aquarius-resolve-launch: interface at ${SCALE}x (${QT_VARIABLE}), pointer ${CURSOR_THEME} at ${CURSOR_SIZE}px, file dialogs: ${DIALOG_WORDS}"
 echo "${REPORT_LINE}" >&2
 
 # --report: that was the whole question. Printed on stdout this time, because

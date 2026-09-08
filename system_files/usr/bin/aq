@@ -714,9 +714,10 @@ aq resolve — DaVinci Resolve on AquariusOS
     aq resolve run  Start Resolve. (You can also just click it in your apps.)
 
     aq resolve status
-                    Is it installed, which version, what is it running in, and
-                    can it see the graphics card. Start here when something is
-                    wrong.
+                    Is it installed, which version, what is it running in, can
+                    it see the graphics card and your drives, does its sound
+                    reach the desktop, and which file picker it opens. Start
+                    here when something is wrong.
 
     aq resolve check
                     Is there a newer DaVinci Resolve than the one you have? It
@@ -944,6 +945,44 @@ resolve_status() {
     if [ -x "${AQ_RESOLVE_INSTALLER}" ]; then
         "${AQ_RESOLVE_INSTALLER}" --sound 2>&1
     fi
+
+    # --------------------------------------------------------------------------
+    # Which file picker will Resolve open?
+    # --------------------------------------------------------------------------
+    # Resolve's own Open/Save windows are Qt's, and they look and behave like
+    # nothing else on the computer. Qt CAN be asked for the desktop's shared
+    # picker instead — the one Files, Firefox and the Aquarius Editor use — but
+    # only if the plug-in that does it is inside Blackmagic's own copy of Qt.
+    # Whether it is there is their decision and no operating system can change
+    # it.
+    #
+    # So the launcher looks, every time Resolve starts, and says which one you
+    # are getting. This prints the same answer without starting anything.
+    echo ""
+    echo "  Which file picker does Resolve open?"
+    if [ -x "${AQ_RESOLVE_LAUNCHER}" ]; then
+        local launch_line dialogs
+        launch_line="$("${AQ_RESOLVE_LAUNCHER}" --report 2> /dev/null)"
+        dialogs="${launch_line##*file dialogs: }"
+        case "${dialogs}" in
+            "the desktop's shared picker")
+                echo "    The desktop's shared picker — the same one Files and Firefox use."
+                echo "    Your places, your recent folders, the same keyboard shortcuts."
+                ;;
+            "Resolve's own")
+                echo "    Resolve's own. Blackmagic's copy of Qt does not carry the piece"
+                echo "    that would let it use the shared one, so no operating system can"
+                echo "    change this. Everything still works; it just looks like Resolve"
+                echo "    rather than like the rest of the computer."
+                ;;
+            *)
+                echo "    Could not tell — the launcher did not answer."
+                ;;
+        esac
+        echo "    To fix it either way, put one of these in"
+        echo "    ~/.config/aquarius/resolve.conf:   file_dialogs=own"
+        echo "                                       file_dialogs=shared"
+    fi
 }
 
 # =============================================================================
@@ -998,9 +1037,20 @@ resolve_scale_set() {
 #                                the default one. Only worth trying if the
 #                                default makes the interface look wrong — see
 #                                docs/restart/resolve.md.
+#
+#   file_dialogs=own             Always use Resolve's own Open/Save windows.
+#   file_dialogs=shared          Always ask for the desktop's shared file
+#                                picker, the one Files and Firefox use.
+#   file_dialogs=auto            Look inside Resolve for the piece that makes
+#                                the shared picker possible, and use it if it is
+#                                there. This is what happens with no line at
+#                                all. 'aq resolve status' says which you get.
 EOF
+        # ⚠️ EVERY OTHER SETTING IN THIS FILE IS CARRIED ACROSS. This function
+        # rewrites the whole file, so a key missing from this list is a key
+        # silently deleted the next time somebody runs 'aq resolve scale'.
         if [ -r "${AQ_RESOLVE_CONF}" ]; then
-            grep -E '^[[:space:]]*(qt_variable)[[:space:]]*=' "${AQ_RESOLVE_CONF}" || true
+            grep -E '^[[:space:]]*(qt_variable|file_dialogs)[[:space:]]*=' "${AQ_RESOLVE_CONF}" || true
         fi
         if [ -n "${value}" ]; then
             echo "scale=${value}"

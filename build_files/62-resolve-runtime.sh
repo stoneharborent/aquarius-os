@@ -1014,6 +1014,66 @@ else
     bad "the launcher fails when Files hands it a project — 'Open With' would do nothing"
 fi
 
+# ------------------------------------------------------------------------------
+# Which file picker Resolve opens — found out, not guessed at
+# ------------------------------------------------------------------------------
+# ⚠️ FEATURE 008 ITEM 5, built as auto-detection rather than as a bench
+# experiment somebody has to remember to run.
+#
+# Resolve's Open, Save and Render-To windows are Qt's own and look like nothing
+# else on the computer. Qt can be asked for the desktop's shared picker instead
+# — the same one Files and Firefox use, over xdg-desktop-portal on the session
+# bus distrobox already shares — but only if the plug-in that does it is inside
+# BLACKMAGIC'S copy of Qt, at
+# /opt/resolve/libs/plugins/platformthemes/libqxdgdesktopportal.so.
+#
+# Whether it is there is Blackmagic's decision. Ours is to LOOK, every launch,
+# and to say which one you are getting rather than claiming either.
+#
+# None of that file exists here — Resolve is never in a build machine — so the
+# answer is stood in for, exactly like the drives and the sound.
+say "DaVinci Resolve — which file picker it opens"
+
+aq_dialogs() { # aq_dialogs <yes|no>
+    AQ_RESOLVE_FAKE_PORTAL_PLUGIN="$1" "${AQ_LAUNCH}" --report 2> /dev/null || true
+}
+
+AQ_DLG_SHARED="$(aq_dialogs yes)"
+echo "  With the portal plug-in in Blackmagic's Qt: ${AQ_DLG_SHARED}"
+if printf '%s' "${AQ_DLG_SHARED}" | grep -q "file dialogs: the desktop's shared picker"; then
+    ok "the shared picker is switched on when Blackmagic's Qt can do it"
+else
+    bad "the launcher does not switch to the desktop's shared picker even when the plug-in is there"
+fi
+
+AQ_DLG_OWN="$(aq_dialogs no)"
+echo "  Without it: ${AQ_DLG_OWN}"
+if printf '%s' "${AQ_DLG_OWN}" | grep -q "file dialogs: Resolve's own"; then
+    ok "and Resolve's own dialogs are reported honestly when it cannot"
+else
+    bad "the launcher does not say plainly that Resolve is using its own file dialogs"
+fi
+
+# ⚠️ AND IT MUST SET NOTHING IN THAT CASE. Naming a plug-in that is not there
+# makes Qt print a warning at every start and change nothing — the worst of both.
+if printf '%s' "${AQ_DLG_OWN}" | grep -q 'xdgdesktopportal'; then
+    bad "the launcher would still ask Qt for a plug-in that is not in Resolve's Qt"
+else
+    ok "and asks Qt for nothing at all in that case, so Resolve starts without a warning"
+fi
+
+aq_file_has "${AQ_LAUNCH}" 'libqxdgdesktopportal\.so' \
+    "the launcher looks for the plug-in file inside Resolve's own Qt"
+aq_file_has "${AQ_LAUNCH}" 'conf_value file_dialogs' \
+    "and ~/.config/aquarius/resolve.conf can override the answer either way, for the bench"
+aq_file_has /usr/bin/aq 'file dialogs: ' \
+    "'aq resolve status' reads the same answer off the same launcher"
+# The one that would silently undo all of it: 'aq resolve scale' rewrites
+# resolve.conf, and a key missing from the list it carries across is a key
+# deleted the next time somebody changes the size.
+aq_file_has /usr/bin/aq 'qt_variable\|file_dialogs' \
+    "'aq resolve scale' carries the file-picker setting across when it rewrites resolve.conf"
+
 # And the front door for changing it by hand.
 if /usr/bin/aq resolve scale > /tmp/aq-resolve-scale.txt 2>&1; then
     ok "'aq resolve scale' runs"
