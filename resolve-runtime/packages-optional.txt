@@ -60,5 +60,9 @@ vulkan-tools
 patchelf
 # Reads the hardware, so the installer can say what graphics card it found.
 pciutils
-# Lets Resolve's own audio reach the host's PipeWire.
-pipewire-alsa
+
+# --- Moved out of this file --------------------------------------------------
+# `pipewire-alsa` used to be here. It is the piece that lets Resolve's audio
+# reach the host's PipeWire, and on 2026-09-08 it became REQUIRED — "the sound
+# works" is not an extra in a video editor. It is in packages-required.txt now,
+# with the reasoning. This note is here so that nobody wonders where it went.

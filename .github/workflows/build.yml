@@ -492,6 +492,43 @@ jobs:
         run: ./tests/test-aquarius-icons.sh
 
       # ------------------------------------------------------------------------
+      # Resolve's sound is not optional
+      # ------------------------------------------------------------------------
+      # ⚠️ FEATURE 008 ITEM 12, 2026-09-08. `pipewire-alsa` is the piece that
+      # carries Resolve's audio out of its container and into the desktop's
+      # PipeWire. It used to be on the runtime's OPTIONAL list, where a Rocky
+      # point release that moved the package would have printed a note and
+      # published a runtime that plays no sound at all.
+      #
+      # It is required now. This is a repository check rather than an image one
+      # because the package lists belong to the runtime, which is a separate
+      # build — so nothing else in this workflow would notice it sliding back.
+      - name: Check Resolve's runtime still requires its sound
+        run: |
+          set -uo pipefail
+          fails=0
+          REQ=resolve-runtime/packages-required.txt
+          OPT=resolve-runtime/packages-optional.txt
+          # The package name on a line of its own — not inside a comment, which
+          # is exactly what the note left behind in the optional file is.
+          if grep -qx 'pipewire-alsa' "${REQ}"; then
+            echo "  OK   ${REQ} requires pipewire-alsa, so a build without it stops"
+          else
+            echo "  FAIL ${REQ} no longer requires pipewire-alsa — the runtime could publish with no sound"
+            fails=1
+          fi
+          if grep -qx 'pipewire-alsa' "${OPT}"; then
+            echo "  FAIL ${OPT} lists pipewire-alsa again — an optional one is allowed to go missing"
+            fails=1
+          else
+            echo "  OK   it is not back on the optional list"
+          fi
+          if [ "${fails}" -ne 0 ]; then
+            echo "::error::Resolve's audio depends on pipewire-alsa being a required package of the runtime."
+            exit 1
+          fi
+
+      # ------------------------------------------------------------------------
       # THE MARK IS ONE DRAWING, AND IT IS THE RIGHT ONE
       # ------------------------------------------------------------------------
       # Royce redrew the AquariusOS mark on 2026-09-06. The "A" is now three
@@ -6085,6 +6122,39 @@ jobs:
           grep -q 'AQ_RESOLVE_INSTALLER}" --drives' /usr/bin/aq \
             && ok "'aq resolve status' asks the same script, so the two cannot disagree" \
             || bad "'aq resolve status' no longer asks about drives, or works out its own answer"
+
+          echo "== and that the sound comes out of the speakers =="
+          # ⚠️ Resolve plays through ALSA, which expects a sound card. There is
+          # no sound card inside a container — the real one belongs to
+          # AquariusOS, which drives it with PipeWire — so one plug-in file from
+          # `pipewire-alsa` carries the audio across. Without it Resolve plays
+          # silence with an empty device list, which reads as a broken Resolve.
+          #
+          # The plug-in lives in the RUNTIME, which is a separate image with its
+          # own build; build-resolve-runtime.yml reads the file back out of it.
+          # What is proved here is this image's half: that the question can be
+          # asked, that both answers are worded, and that the question is about
+          # the FILE and not about a package name.
+          sound() { AQ_RESOLVE_FAKE_SOUND="$1" /usr/libexec/aquarius-resolve-install --sound 2>&1; }
+          SND_OK="$(sound yes)"
+          printf '%s\n' "${SND_OK}" | sed 's/^/       /'
+          printf '%s' "${SND_OK}" | grep -q "Sound: reaches the desktop's audio (PipeWire)" \
+            && ok "a working setup says its sound reaches the desktop's audio" \
+            || bad "the sound check no longer says plainly that the audio reaches the desktop"
+          SND_BAD="$(sound no)"
+          printf '%s\n' "${SND_BAD}" | sed 's/^/       /'
+          printf '%s' "${SND_BAD}" | grep -q 'cannot reach the desktop' \
+            && ok "and a broken one says so rather than staying quiet" \
+            || bad "the sound check does not report a setup whose audio cannot get out"
+          printf '%s' "${SND_BAD}" | grep -q 'aq resolve install' \
+            && ok "and ends with what to do about it" \
+            || bad "the sound check names a problem and no way out of it"
+          grep -q 'libasound_module_pcm_pipewire.so' /usr/libexec/aquarius-resolve-install \
+            && ok "it looks for the plug-in file itself, not for a package name" \
+            || bad "the sound question no longer looks for the ALSA-to-PipeWire plug-in file"
+          grep -q 'AQ_RESOLVE_INSTALLER}" --sound' /usr/bin/aq \
+            && ok "'aq resolve status' asks the same script about sound too" \
+            || bad "'aq resolve status' no longer reports whether Resolve's sound can get out"
 
           echo "== the way to update without a terminal =="
           DESKUP=/usr/share/applications/aquarius-update-resolve.desktop

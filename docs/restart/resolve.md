@@ -325,6 +325,46 @@ drive.
 
 ---
 
+## Sound, with nothing to set
+
+Resolve's audio comes out of whatever your computer is set to play through, and
+follows it when you change it in **Settings → Sound**. There is no setting to
+match up and nothing to switch on.
+
+The reason it needs saying at all is that this is the sort of thing that usually
+does need setting on Linux. Resolve plays audio the oldest way there is, expecting
+to find a sound card; there is no sound card inside its environment, because the
+real one belongs to AquariusOS. One small piece inside the environment carries
+the sound across to the desktop. It is part of the environment AquariusOS builds,
+it cannot be left out, and the build refuses to publish an environment without it.
+
+`aq resolve status` says so in one line:
+
+```
+Sound: reaches the desktop's audio (PipeWire)
+```
+
+**If you get no sound in Resolve**, look in one place first:
+
+> **DaVinci Resolve** → **Preferences** → **System** → **Video and Audio I/O**
+
+Under *Audio* the **Speaker Setup** device should be the ordinary system one —
+it is usually named after your desktop's default output, the same name Settings →
+Sound shows. If it is set to something else, or to *None*, change it there and
+restart Resolve. Resolve remembers this per user, so a machine that has had
+Resolve on it before can carry an old choice across.
+
+If the list of devices is **empty**, that is a different fault and `aq resolve
+status` will have said so: the piece that carries the sound is not in the
+environment. Rebuild it — your projects and settings are kept:
+
+```
+aq resolve remove
+aq resolve install
+```
+
+---
+
 ## The bench list for the size and the pointer, Royce
 
 Five minutes, in this order. It is worth doing them as a list, because the two
@@ -830,7 +870,7 @@ Three things about that are deliberate:
 - **Unknown lines are ignored, not shown.** A line added to the script in future
   cannot break a window built before it.
 
-**Three questions and a rehearsal**, all answered by the same script, so the
+**Four questions and a rehearsal**, all answered by the same script, so the
 window never has a second opinion about the machine:
 
 ```
@@ -840,6 +880,10 @@ aquarius-resolve-install --drives           are your drives visible inside, at
                                             the same paths? Changes nothing.
                                             `aq resolve status` prints this, and
                                             so does step 7.
+aquarius-resolve-install --sound            can Resolve's audio reach the
+                                            desktop's? Looks inside for the
+                                            ALSA-to-PipeWire plug-in file, not
+                                            for a package name. Changes nothing.
 aquarius-resolve-install --dry-run          walk all seven steps, change nothing
 aquarius-resolve-install --update --dry-run rehearse an update, change nothing
 aquarius-resolve-check --dry-run           answer from the saved feed, offline

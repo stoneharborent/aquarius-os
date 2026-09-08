@@ -197,6 +197,42 @@ else
     bad "no cursor theme is installed — Resolve would draw the tiny default X11 pointer, which is the fault this was meant to fix"
 fi
 
+# ------------------------------------------------------------------------------
+# The sound, read back the same way
+# ------------------------------------------------------------------------------
+# The package being installed is not the question. The question is whether the
+# PLUG-IN FILE is in here — the thing ALSA loads to hand Resolve's audio to the
+# host's PipeWire — and whether ALSA's default device really points at it.
+#
+# Without the plug-in, Resolve is silent and its audio-device list is empty, and
+# nothing anywhere says why. This is the same rule as the cursor theme above:
+# content, never a package name alone.
+say "The sound — can Resolve's audio reach the desktop's?"
+ALSA_PLUGIN=""
+for candidate in /usr/lib64/alsa-lib/libasound_module_pcm_pipewire.so \
+    /usr/lib/alsa-lib/libasound_module_pcm_pipewire.so; do
+    if [ -e "${candidate}" ]; then
+        ALSA_PLUGIN="${candidate}"
+        break
+    fi
+done
+if [ -n "${ALSA_PLUGIN}" ]; then
+    ok "the ALSA-to-PipeWire plug-in is here: ${ALSA_PLUGIN}"
+else
+    bad "there is no ALSA-to-PipeWire plug-in in this image — Resolve would play no sound at all, and would show an empty audio-device list"
+fi
+
+# ⚠️ AND THAT ALSA'S DEFAULT IS IT. The package ships two drop-ins and the
+# second sets `pcm.!default { type pipewire }`, which is why AquariusOS adds no
+# ALSA configuration of its own. If a future package ever stopped shipping that
+# drop-in, everything above would still pass and the sound would still be gone.
+if grep -rqs 'type[[:space:]]*pipewire' /etc/alsa/conf.d /usr/share/alsa/alsa.conf.d 2> /dev/null; then
+    ok "ALSA's default playback device is PipeWire, out of the package's own drop-in"
+    ls /etc/alsa/conf.d 2> /dev/null | sed 's/^/       \/etc\/alsa\/conf.d\//'
+else
+    bad "nothing sets ALSA's default device to PipeWire — Resolve would look for a sound card that does not exist inside a container"
+fi
+
 say "The C library version — the VFX Reference Platform floor"
 GLIBC_VERSION="$(rpm -q --queryformat '%{VERSION}' glibc)"
 echo "  glibc is ${GLIBC_VERSION}"

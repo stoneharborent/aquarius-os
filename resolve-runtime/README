@@ -58,6 +58,12 @@ WHAT IS IN HERE
   The Vulkan loader and drivers, so the same container can host the Unreal
   Engine 5 editor, whose own floor is Rocky 8.
 
+  The piece that carries sound out. Resolve plays audio the oldest way there
+  is, expecting a sound card, and there is no sound card in here — the real
+  one belongs to AquariusOS. `pipewire-alsa` bridges the two through the
+  socket AquariusOS already shares, and it makes itself the default, so
+  nothing has to be set in Resolve or in here.
+
   Two scripts of ours:
       aquarius-resolve-setup   installs Resolve from your download
       aquarius-resolve-run     starts it with the right settings
@@ -72,7 +78,9 @@ WHAT IS NOT IN HERE
   NOT configured here — an AMD machine will start Resolve and be told its GPU
   processing mode is unsupported. That is honest, known, and on the roadmap.
 
-  Audio hardware access, beyond what the host passes through.
+  A sound card. There is no such thing inside a container. What is in here is
+  the plug-in that hands Resolve's audio to the host's, which is the part that
+  matters and is why there is nothing to set up.
 
 
 THE COMMANDS, ON THE HOST

@@ -305,6 +305,39 @@ jobs:
           fi
 
           echo ""
+          echo "== the sound gets out of here =="
+          # ⚠️ FEATURE 008 ITEM 12, 2026-09-08. Resolve plays through ALSA, which
+          # expects a sound card. There is no sound card inside a container: the
+          # real one belongs to AquariusOS, which drives it with PipeWire. The
+          # `pipewire-alsa` plug-in is what carries the audio across, through the
+          # /run/user/<id> socket distrobox already shares.
+          #
+          # It moved from the optional list to the required one on the same day,
+          # so a missing package now fails the build above. This is the second
+          # half of that: the FILE, read back out of the finished image, because
+          # a package can install and leave its plug-in somewhere ldconfig and
+          # ALSA never look.
+          plugin=""
+          for candidate in /usr/lib64/alsa-lib/libasound_module_pcm_pipewire.so \
+                           /usr/lib/alsa-lib/libasound_module_pcm_pipewire.so; do
+            [ -e "${candidate}" ] && plugin="${candidate}" && break
+          done
+          if [ -n "${plugin}" ]; then
+            ok "the ALSA-to-PipeWire plug-in is here: ${plugin}"
+          else
+            bad "no ALSA-to-PipeWire plug-in — Resolve would play silence and show an empty audio-device list"
+          fi
+          # And that ALSA's DEFAULT device is it. The package's own drop-in sets
+          # `pcm.!default { type pipewire }`, which is why AquariusOS ships no
+          # ALSA configuration of its own. If that drop-in ever stopped arriving,
+          # everything above would still pass and the sound would still be gone.
+          if grep -rqs 'type[[:space:]]*pipewire' /etc/alsa/conf.d /usr/share/alsa/alsa.conf.d; then
+            ok "ALSA's default playback device is PipeWire, from the package's own drop-in"
+          else
+            bad "nothing points ALSA's default device at PipeWire — Resolve would look for a sound card that is not in here"
+          fi
+
+          echo ""
           echo "== our own two scripts =="
           for f in /usr/bin/aquarius-resolve-setup /usr/bin/aquarius-resolve-run; do
             if [ -x "$f" ]; then ok "$f is present and runnable"; else bad "$f is missing"; fi

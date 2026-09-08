@@ -108,6 +108,11 @@
 #         computer is visible INSIDE the container at the same path. Changes
 #         nothing. `aq resolve status` prints exactly this, and so does step 7.
 #
+#     aquarius-resolve-install --sound
+#         Says whether Resolve's audio can reach the desktop's, by looking
+#         inside the container for the ALSA-to-PipeWire plug-in. Changes
+#         nothing. `aq resolve status` prints exactly this.
+#
 # AND A REHEARSAL:
 #
 #     aquarius-resolve-install --dry-run
@@ -180,6 +185,7 @@ while [ $# -gt 0 ]; do
         --gpu-summary) QUERY="gpu" ;;
         --find-installer) QUERY="find" ;;
         --drives) QUERY="drives" ;;
+        --sound) QUERY="sound" ;;
         --progress-fd)
             shift
             PROGRESS_FD="${1:-}"
@@ -558,6 +564,61 @@ report_drives() {
     return 0
 }
 
+# ==============================================================================
+# THE SOUND COMES OUT OF THE SPEAKERS
+# ==============================================================================
+# Resolve plays audio through ALSA, which is Linux's lowest-level sound
+# interface and expects to find a sound card. Inside a container there is no
+# sound card: the real one belongs to AquariusOS, which drives it with PipeWire.
+#
+# The piece in between is an ALSA plug-in from the `pipewire-alsa` package. It
+# takes what Resolve plays and hands it to the host's PipeWire through the
+# socket in /run/user/<your id>, which distrobox already shares. It also ships
+# its own ALSA drop-in making PipeWire the DEFAULT device, so there is nothing
+# for AquariusOS to configure and nothing for a person to set — which is the
+# whole point of feature 008 item 12, "sound with no settings".
+#
+# What there IS to do is check, because without that one file Resolve is silent
+# and its audio-device list is empty, and nothing anywhere says why.
+#
+# ⚠️ THE FILE, NOT THE PACKAGE. `rpm -q pipewire-alsa` inside the container would
+# answer a different question — "was a package installed" rather than "is the
+# thing ALSA loads in here". Same rule as everywhere else in this repository:
+# trust content, never a name.
+#
+# AQ_RESOLVE_FAKE_SOUND=yes|no stands in for the answer on a machine with no
+# container, the same way the drives check is stood in for above.
+ALSA_PIPEWIRE_PLUGIN_PATHS="/usr/lib64/alsa-lib/libasound_module_pcm_pipewire.so /usr/lib/alsa-lib/libasound_module_pcm_pipewire.so"
+
+sound_reaches_desktop() {
+    case "${AQ_RESOLVE_FAKE_SOUND:-}" in
+        yes) return 0 ;;
+        no) return 1 ;;
+    esac
+    # One `distrobox enter`, not one per path: entering a container is the slow
+    # part, and this runs inside `aq resolve status`, which people run when
+    # something is already wrong and they are already impatient.
+    distrobox enter --name "${CONTAINER}" -- sh -c \
+        'for f in '"${ALSA_PIPEWIRE_PLUGIN_PATHS}"'; do [ -e "$f" ] && exit 0; done; exit 1' \
+        > /dev/null 2>&1
+}
+
+report_sound() {
+    if sound_reaches_desktop; then
+        echo "  Sound: reaches the desktop's audio (PipeWire)"
+        echo "  Nothing to set. Resolve's audio comes out of whatever your"
+        echo "  computer is set to play through, and follows it when you change it."
+    else
+        echo "  ⚠️  Sound: cannot reach the desktop's audio."
+        echo "  Resolve would play silence, and its list of audio devices would"
+        echo "  be empty. The piece that carries sound out of the environment is"
+        echo "  missing from it. Build the environment again — your projects and"
+        echo "  settings are kept:"
+        echo "        aq resolve remove"
+        echo "        aq resolve install"
+    fi
+}
+
 # ------------------------------------------------------------------------------
 # What this machine already has, and what the checker says is newest
 # ------------------------------------------------------------------------------
@@ -660,6 +721,16 @@ case "${QUERY}" in
             CONTAINER="${AQ_RESOLVE_CONTAINER:-aquarius-resolve}"
         fi
         report_drives
+        exit 0
+        ;;
+    sound)
+        # Same shape, same reason, as --drives above.
+        if [ -r "${RUNTIME_ENV}" ]; then
+            # shellcheck source=/dev/null
+            . "${RUNTIME_ENV}"
+            CONTAINER="${AQ_RESOLVE_CONTAINER:-aquarius-resolve}"
+        fi
+        report_sound
         exit 0
         ;;
 esac

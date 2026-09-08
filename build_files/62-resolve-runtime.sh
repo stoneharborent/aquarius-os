@@ -881,6 +881,63 @@ aq_file_has /tmp/aq-dryrun.txt '^  Your drives, inside and out$' \
 aq_file_has /usr/bin/aq 'AQ_RESOLVE_INSTALLER\}" --drives' \
     "'aq resolve status' asks the same question of the same script, rather than working out its own answer"
 
+# ------------------------------------------------------------------------------
+# Sound, with no settings
+# ------------------------------------------------------------------------------
+# ⚠️ FEATURE 008 ITEM 12. Resolve plays audio through ALSA, which expects a sound
+# card, and there is no sound card inside a container — the real one belongs to
+# AquariusOS, which drives it with PipeWire. One plug-in file from the
+# `pipewire-alsa` package carries the audio across, through the socket in
+# /run/user/<id> that distrobox already shares. Without it Resolve is silent with
+# an empty audio-device list, which reads as a broken Resolve.
+#
+# That package now lives in the RUNTIME's required list, so the runtime's own
+# build is what proves the file is there (resolve-runtime/build.sh reads it back
+# out of the finished image). This image cannot see inside that container, so
+# what it checks is its own half: that the required list still asks for the
+# package, that the question can be asked, and that both answers are worded.
+say "DaVinci Resolve — sound with no settings"
+
+echo "  The package list is not in this image — it belongs to the runtime, which"
+echo "  is a separate build. resolve-runtime/build.sh is what reads the plug-in"
+echo "  file back out of the finished runtime. What follows is this image's half."
+
+aq_sound() { # aq_sound <yes|no>
+    AQ_RESOLVE_FAKE_SOUND="$1" /usr/libexec/aquarius-resolve-install --sound 2>&1
+}
+
+AQ_SOUND_OK="$(aq_sound yes)"
+echo "  When the audio can get out:"
+printf '%s\n' "${AQ_SOUND_OK}" | sed 's/^/    /'
+if printf '%s' "${AQ_SOUND_OK}" | grep -q "Sound: reaches the desktop's audio (PipeWire)"; then
+    ok "a working setup says its sound reaches the desktop's audio"
+else
+    bad "the sound check no longer says plainly that the audio reaches the desktop"
+fi
+
+AQ_SOUND_BAD="$(aq_sound no)"
+echo "  When it cannot:"
+printf '%s\n' "${AQ_SOUND_BAD}" | sed 's/^/    /'
+if printf '%s' "${AQ_SOUND_BAD}" | grep -q 'cannot reach the desktop'; then
+    ok "and a broken one says so rather than staying quiet"
+else
+    bad "the sound check does not report a setup whose audio cannot get out"
+fi
+if printf '%s' "${AQ_SOUND_BAD}" | grep -q 'aq resolve install'; then
+    ok "and ends with what to do about it"
+else
+    bad "the sound check names a problem and no way out of it"
+fi
+
+# ⚠️ THE FILE, NOT THE PACKAGE NAME. `rpm -q` inside the container would answer
+# "was a package installed", which is a different question from "is the thing
+# ALSA loads in there". The launcher and the installer must keep asking the
+# second one.
+aq_file_has /usr/libexec/aquarius-resolve-install 'libasound_module_pcm_pipewire\.so' \
+    "the sound question looks for the plug-in file itself, not for a package name"
+aq_file_has /usr/bin/aq 'AQ_RESOLVE_INSTALLER\}" --sound' \
+    "'aq resolve status' asks the same script about sound too"
+
 # And the front door for changing it by hand.
 if /usr/bin/aq resolve scale > /tmp/aq-resolve-scale.txt 2>&1; then
     ok "'aq resolve scale' runs"

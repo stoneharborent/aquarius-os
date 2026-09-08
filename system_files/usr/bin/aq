@@ -928,6 +928,22 @@ resolve_status() {
         echo "    which is a fault in the operating system rather than in"
         echo "    anything you did."
     fi
+
+    # --------------------------------------------------------------------------
+    # Does its sound come out of the speakers?
+    # --------------------------------------------------------------------------
+    # The third question of the same kind, asked the same way: inside the
+    # container, by the one script that owns the answer.
+    #
+    # Resolve plays through ALSA, which expects a sound card, and there is no
+    # sound card inside a container — the real one belongs to AquariusOS, which
+    # drives it with PipeWire. One plug-in file carries the audio across. Without
+    # it Resolve is silent with an empty device list, which reads as a broken
+    # Resolve rather than as a missing piece.
+    echo ""
+    if [ -x "${AQ_RESOLVE_INSTALLER}" ]; then
+        "${AQ_RESOLVE_INSTALLER}" --sound 2>&1
+    fi
 }
 
 # =============================================================================

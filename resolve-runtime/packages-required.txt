@@ -15,8 +15,34 @@
 # ==============================================================================
 
 # --- Sound -------------------------------------------------------------------
+# Resolve plays audio through ALSA, which is Linux's oldest and lowest sound
+# interface. alsa-lib is the library it links against.
 alsa-lib
 pulseaudio-libs
+#
+# ⚠️ AND THE PIECE THAT MAKES IT COME OUT OF THE SPEAKERS. Promoted from the
+# optional list on 2026-09-08 (feature 008, "Resolve belongs").
+#
+# ALSA on its own talks to a sound card. Inside a container there is no sound
+# card — the real one belongs to AquariusOS, which drives it with PipeWire.
+# `pipewire-alsa` is the piece in between: an ALSA plug-in that takes what
+# Resolve plays and hands it to the host's PipeWire through the socket in
+# /run/user/<your id>, which distrobox already shares. Without it Resolve is
+# silent, or opens with an empty audio-device list, and nothing anywhere says
+# why.
+#
+# IT NEEDS NO CONFIGURATION FROM US, and this is worth writing down so that
+# nobody adds a file that fights it. The package itself drops two drop-ins into
+# /etc/alsa/conf.d — 50-pipewire.conf and 99-pipewire-default.conf — and the
+# second one sets ALSA's DEFAULT playback and capture device to PipeWire
+# (`pcm.!default { type pipewire }`). So the default is already right the
+# moment the package is installed. AquariusOS adds no ALSA configuration of its
+# own to this image, on purpose.
+#
+# It is REQUIRED rather than optional because "the audio works" is not a nice
+# extra in a video editor. A build that cannot get this package should stop and
+# be looked at, not publish a runtime that plays no sound.
+pipewire-alsa
 
 # --- The Apache Portable Runtime ---------------------------------------------
 # Resolve's own networking and threading layer is built on it. This is the
