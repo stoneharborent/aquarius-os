@@ -60,7 +60,7 @@
 # THE THREE PAGES
 # =============================================================================
 #   1  Choose      what will happen, which file, which graphics card, Install.
-#   2  Installing  the six steps, a bar, Details, Cancel. Becomes the failure
+#   2  Installing  the seven steps, a bar, Details, Cancel. Becomes the failure
 #                  page in place if anything goes wrong — same log, still there.
 #   3  Done        "DaVinci Resolve is installed", Open it, Close, and the two
 #                  things worth knowing the first time it opens.
@@ -139,6 +139,11 @@ DEFAULT_STEPS = [
     "Setting that environment up",
     "Installing DaVinci Resolve",
     "Adding it to your apps",
+    # Added 2026-09-08. Blackmagic's installer rewrites its own app-menu entry
+    # every time it runs, and an entry that bypasses our launcher is a Resolve
+    # that opens small with the wrong pointer. The script checks and repairs it;
+    # this is the row that says so while it happens.
+    "Matching Resolve to your screen",
 ]
 
 

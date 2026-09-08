@@ -708,7 +708,7 @@ aq resolve — DaVinci Resolve on AquariusOS
                     apps does.
 
     aq resolve install --dry-run
-                    A rehearsal. Walks through all six steps and installs
+                    A rehearsal. Walks through all seven steps and installs
                     nothing at all. Add --gui to look at the window.
 
     aq resolve run  Start Resolve. (You can also just click it in your apps.)
