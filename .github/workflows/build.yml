@@ -2442,8 +2442,18 @@ jobs:
           then :; else bad "the login screen's window manager loads labwc's default key bindings"; fi
 
           echo "== the login screen itself =="
+          # The ENTRY file lives at the shell root (beside shell.qml), not in
+          # greeter/, so Quickshell's config folder is the whole shell and the
+          # greeter's ../theme and ../components/bar imports resolve. Moved
+          # 2026-09-07; before that the login screen failed with "LogoMark is
+          # not a type" and the machine fell back to GDM.
+          if [ -s /usr/share/aquarius/shell/greeter.qml ]; then
+            ok "greeter.qml (the entry, at the shell root)"
+          else
+            bad "/usr/share/aquarius/shell/greeter.qml is missing — the login screen would not start"
+          fi
           GREETER_DIR=/usr/share/aquarius/shell/greeter
-          for f in greeter.qml qmldir GreeterState.qml GreeterWindow.qml \
+          for f in qmldir GreeterState.qml GreeterWindow.qml \
                    GreeterCard.qml GreeterField.qml GreeterAvatar.qml \
                    GreeterStepArrow.qml GreeterDesktopPill.qml; do
             if [ -s "${GREETER_DIR}/${f}" ]; then ok "${f}"

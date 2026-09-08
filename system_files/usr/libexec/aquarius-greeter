@@ -13,7 +13,7 @@
 #                          something to draw into.
 #               └─ aquarius-greeter-shell
 #                          sets the screen size, then starts the login screen
-#                    └─ qs -p …/greeter/greeter.qml
+#                    └─ qs -p …/shell/greeter.qml
 #                          the login screen itself: the Ice wallpaper, the
 #                          clock, the card, the password box.
 #
