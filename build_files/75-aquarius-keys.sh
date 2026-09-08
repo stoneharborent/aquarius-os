@@ -252,8 +252,24 @@ aq_file_has "${KEYS_DIR}/mac.yaml" '^ *Super-Shift-3: SYSRQ$' \
     "mac.yaml: Command-Shift-3 takes a screenshot"
 aq_file_has "${KEYS_DIR}/mac.yaml" '^ *- Ptyxis( |$)' \
     "mac.yaml knows Ptyxis, the terminal this image ships, is a terminal"
-aq_file_has "${KEYS_DIR}/mac.yaml" '^ *- resolve *#' \
-    "mac.yaml leaves DaVinci Resolve's own shortcuts alone"
+# ⚠️ AND THE ONE THAT CHANGED DIRECTION. Until 2026-09-08 this line checked the
+# OPPOSITE: that mac.yaml carried `- resolve` in its exclusion list, so that
+# DaVinci Resolve kept its Control keys in Mac mode.
+#
+# Royce's decision that day (feature 008 item 11) reversed it. The old reasoning
+# was "a professional app where you have years of Control-key muscle memory";
+# his years of Resolve are MAC years, so excluding it meant Command did nothing
+# inside the one application this operating system exists for, while working
+# everywhere else. Resolve follows the OS setting now: Mac mode maps Command
+# inside Resolve, Windows mode leaves everything alone.
+#
+# So the check is inverted rather than deleted. A deleted check is a decision
+# nobody can see being undone.
+if grep -Eq '^[[:space:]]*- resolve([[:space:]]|$)' "${KEYS_DIR}/mac.yaml"; then
+    bad "mac.yaml excludes DaVinci Resolve again — Command would do nothing inside Resolve while working everywhere else (Royce's decision, 2026-09-08)"
+else
+    ok "DaVinci Resolve follows the OS's keyboard setting, like everything else"
+fi
 
 # Command-Space, Command-Tab and Command-` must NOT be remapped: they are how
 # the desktop's own search and window switching are reached. A rule for any of

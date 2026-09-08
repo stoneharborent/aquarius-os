@@ -4472,7 +4472,18 @@ jobs:
           check "Command-Q closes the window"             '^ *Super-q: A-F4$'      "${MAC}"
           check "Command-Shift-3 takes a screenshot"      '^ *Super-Shift-3: SYSRQ$' "${MAC}"
           check "Files gets its own rules"                '^ *- Nautilus$'         "${MAC}"
-          check "DaVinci Resolve is left alone"           '^ *- resolve *#'        "${MAC}"
+          # ⚠️ THIS CHECK CHANGED DIRECTION ON 2026-09-08, and it is inverted
+          # rather than deleted so that the decision stays visible. It used to
+          # require `- resolve` in mac.yaml's exclusion list, keeping DaVinci
+          # Resolve on Control keys in Mac mode. Royce's years of Resolve are
+          # MAC years, so that made Command do nothing inside the one
+          # application this operating system exists for, while working
+          # everywhere else on the machine. Resolve follows the OS setting now.
+          if grep -Eq '^[[:space:]]*- resolve([[:space:]]|$)' "${MAC}"; then
+            bad "mac.yaml excludes DaVinci Resolve again — Command would do nothing inside Resolve (Royce's decision, 2026-09-08)"
+          else
+            ok "DaVinci Resolve follows the OS's keyboard setting, like everything else"
+          fi
 
           # These three must NOT be remapped: they are how the desktop's own
           # search and window switching are reached. A rule for any of them

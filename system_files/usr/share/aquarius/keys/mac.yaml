@@ -170,12 +170,33 @@ keymap:
   # ---------------------------------------------------------------------------
   # Some programs should be left completely alone:
   #
-  #   * Professional apps that were built on Linux with Control-based
-  #     shortcuts, where a creator already has years of muscle memory —
-  #     DaVinci Resolve, Blender, OBS.
   #   * Games. A game reads the keyboard directly and expects the keys the
   #     player configured. Remapping in the middle of a game is the fastest
   #     way to lose a fight.
+  #   * Apps built on Linux around the Control key, where somebody's muscle
+  #     memory is genuinely a Linux one — Blender and OBS are here for that
+  #     reason.
+  #
+  # ⚠️ DAVINCI RESOLVE IS NOT ON THIS LIST ANY MORE. Royce's decision,
+  # 2026-09-08 (feature 008 item 11 in FEATURES.md). It used to be, and the
+  # reasoning was "a professional app where you have years of Control-key
+  # muscle memory". That reasoning was wrong for the person this operating
+  # system is built for: Royce's years of Resolve are MAC years. Command-S,
+  # Command-Z, Command-B. On Linux those same commands are Control keys, so
+  # excluding Resolve meant Command did nothing inside the one application
+  # AquariusOS exists for, while working everywhere else on the machine —
+  # a seam, and a seam by our own choice.
+  #
+  # THE RULE NOW: the keys inside Resolve match whatever the OS is set to.
+  #
+  #   Mac mode      Command-S saves, Command-Z undoes, Command-C copies,
+  #                 exactly as they do in Files and in Firefox. Same as this
+  #                 person's other computer.
+  #   Windows mode  nothing is remapped anywhere — the remapper does not even
+  #                 run — so Resolve gets the Control keys it always had.
+  #
+  # There is no third state and no setting of its own. One question, asked
+  # once, at first login.
   #
   # To stop Aquarius Keys touching an app, add its id to this list. To find
   # out what an app calls itself, click on its window and run:
@@ -191,7 +212,9 @@ keymap:
   - name: The Mac shortcut set — everywhere except the apps listed below
     application:
       not:
-        - resolve            # DaVinci Resolve
+        # ⚠️ `resolve` was here until 2026-09-08 and is deliberately gone. See
+        # the block above. DaVinci Resolve follows the OS's keyboard setting
+        # now, like everything else on the machine.
         - /[Bb]lender/
         - obs                # OBS Studio
         - com.obsproject.Studio

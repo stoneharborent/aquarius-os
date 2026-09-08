@@ -325,6 +325,35 @@ drive.
 
 ---
 
+## The keys inside Resolve match the rest of the computer
+
+AquariusOS asks once, at first login, whether you want Mac keys or Windows keys.
+**Since 8 September 2026 that answer applies inside Resolve too.**
+
+- **Mac mode** — Command-S saves, Command-Z undoes, Command-C and Command-V copy
+  and paste, Command-B blades. The same keys as in Files and Firefox, and the
+  same keys as on a Mac.
+- **Windows mode** — nothing is remapped anywhere on the machine, so Resolve has
+  the Control keys it has always had on Linux.
+
+Switch at any time, with no logging out:
+
+```
+aq keys mac
+aq keys windows
+```
+
+Resolve used to be *excluded* from Mac mode, on the reasoning that a
+professional application should keep the Control keys somebody had years of
+practice with. That was the wrong call here: Royce's years of Resolve are Mac
+years, so the exclusion made Command do nothing inside the one application this
+operating system exists for, while working everywhere else. The whole story, and
+what to try on the bench before trusting it — particularly the Option/Alt-heavy
+trim and nudge shortcuts — is in
+[aquarius-keys.md](aquarius-keys.md).
+
+---
+
 ## Opening footage from Files
 
 Right-click a video or a sound file in Files and **DaVinci Resolve** is in the

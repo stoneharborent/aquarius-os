@@ -203,17 +203,43 @@ behave the same. An app with three windows open needs three Command-Qs.
 
 ## How to exclude an app
 
-Some programs should be left alone entirely: professional apps where you already
-have years of Control-key muscle memory, and games, which read the keyboard
-directly and expect the keys the player configured.
+Some programs should be left alone entirely: games, which read the keyboard
+directly and expect the keys the player configured, and apps built on Linux
+around the Control key where the muscle memory really is a Linux one.
 
 Already excluded, out of the box:
 
-- DaVinci Resolve
 - Blender
 - OBS Studio
 - Steam, **and every game Steam launches**
 - gamescope, Lutris, Heroic
+
+### DaVinci Resolve is deliberately **not** on that list
+
+It was until 8 September 2026, and the reason it stopped is worth reading before
+anybody puts it back.
+
+The old reasoning was "a professional app where you have years of Control-key
+muscle memory". That is true of somebody who learned Resolve on Linux. It is not
+true of Royce, whose years of Resolve are **Mac** years — Command-S, Command-Z,
+Command-B. On Linux those same commands are Control keys, so excluding Resolve
+meant Command did nothing at all inside the one application this operating
+system exists for, while working perfectly in Files and Firefox two windows
+away. A seam, and one we had put there ourselves.
+
+So Resolve follows the setting, like everything else:
+
+| The OS is set to | Inside Resolve |
+|---|---|
+| **Mac** | Command-S saves, Command-Z undoes, Command-C copies — the same keys as everywhere else on the machine, and the same keys as on a Mac. |
+| **Windows** | Nothing is remapped anywhere. The remapper does not even run. Resolve has the Control keys it always had. |
+
+There is no third state and no setting of its own.
+
+**If you genuinely want Resolve left alone**, add `resolve` back to the `not:`
+list described below. The build will fail with a message saying this decision is
+being reversed, which is on purpose — remove that check in
+`build_files/75-aquarius-keys.sh` at the same time, and say why.
 
 To add one, edit the `not:` list in the block named *"The Mac shortcut set"* in
 `system_files/usr/share/aquarius/keys/mac.yaml`, and rebuild the image. The list
@@ -281,7 +307,22 @@ work.
 7. **Command-Shift-4** opens the screenshot tool with an area selection.
 8. **Switch live**: `aq keys windows`, then immediately Control-C to copy in
    Firefox — no logging out. Then `aq keys mac` and check Command-C again.
-9. **DaVinci Resolve** — its own shortcuts must be completely unaffected.
+9. **DaVinci Resolve follows the OS setting** — changed 2026-09-08, and this is
+   the item to spend real time on.
+   - In **Mac mode**: Command-S saves the project. Command-Z undoes. Command-C
+     and Command-V copy and paste a clip on the timeline. Command-B does a blade
+     cut. They should feel like the Mac, because that is the whole point.
+   - In **Windows mode** (`aq keys windows`): the same jobs are Control-S,
+     Control-Z, Control-B, and nothing is remapped at all.
+   - ⚠️ **AND THE OPTION/ALT-HEAVY ONES, WHICH ARE THE RISK.** Aquarius Keys
+     swaps the two keys beside the space bar in Mac mode, so the key that used
+     to send Alt now sends Super and the Windows-logo key sends Alt. Resolve
+     leans on Alt more than almost any other application: **Alt+drag** to make a
+     copy of a clip, Alt with the arrow keys to nudge, the trim tools, and the
+     Option-modified trims on the edit page. Try each of those with the physical
+     key that is *labelled* Option on the bench keyboard, in both modes, before
+     this item is called done. If any of them does the wrong thing, say which —
+     it is a rule to add to `mac.yaml`, not a reason to exclude Resolve again.
 10. **`aq keys status`** — should say Mac, say it is running, name the desktop,
     and — this line is new — say **how many keyboards it has hold of**. On the
     bench that should be two: the K780 and the Razer. "Running: yes" with no
