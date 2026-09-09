@@ -29,6 +29,20 @@
 # real distrobox-export file into a temporary folder, runs the repair against
 # it, and checks **every key**, one at a time.
 #
+# ⚠️ AND THE BENCH FINDING OF 9 SEPTEMBER 2026, WHICH IS THE WORST OF THE LOT.
+# Clicking the DaVinci Resolve icon in GNOME did **nothing at all** — no window,
+# no error on screen. GNOME's log said exactly why:
+#
+#     Failed to launch "DaVinci Resolve (on aquarius-resolve)":
+#     Failed to change to directory "/opt/resolve/" (No such file or directory)
+#
+# The entry carried `Path=/opt/resolve/`, copied out of the container.
+# `Path=` is the folder the desktop steps into BEFORE it runs anything, and
+# /opt/resolve exists only inside the container. So the desktop refused to start
+# the app at all. Running the same Exec line by hand in a terminal worked, which
+# is why nobody caught it sooner — and it is almost certainly the real cause of
+# the 8 September "after quitting, Resolve cannot be reopened" as well.
+#
 # It also checks the two pieces of noise beside it:
 #
 #   * distrobox's own "Terminal entering Aquarius-resolve" entry, which is a way
@@ -124,6 +138,25 @@ sed -i "s#Icon=.*#Icon=${WORK}/icons/DV_Resolve.png#" "${MAIN}"
 
 echo ""
 echo "-- the entry that starts Resolve --"
+
+# ⚠️ BEFORE THE REPAIR: `check` has to already be unhappy about the working
+# folder. THE BENCH FAULT OF 9 SEPTEMBER 2026 — clicking the DaVinci Resolve
+# icon in GNOME did nothing at all, and GNOME's log said why: "Failed to change
+# to directory /opt/resolve/ (No such file or directory)". `Path=` is the folder
+# the desktop steps into BEFORE running the program, /opt/resolve is inside the
+# container and not on this computer, so the desktop refused to start the app at
+# all. If `check` cannot see that, nothing can.
+if run_entry check "${MAIN}" > "${WORK}/check-before.txt" 2>&1; then
+    bad "'check' passed an entry with Path=/opt/resolve/ — the very thing that made clicking the icon do nothing"
+else
+    if grep -q 'Path is' "${WORK}/check-before.txt"; then
+        ok "'check' names the unreachable Path before the repair"
+    else
+        bad "'check' failed but never mentioned Path:"
+        sed 's/^/       /' "${WORK}/check-before.txt" >&2
+    fi
+fi
+
 if run_entry repair "${MAIN}" | sed 's/^/     /'; then
     ok "the repair ran"
 else
@@ -179,6 +212,19 @@ if grep -q '^NoDisplay=true' "${MAIN}"; then
     bad "the entry that STARTS Resolve was hidden — there would be no way to open it"
 else
     ok "it is not hidden, because it is the one that opens Resolve"
+fi
+
+# ⚠️ THE WORKING FOLDER — THE BENCH FAULT OF 9 SEPTEMBER 2026. `Path=` is the
+# folder the desktop steps into before it runs Exec. Blackmagic's entries name
+# /opt/resolve/, which lives inside the container and has never been on this
+# computer, so GNOME could not step into it and refused to start the entry at
+# all: clicking the DaVinci Resolve icon did nothing whatsoever. The folder is
+# not lost — aquarius-resolve-launch steps into it INSIDE the container, where
+# it really is.
+if grep -q '^Path=' "${MAIN}"; then
+    bad "it kept $(grep -m1 '^Path=' "${MAIN}") — the desktop cannot step into that folder, so clicking the icon does nothing"
+else
+    ok "the unreachable working folder is gone — THE 'CLICKING THE ICON DOES NOTHING' FAULT"
 fi
 
 # It has to be a valid desktop file afterwards. If the machine running this has
@@ -256,6 +302,37 @@ if grep -q '^GenericName=Video Editor' "${OTHER}"; then
 else
     ok "it was not mistaken for Resolve itself"
 fi
+# ⚠️ AND ITS WORKING FOLDER TOO. distrobox copied `Path=/opt/resolve/` onto
+# every one of these entries, not just Resolve's, so every one of them was
+# equally unclickable.
+if grep -q '^Path=' "${OTHER}"; then
+    bad "it kept $(grep -m1 '^Path=' "${OTHER}") — the desktop cannot step into that folder either"
+else
+    ok "its unreachable working folder is gone as well"
+fi
+
+# -----------------------------------------------------------------------------
+# ⚠️ AND A WORKING FOLDER THAT REALLY IS THERE IS LEFT ALONE
+# -----------------------------------------------------------------------------
+# The rule is "a folder this computer does not have", not "any Path at all". A
+# Path naming a real folder is somebody's deliberate setting — the desktop can
+# step into it, so it breaks nothing — and this program has no business
+# deleting it.
+REAL="${WORK}/aquarius-resolve-com.blackmagicdesign.rawplayer.desktop"
+cat > "${REAL}" <<FIXTURE
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Blackmagic RAW Player (on aquarius-resolve)
+Path=${WORK}
+Exec=/usr/libexec/aquarius-resolve-launch /opt/resolve/BlackmagicRAWPlayer/BlackmagicRAWPlayer %f
+Terminal=false
+Icon=${WORK}/icons/DV_Resolve.png
+FIXTURE
+
+run_entry repair "${REAL}" | sed 's/^/     /'
+key_is "${REAL}" Path "${WORK}" \
+    "a folder that really is on this computer is not touched"
 
 # -----------------------------------------------------------------------------
 # ⚠️ The distrobox "Terminal entering …" entries, and NoDisplay written twice

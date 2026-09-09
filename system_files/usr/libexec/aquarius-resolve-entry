@@ -26,6 +26,30 @@
 #     under "Video"; GenericName is the "what is this?" line search engines and
 #     menus show underneath. Without them Resolve is an app with no shelf.
 #
+# ⚠️ AND THE FOURTH, FOUND ON THE BENCH THE NEXT DAY (2026-09-09). Clicking the
+# DaVinci Resolve icon in GNOME did nothing at all — no window, no error, no
+# spinner. GNOME's own log said why:
+#
+#     Failed to launch "DaVinci Resolve (on aquarius-resolve)":
+#     Failed to change to directory "/opt/resolve/" (No such file or directory)
+#
+# The entry carried a line copied straight out of the container:
+#
+#     Path=/opt/resolve/
+#
+# `Path=` means "before you start this program, step into this folder". The
+# desktop does that FIRST, before it runs anything. /opt/resolve is inside the
+# container and has never existed on the computer itself, so GNOME could not
+# step into it, and it therefore refused to start the entry at all. Running the
+# same Exec line by hand in a terminal worked perfectly, which is exactly why
+# this was missed for a day. It is almost certainly also the real cause of the
+# 2026-09-08 report "after quitting, Resolve cannot be reopened", which was put
+# down to StartupWMClass at the time.
+#
+# So a `Path=` naming a folder this computer does not have is now REMOVED. The
+# working folder Blackmagic wanted is not lost: /usr/libexec/aquarius-resolve-launch
+# steps into it INSIDE the container, where the folder actually is.
+#
 # This program repairs the entry. It is separate from
 # /usr/libexec/aquarius-resolve-install for one reason: it can then be run
 # against a file in a temporary folder, in CI, on a machine with no Resolve and
@@ -45,7 +69,17 @@
 #               mean two programs owning one line.
 #   MimeType    the same — "Open With → DaVinci Resolve" is the installer's.
 #   Comment     Blackmagic's own description. Theirs, and good.
-#   Path        Blackmagic's working folder.
+#
+# -----------------------------------------------------------------------------
+# WHAT IT REMOVES
+# -----------------------------------------------------------------------------
+#   Path        ONLY when it names a folder this computer does not have. The
+#               desktop must step into that folder before it starts the app, and
+#               a folder it cannot step into makes it refuse to start the app at
+#               all — silently. Blackmagic's `Path=/opt/resolve/` is inside the
+#               container, so on the host it is always one of these. A `Path=`
+#               that names a real folder on this computer is somebody's
+#               deliberate setting and is left exactly as it is.
 #
 # -----------------------------------------------------------------------------
 # HOW IT IS RUN
@@ -93,8 +127,28 @@ ON_CONTAINER = re.compile(r"\s*\(on\s+[^)]*\)\s*$")
 # The keys `aq resolve status` and the CI test read back.
 SHOW_KEYS = (
     "Name", "GenericName", "Icon", "StartupWMClass",
-    "Categories", "Exec", "MimeType", "NoDisplay", "Terminal", "Type",
+    "Categories", "Exec", "Path", "MimeType", "NoDisplay", "Terminal", "Type",
 )
+
+
+def unreachable_working_folder(entry):
+    """The entry's Path=, if it names a folder this computer does not have.
+
+    ⚠️ THIS IS THE 2026-09-09 FAULT. `Path=` is the folder the desktop steps
+    into BEFORE it runs the program. If it cannot step in, it does not run the
+    program — it gives up, quietly, and clicking the icon does nothing at all.
+    Blackmagic's entries say `Path=/opt/resolve/`, which exists inside the
+    container and nowhere on this computer.
+
+    Returns the offending value, or None when there is nothing wrong: no Path at
+    all, an empty one, or one that really is a folder here.
+    """
+    value = entry.get("Path")
+    if not value:
+        return None
+    if os.path.isdir(value):
+        return None
+    return value
 
 
 class Entry(object):
@@ -298,6 +352,18 @@ def repair(path):
             entry.drop("StartupWMClass",
                        why="it was a file path, which can never match a window")
 
+    # ⚠️ AND THE WORKING FOLDER, ON EVERY ENTRY. This one applies to Resolve and
+    # to everything Blackmagic installed beside it, because distrobox copied the
+    # same kind of line onto all of them. See unreachable_working_folder() and
+    # the 2026-09-09 block at the top of this file: a folder the desktop cannot
+    # step into is a program the desktop will not start.
+    missing_folder = unreachable_working_folder(entry)
+    if missing_folder:
+        entry.drop("Path",
+                   why="%s is not a folder on this computer, and a desktop that "
+                       "cannot step into it refuses to start the app at all"
+                       % missing_folder)
+
     icon = entry.get("Icon")
     if not icon:
         print("  NOTE  %s names no icon at all." % os.path.basename(path))
@@ -359,6 +425,15 @@ def check(path):
         got = entry.get(key)
         if got != want:
             problems.append("  %s is %r, should be %r" % (key, got, want))
+    missing_folder = unreachable_working_folder(entry)
+    if missing_folder:
+        problems.append(
+            "  Path is %r, which is not a folder on this computer."
+            % missing_folder)
+        problems.append(
+            "  The desktop steps into that folder before it starts the app, so")
+        problems.append(
+            "  clicking the icon does nothing at all. The line has to come off.")
     icon = entry.get("Icon")
     if not icon:
         problems.append("  Icon is missing")

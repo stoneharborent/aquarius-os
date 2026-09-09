@@ -721,6 +721,22 @@ aq_file_has "${AQ_LAUNCH}" 'XCURSOR_THEME=' "your cursor theme is carried in"
 aq_file_has "${AQ_LAUNCH}" 'XCURSOR_SIZE=' "so is its size"
 aq_file_has "${AQ_LAUNCH}" 'XCURSOR_PATH=' "and where to find the theme from inside"
 
+# ⚠️ AND THE FOLDER RESOLVE IS STARTED FROM — THE BENCH FAULT OF 2026-09-09.
+# Blackmagic's app-menu entries carried `Path=/opt/resolve/`, the folder the
+# desktop steps into BEFORE running the program. That folder is inside the
+# container, so GNOME could not step into it and refused to start Resolve at
+# all: clicking the icon did nothing whatsoever. The entry helper takes that
+# line off; this launcher does the stepping-in INSIDE the container instead,
+# where the folder really is. Both halves are needed, so both are checked.
+aq_file_has "${AQ_LAUNCH}" 'resolve_work_folder' \
+    "the launcher works out which folder to start the program from"
+aq_file_has "${AQ_LAUNCH}" '/bin/sh -c' \
+    "and steps into it inside the container, where /opt/resolve really is"
+aq_file_has "${AQ_LAUNCH}" 'WORK_FOLDER' \
+    "and hands that folder over as the first thing the container is given"
+aq_file_has /usr/libexec/aquarius-resolve-entry 'unreachable_working_folder' \
+    "the entry helper takes off a Path= naming a folder this computer does not have"
+
 # ⚠️ AND IT HAS TO BE ABLE TO SAY WHAT IT WOULD DO WITHOUT DOING IT. --report
 # is what the last step of every install and update ("Matching Resolve to your
 # screen") asks, and what a person on the bench can run to see the answer. It

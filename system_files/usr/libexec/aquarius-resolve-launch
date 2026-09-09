@@ -112,6 +112,12 @@
 # are turned into plain paths, because that is what Files hands over and Resolve
 # does not understand a URI. See the block above the `exec` at the bottom.
 #
+# It also steps into the folder Blackmagic wants the program started from —
+# /opt/resolve, or its own folder for the two RAW tools — INSIDE the container.
+# That used to be written on the app-menu entry as `Path=/opt/resolve/`, which
+# made GNOME refuse to start Resolve at all, because that folder is not on this
+# computer. Full story at "WHICH FOLDER RESOLVE STARTS IN", near the bottom.
+#
 #   aquarius-resolve-launch --report
 # Works out the size, the pointer and which file picker Resolve will get, prints
 # the one line it would print on a real launch, and STARTS NOTHING. Added
@@ -393,7 +399,64 @@ if [ "$#" -gt 0 ]; then
     for arg in "$@"; do
         RUN_ARGS+=("$(uri_to_path "${arg}")")
     done
+else
+    # No arguments at all: somebody clicked the DaVinci Resolve icon. Resolve
+    # itself is named here rather than left to the container-side script's own
+    # default, because the working folder worked out below has to be worked out
+    # from SOMETHING, and that something is the name of the program.
+    RUN_ARGS+=("/opt/resolve/bin/resolve")
 fi
+
+# ------------------------------------------------------------------------------
+# WHICH FOLDER RESOLVE STARTS IN
+# ------------------------------------------------------------------------------
+# Added 2026-09-09, and this is the fix for "clicking the DaVinci Resolve icon
+# does nothing".
+#
+# THE FAULT. Every app-menu entry Blackmagic's installer writes carries a line
+# saying which folder the program should be started from:
+#
+#     Path=/opt/resolve/                  (Resolve, Capture Logs, Panels, …)
+#     Path=/opt/resolve/BlackmagicRAWPlayer/
+#     Path=/opt/resolve/BlackmagicRAWSpeedTest
+#
+# `Path=` means "step into this folder FIRST, then run Exec". distrobox copied
+# those lines out of the container and onto the entries in your apps — but
+# /opt/resolve only exists INSIDE the container. GNOME tried to step into a
+# folder that is not on this computer, gave up, and started nothing:
+#
+#     Failed to launch "DaVinci Resolve (on aquarius-resolve)":
+#     Failed to change to directory "/opt/resolve/" (No such file or directory)
+#
+# No window, no error on screen, nothing. Starting the very same Exec line from
+# a terminal worked, which is why it took a day to find.
+#
+# /usr/libexec/aquarius-resolve-entry now takes that line off the entries. This
+# is the other half: the folder Blackmagic asked for is a real folder in the
+# only place it makes sense — inside the container — so the stepping-in is done
+# in there instead, right before the program starts.
+#
+# ⚠️ WHY IT MATTERS AND IS NOT JUST TIDINESS. Resolve's own logging settings ask
+# for `./logs/rollinglog.txt` — a path RELATIVE to whatever folder Resolve was
+# started from. Started from /opt/resolve that is /opt/resolve/logs, which is
+# where Blackmagic put it and where their "capture logs" tool looks. Started
+# from wherever the click happened to leave us, Resolve would quietly create a
+# `logs` folder there — most likely straight in the home folder.
+#
+# THE FOLDERS, confirmed against the real container on 2026-09-09
+# (`ls /opt/resolve`): the two Blackmagic RAW tools live in a folder of their
+# own and want to start there; everything else — Resolve itself in /opt/resolve/bin,
+# the control-panel setup, the log capture script, the uninstaller — wants
+# /opt/resolve, which is what Blackmagic's own entries say.
+resolve_work_folder() { # resolve_work_folder <program inside the container>
+    case "$1" in
+        /opt/resolve/BlackmagicRAWPlayer/*) printf '/opt/resolve/BlackmagicRAWPlayer' ;;
+        /opt/resolve/BlackmagicRAWSpeedTest/*) printf '/opt/resolve/BlackmagicRAWSpeedTest' ;;
+        *) printf '/opt/resolve' ;;
+    esac
+}
+
+WORK_FOLDER="$(resolve_work_folder "${RUN_ARGS[0]}")"
 
 # `distrobox enter --additional-flags` takes ONE string, so the flags are joined
 # into one. None of these values can contain a space in practice — a cursor
@@ -407,5 +470,32 @@ done
 # ⚠️ "${RUN_ARGS[@]}" and not ${RUN_ARGS[@]}: every argument stays exactly one
 # argument, so a drive called "Shoot 2026" or a project called "Ep 3 (final).drp"
 # arrives whole rather than as three arguments Resolve cannot make sense of.
+#
+# ⚠️ AND THE `sh -c` WRAPPER IS HOW THE WORKING FOLDER GETS IN. Read it as a
+# sentence: "inside the container, step into the first thing I hand you, throw
+# that first thing away, then run aquarius-resolve-run with everything else."
+#
+#   * `sh` after the quoted script is not a mistake and not a duplicate — it is
+#     the name the little script calls itself in any message it prints. It is
+#     what makes the folder "$1" and the program "$2" onwards.
+#   * every value still travels as its own separate argument, so a project
+#     called "Ep 3 (final).drp" arrives whole, exactly as before.
+#   * it is done HERE, on this computer, rather than inside the container's own
+#     /usr/bin/aquarius-resolve-run — because that script lives in the runtime
+#     container image, and changing it would mean rebuilding and republishing
+#     that whole image. This costs nothing and needs no rebuild.
+#   * if the folder somehow is not there, it says so and starts Resolve anyway.
+#     A wrong folder is a misplaced log file; not starting at all is the fault
+#     we are fixing.
+#
+# The single quotes around that little script are deliberate and shellcheck is
+# told so: `$1`, `$@` and `$PWD` belong to the shell INSIDE the container, and
+# must reach it as those three characters rather than being replaced here.
+# shellcheck disable=SC2016
 exec distrobox enter --name "${CONTAINER}" --additional-flags "${EXTRA}" \
-    -- /usr/bin/aquarius-resolve-run "${RUN_ARGS[@]}"
+    -- /bin/sh -c '
+        cd "$1" 2> /dev/null || printf "%s\n" \
+            "aquarius-resolve: $1 is not in this container; starting from $PWD instead." >&2
+        shift
+        exec /usr/bin/aquarius-resolve-run "$@"
+    ' sh "${WORK_FOLDER}" "${RUN_ARGS[@]}"

@@ -279,6 +279,10 @@ says the mode is unsupported, go to
 install. After quitting, Resolve cannot be reopened and is not in the app
 search."*
 
+*Extended 2026-09-09: the icon was then there and clicking it still did nothing.
+That one is its own section below — [Why clicking the icon did nothing
+(2026-09-09)](#why-clicking-the-icon-did-nothing-2026-09-09).*
+
 ### What was wrong
 
 When Resolve is installed, the tool that runs it inside its own environment
@@ -328,6 +332,7 @@ which is all that used to be repaired:
 | `Icon` | **Blackmagic's own, untouched** | Royce's decision, 2026-09-08: brand marks stay theirs, the same as Firefox's and Steam's |
 | `StartupWMClass` | `resolve` | so the dock can match Resolve's window to its tile |
 | `Categories` | `AudioVideo;Video;` | so it files itself under Video |
+| `Path` | **removed** | it named a folder inside the container, and a desktop that cannot step into that folder refuses to start the app at all — see below |
 | `Exec`, `MimeType` | untouched here | the installer owns those; "Open With → DaVinci Resolve" depends on them |
 
 The other things Blackmagic install beside Resolve — the RAW Player, the speed
@@ -339,6 +344,53 @@ itself.
 
 The two "Terminal entering …" entries are hidden properly — every `NoDisplay`
 line is removed and exactly one is written — and the install says so.
+
+### Why clicking the icon did nothing (2026-09-09)
+
+The day after all of that, the icon was there, in the right place, with the
+right name — and clicking it still did **nothing**. No window, no error message,
+not even a spinner. GNOME's own log said exactly why:
+
+```
+Failed to launch "DaVinci Resolve (on aquarius-resolve)":
+Failed to change to directory "/opt/resolve/" (No such file or directory)
+```
+
+Blackmagic's entry carried one more line that distrobox had copied straight out
+of the container:
+
+```
+Path=/opt/resolve/
+```
+
+`Path` is the folder the desktop **steps into before it starts the program**. It
+does that first, every time. `/opt/resolve` lives inside Resolve's container and
+has never existed on the computer itself, so the desktop could not step into it
+— and rather than starting the program anyway, it gave up and started nothing.
+Typing the same `Exec` line into a terminal worked perfectly, which is exactly
+why this went unnoticed for a day.
+
+⚠️ **This is almost certainly the real cause of the 8 September finding "after
+quitting, Resolve cannot be reopened".** That was put down to `StartupWMClass`
+at the time. It was this: the first launch of the day came from somewhere other
+than the app menu, and every click on the icon afterwards was refused.
+
+**What happens now.** Two halves, and both are needed:
+
+* the repair **removes** a `Path` line naming a folder this computer does not
+  have — which, for these entries, is always. A `Path` naming a folder that
+  really is here is somebody's deliberate setting and is left alone.
+* the working folder Blackmagic wanted is not thrown away. It is applied where
+  it makes sense: `/usr/libexec/aquarius-resolve-launch` steps into it **inside
+  the container**, just before the program starts. Resolve gets `/opt/resolve`;
+  the two Blackmagic RAW tools get their own folders.
+
+That second half is not tidiness. Resolve's own logging setting asks for
+`./logs/rollinglog.txt` — a path measured from whatever folder Resolve was
+started in. Started from `/opt/resolve`, the log goes where Blackmagic put it
+and where their "Capture Logs" tool looks for it. Started from wherever the
+click happened to leave things, Resolve would quietly grow a `logs` folder
+there — most likely in the middle of your home folder.
 
 ### Seeing it for yourself
 

@@ -6379,6 +6379,25 @@ jobs:
             && ok "the launcher answers when it is handed a project, rather than falling over" \
             || bad "the launcher fails when Files hands it a project — 'Open With → DaVinci Resolve' would do nothing"
 
+          # ⚠️ THE BENCH FAULT OF 9 SEPTEMBER 2026 — clicking the DaVinci
+          # Resolve icon did nothing at all. Blackmagic's entry carried
+          # `Path=/opt/resolve/`, the folder the desktop steps into BEFORE it
+          # runs the program; that folder is inside the container, GNOME could
+          # not step into it, so it refused to start the app and said nothing on
+          # screen. The fix has two halves and both must stay: the entry helper
+          # takes the line off, and the launcher does the stepping-in inside the
+          # container, where /opt/resolve really is. Resolve's own log setting
+          # asks for ./logs/rollinglog.txt relative to that folder, so losing
+          # this would also start growing a logs folder in the home folder.
+          for want in resolve_work_folder WORK_FOLDER '/bin/sh -c'; do
+            grep -qF "${want}" /usr/libexec/aquarius-resolve-launch \
+              && ok "the launcher still has: ${want}" \
+              || bad "the launcher has lost '${want}' — Resolve would start from whatever folder the click left behind"
+          done
+          grep -qF 'unreachable_working_folder' /usr/libexec/aquarius-resolve-entry \
+            && ok "the entry helper still removes a Path= naming a folder this computer does not have" \
+            || bad "the entry helper no longer removes an unreachable Path= — clicking the Resolve icon would do nothing at all"
+
           echo "== and which file picker Resolve will open =="
           # ⚠️ FEATURE 008 ITEM 5, built as auto-detection rather than as a bench
           # experiment somebody has to remember to run. Resolve's Open, Save and
