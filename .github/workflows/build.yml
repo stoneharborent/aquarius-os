@@ -2972,7 +2972,11 @@ jobs:
 
           echo "== kernel options =="
           for f in /usr/lib/bootc/kargs.d/*.toml; do echo "--- ${f} ---"; cat "${f}"; done
-          check "the boot options ask for a splash" 'kargs = \["quiet", "splash", "rhgb"\]' \
+          # The exact line 80-boot-branding.sh writes: quiet + splash + rhgb, and
+          # since 2026-09-09 no blinking console cursor either (Royce's Mac-like
+          # boot directive). Change both places together.
+          check "the boot options ask for a splash and no console cursor" \
+                'kargs = \["quiet", "splash", "rhgb", "vt.global_cursor_default=0"\]' \
                 /usr/lib/bootc/kargs.d/05-aquarius-boot.toml
 
           echo "== the boot menu =="
