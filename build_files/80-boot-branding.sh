@@ -538,6 +538,23 @@ aq_file_has /usr/lib/os-release "^PRETTY_NAME=\"${PRETTY_NAME}\"$" \
 # We pass all three. `splash` is the modern name, `rhgb` is the older Red Hat
 # one that some tooling still looks for, and passing both is free.
 #
+# AND A FOURTH, ADDED 2026-09-08: `vt.global_cursor_default=0`.
+#
+# ⚠️ WHY. Royce's directive after the bench run: "I want the experience to be
+# like booting up a Mac. No commands, terminals or text during boot." A Linux
+# text console draws a blinking underscore — a cursor — in its top-left corner
+# from the moment the kernel takes the screen. If anything at all causes the
+# console to become visible for a moment (a display handover, a service that
+# prints, the gap between one screen and the next), that blinking underscore is
+# the first thing a person sees, and it is unmistakably "a computer starting up
+# in 1994". This kernel option turns it off for every console on the machine.
+# It changes nothing else: text still prints, a text login still works, and
+# Ctrl+Alt+F3 still gives a usable console.
+#
+# It does NOT hide text; it hides the cursor. The text itself is dealt with by
+# `quiet` (kernel messages) and by /usr/libexec/aquarius-greeter no longer
+# printing to the screen at all. See docs/restart/boot-branding.md.
+#
 # /usr/lib/bootc/kargs.d/ is how an image ships kernel options: a machine picks
 # them up when it installs or updates from this image, so nobody has to type
 # anything.
@@ -547,8 +564,10 @@ install -d -m 0755 /usr/lib/bootc/kargs.d
 cat > "${KARGS_FILE}" << 'EOF'
 # AquariusOS: show the graphical boot splash and keep the kernel quiet while it
 # does. `splash` and `rhgb` each independently tell Plymouth to draw the splash
-# rather than a wall of white text; `quiet` stops log messages drawing over it.
-kargs = ["quiet", "splash", "rhgb"]
+# rather than a wall of white text; `quiet` stops log messages drawing over it;
+# `vt.global_cursor_default=0` stops the text console's blinking underscore ever
+# appearing, so a moment of visible console is not also a blinking cursor.
+kargs = ["quiet", "splash", "rhgb", "vt.global_cursor_default=0"]
 EOF
 cat "${KARGS_FILE}"
 # The login screen is held back until the pour has played (bench, 2026-09-07:
@@ -556,11 +575,17 @@ cat "${KARGS_FILE}"
 # oneshot unit, ordered before the login screen, switched on from /usr.
 AQ_HOLD_UNIT="/usr/lib/systemd/system/aquarius-boot-hold.service"
 AQ_HOLD_LINK="/usr/lib/systemd/system/graphical.target.wants/aquarius-boot-hold.service"
+AQ_HOLD_PROG="/usr/libexec/aquarius-boot-hold"
 say "The login screen waits for the pour"
 aq_file_has "${AQ_HOLD_UNIT}" '^Before=display-manager.service$' \
     "aquarius-boot-hold finishes before the login screen starts"
 aq_file_has "${AQ_HOLD_UNIT}" '^After=plymouth-start.service$' \
     "and it does not start counting until the boot screen is up"
+# ⚠️ ADDED 2026-09-08. plymouth-quit.service is what takes the boot animation
+# away. It must never do that while this service is still holding the login
+# screen back, or the hold is a hold with nothing on the screen to look at.
+aq_file_has "${AQ_HOLD_UNIT}" '^Before=plymouth-quit.service$' \
+    "and the boot animation cannot be taken away before the hold has finished"
 aq_file_has "${AQ_HOLD_UNIT}" '^ConditionKernelCommandLine=splash$' \
     "and it only runs when a boot screen was asked for"
 aq_file_has "${AQ_HOLD_UNIT}" '^Type=oneshot$' \
@@ -570,11 +595,70 @@ if [ -L "${AQ_HOLD_LINK}" ]; then
 else
     bad "${AQ_HOLD_LINK} is missing, so the hold is installed and would never run"
 fi
+
+# ------------------------------------------------------------------------------
+# The hold is MEASURED, not guessed — and this is where the numbers are checked
+# ------------------------------------------------------------------------------
+# ⚠️ THE BENCH LESSON OF 2026-09-08. The hold used to be `sleep 3.5`, and the
+# journal showed the sleep starting a full second after the boot animation did.
+# It now asks systemd when plymouth-start.service really became active and waits
+# from there. Three numbers have to agree for that to be right, and they live in
+# three files, so all three are read back here.
+aq_file_has "${AQ_HOLD_UNIT}" "^ExecStart=${AQ_HOLD_PROG}\$" \
+    "the hold is worked out by a program, not a flat sleep"
+# git records the executable bit and the copy preserves it, but this project has
+# been bitten before by a file arriving without it (iCloud strips it on sync),
+# and the symptom here would be a login screen that simply never waits.
+chmod 0755 "${AQ_HOLD_PROG}" 2> /dev/null || true
+if [ -x "${AQ_HOLD_PROG}" ]; then
+    ok "${AQ_HOLD_PROG} is installed and runnable"
+else
+    bad "${AQ_HOLD_PROG} is missing or not runnable — the login screen would not wait at all"
+fi
+if bash -n "${AQ_HOLD_PROG}" 2> /tmp/aq-hold-syn.txt; then
+    ok "it is valid shell"
+else
+    bad "${AQ_HOLD_PROG} does not parse as shell:"
+    sed 's/^/       /' /tmp/aq-hold-syn.txt
+fi
+rm -f /tmp/aq-hold-syn.txt
+# 1.5 s of waiting + 2.2 s of pouring + 0.6 s of margin = 4.3.
+aq_file_has "${AQ_HOLD_PROG}" '^AQ_HOLD_TOTAL="\$\{AQ_BOOT_HOLD_TOTAL:-4\.3\}"$' \
+    "it holds for 4.3 s from the moment the animation appeared (1.5 + 2.2 + 0.6)"
+aq_file_has "${AQ_HOLD_PROG}" 'AQ_BOOT_HOLD_MAX:-6' \
+    "and never for longer than six seconds, whatever the arithmetic says"
+aq_file_has "${AQ_HOLD_PROG}" 'ActiveEnterTimestampMonotonic' \
+    "it measures from when the boot animation really appeared, not from when it started"
 aq_file_has "${THEME_DIR}/aquarius.script" '^BOOT_DELAY *= *45;' \
     "the pour starts 1.5 s late at boot, so a slow screen is awake for it"
 
-aq_file_has "${KARGS_FILE}" 'kargs = \["quiet", "splash", "rhgb"\]' \
-    "the boot options ask for a graphical splash"
+# It has to RUN. --explain does every step except the waiting, so a build
+# container — which has no systemd to ask and therefore takes the fallback
+# branch — still proves the program loads, does its sums and exits 0.
+say "The hold's own rehearsal (--explain)"
+if "${AQ_HOLD_PROG}" --explain > /tmp/aq-hold-explain.txt 2>&1; then
+    ok "'aquarius-boot-hold --explain' runs and waits for nothing"
+    sed 's/^/       /' /tmp/aq-hold-explain.txt
+else
+    bad "'aquarius-boot-hold --explain' failed:"
+    sed 's/^/       /' /tmp/aq-hold-explain.txt
+fi
+rm -f /tmp/aq-hold-explain.txt
+
+# The repository's own test of the arithmetic, run against a stand-in systemctl
+# so that every branch — animation just appeared, animation long gone, no answer
+# at all — is exercised for real rather than reasoned about.
+if [ -x /ctx/tests/test-boot-hold.sh ]; then
+    say "The hold's arithmetic, against a stand-in clock"
+    if /ctx/tests/test-boot-hold.sh "${AQ_HOLD_PROG}"; then
+        ok "tests/test-boot-hold.sh passed against the copy in this image"
+    else
+        bad "tests/test-boot-hold.sh FAILED against the copy in this image"
+    fi
+fi
+
+aq_file_has "${KARGS_FILE}" 'kargs = \["quiet", "splash", "rhgb", "vt.global_cursor_default=0"\]' \
+    "the boot options ask for a graphical splash and no blinking console cursor"
 
 echo "Every kernel-option file this image ships:"
 ls -l /usr/lib/bootc/kargs.d/

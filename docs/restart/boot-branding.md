@@ -49,15 +49,15 @@ Then — after a second and a half of plain navy, on purpose — over 2.2 second
 
 Then it **holds** — stands perfectly still — until the login screen takes over.
 
-> **Why the wait, and why the login screen is late (bench, 2026-09-07).** The
-> bench PC gets from boot screen to login screen in five seconds, and its
-> television spends the first two of them still showing the motherboard's logo
-> while it switches over. The pour had finished before the picture arrived;
-> all Royce saw was the held mark. So the pour now starts 1.5 seconds late
-> (`BOOT_DELAY` in `aquarius.script`), and `aquarius-boot-hold.service` keeps
-> the login screen from starting for 3.5 seconds after the real system takes
-> over. On the bench that costs nothing; on a faster machine, a few seconds
-> of navy. Shutdown is untouched — the screen is already awake for the wind.
+> **Why the wait, and why the login screen is late.** The bench PC gets from
+> boot screen to login screen in five seconds, and its television spends the
+> first two of them still showing the motherboard's logo while it switches over.
+> The pour had finished before the picture arrived; all Royce saw was the held
+> mark. So the pour starts 1.5 seconds late (`BOOT_DELAY` in `aquarius.script`),
+> and `aquarius-boot-hold.service` keeps the login screen from starting until the
+> pour has been on screen. Shutdown is untouched — the screen is already awake
+> for the wind. **The next section is the real timeline, measured on the bench,
+> and what it turned out to be hiding.**
 
 AquariusOS is named after Aquarius, the water-bearer. That is the whole idea: the
 mark is not drawn, it is **poured**.
@@ -81,6 +81,192 @@ underneath. A wrong password shakes the box once and says so in plain words.
 pulsing dots under it, and the ground was near-black `#06070C` from the retired
 Starlight palette. `branding/tokens.md` is the record of what replaced the
 colour; the rest of this section is the record of what replaced the picture.)
+
+---
+
+### The real timeline, and the black boot of 2026-09-08
+
+*Written 2026-09-08 from the bench machine's own journal. Everything in this
+section is a measurement, not a design intention.*
+
+On 8 September Royce booted the machine on the login screen we had made — the
+first time it ever drew — and reported: **"The opening animation didn't play; the
+screen stayed black."** And, as a directive: *"I want the experience to be like
+booting up a Mac. No commands, terminals or text during boot."*
+
+Here is what the machine actually did. The numbers are seconds since the kernel
+started, read from `journalctl -b -o short-monotonic`.
+
+| When | What happened |
+| --- | --- |
+| **0.9 s** | The kernel finds the screen and says `fbcon: Deferring console take-over`. This is good: it is why the motherboard's logo stays on screen instead of being replaced by scrolling text. |
+| **3.0 s** | The kernel hands over to the small start-up system (the initramfs). |
+| **3.2 → 7.3 s** | The graphics drivers load — AMD's at 5.2, NVIDIA's from 5.6 to 7.2. Nothing else can happen until they are done. **Four seconds, and unavoidable.** |
+| **7.2 s** | NVIDIA takes the screen. A big television goes dark for a second or two here while it re-syncs. That is physics, not software. |
+| **7.5 → 7.8 s** | The boot animation starts (`plymouth-start.service`). |
+| **~9.3 s** | Its own 1.5-second wait ends and **the pour begins**. |
+| **~11.5 s** | The pour ends. The mark should now be held. |
+| **11.55 s** | ⚠️ **The boot animation is taken away** by `plymouth-quit.service`. |
+| **12.35 s** | The hold finishes and greetd starts. |
+| **12.53 s** | ⚠️ **The text console takes the screen** — `fbcon: Taking over console`, `switching to colour frame buffer device 480x135` — and five lines of white text from our own login-screen launcher print onto it. |
+| **15.4 s** | The login screen is finally up. |
+
+So the pour did play. It played from 9.3 to 11.5 seconds, on a television that
+was still recovering from the graphics handover at 7.2 — and then it was thrown
+away at 11.55, a full second before there was anything to replace it, leaving
+three seconds of text console for a person to look at. That is the "black
+screen" and that is the "text during boot", and they are the same fault.
+
+**Three things were wrong, and all three are fixed.**
+
+**1. Nothing was holding the boot animation.** Taking the animation away is a
+service of its own, `plymouth-quit.service`, and it runs early unless the login
+screen says otherwise. GNOME's login screen says otherwise: GDM's service file
+carries `Conflicts=plymouth-quit.service` — "do not run that, I will take the
+animation down myself when my own screen has drawn". Fedora's greetd service
+file says no such thing; worse, it says `After=plymouth-quit-wait.service`,
+which means "do not start me until the animation has already gone".
+
+AquariusOS now ships **its own `greetd.service`**, which is GDM's arrangement
+line for line. You can read both on the machine:
+
+```bash
+# ours, the one in use
+cat /usr/lib/systemd/system/greetd.service
+
+# Fedora's, kept beside it so you can see exactly what we changed
+cat /usr/share/aquarius/units/greetd.service.fedora
+```
+
+It has to be a whole file rather than a small addition, because the one line
+that had to *go* is Fedora's `After=plymouth-quit-wait.service`, and a small
+addition can add ordering but never remove it. Leaving it in beside our
+`Conflicts=` would be a machine waiting for something it had itself arranged
+never to happen: a boot that never reaches a login screen at all.
+
+Since our greetd now stops `plymouth-quit.service` running, exactly one program
+on the machine is responsible for ever taking the animation down:
+**`/usr/libexec/aquarius-plymouth-release`**, started by greetd. It waits for the
+login screen to draw and then says `plymouth quit --retain-splash` — "stop, but
+leave your last picture on the screen" — so the login screen appears *over* the
+held mark with no black flash in between. That is the Mac-like handover.
+
+It is written so that it cannot leave you stuck. If the login screen has not
+drawn within 25 seconds it takes the animation down **anyway**, and deliberately
+does *not* keep the picture, so that whatever is underneath — a text login, an
+error — can be read. It says so, at length, in the journal:
+
+```bash
+journalctl -b -u aquarius-plymouth-release
+```
+
+`tests/test-plymouth-release.sh` proves all of that on every push, against a
+stand-in `plymouth` that writes down every request it is given.
+
+**2. Our own login-screen launcher was printing to the screen.** The five white
+lines at 12.53 seconds came from `/usr/libexec/aquarius-greeter`. The comment
+above them said they went "to greetd's own journal". They did not: greetd hands
+its greeter the terminal, not the journal, and `journalctl -b -u greetd` on the
+bench shows four lines from greetd and none at all from that file. A wrong
+belief in a comment survived for days.
+
+The launcher now sends its own output — and, because they inherit it, the window
+manager's and Quickshell's too — into the system journal before it prints
+anything at all:
+
+```bash
+journalctl -b -t aquarius-greeter
+```
+
+It keeps a way back to the real screen on two spare file descriptors, and uses
+it in exactly one place: the plain text login screen it falls back to when the
+graphical one will not start. A text login printed into the journal would help
+nobody, so that path takes the animation down first (without keeping the
+picture) and then draws where a person can see it.
+
+**3. The hold was measuring from the wrong moment.** `aquarius-boot-hold` used
+to be `sleep 3.5`. Look at the table again: the animation appeared at 7.8 and
+the sleep started at 8.8 — a whole second later, because udev and the graphics
+driver sat in between. On another machine that gap could be three seconds, or
+none. A flat sleep is the wrong tool.
+
+It now asks systemd when `plymouth-start.service` really became active, and
+waits for however much of the story is left:
+
+```
+1.5 s  the animation's own wait, so a television is awake for the pour
+2.2 s  the pour itself
+0.6 s  a margin, so the finished mark is held still rather than cut off
+-----
+4.3 s  from the moment the animation appeared — and never more than 6
+```
+
+On a machine where the animation appeared four seconds ago, it waits almost
+nothing. `tests/test-boot-hold.sh` runs that arithmetic against a stand-in
+clock, including the case where systemd has no answer — where "no answer" must
+never quietly become "do not wait at all".
+
+You can ask it what it would do, on a running machine, without waiting:
+
+```bash
+/usr/libexec/aquarius-boot-hold --explain
+```
+
+**And a fourth, smaller thing: the blinking cursor.** A Linux text console draws
+a blinking underscore in its top-left corner from the moment the kernel has the
+screen. If the console is ever visible for a moment, that underscore is the
+first thing a person sees, and nothing says "a computer from 1994" more clearly.
+The kernel option `vt.global_cursor_default=0` turns it off, everywhere, and it
+is now one of the four options in
+`/usr/lib/bootc/kargs.d/05-aquarius-boot.toml`. It hides the cursor, not the
+text; the text is dealt with by the three fixes above.
+
+### ⚠️ Still to check on the bench: what GRUB draws
+
+*This is a to-do, not a finding. Nobody has looked yet, and guessing would be
+worse than saying so.*
+
+Between the motherboard's logo and the pour there is one more program that could
+be drawing something: **GRUB**, the boot menu. On this kind of machine the menu
+entries live in `/boot/loader/entries/`, and the settings that decide whether a
+menu is shown at all live in the boot partition. The session that wrote this
+could not read any of it — `/run/host/boot` is readable by root only — so
+**what, if anything, GRUB puts on the screen is unknown.**
+
+The check is one look, and it takes one restart:
+
+> **Bench test.** Restart the machine and watch the screen between the
+> motherboard's logo going away and the navy screen appearing. Is anything
+> drawn in that gap — a menu, a countdown, a line saying `Loading Linux …`, a
+> `Welcome to GRUB!`, a blinking cursor on black?
+>
+> * **Nothing at all** → there is nothing to fix. Write that down here and this
+>   section can be deleted.
+> * **Something** → the fix is two settings, and they are the standard ones:
+>
+>   ```bash
+>   sudo grep -E 'GRUB_TIMEOUT|GRUB_TIMEOUT_STYLE' /etc/default/grub
+>   # want:
+>   #   GRUB_TIMEOUT_STYLE=hidden
+>   #   GRUB_TIMEOUT=0
+>   ```
+>
+>   `hidden` means "do not draw the menu"; `0` means "do not wait". **Holding
+>   Shift (or pressing Esc) during start-up still brings the menu up**, which is
+>   how you would ever roll back to an older version — so nothing is lost.
+>
+>   Report what you saw and it goes into `build_files/80-boot-branding.sh` as a
+>   written setting with a read-back check, like everything else here.
+
+Two things worth knowing before that test:
+
+* The four seconds of graphics-driver loading (3.2 → 7.3 in the table) and the
+  television's re-sync at 7.2 are **not** something an operating system can
+  remove. A machine has to load the NVIDIA driver before it can draw anything at
+  all in colour, and a television takes a moment to change mode. The pour starts
+  as soon as it honestly can.
+* `quiet` already stops the kernel's own messages. Anything you see in that gap
+  is GRUB, not Linux.
 
 ---
 
@@ -354,7 +540,21 @@ On the bench machine, after `sudo bootc upgrade` and a restart:
 
 **1. Watch it start up.** You should see the stream fall, the A pour out of it,
 the wave spill across, the word fade in — and then **stillness** until the login
-screen appears.
+screen appears **over the top of the held mark**, with no black in between and
+no white text at any point.
+
+> ⚠️ **The three things that went wrong on 2026-09-08, so watch for each.**
+> (a) Is there any white text at all between the pour and the login screen? There
+> must not be — and if there is, `journalctl -b -t aquarius-greeter` is where
+> that text should have gone instead. (b) Does the mark stay on screen right up
+> until the login screen draws, or does the screen go black first? (c) Between
+> the motherboard's logo and the navy screen, is anything drawn at all? That last
+> one is the GRUB question, and it has its own section above.
+>
+> If the login screen never appears and the mark is still there after half a
+> minute, the safety net has already acted; read
+> `journalctl -b -u aquarius-plymouth-release`, which says in plain words what
+> it waited for and what it did.
 
 > ⚠️ **If the pour re-plays** — if it pours, holds, and then pours again — that
 > means Plymouth restarted the theme rather than the animation looping. Our
@@ -585,16 +785,24 @@ kernel is asked for one. Reading Plymouth's own source code
 it: `splash` or `rhgb`. And `quiet` is what stops kernel log messages scrolling
 over the top of it.
 
-We pass all three, in `/usr/lib/bootc/kargs.d/05-aquarius-boot.toml`:
+We pass all three, and since 2026-09-08 a fourth, in
+`/usr/lib/bootc/kargs.d/05-aquarius-boot.toml`:
 
 ```toml
-kargs = ["quiet", "splash", "rhgb"]
+kargs = ["quiet", "splash", "rhgb", "vt.global_cursor_default=0"]
 ```
 
 `splash` is the modern name and `rhgb` is the older Red Hat one that some tooling
 still looks for. Passing both is free. That folder is how an image ships kernel
 options — a machine picks them up when it installs or updates from this image, so
 nobody types anything.
+
+`vt.global_cursor_default=0` is the fourth, and it is about the blinking
+underscore a Linux text console draws in its top-left corner. If a console is
+ever visible for a moment during start-up, that underscore is the first thing a
+person sees. This turns it off for every console on the machine. It hides the
+cursor, not the text — text still prints, a text login still works, and
+Ctrl+Alt+F3 still gives you a usable console.
 
 ---
 

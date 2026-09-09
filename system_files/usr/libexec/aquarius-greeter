@@ -48,6 +48,34 @@
 # covers the whole screen with nothing able to appear over it. labwc implements
 # it, is already in this image for the Aquarius Desktop, and is therefore one
 # fewer program to keep working.
+#
+# -----------------------------------------------------------------------------
+# ⚠️ NOTHING MAY BE PRINTED TO THE SCREEN BEFORE THE WINDOW MANAGER STARTS
+# -----------------------------------------------------------------------------
+# THE BENCH FAULT OF 2026-09-08, and Royce's directive with it: "I want the
+# experience to be like booting up a Mac. No commands, terminals or text during
+# boot."
+#
+# greetd runs this script on virtual terminal 1 — the screen. Anything printed
+# here is printed THERE, in white text on black, over the boot animation. The
+# five lines that used to introduce this file were, on the bench, three seconds
+# of exactly the "techy stuff" the directive is about.
+#
+# It was never intentional. The comment above these lines used to say they went
+# "to greetd's own journal", and they did not: greetd hands its greeter the
+# terminal, not the journal, and `journalctl -u greetd -b` on the bench shows
+# four lines from greetd itself and none at all from this file. That is how a
+# wrong belief survives for days.
+#
+# So the FIRST thing this script does is send its own output — and, because
+# they inherit it, labwc's and Quickshell's too — to the system journal, where
+# the comment always claimed it went. The real terminal is kept on two spare
+# file descriptors, because the text login screen at the bottom of this file
+# genuinely does need the screen.
+#
+# Everything below therefore lands in:
+#     journalctl -b -t aquarius-greeter
+# as well as in greetd's own journal on the machines where greetd forwards it.
 # =============================================================================
 
 set -uo pipefail
@@ -55,9 +83,54 @@ set -uo pipefail
 AQ_LABWC_CONFIG_DIR="/usr/share/aquarius/greeter-labwc"
 AQ_GREETER_SHELL="/usr/libexec/aquarius-greeter-shell"
 
-# Everything printed here goes to greetd's own journal, which is where somebody
-# debugging a login screen will look:
-#     journalctl -u greetd -b
+# ⚠️ KEEP THE REAL SCREEN. Descriptors 8 and 9 are this script's way back to the
+# terminal greetd gave it. The text-login fallback restores them before it draws,
+# because a text login screen printed into the journal helps nobody.
+exec 8>&1 9>&2
+
+# Send our output to the journal instead of the screen. systemd-cat is the
+# proper tool; logger is the fallback on the odd machine without it; and if
+# neither is here, the screen it is — a login screen that talks is better than
+# one that has thrown its only explanation away.
+if command -v systemd-cat > /dev/null 2>&1; then
+    exec > >(systemd-cat -t aquarius-greeter) 2>&1
+elif command -v logger > /dev/null 2>&1; then
+    exec > >(logger -t aquarius-greeter) 2>&1
+fi
+
+# Restore the screen. Used only by the text-login fallback at the bottom.
+aq_take_the_screen_back() {
+    exec 1>&8 2>&9
+}
+
+# -----------------------------------------------------------------------------
+# Take the screen over from the boot animation, in GDM's order
+# -----------------------------------------------------------------------------
+# `plymouth deactivate` tells the boot animation to let go of the graphics card
+# WITHOUT clearing the screen: the last frame it drew stays exactly where it is,
+# and the window manager can now open the display. That is the trick that makes
+# a Mac-like handover possible — there is no black flash between the mark and
+# the login screen, because the mark is never taken away, only drawn over.
+#
+# The matching `plymouth quit --retain-splash` — "you can stop now, leave the
+# picture" — is NOT done here, and that is deliberate. This script cannot see
+# when the login screen has finished drawing; it is blocked inside labwc from
+# the moment labwc starts. aquarius-plymouth-release.service watches for that
+# from outside, as root, and it is the one thing on the machine responsible for
+# taking the animation down. Read its header.
+#
+# The `|| true` is not laziness. This script runs as the unprivileged `greetd`
+# user, and a refused request must not stop a login screen from appearing.
+# greetd.service asks for the same thing as root a moment earlier, so this is
+# the second of two attempts, not the only one.
+if command -v plymouth > /dev/null 2>&1; then
+    if plymouth --ping > /dev/null 2>&1; then
+        echo "  the boot animation is up; asking it to release the screen"
+        plymouth deactivate > /dev/null 2>&1 \
+            || echo "  (it did not answer; greetd.service already asked as root)"
+    fi
+fi
+
 echo "=== The AquariusOS login screen is starting ==="
 echo "  window manager: labwc"
 echo "  configuration:  ${AQ_LABWC_CONFIG_DIR}"
@@ -117,6 +190,25 @@ fi
 # -----------------------------------------------------------------------------
 # The safety net
 # -----------------------------------------------------------------------------
+# ⚠️ THE BOOT ANIMATION HAS TO GO FIRST. Everything below this line draws TEXT
+# on the screen, and the screen may still be showing the held Aquarius mark:
+# `plymouth deactivate` above let the animation go of the graphics card but left
+# its picture there, and on this path no login screen is ever going to be drawn
+# over the top of it. A text login printed onto a held splash is unreadable — it
+# is the one outcome worse than a plain text login.
+#
+# So: take it down, properly, and do not keep the picture.
+echo "THE GRAPHICAL LOGIN SCREEN DID NOT START (exit ${AQ_STATUS}) — falling back"
+echo "to the text login. The boot animation is being taken down and the screen"
+echo "handed back to this script so that the text login can be read."
+if command -v plymouth > /dev/null 2>&1; then
+    plymouth quit > /dev/null 2>&1 || true
+fi
+
+# And take the screen back from the journal, because a text login screen that
+# nobody can see is not a login screen.
+aq_take_the_screen_back
+
 echo
 echo "  ============================================================"
 echo "  THE GRAPHICAL LOGIN SCREEN DID NOT START (exit ${AQ_STATUS})"
@@ -128,8 +220,11 @@ echo "  To go back to the GNOME login screen, log in and run:"
 echo "      sudo aq login use gdm"
 echo "  and restart."
 echo
-echo "  What went wrong is in the lines above this one:"
-echo "      journalctl -u greetd -b"
+echo "  What went wrong was written to the system log, not to this"
+echo "  screen (a login screen must not print over the boot animation)."
+echo "  Log in here and read it with:"
+echo "      journalctl -b -t aquarius-greeter"
+echo "      journalctl -b -u greetd"
 echo "  ============================================================"
 echo
 

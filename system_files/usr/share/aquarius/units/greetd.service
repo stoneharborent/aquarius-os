@@ -1,0 +1,126 @@
+# =============================================================================
+# greetd.service — AquariusOS's own copy, which holds the boot screen
+# =============================================================================
+# ⚠️ THIS FILE IS NOT WHERE IT RUNS FROM. It lives here, under
+# /usr/share/aquarius/units/, and build_files/55-aquarius-session.sh copies it
+# over Fedora's own copy at /usr/lib/systemd/system/greetd.service AFTER the
+# greetd package is installed. It has to be that way round: the package owns
+# that path, so a file sitting there first is simply overwritten when the
+# package arrives, and nothing warns you.
+#
+# -----------------------------------------------------------------------------
+# WHY WE SHIP OUR OWN AT ALL — the black boot of 2026-09-08
+# -----------------------------------------------------------------------------
+# On the bench, on the first boot that reached our own login screen, Royce saw
+# no boot animation at all: a black screen, then about three seconds of text
+# console, then the login screen. The journal said exactly why.
+#
+# Fedora's greetd.service is written for a machine with no boot animation:
+#
+#     After=systemd-user-sessions.service plymouth-quit-wait.service
+#     After=getty@tty1.service
+#     Conflicts=getty@tty1.service
+#
+# `plymouth-quit-wait.service` means "wait until the boot screen has gone
+# away". So the sequence on a greetd machine was: the boot screen appears, a
+# separate service called `plymouth-quit.service` takes it away at 11.55
+# seconds — nothing was stopping it — and only then does greetd start. The
+# animation is thrown away a full second before the login screen exists, and in
+# the gap the text console paints the screen.
+#
+# GDM does not do that, which is why the GDM boot the day before looked right.
+# GDM's unit says:
+#
+#     Conflicts=plymouth-quit.service      "do not run that; I will do it"
+#     After=plymouth-quit.service          "…and if it runs anyway, after it"
+#     After=plymouth-start.service         "the boot screen first"
+#     OnFailure=plymouth-quit.service      "if I die, somebody take it down"
+#     (and NOT After=plymouth-quit-wait.service)
+#
+# — and then GDM itself tells the boot screen to go away once its greeter has
+# actually drawn. This file is that same arrangement for greetd, line for line,
+# and the AquariusOS side of "GDM itself tells it to go away" is
+# aquarius-plymouth-release.service, which greetd pulls in.
+#
+# ⚠️ WHY THIS IS A WHOLE FILE AND NOT A DROP-IN. A drop-in (a small file under
+# greetd.service.d/) can ADD ordering but cannot REMOVE any, and the one line
+# that has to go is Fedora's `After=plymouth-quit-wait.service`. Left in place
+# alongside `Conflicts=plymouth-quit.service`, greetd would wait for a boot
+# screen that it has itself arranged to keep — which is a machine that never
+# reaches a login screen at all. So: a whole file.
+#
+# -----------------------------------------------------------------------------
+# WHAT MUST NOT CHANGE
+# -----------------------------------------------------------------------------
+#   Alias=display-manager.service   This is how `aq login use greetd` works.
+#                                   `systemctl enable greetd.service` reads it
+#                                   and points display-manager.service here;
+#                                   graphical.target starts that. Remove this
+#                                   line and switching login screens silently
+#                                   stops working.
+#   Conflicts=getty@tty1.service    The login screen and a text login cannot
+#                                   both own the first virtual terminal.
+#   Restart=always                  greetd's own crash recovery. Kept exactly as
+#                                   Fedora had it, including the rate limit,
+#                                   which is what stops a flickering loop.
+# =============================================================================
+[Unit]
+Description=Greeter daemon (AquariusOS: holds the boot screen until the login screen has drawn)
+
+# It replaces the text login on the first virtual terminal.
+Conflicts=getty@tty1.service
+After=getty@tty1.service
+
+# It replaces plymouth-quit.service, because it takes the boot screen down
+# itself — see aquarius-plymouth-release.service, which it pulls in.
+Conflicts=plymouth-quit.service
+After=plymouth-quit.service
+
+# The things it needs before it can run: the boot screen up (so there is
+# something to hold), and logins allowed.
+After=plymouth-start.service systemd-user-sessions.service
+
+# ⚠️ DELIBERATELY ABSENT: After=plymouth-quit-wait.service. Read the header.
+
+# If greetd fails for any reason, somebody still has to take the boot screen
+# down, or the machine sits on a still picture with no way in.
+OnFailure=plymouth-quit.service
+
+[Service]
+Type=simple
+
+# Root, and before greetd runs anything: release the screen from the boot
+# animation so that the login screen's window manager can take the graphics
+# card. The `-` means "carry on even if this fails" — a machine with no boot
+# animation has no plymouth to talk to and that is not an error.
+#
+# ⚠️ WHY HERE AND NOT ONLY IN /usr/libexec/aquarius-greeter. The greeter script
+# runs as the unprivileged `greetd` user; this runs as root. Both ask for the
+# same thing and asking twice is harmless, but only this one is certain.
+ExecStartPre=-/usr/bin/plymouth deactivate
+
+# A folder the login screen can actually write in, and no stale "I drew" stamp
+# left over from a previous try.
+#
+# ⚠️ WHY THIS EXISTS. Both safety nets on this machine want the greeter to say
+# "I have drawn" by touching a file (aquarius-greeter-watchdog and
+# aquarius-plymouth-release both look for one). /run belongs to root and the
+# login screen runs as the unprivileged `greetd` user, so it cannot create a
+# file directly in /run however plainly the documentation asks it to — which is
+# what /run/aquarius-greeter-ready quietly was for three days. This gives that
+# user one folder of its own, and the stamp becomes /run/aquarius-greeter/ready.
+ExecStartPre=-/usr/bin/rm -rf /run/aquarius-greeter /run/aquarius-greeter-ready
+ExecStartPre=-/usr/bin/install -d -m 0755 -o greetd -g greetd /run/aquarius-greeter
+
+ExecStart=greetd
+IgnoreSIGPIPE=no
+SendSIGHUP=yes
+TimeoutStopSec=30s
+KeyringMode=shared
+Restart=always
+RestartSec=1
+StartLimitBurst=5
+StartLimitInterval=30
+
+[Install]
+Alias=display-manager.service

@@ -168,27 +168,98 @@ A result nobody records has to be paid for twice.
 
 ---
 
-## The one change worth making regardless — a "ready" stamp
+## The "ready" stamp — the contract between the two repositories
 
-The safety net (`aquarius-greeter-watchdog`) would be far more precise if the
-greeter told it, "I drew." The watchdog already prefers a file at
-**`/run/aquarius-greeter-ready`** over guessing from `pgrep qs`. If the greeter
-QML touches that file in `GreeterWindow.qml`'s `Component.onCompleted` (only on
-the primary screen), the watchdog gets an unambiguous "the login box is on the
-screen" signal, and the frozen-`qs`-but-black case stops being invisible.
+*Rewritten 2026-09-08. There are now **two** programs waiting for this signal,
+and the path it was originally given turned out to be one the greeter cannot
+write. Both halves are stated here because this file is the contract.*
 
-This is a **one-line change in the shell repo**, not here, and it must be made
-there so the QML and its contract stay one thing:
+### What the stamp is for
 
-```qml
-// GreeterWindow.qml, in Component.onCompleted, primary screen only:
-//   Quickshell.Io: FileView / Process to `touch /run/aquarius-greeter-ready`
+Two programs on the machine need to know one thing: **has the login screen
+actually drawn?**
+
+* `/usr/libexec/aquarius-greeter-watchdog` — the safety net. If the login screen
+  does not draw on two greetd boots in a row it switches the machine back to
+  GDM. Without a stamp it has to guess from "is Quickshell running", which a
+  frozen Quickshell would fool.
+* `/usr/libexec/aquarius-plymouth-release` — the boot-animation handover, added
+  2026-09-08. It holds the Aquarius mark on screen until the login screen is
+  ready to appear over it. With a stamp the handover is exact; without one it
+  guesses the same way, and gives up after 25 seconds.
+
+Neither can see the screen. Only the greeter itself knows.
+
+### ⚠️ The path — and the mistake that lived in this file for three days
+
+This page used to ask the greeter QML to touch **`/run/aquarius-greeter-ready`**.
+It cannot. `/run` belongs to `root`, mode `0755`, and the login screen runs as
+the unprivileged **`greetd`** user — so creating a file directly in `/run` fails
+with "permission denied", quietly, and the stamp simply never appears. Nothing
+would ever have said so.
+
+So `greetd.service` (ours — `system_files/usr/share/aquarius/units/greetd.service`)
+now creates a folder for it and hands it to that user, on every start:
+
+```ini
+ExecStartPre=-/usr/bin/rm -rf /run/aquarius-greeter /run/aquarius-greeter-ready
+ExecStartPre=-/usr/bin/install -d -m 0755 -o greetd -g greetd /run/aquarius-greeter
 ```
 
-Until that lands, the watchdog falls back to `pgrep qs` plus the
-consecutive-boot counter, which already catches the confirmed bench symptom
-(labwc root menu = qs not up). Do **not** rewrite the greeter blind to add this;
-make it deliberately, on a machine where you can watch it draw.
+### The contract, in one line
+
+> **The greeter writes `/run/aquarius-greeter/ready` when it has drawn.**
+
+Details, all of which matter:
+
+| | |
+| --- | --- |
+| **Path** | `/run/aquarius-greeter/ready` — the folder exists and is owned by the `greetd` user before the greeter starts. |
+| **When** | Once the login card is really on screen. `Component.onCompleted` on the **primary screen's** `GreeterWindow` is the honest moment; a later frame callback is better still. |
+| **Only once** | Not per screen. On a two-monitor machine `Component.onCompleted` runs twice; writing twice is harmless, but do not make the stamp per-screen or the contract stops meaning "the login box is visible". |
+| **Contents** | Ignored. Both programs check only that the file exists. Writing a timestamp into it is welcome and costs nothing. |
+| **Removal** | Nobody has to. `greetd.service` clears it before every start, and `/run` is emptied at every boot. |
+| **The old path** | `/run/aquarius-greeter-ready` is **still accepted** by both programs, so nothing breaks. It is only writable by root, so the greeter cannot use it. |
+
+The change is in the **shell repository**, not this one, so that the QML and its
+contract stay one thing:
+
+```qml
+// greeter/GreeterWindow.qml, primary screen only:
+//   Quickshell.Io Process / FileView →  /run/aquarius-greeter/ready
+```
+
+### Until it lands
+
+Both programs fall back to "is Quickshell running" (`pgrep -x qs`,
+`pgrep -x quickshell`, or the greeter QML on a command line), plus — for the
+watchdog — the consecutive-boot counter underneath. That combination already
+catches the confirmed bench symptom, which was labwc's own root menu showing,
+i.e. Quickshell not up at all. The handover works today on that signal too; the
+stamp makes it exact rather than approximate.
+
+Do **not** rewrite the greeter blind to add this. Make it deliberately, on a
+machine where you can watch it draw.
+
+### How to prove the stamp works, on the bench
+
+```bash
+# 1. Is the folder there, and does it belong to the login screen's user?
+ls -ld /run/aquarius-greeter
+#    want: drwxr-xr-x  greetd greetd
+
+# 2. Did the greeter write the stamp this boot?
+ls -l /run/aquarius-greeter/ready
+
+# 3. What did the handover make of it?
+journalctl -b -u aquarius-plymouth-release
+#    "the login screen wrote /run/aquarius-greeter/ready"   → the stamp worked
+#    "the login screen's program (Quickshell) is running"   → fell back
+#    "the login screen did not draw within 25s"             → neither signal
+
+# 4. And the safety net's view:
+sudo /usr/libexec/aquarius-greeter-watchdog --status
+```
 
 ---
 
@@ -200,3 +271,14 @@ make it deliberately, on a machine where you can watch it draw.
   greetd boots in a row**, so the greeter can no longer trap the machine.
 - The recovery is one line from a text console: `sudo aq login use gdm` then
   reboot. See `login.md`.
+- **Added 2026-09-08:** the greeter can no longer leave the machine showing the
+  boot animation with nothing over it. `aquarius-plymouth-release` takes the
+  animation down after 25 seconds whether or not the login screen ever drew, and
+  when it does that it deliberately does *not* keep the picture, so whatever is
+  underneath can be read. `tests/test-plymouth-release.sh` proves that path on
+  every push.
+- **Added 2026-09-08:** the greeter launcher no longer prints anything to the
+  screen. Everything it, labwc and Quickshell say now goes to
+  `journalctl -b -t aquarius-greeter` — which is where the comments in that file
+  always claimed it went, and where it never actually did. If you have debugged
+  this greeter before and remember an empty `journalctl -u greetd`, that is why.

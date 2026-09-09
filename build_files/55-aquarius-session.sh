@@ -289,6 +289,208 @@ aq_file_has /etc/greetd/config.toml '^command = "/usr/libexec/aquarius-greeter"$
 aq_file_has /etc/greetd/config.toml '^user = "greetd"$' \
     "it runs as the user Fedora's package actually creates (greetd, not greeter)"
 
+# ==============================================================================
+# 3b. OUR OWN greetd.service — the one that holds the boot animation
+# ==============================================================================
+# ⚠️ THE BENCH FAULT OF 2026-09-08, AND ROYCE'S DIRECTIVE WITH IT: "I want the
+# experience to be like booting up a Mac. No commands, terminals or text during
+# boot."
+#
+# On the first bench boot that reached our own login screen there was no boot
+# animation at all — a black screen, three seconds of text console, then the
+# login screen. The journal said why in one line: Fedora's greetd.service is
+# `After=plymouth-quit-wait.service` and has no `Conflicts=plymouth-quit.service`,
+# so a service called plymouth-quit.service took the animation away at 11.55
+# seconds, a second BEFORE greetd started, and the bare text console painted the
+# screen in the gap. GDM does not have that problem because GDM's unit conflicts
+# with plymouth-quit and takes the animation down itself once its greeter has
+# drawn. Our unit is GDM's arrangement, for greetd.
+#
+# ⚠️ WHY IT IS COPIED HERE AND NOT SHIPPED IN system_files/. The greetd package
+# owns /usr/lib/systemd/system/greetd.service. Step 5 copies system_files/ into
+# place BEFORE this step installs the package, so a file shipped at that path
+# would simply be overwritten by rpm a moment later, with nothing to warn you.
+# The file lives at /usr/share/aquarius/units/greetd.service (shipped normally,
+# reviewable, and left there so the original is always readable) and is copied
+# over the package's copy here, after the package is on disk.
+#
+# ⚠️ WHY A WHOLE FILE AND NOT A DROP-IN. A drop-in can add ordering; it cannot
+# remove any. The line that has to go is Fedora's `After=plymouth-quit-wait.service`
+# — "wait until the boot animation has gone" — which, combined with our
+# `Conflicts=plymouth-quit.service` ("do not take it away"), is a machine that
+# waits forever for something it has arranged never to happen.
+say "Our own greetd.service (the one that holds the boot animation)"
+
+AQ_GREETD_SRC="/usr/share/aquarius/units/greetd.service"
+AQ_GREETD_UNIT="/usr/lib/systemd/system/greetd.service"
+
+if [ -r "${AQ_GREETD_SRC}" ]; then
+    ok "the AquariusOS greetd unit is in the image at ${AQ_GREETD_SRC}"
+else
+    bad "${AQ_GREETD_SRC} is missing — step 5 should have copied it from system_files/"
+fi
+
+# Keep Fedora's, once, beside ours. Not used by anything; it is there so that a
+# person debugging a login screen can read what we changed and why, on the
+# machine, without a copy of this repository.
+if [ -r "${AQ_GREETD_UNIT}" ] && [ ! -r /usr/share/aquarius/units/greetd.service.fedora ]; then
+    install -D -m 0644 "${AQ_GREETD_UNIT}" /usr/share/aquarius/units/greetd.service.fedora
+fi
+
+install -D -m 0644 "${AQ_GREETD_SRC}" "${AQ_GREETD_UNIT}"
+
+echo "--- ${AQ_GREETD_UNIT} (the part that matters) ---"
+grep -Ev '^\s*#' "${AQ_GREETD_UNIT}" | grep -v '^$' | sed 's/^/    /'
+echo "---"
+
+# The four lines that make the handover work, read back out of the installed
+# file. Every one of them was missing on 2026-09-08 and each one on its own is
+# enough to bring the black boot back.
+aq_file_has "${AQ_GREETD_UNIT}" '^Conflicts=plymouth-quit.service$' \
+    "greetd stops the boot animation being taken away behind its back"
+aq_file_has "${AQ_GREETD_UNIT}" '^After=plymouth-quit.service$' \
+    "and if it is taken away anyway, greetd still starts after it"
+aq_file_has "${AQ_GREETD_UNIT}" '^After=plymouth-start.service systemd-user-sessions.service$' \
+    "greetd waits for the boot animation and for logins to be allowed"
+aq_file_has "${AQ_GREETD_UNIT}" '^OnFailure=plymouth-quit.service$' \
+    "if greetd fails, something still takes the boot animation down"
+aq_file_has "${AQ_GREETD_UNIT}" '^Conflicts=getty@tty1.service$' \
+    "the login screen and the text login cannot both own the first screen"
+aq_file_has "${AQ_GREETD_UNIT}" '^Alias=display-manager.service$' \
+    "'aq login use greetd' still has something to point display-manager.service at"
+
+# ⚠️ THE LINE THAT MUST NOT BE THERE. Fedora's `After=plymouth-quit-wait.service`
+# means "wait until the boot animation has gone away". With our Conflicts= above
+# it means "wait for something I have arranged never to happen" — a machine that
+# never reaches a login screen. This check is the whole reason we ship a full
+# unit rather than a drop-in, so it is checked as hard as anything here.
+if grep -Eq '^After=.*plymouth-quit-wait' "${AQ_GREETD_UNIT}"; then
+    bad "${AQ_GREETD_UNIT} still waits for plymouth-quit-wait.service — with Conflicts=plymouth-quit that is a boot that never finishes"
+else
+    ok "it does NOT wait for plymouth-quit-wait.service (which would deadlock the boot)"
+fi
+
+# ------------------------------------------------------------------------------
+# The program that takes the boot animation down, and only it
+# ------------------------------------------------------------------------------
+# Because greetd now conflicts with plymouth-quit.service, exactly one thing on
+# a greetd boot is responsible for ever taking the animation away. If it were
+# missing, the machine would sit on a still picture of the Aquarius mark with no
+# way in — so it is checked here as carefully as the unit above.
+say "The program that hands the screen from the boot animation to the login screen"
+AQ_RELEASE_PROG="/usr/libexec/aquarius-plymouth-release"
+AQ_RELEASE_UNIT="/usr/lib/systemd/system/aquarius-plymouth-release.service"
+AQ_RELEASE_LINK="/usr/lib/systemd/system/greetd.service.wants/aquarius-plymouth-release.service"
+
+chmod 0755 "${AQ_RELEASE_PROG}" 2> /dev/null || true
+if [ -x "${AQ_RELEASE_PROG}" ]; then
+    ok "aquarius-plymouth-release is installed and executable"
+else
+    bad "${AQ_RELEASE_PROG} is missing — a greetd boot could be left showing the boot animation for ever"
+fi
+if bash -n "${AQ_RELEASE_PROG}" 2> /tmp/aq-release-syn.txt; then
+    ok "it is valid shell"
+else
+    bad "aquarius-plymouth-release does not parse as shell:"
+    sed 's/^/       /' /tmp/aq-release-syn.txt
+fi
+rm -f /tmp/aq-release-syn.txt
+
+# It has to RUN. In a build container there is no boot animation, so this takes
+# the "nothing to hand over" branch — which is exactly the branch a machine
+# without a splash takes, and it must be quiet and quick.
+if "${AQ_RELEASE_PROG}" > /tmp/aq-release-run.txt 2>&1; then
+    ok "it runs with no boot animation present and changes nothing"
+    sed 's/^/       /' /tmp/aq-release-run.txt
+else
+    bad "aquarius-plymouth-release failed to run:"
+    sed 's/^/       /' /tmp/aq-release-run.txt
+fi
+rm -f /tmp/aq-release-run.txt
+
+aq_file_has "${AQ_RELEASE_UNIT}" '^ExecStart=/usr/libexec/aquarius-plymouth-release$' \
+    "its service runs it"
+aq_file_has "${AQ_RELEASE_UNIT}" '^BindsTo=greetd.service$' \
+    "and it belongs to greetd, so it never runs on a GDM boot"
+if [ -L "${AQ_RELEASE_LINK}" ]; then
+    echo "  ${AQ_RELEASE_LINK} -> $(readlink "${AQ_RELEASE_LINK}")"
+    if [ -e "${AQ_RELEASE_LINK}" ]; then
+        ok "greetd pulls it in, from /usr, so an update always restores it"
+    else
+        bad "the link that makes greetd pull it in is dangling"
+    fi
+else
+    bad "${AQ_RELEASE_LINK} is missing — nothing would take the boot animation down on a greetd boot"
+fi
+
+# The repository's own test of the handover, run against the copy in this image.
+if [ -x /ctx/tests/test-plymouth-release.sh ]; then
+    if /ctx/tests/test-plymouth-release.sh "${AQ_RELEASE_PROG}"; then
+        ok "tests/test-plymouth-release.sh passed against the copy in this image"
+    else
+        bad "tests/test-plymouth-release.sh FAILED against the copy in this image"
+    fi
+fi
+
+# ------------------------------------------------------------------------------
+# systemd's own opinion of the two unit files
+# ------------------------------------------------------------------------------
+# Advisory, and reported honestly: inside a build container the manager often
+# cannot start at all, and a green tick nobody earned is worse than no tick.
+if aq_have systemd-analyze; then
+    for aq_u in "${AQ_GREETD_UNIT}" "${AQ_RELEASE_UNIT}" \
+        /usr/lib/systemd/system/aquarius-boot-hold.service; do
+        aq_verdict="$(systemd-analyze verify "${aq_u}" 2>&1 || true)"
+        printf '%s\n' "${aq_verdict}" | sed "s#^#  $(basename "${aq_u}"): #"
+        if printf '%s' "${aq_verdict}" | grep -Eqi "failed to initialize manager|failed to lookup"; then
+            echo "  note   systemd-analyze could not start in this container, so it did"
+            echo "         not really read $(basename "${aq_u}"). The line checks above are the guard."
+        elif printf '%s' "${aq_verdict}" | grep -Eqi "unknown (key|lvalue)|failed to parse"; then
+            bad "systemd cannot understand part of ${aq_u} (see above)."
+        else
+            ok "systemd read $(basename "${aq_u}") and understood every line of it"
+        fi
+    done
+fi
+
+# ------------------------------------------------------------------------------
+# ⚠️ AND `aq login use greetd` / `aq login use gdm` STILL SWITCH
+# ------------------------------------------------------------------------------
+# Replacing a unit file is exactly the kind of change that can quietly break the
+# one command a person needs when they are locked out. `systemctl enable` reads
+# the [Install] section; ours keeps `Alias=display-manager.service`, which is the
+# whole mechanism. This proves it rather than asserting it: switch each way and
+# read back where display-manager.service actually points.
+say "Switching login screens still works with our unit in place"
+AQ_DM_LINK="/etc/systemd/system/display-manager.service"
+
+systemctl disable gdm.service > /dev/null 2>&1 || true
+if systemctl enable greetd.service > /dev/null 2>&1; then
+    aq_dm_target="$(readlink -f "${AQ_DM_LINK}" 2> /dev/null || echo none)"
+    if [ "${aq_dm_target}" = "${AQ_GREETD_UNIT}" ]; then
+        ok "'aq login use greetd' points display-manager.service at our greetd unit"
+    else
+        bad "after enabling greetd, display-manager.service points at '${aq_dm_target}', not ${AQ_GREETD_UNIT}"
+    fi
+else
+    bad "'systemctl enable greetd.service' failed — 'aq login use greetd' would not work"
+fi
+
+systemctl disable greetd.service > /dev/null 2>&1 || true
+if systemctl enable gdm.service > /dev/null 2>&1; then
+    aq_dm_target="$(readlink -f "${AQ_DM_LINK}" 2> /dev/null || echo none)"
+    case "${aq_dm_target}" in
+        */gdm.service)
+            ok "'aq login use gdm' points display-manager.service back at GDM"
+            ;;
+        *)
+            bad "after enabling gdm, display-manager.service points at '${aq_dm_target}', not GDM"
+            ;;
+    esac
+else
+    bad "'systemctl enable gdm.service' failed — the machine would have no login screen"
+fi
+
 # ------------------------------------------------------------------------------
 # The login screen's own pieces
 # ------------------------------------------------------------------------------

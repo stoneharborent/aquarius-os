@@ -1,0 +1,44 @@
+# =============================================================================
+# aquarius-plymouth-release — the AquariusOS half of "GDM quits Plymouth itself"
+# =============================================================================
+# WHAT IT IS FOR, IN ONE PARAGRAPH
+#
+# Our own greetd.service says `Conflicts=plymouth-quit.service`, which stops
+# Fedora's "take the boot animation away" service from running at all on a boot
+# that uses the AquariusOS login screen. That is deliberate — it is what lets
+# the animation stay on the screen until the login screen is ready to appear
+# over it, the way a Mac hands one picture to the next. But it also means that
+# from that moment on, ONE program is responsible for ever taking the animation
+# down. This service is it, and /usr/libexec/aquarius-plymouth-release is
+# written so that it cannot fail to.
+#
+# WHEN IT RUNS. Only on a greetd boot. It is pulled in by a link shipped inside
+# the image at /usr/lib/systemd/system/greetd.service.wants/, so it starts
+# whenever greetd does, and never on a GDM boot (where GDM does this job).
+#
+# WHY BindsTo AND NOT Requires. If greetd goes away — somebody switches back to
+# GDM, or greetd is stopped — this has nothing left to wait for and should stop
+# too rather than sit there holding a timer.
+# =============================================================================
+[Unit]
+Description=Hand the screen from the boot animation to the AquariusOS login screen
+Documentation=file:///usr/libexec/aquarius-plymouth-release
+
+# Nothing to hand over on a machine that booted without a boot animation.
+ConditionKernelCommandLine=splash
+
+After=greetd.service
+BindsTo=greetd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/aquarius-plymouth-release
+
+# The program's own limit is 25 seconds and it always exits 0. This is the
+# outer fence: if it ever hung, systemd kills it, and greetd's own
+# OnFailure=plymouth-quit.service is still underneath.
+TimeoutStartSec=60s
+
+# ⚠️ NOT RemainAfterExit. Nothing orders itself after this, and a oneshot that
+# stays "active" would make `systemctl status` read as though the handover were
+# still in progress long after it finished.

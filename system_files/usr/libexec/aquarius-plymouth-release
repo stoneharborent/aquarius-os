@@ -1,0 +1,206 @@
+#!/usr/bin/bash
+# =============================================================================
+# aquarius-plymouth-release — hand the screen from the boot animation to the
+#                             AquariusOS login screen, and never get stuck
+# =============================================================================
+# PLAIN ENGLISH
+#
+# The boot animation (Plymouth) owns the screen while the computer starts. The
+# login screen wants it next. Somebody has to say "you can stop now" at exactly
+# the right moment — after the login screen has drawn, never before it, and
+# never *not at all*.
+#
+# On GNOME's login screen, GDM does this itself: it is a big program, it knows
+# when its own greeter is on the screen, and it tells Plymouth to quit. greetd
+# does not — greetd is a small program whose only job is checking passwords. So
+# this is the piece that does it for AquariusOS.
+#
+# ⚠️ THE BENCH FAULT THIS COMES FROM (2026-09-08). On the first boot that
+# reached our own login screen there was no animation at all: black, then three
+# seconds of text console, then the login screen. The reason was that nothing
+# was holding the boot animation — a service called plymouth-quit.service took
+# it away at 11.55 seconds, a second before greetd even started. Our own
+# greetd.service now says `Conflicts=plymouth-quit.service`, which stops that
+# service running at all on a greetd boot. Which means: from that moment on,
+# THIS program is the only thing that takes the boot animation down. If it did
+# not run, or ran and did nothing, the machine would sit on a still picture of
+# the Aquarius mark forever with no way in.
+#
+# So this program is written to be impossible to get stuck behind:
+#
+#   * If there is no boot animation running, it exits immediately, happily.
+#   * It waits for the login screen to draw, but only up to a limit.
+#   * When the limit runs out it takes the boot animation down ANYWAY — and
+#     without keeping the last frame, so that whatever is underneath (a text
+#     login, an error, anything) becomes visible. A person must always be able
+#     to see what went wrong.
+#   * It always exits 0. A failure here must never mark the boot as failed.
+#
+# -----------------------------------------------------------------------------
+# HOW IT KNOWS THE LOGIN SCREEN HAS DRAWN
+# -----------------------------------------------------------------------------
+# The same two signals /usr/libexec/aquarius-greeter-watchdog uses, and for the
+# same reasons (its header explains them at length):
+#
+#   1. A READY STAMP written by the greeter itself. Two paths are accepted:
+#
+#        /run/aquarius-greeter/ready    the one the greeter can actually write.
+#                                       /run belongs to root; the login screen
+#                                       runs as the unprivileged `greetd` user,
+#                                       so greetd.service creates this folder
+#                                       and gives it to that user first.
+#        /run/aquarius-greeter-ready    the original path, kept because it is
+#                                       what greeter-debug.md has always named.
+#                                       Anything running as root can write it.
+#
+#   2. QUICKSHELL IS RUNNING. The login screen is a Quickshell program. If it
+#      is alive, something is on the screen. Weaker than the stamp — a frozen
+#      Quickshell would fool it — which is why the timeout above exists.
+#
+# -----------------------------------------------------------------------------
+# WHY `plymouth quit --retain-splash` AND NOT PLAIN `plymouth quit`
+# -----------------------------------------------------------------------------
+# --retain-splash leaves the last frame of the animation on the screen instead
+# of clearing it to black. The login screen then appears over the top of the
+# held Aquarius mark, with no black flash in between. That is GDM's own choice
+# and it is what makes a Mac-like boot possible.
+#
+# It is the WRONG choice when the login screen never drew, because then the
+# machine would show a still picture and nothing else — which is why the
+# timeout path deliberately does not use it.
+#
+# RUNNING IT BY HAND
+#   sudo /usr/libexec/aquarius-plymouth-release --status   what it can see now
+#   sudo /usr/libexec/aquarius-plymouth-release --now      take it down at once
+# =============================================================================
+
+set -uo pipefail
+
+# ⚠️ AQ_PLYMOUTH_RELEASE_ROOT exists for ONE reason: so
+# tests/test-plymouth-release.sh can run this program for real, against a
+# temporary folder, without being root and without touching the machine it runs
+# on. It is never set in normal use, and unset every path below is exactly what
+# it always was. Same idea, and same rule, as AQ_GREETER_WATCHDOG_ROOT in
+# /usr/libexec/aquarius-greeter-watchdog.
+AQ_ROOT="${AQ_PLYMOUTH_RELEASE_ROOT:-}"
+
+# The two stamps, in the order they are trusted.
+AQ_READY_STAMPS=(
+    "${AQ_ROOT}/run/aquarius-greeter/ready"
+    "${AQ_ROOT}/run/aquarius-greeter-ready"
+)
+
+# How long to wait for the login screen before taking the boot screen down
+# regardless. 25 seconds is comfortably longer than a healthy start (labwc and
+# Quickshell are up in two or three) and comfortably shorter than a person's
+# patience with a screen that is not changing.
+AQ_WAIT="${AQ_PLYMOUTH_RELEASE_WAIT:-25}"
+AQ_POLL="${AQ_PLYMOUTH_RELEASE_POLL:-0.25}"
+
+# The program that talks to the boot animation. Overridable so that
+# tests/test-plymouth-release.sh can hand it a stand-in and watch what it is
+# asked to do — there is no boot animation in a build container.
+AQ_PLYMOUTH="${AQ_PLYMOUTH_CMD:-/usr/bin/plymouth}"
+
+say() { echo "aquarius-plymouth-release: $*"; }
+
+# Is a boot animation running at all? `plymouth --ping` answers exactly that
+# and nothing else, and answers "no" on every machine that booted without one.
+aq_plymouth_is_up() {
+    [ -x "${AQ_PLYMOUTH}" ] || return 1
+    "${AQ_PLYMOUTH}" --ping > /dev/null 2>&1
+}
+
+# Has the login screen drawn? Stamp first, then "is Quickshell alive".
+aq_greeter_has_drawn() {
+    local stamp
+    for stamp in "${AQ_READY_STAMPS[@]}"; do
+        if [ -e "${stamp}" ]; then
+            AQ_REASON="the login screen wrote ${stamp}"
+            return 0
+        fi
+    done
+    if command -v pgrep > /dev/null 2>&1; then
+        if pgrep -x qs > /dev/null 2>&1 \
+            || pgrep -x quickshell > /dev/null 2>&1 \
+            || pgrep -f 'greeter/greeter\.qml' > /dev/null 2>&1; then
+            AQ_REASON="the login screen's program (Quickshell) is running"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+aq_take_it_down() { # aq_take_it_down keep|clear
+    if [ "$1" = "keep" ]; then
+        say "handing the screen over, keeping the last frame of the animation"
+        "${AQ_PLYMOUTH}" quit --retain-splash > /dev/null 2>&1 \
+            || say "WARNING: 'plymouth quit --retain-splash' was refused; trying a plain quit"
+    fi
+    # Always finish with a plain quit as well. If the call above worked this is
+    # a no-op (there is nothing left to talk to); if it was refused, this is the
+    # thing that stops the machine sitting on a picture.
+    "${AQ_PLYMOUTH}" quit > /dev/null 2>&1 || true
+}
+
+AQ_REASON=""
+
+case "${1:-}" in
+    --status)
+        if aq_plymouth_is_up; then
+            say "the boot animation is running"
+        else
+            say "no boot animation is running"
+        fi
+        if aq_greeter_has_drawn; then
+            say "the login screen HAS drawn — ${AQ_REASON}"
+        else
+            say "the login screen has NOT drawn yet"
+        fi
+        exit 0
+        ;;
+    --now)
+        aq_take_it_down keep
+        exit 0
+        ;;
+    "" | --wait) : ;;
+    *)
+        say "I do not understand '$1'. I take --status, --now or nothing at all."
+        exit 0
+        ;;
+esac
+
+if ! aq_plymouth_is_up; then
+    say "no boot animation is running, so there is nothing to hand over. Done."
+    exit 0
+fi
+
+say "waiting up to ${AQ_WAIT}s for the AquariusOS login screen to draw"
+
+# The loop. Timed against the clock rather than by counting sleeps, because a
+# sleep that is interrupted must not shorten the wait.
+AQ_DEADLINE=$(($(date +%s) + AQ_WAIT))
+while :; do
+    if aq_greeter_has_drawn; then
+        say "${AQ_REASON}"
+        aq_take_it_down keep
+        exit 0
+    fi
+    if [ "$(date +%s)" -ge "${AQ_DEADLINE}" ]; then
+        break
+    fi
+    sleep "${AQ_POLL}"
+done
+
+# ⚠️ THE PATH THAT MUST NEVER BE SILENT. The login screen did not draw, and the
+# machine is about to show whatever is underneath the animation. Say so, at
+# length, because this line in the journal is the whole explanation for a boot
+# that looked wrong.
+say "the login screen did not draw within ${AQ_WAIT}s."
+say "Taking the boot animation down anyway, and NOT keeping its last frame, so"
+say "that whatever is underneath it can be seen. If this machine has just shown"
+say "you a black screen or a text login, that is what happened, and:"
+say "    journalctl -b -u greetd"
+say "says why the login screen did not come up."
+aq_take_it_down clear
+exit 0

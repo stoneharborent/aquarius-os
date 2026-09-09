@@ -3,27 +3,41 @@
 # =============================================================================
 # WHAT IT IS FOR
 #
-# The boot screen pours the Aquarius mark over 2.2 seconds and then holds it
-# until the login screen takes over. On the bench (2026-09-07) the machine got
-# from the boot screen to the login screen in five seconds, and a big television
-# took the first two of those to switch over from the motherboard's logo. The
-# pour was finished before anybody could see it. Fast is good; a story nobody
-# sees is not.
+# The boot screen pours the Aquarius mark over 2.2 seconds, after waiting 1.5
+# seconds so a television has time to wake up, and then holds it until the login
+# screen takes over. On the bench (2026-09-07) the machine got from the boot
+# screen to the login screen in five seconds, and a big television took the
+# first two of those to switch over from the motherboard's logo. The pour was
+# finished before anybody could see it. Fast is good; a story nobody sees is not.
 #
-# This service does one thing: it makes the login screen wait. It starts once
-# the boot screen is up, sleeps, and finishes — and the login screen is ordered
-# after it. The pour itself starts 1.5 seconds late (aquarius.script, BOOT_DELAY)
-# so the screen is awake for it; 1.5 + 2.2 = 3.7 seconds, and this waits a
-# little longer than that from the moment the real system takes over.
+# This service does one thing: it makes the login screen wait. The login screen
+# is ordered after it, so for as long as it is running the login screen does not
+# start. The arithmetic — how much of the animation is still to come — is in
+# /usr/libexec/aquarius-boot-hold, and that file's header is the long version.
 #
-# WHAT IT COSTS. On a machine that already takes five seconds, nothing: the
-# wait ends before the login screen would have started anyway. On a faster
-# machine, up to three and a half seconds of navy with the mark held on it.
+# ⚠️ CHANGED 2026-09-08: IT NO LONGER SLEEPS A FLAT 3.5 SECONDS. It used to, and
+# the bench journal showed why that was wrong: the sleep began a full second
+# after the animation did, because the graphics driver and udev sat in between,
+# so the wait was measured from the wrong moment. It now asks systemd when
+# plymouth-start.service actually became active and waits from there.
+#
+# WHAT IT COSTS. On a machine that already takes five seconds, nothing: the wait
+# ends before the login screen would have started anyway. On a fast machine, up
+# to a few seconds of navy with the mark held on it, and never more than six.
 #
 # WHEN IT DOES NOT RUN. Only when the boot screen was asked for at all
 # (`splash` on the kernel command line — the image puts it there). Shutting
 # down is not affected: this is ordered before the login screen, and nothing
 # else.
+#
+# ⚠️ Before=plymouth-quit.service, ADDED 2026-09-08. plymouth-quit.service is
+# the service that takes the boot animation away. On a boot that uses either of
+# our login screens it is conflicted out of the way entirely (GDM and our own
+# greetd.service both say Conflicts=plymouth-quit.service), so this line
+# normally has nothing to order against. It is here for the boot where that is
+# somehow not true: the animation must never be taken down while this service is
+# still holding the login screen back, because that is a hold with nothing on
+# the screen to look at.
 #
 # HOW IT IS SWITCHED ON. By a link shipped in the read-only half of the system,
 # graphical.target.wants/, the same way every other Aquarius service is. See
@@ -35,10 +49,15 @@ DefaultDependencies=no
 ConditionKernelCommandLine=splash
 After=plymouth-start.service
 Before=display-manager.service
+Before=plymouth-quit.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/sleep 3.5
+ExecStart=/usr/libexec/aquarius-boot-hold
+
+# The program has its own six-second ceiling and always finishes. This is the
+# outer fence: a boot must never hang here waiting for an animation.
+TimeoutStartSec=30s
 
 [Install]
 WantedBy=graphical.target

@@ -1117,6 +1117,73 @@ and then exits. labwc was started with `-s`, which means "shut down when that
 finishes", so the whole chain unwinds and greetd has the screen back to start
 your desktop on.
 
+### ⚠️ The boot animation, and what greetd had to be taught (2026-09-08)
+
+*Added after the first bench boot that reached this login screen. Royce: "The
+opening animation didn't play; the screen stayed black" — and, as a directive,
+"I want the experience to be like booting up a Mac. No commands, terminals or
+text during boot."*
+
+The full timeline, with the journal numbers, is in
+**`boot-branding.md` → "The real timeline, and the black boot of 2026-09-08"**.
+This is the login-screen half of it, because three of the four fixes live here.
+
+**The boot animation was being taken away before there was anything to replace
+it.** Taking it away is a service of its own, `plymouth-quit.service`, and it
+runs early unless the login screen says otherwise. GDM's service file says
+otherwise; Fedora's greetd service file did not, and on top of that it waited
+for the animation to have already gone before starting. So on a greetd boot the
+mark vanished at 11.55 seconds, greetd started at 12.35, and the three seconds
+in between were a bare text console.
+
+AquariusOS now ships **its own `greetd.service`**. Both are on the machine:
+
+```bash
+cat /usr/lib/systemd/system/greetd.service            # ours, the one in use
+cat /usr/share/aquarius/units/greetd.service.fedora   # Fedora's, kept to compare
+```
+
+Ours is GDM's arrangement: *do not let anything take the animation away, I will
+do it myself when my screen has drawn; and if I fail, let something else take it
+down so nobody is stranded.* It has to be a whole file rather than a small
+addition, because a small addition can add ordering but can never remove any,
+and the line that had to go was Fedora's "wait until the animation has gone".
+
+**`aq login use greetd` and `aq login use gdm` still work exactly as before.**
+That is not an assumption: the build switches each way and reads back where
+`display-manager.service` actually points, on every push. The mechanism is the
+one line `Alias=display-manager.service`, which our file keeps.
+
+**One program now owns taking the animation down**, and it is
+`/usr/libexec/aquarius-plymouth-release`. It waits for the login screen to draw
+and then says "stop, but leave your last picture" — so the login screen appears
+*over* the held Aquarius mark instead of after a black flash. If the login screen
+has not drawn within 25 seconds it takes the animation down anyway and does *not*
+keep the picture, so that whatever is underneath can be read:
+
+```bash
+journalctl -b -u aquarius-plymouth-release
+```
+
+**And this login screen no longer prints anything to the screen.** The five white
+lines Royce saw came from `/usr/libexec/aquarius-greeter`. The comment above them
+said they went to greetd's journal; they did not — greetd hands its greeter the
+terminal, not the journal, which is why `journalctl -u greetd -b` on the bench
+showed four lines and none of ours. Everything that file, labwc and Quickshell
+say now goes here instead:
+
+```bash
+journalctl -b -t aquarius-greeter
+```
+
+The one place it still writes to the screen is the plain text login it falls back
+to when the graphical one will not start — which takes the animation down first,
+because text drawn over a held splash is unreadable.
+
+**If you have debugged this login screen before**, that last paragraph is the
+important one: the journal you were reading was genuinely empty, and it is not
+any more.
+
 ### Why labwc and not something smaller
 
 `cage` is the obvious choice — it is a window manager built for exactly this,
@@ -1196,7 +1263,12 @@ In order, and stop at the first one that is wrong:
 2. `sudo aq login use greetd`, then `sudo systemctl reboot`.
 3. **Does a login screen appear at all?** If it is a plain blue-and-grey text
    screen, the graphical one failed and fell back — that is the safety net
-   working. `journalctl -u greetd -b` says why.
+   working. `journalctl -b -t aquarius-greeter` says why (and
+   `journalctl -b -u greetd` is greetd's own half).
+3b. **Did the boot animation hold?** The pour should still be on the screen when
+   the login screen draws over it, with no black flash and no white text at any
+   point. `journalctl -b -u aquarius-plymouth-release` says exactly what the
+   handover waited for and what it did.
 4. **Is it the right size on the 55" monitor?** **Expect tiny** — see "Where it
    gets its size" above: it reads a file that AquariusOS no longer writes, and
    fixing that properly is the R5 job. To make it the right size today, put

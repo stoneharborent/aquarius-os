@@ -1,0 +1,149 @@
+#!/usr/bin/bash
+# =============================================================================
+# aquarius-boot-hold — give the boot animation time to actually be seen
+# =============================================================================
+# PLAIN ENGLISH
+#
+# The boot animation pours the Aquarius mark over 2.2 seconds, after waiting
+# 1.5 seconds so that a television has time to wake up. That is 3.7 seconds of
+# story. If the login screen is ready before then, nobody ever sees it.
+#
+# So this program makes the login screen wait. The service that runs it,
+# aquarius-boot-hold.service, is ordered `Before=display-manager.service`, so
+# for as long as this program is running the login screen does not start.
+#
+# -----------------------------------------------------------------------------
+# ⚠️ WHY THIS IS A PROGRAM AND NOT `ExecStart=/usr/bin/sleep 3.5`
+# -----------------------------------------------------------------------------
+# It was a flat 3.5-second sleep until 2026-09-08, and the bench showed what is
+# wrong with that. Here is the real timeline from that machine's journal:
+#
+#     7.5 – 7.8 s   plymouth-start.service — the boot animation appears
+#     8.8 s         aquarius-boot-hold starts its 3.5-second sleep
+#     ~9.3 s        the animation's own 1.5-second wait ends; the pour begins
+#     ~11.5 s       the pour ends
+#     12.35 s       the sleep ends
+#
+# The sleep began a whole second AFTER the animation did, because the services
+# in between (udev settling, the graphics driver) took that long. On a different
+# machine that gap could be three seconds, or none. A flat sleep is therefore
+# measuring the wrong thing: what matters is how long it has been since the
+# ANIMATION appeared, not since this program happened to start.
+#
+# So this asks systemd when plymouth-start.service actually became active, works
+# out how much of the animation is still to come, and waits exactly that long.
+# On a machine where the animation appeared four seconds ago it waits almost
+# nothing. On a machine where it appeared a tenth of a second ago it waits the
+# full time. Either way a person sees the whole pour and no more navy than that.
+#
+# -----------------------------------------------------------------------------
+# THE NUMBERS, AND WHERE EACH ONE COMES FROM
+# -----------------------------------------------------------------------------
+#   1.5 s   BOOT_DELAY in /usr/share/plymouth/themes/aquarius/aquarius.script
+#           (written there as `BOOT_DELAY = 45;` — 45 frames at 30 a second).
+#   2.2 s   the pour itself: 66 frames at 30 a second.
+#   0.6 s   a margin, so the finished mark is held still for a moment rather
+#           than being cut off on its last frame.
+#   -----
+#   4.3 s   from the moment the boot animation appeared.
+#
+# ⚠️ THESE MUST MATCH THE THEME. build_files/80-boot-branding.sh checks that the
+# theme still says `BOOT_DELAY = 45;` and that this file still says 4.3, so the
+# two cannot drift apart quietly.
+#
+# AND A CEILING. However odd the answers coming back, this never waits longer
+# than AQ_MAX_HOLD. A boot that hangs here is a boot with no login screen, and
+# no animation is worth that.
+#
+# RUNNING IT BY HAND
+#   /usr/libexec/aquarius-boot-hold --explain   print the sums, wait for nothing
+# =============================================================================
+
+set -uo pipefail
+
+# How long the story lasts, from the moment the animation appears. See above.
+AQ_HOLD_TOTAL="${AQ_BOOT_HOLD_TOTAL:-4.3}"
+
+# The most this may ever wait, whatever the arithmetic says.
+AQ_MAX_HOLD="${AQ_BOOT_HOLD_MAX:-6}"
+
+# What to fall back to when systemd cannot say when the animation appeared —
+# the old flat sleep, which is better than nothing and is what this machine did
+# before 2026-09-08.
+AQ_FALLBACK="${AQ_BOOT_HOLD_FALLBACK:-3.5}"
+
+# The unit whose start time is "when the animation appeared".
+AQ_PLYMOUTH_UNIT="${AQ_BOOT_HOLD_UNIT:-plymouth-start.service}"
+
+say() { echo "aquarius-boot-hold: $*"; }
+
+EXPLAIN_ONLY=0
+[ "${1:-}" = "--explain" ] && EXPLAIN_ONLY=1
+
+# -----------------------------------------------------------------------------
+# Now, on the clock systemd uses
+# -----------------------------------------------------------------------------
+# systemd reports unit timestamps in MONOTONIC microseconds — microseconds since
+# the kernel started, on a clock that never jumps. /proc/uptime is the same
+# clock in seconds, and it is readable by anybody with no services involved,
+# which is what makes it the right partner for this.
+aq_now_us() {
+    local up
+    up="$(cut -d' ' -f1 /proc/uptime 2> /dev/null)"
+    case "${up}" in
+        '' | *[!0-9.]*) return 1 ;;
+    esac
+    awk -v u="${up}" 'BEGIN { printf "%d", u * 1000000 }'
+}
+
+# -----------------------------------------------------------------------------
+# When did the boot animation appear?
+# -----------------------------------------------------------------------------
+# `systemctl show -p ActiveEnterTimestampMonotonic --value` prints one number
+# and nothing else. It prints 0 when the unit never became active — on a machine
+# with no boot animation, for instance — and that is treated as "no answer".
+aq_plymouth_started_us() {
+    local v
+    command -v systemctl > /dev/null 2>&1 || return 1
+    v="$(systemctl show "${AQ_PLYMOUTH_UNIT}" \
+        -p ActiveEnterTimestampMonotonic --value 2> /dev/null)"
+    case "${v}" in
+        '' | 0 | *[!0-9]*) return 1 ;;
+    esac
+    printf '%s' "${v}"
+}
+
+# -----------------------------------------------------------------------------
+# The sum
+# -----------------------------------------------------------------------------
+NOW_US="$(aq_now_us || true)"
+START_US="$(aq_plymouth_started_us || true)"
+
+if [ -z "${NOW_US}" ] || [ -z "${START_US}" ]; then
+    say "could not find out when the boot animation appeared"
+    say "(${AQ_PLYMOUTH_UNIT} gave no start time), so holding the login screen"
+    say "for a flat ${AQ_FALLBACK}s, which is what this machine did before."
+    WAIT="${AQ_FALLBACK}"
+else
+    ELAPSED="$(awk -v n="${NOW_US}" -v s="${START_US}" \
+        'BEGIN { printf "%.2f", (n - s) / 1000000 }')"
+    WAIT="$(awk -v t="${AQ_HOLD_TOTAL}" -v e="${ELAPSED}" -v m="${AQ_MAX_HOLD}" \
+        'BEGIN {
+            w = t - e;
+            if (w < 0) w = 0;
+            if (w > m) w = m;
+            printf "%.2f", w
+        }')"
+    say "the boot animation appeared ${ELAPSED}s ago; its story lasts ${AQ_HOLD_TOTAL}s;"
+    say "so the login screen waits ${WAIT}s more."
+fi
+
+if [ "${EXPLAIN_ONLY}" = "1" ]; then
+    say "--explain: nothing was waited for."
+    exit 0
+fi
+
+# `sleep 0` is a legal no-op, so there is no special case for "no wait needed".
+sleep "${WAIT}"
+say "done — the login screen may start."
+exit 0

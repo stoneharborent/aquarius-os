@@ -37,10 +37,12 @@
 # screen, the same wall the GDM guard hit on 2026-09-05). So it uses the best
 # signals it can get, in order of strength:
 #
-#   1. A READY STAMP. If the greeter QML touches /run/aquarius-greeter-ready
+#   1. A READY STAMP. If the greeter QML touches /run/aquarius-greeter/ready
 #      when it finishes loading (Component.onCompleted), that file is proof the
 #      greeter drew. This is the signal we WANT the greeter to grow — see
 #      docs/restart/greeter-debug.md — and this program prefers it when present.
+#      (The older path /run/aquarius-greeter-ready is accepted too; the note
+#      beside AQ_READY_STAMPS below explains why there are two.)
 #
 #   2. QUICKSHELL IS RUNNING. If `qs` (Quickshell) is alive during the watch,
 #      the greeter at least launched. In the reported failure labwc's OWN root
@@ -109,7 +111,19 @@ AQ_PROBATION="${AQ_STATE_DIR}/greeter-probation"
 AQ_LOG="${AQ_STATE_DIR}/greeter-watchdog.log"
 
 # The greeter's own "I drew" stamp, if it grows one. See the header.
-AQ_READY_STAMP="${AQ_ROOT}/run/aquarius-greeter-ready"
+#
+# ⚠️ TWO PATHS, AND THE REASON IS FILE PERMISSIONS (found 2026-09-08). /run
+# belongs to root, and the login screen runs as the unprivileged `greetd` user —
+# so the greeter QML CANNOT create /run/aquarius-greeter-ready, however plainly
+# the documentation asks it to. greetd.service now creates /run/aquarius-greeter
+# and gives that folder to the greetd user, so the stamp the greeter can
+# actually write is /run/aquarius-greeter/ready. The old path is still accepted,
+# because anything running as root can write it and because greeter-debug.md has
+# named it since 2026-09-05.
+AQ_READY_STAMPS=(
+    "${AQ_ROOT}/run/aquarius-greeter/ready"
+    "${AQ_ROOT}/run/aquarius-greeter-ready"
+)
 
 # The once-per-boot stamp. Under /run, which is emptied at every boot.
 AQ_STAMP_DIR="/run/aquarius"
@@ -168,9 +182,12 @@ aq_greetd_is_the_login_screen() {
 # -----------------------------------------------------------------------------
 aq_greeter_is_healthy() {
     # 1. The greeter said so.
-    if [ -e "${AQ_READY_STAMP}" ]; then
-        return 0
-    fi
+    local stamp
+    for stamp in "${AQ_READY_STAMPS[@]}"; do
+        if [ -e "${stamp}" ]; then
+            return 0
+        fi
+    done
     # 2. Quickshell is alive. In the reported failure labwc's own root menu is
     #    what shows, which means qs is NOT up — so this reliably reads that case.
     #    /usr/bin/qs is a symlink to /usr/bin/quickshell, so the process name can

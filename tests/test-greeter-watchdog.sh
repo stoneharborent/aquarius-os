@@ -169,6 +169,14 @@ else
 fi
 
 # The ready stamp is the stronger signal, and must reset even with no qs process.
+#
+# ⚠️ THERE ARE TWO PATHS, AND BOTH ARE TESTED (2026-09-08). /run belongs to root
+# and the login screen runs as the unprivileged `greetd` user, so the greeter
+# CANNOT create /run/aquarius-greeter-ready — the path the documentation asked
+# it to write for three days. greetd.service now makes /run/aquarius-greeter and
+# gives it to that user, so the stamp the greeter can really write is
+# /run/aquarius-greeter/ready. The old path still counts, because anything
+# running as root can write it.
 scenario healthy-by-ready-stamp
 set_counter 1
 : > "${ROOT}/run/aquarius-greeter-ready"     # the greeter said "I drew"
@@ -179,6 +187,19 @@ elif [ "$(counter)" != "0" ]; then
     fail "the ready stamp was present but the counter was not reset"
 else
     pass "the ready stamp alone (no qs process) is enough to count as healthy"
+fi
+
+scenario healthy-by-writable-ready-stamp
+set_counter 1
+mkdir -p "${ROOT}/run/aquarius-greeter"
+: > "${ROOT}/run/aquarius-greeter/ready"     # the path the greeter can write
+run_watchdog
+if reverted; then
+    fail "the greeter posted /run/aquarius-greeter/ready and it reverted anyway"
+elif [ "$(counter)" != "0" ]; then
+    fail "/run/aquarius-greeter/ready was present but the counter was not reset"
+else
+    pass "the stamp the greeter can actually write (/run/aquarius-greeter/ready) counts too"
 fi
 
 # ==============================================================================

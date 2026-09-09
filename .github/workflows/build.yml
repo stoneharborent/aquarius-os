@@ -453,6 +453,37 @@ jobs:
         run: ./tests/test-greeter-watchdog.sh
 
       # ------------------------------------------------------------------------
+      # The boot animation is actually seen, and always goes away again
+      # ------------------------------------------------------------------------
+      # ⚠️ THE BENCH FAULT OF 8 SEPTEMBER 2026, and Royce's directive with it:
+      # "I want the experience to be like booting up a Mac. No commands,
+      # terminals or text during boot." The first boot that reached our own
+      # login screen showed no animation at all — black, then three seconds of
+      # text console, then the login screen. Two causes, and these are the two
+      # tests for them.
+      #
+      # The first: the login screen was held back by a flat `sleep 3.5` that
+      # started a whole second after the animation did, so it was measuring the
+      # wrong moment. It now asks systemd when the animation really appeared.
+      # This runs that arithmetic against a stand-in clock — including the case
+      # where systemd has no answer, where "no answer" must never mean "do not
+      # wait at all".
+      - name: Check the login screen waits the right amount for the boot animation
+        run: ./tests/test-boot-hold.sh
+
+      # The second: our greetd.service now says Conflicts=plymouth-quit.service,
+      # which stops Fedora's "take the animation away" service running at all on
+      # a greetd boot. That is what lets the animation stay up until the login
+      # screen can appear over it — and it means exactly ONE program is now
+      # responsible for ever taking it down. If that program failed, the machine
+      # would sit on a still picture with no way in, which is the worst outcome
+      # this repository can produce. So it is tested against a stand-in plymouth
+      # that writes down every request, including the case where the login
+      # screen never draws at all.
+      - name: Check the boot animation is always handed over, and always goes away
+        run: ./tests/test-plymouth-release.sh
+
+      # ------------------------------------------------------------------------
       # The USB4 / Thunderbolt rescue actually retries, and leaves working
       # hardware alone
       # ------------------------------------------------------------------------
