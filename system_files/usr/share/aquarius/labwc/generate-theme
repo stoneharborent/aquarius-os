@@ -314,6 +314,12 @@ BUTTON_EDGE_PAD = 12     # section 4: air between the window edge and the first
 MAX_SQUARE = 7           # section 4: the maximise glyph is a 7x7 square
 MAX_SQUARE_RADIUS = 1.2  # section 4: with 1.2 rounded corners
 
+# How thick the minimise line is when the STYLESHEET draws it rather than the
+# icon theme (GNOME windows — see build_gtk_css). labwc's own picture strokes it
+# at BUTTON_STROKE, which is 1.8; CSS wants a whole number of pixels for a rule
+# this short, and 2 is what 1.8 rounds to. Nothing else uses it.
+MINIMISE_LINE_WIDTH = 2
+
 # The four button discs, as percentages of the theme's own ink.
 DISC_IDLE = {"ice": 10, "midnight": 12}          # section 4
 DISC_HOVER = {"ice": 16, "midnight": 18}         # section 4
@@ -696,6 +702,28 @@ BUTTON_LAYOUTS = {
     "windows": ":iconify,max,close",
 }
 
+# The same decision said in GTK's language, for `gtk-decoration-layout` in
+# settings.ini. GTK spells the buttons out in English — `minimize`, `maximize`,
+# `close` — and splits the two sides with one colon, exactly as labwc does.
+# A GNOME application draws its own title bar, so this is the only way it can be
+# told which side Royce chose. See neutralise_gtk_settings() below.
+GTK_DECORATION_LAYOUTS = {
+    "mac": "close,minimize,maximize:",
+    "windows": ":minimize,maximize,close",
+}
+
+# The icon theme that goes with each palette. Both ship in the AquariusOS image
+# (/usr/share/icons); on a plain Fedora clone neither exists, which is why
+# nothing below sets one without looking first.
+ICON_THEMES = {"ice": "Aquarius-Ice", "midnight": "Aquarius-Midnight"}
+
+# The cursor theme. AquariusOS has none of its own yet, and Adwaita's is what
+# every Fedora machine has — it is named here so that a KDE-era
+# `gtk-cursor-theme-name=breeze_cursors` left behind in somebody's settings.ini
+# has something to be replaced BY. When an Aquarius cursor set exists, this is
+# the one line that changes.
+CURSOR_THEME = "Adwaita"
+
 
 def generated_region(name, body, indent):
     lines = ["%s<!-- AQ-GENERATED-BEGIN %s -->" % (indent, name)]
@@ -956,6 +984,43 @@ def build_gtk_css(palette, scheme):
             "  background-color: %s;" % css_rgba(ink, hover),
             "}",
             "",
+            "/* 2b. The minimise line, drawn HERE rather than by the icon theme.",
+            " *",
+            " * Design rule 9 says the minimise mark is a line across the MIDDLE",
+            " * of the disc, and that is what labwc draws on every other window.",
+            " * The glyph GNOME applications use is Adwaita's own",
+            " * window-minimize-symbolic, which is a bar sitting LOW in its box:",
+            " * `m 4 10.007812 h 8 v 1.988282 h -8 z` in a 16px square, so its",
+            " * centre is at 11 of 16 where the middle is 8. Drawn inside our",
+            " * %dpx disc that lands about %.2fpx below centre, and it is what"
+            % (BUTTON_DISC, (11.0 / 16.0 - 0.5) * BUTTON_GLYPH_BOX),
+            " * Royce saw on the bench on 8 September 2026: \"the line should be",
+            " * in the middle of the circle, not at the bottom\".",
+            " *",
+            " * It cannot be swapped for our own picture — GTK's",
+            " * -gtk-icon-source is honoured only by GTK's own built-in icon",
+            " * nodes, never by the GtkImage a window button uses (checked",
+            " * against the whole of GTK 4.22.4's theme and libadwaita's). So",
+            " * the glyph is turned off and the line is drawn by the stylesheet.",
+            " *",
+            " * `color: transparent` is how it is turned off, and that is not a",
+            " * trick: `color` IS how GTK tints a symbolic icon, and the rules",
+            " * above already rely on it (that is what turns the X white on a",
+            " * red close button). A colour with no opacity draws nothing.",
+            " *",
+            " * The line itself is a one-colour gradient — the ordinary CSS way",
+            " * of asking for a solid block — sized, centred and not repeated.",
+            " * It survives the hover rules above because they only change the",
+            " * disc's background COLOUR, and this is a background IMAGE.",
+            " */",
+            "windowcontrols > button.minimize > image {",
+            "  color: transparent;",
+            "  background-image: linear-gradient(%s, %s);" % (css_rgba(ink), css_rgba(ink)),
+            "  background-size: %dpx %dpx;" % (BUTTON_GLYPH_BOX, MINIMISE_LINE_WIDTH),
+            "  background-position: center;",
+            "  background-repeat: no-repeat;",
+            "}",
+            "",
             "/* Pointer on close, and close only: the disc takes the theme's",
             " * danger colour, because the one button you can press by accident",
             " * and not undo should say so.",
@@ -1041,6 +1106,20 @@ def build_gtk3_css(palette, scheme):
             "  background-color: %s;" % css_rgba(ink, hover),
             "}",
             "",
+            "/* The minimise line, centred. Same reasoning as the GTK 4 half —",
+            " * the icon theme's own glyph is a bar low in its box, and the",
+            " * design says the middle. GTK 3 draws the disc on the BUTTON, so",
+            " * the line goes on the button too: a background IMAGE over the",
+            " * background COLOUR that makes the disc.",
+            " */",
+            "headerbar button.titlebutton.minimize {",
+            "  color: transparent;",
+            "  background-image: linear-gradient(%s, %s);" % (css_rgba(ink), css_rgba(ink)),
+            "  background-size: %dpx %dpx;" % (BUTTON_GLYPH_BOX, MINIMISE_LINE_WIDTH),
+            "  background-position: center;",
+            "  background-repeat: no-repeat;",
+            "}",
+            "",
             "headerbar button.titlebutton.close:hover {",
             "  background-color: %s;" % rgb_of(palette["danger"]),
             "  color: %s;" % rgb_of(palette["inkOnAccent"]),
@@ -1054,13 +1133,331 @@ def build_gtk3_css(palette, scheme):
     )
 
 
-def apply_gtk_css(gtk_root, palette, scheme, report):
+# =============================================================================
+# TELLING SOMEBODY'S OWN GTK FILE FROM A MACHINE'S
+# =============================================================================
+# ⚠️ THIS IS THE SECTION THAT COST A BENCH RUN. Read the whole note.
+#
+# WHAT HAPPENED. On 8 September 2026 Royce looked at a GNOME window on
+# AquariusOS and saw libadwaita's stock buttons: the minimise line at the bottom
+# of the disc, and no red on the close button under the pointer. The reason was
+# not in the stylesheet this program builds. The stylesheet was never written.
+#
+# `~/.config/gtk-4.0/gtk.css` on that machine was two lines, dated 2026-08-30:
+#
+#     @import 'colors.css';
+#     @import 'kde_window_geometry.css';
+#
+# left behind by Bazzite's KDE integration months earlier, along with a Breeze
+# `colors.css`, a `kde_window_geometry.css` and a `settings.ini` naming
+# `breeze-dark` icons and `breeze_cursors`. The rule below — never overwrite a
+# file we did not write — did exactly what it was told, and, because it said so
+# only through `report()`, which the shell silences with `--quiet`, it said it
+# to nobody. A refusal nobody hears is indistinguishable from a bug.
+#
+# TWO THINGS ARE FIXED HERE, AND THE SECOND MATTERS MORE THAN THE FIRST.
+#
+#   1. A file that is plainly a PROGRAM'S OUTPUT — not a person's — may be moved
+#      aside once and replaced. What counts as "plainly a program's output" is
+#      deliberately narrow; see is_machine_written() below.
+#   2. THIS PROGRAM NOW ALWAYS SAYS WHAT IT DID, on stderr, in one sentence,
+#      whether it wrote, moved something aside, or declined. --quiet silences
+#      the running commentary and never silences this. The shell collects the
+#      generator's stderr into the session log, so the answer to "why are my
+#      window buttons wrong" is now one grep away.
+#
+# THE RULE THAT DOES NOT CHANGE: a gtk.css a PERSON wrote is theirs. It is left
+# exactly where it is, and the Aquarius chrome is skipped for that toolkit. The
+# test below is written so that it cannot possibly match a hand-written file —
+# a person's stylesheet contains rules, and this only matches a file whose whole
+# content is imports of other files that are themselves recognisably Breeze.
+
+# What Plasma's GTK integration leaves behind. Each entry is (file it writes,
+# a phrase that appears in that file and in nothing a person would type).
+BREEZE_SIGNATURES = (
+    ("colors.css", "_breeze"),                       # @define-color …_breeze
+    ("kde_window_geometry.css", "Libadwaita-Breeze"),  # its own header comment
+)
+
+# The same question for settings.ini, which is a list of keys rather than a
+# stylesheet. Any ONE of these means Plasma wrote the file: no person types
+# `colorreload-gtk-module` by hand, and `breeze` is not a theme AquariusOS
+# ships or offers.
+BREEZE_SETTINGS_SIGNATURES = (
+    "colorreload-gtk-module",
+    "breeze",
+    "Breeze",
+)
+
+# The keys the Aquarius session owns, because libadwaita reads them and they
+# decide things the session has already decided somewhere else. Everything else
+# in somebody's settings.ini — their font, their cursor blink, their animations
+# — is left exactly as it is.
+GTK_SETTINGS_WE_OWN = (
+    "gtk-icon-theme-name",
+    "gtk-cursor-theme-name",
+    "gtk-decoration-layout",
+    "gtk-application-prefer-dark-theme",
+)
+
+# The suffix a rescued file gets. Same word both times so that somebody who
+# finds one knows immediately what it is and that there will be others.
+RESCUE_SUFFIX = ".before-aquarius"
+
+
+def announce(line):
+    """
+    One plain sentence about what happened to somebody's GTK configuration.
+
+    ALWAYS printed, `--quiet` or not, and to stderr rather than stdout — the
+    shell runs this program quietly on every light/dark flip and collects its
+    stderr into the session log. This is the channel that did not exist on
+    8 September 2026, which is why the generator's refusal was invisible.
+    """
+    sys.stderr.write("generate-theme: %s\n" % line)
+
+
+def is_machine_written(path, text):
+    """
+    Is this file plainly a program's output rather than somebody's own work?
+
+    Returns a short sentence saying WHY if it is, and None if it is not — so the
+    caller can put the reason in the log rather than saying "because".
+
+    THE TEST IS DELIBERATELY NARROW. A stylesheet counts only when everything in
+    it, once comments and blank lines are gone, is an `@import` of a file that
+    sits beside it AND carries a Breeze fingerprint of its own. That cannot
+    match a file a person wrote, because a person's stylesheet has rules in it —
+    and it cannot match an import of a file that is not there to be checked.
+    """
+    folder = os.path.dirname(path)
+
+    # Strip /* … */ comments, then blank lines.
+    stripped = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    lines = [line.strip() for line in stripped.splitlines() if line.strip()]
+    if not lines:
+        return None
+
+    imported = []
+    for line in lines:
+        match = re.match(r"""^@import\s+(?:url\()?['"]?([^'")]+)['"]?\)?\s*;?$""", line)
+        if not match:
+            return None            # a real rule: somebody's own file. Stop.
+        imported.append(os.path.basename(match.group(1).strip()))
+
+    for name in imported:
+        beside = os.path.join(folder, name)
+        signature = dict(BREEZE_SIGNATURES).get(name)
+        if signature is None:
+            return None            # imports something we do not recognise
+        try:
+            with open(beside, "r", encoding="utf-8", errors="replace") as handle:
+                if signature not in handle.read():
+                    return None
+        except OSError:
+            return None            # cannot check it, so do not touch it
+
+    return (
+        "it is Plasma's own GTK stylesheet — nothing but imports of %s, which "
+        "carry Breeze's fingerprints" % " and ".join(imported)
+    )
+
+
+def rescue_once(path):
+    """
+    Move a machine-written file aside, keeping the first one ever moved.
+
+    Returns the path it was moved to, or None if there was already a rescued
+    copy — in which case the original is simply removed, because the thing worth
+    keeping is what was there BEFORE AquariusOS, not the second copy of it.
+    """
+    kept = path + RESCUE_SUFFIX
+    if os.path.exists(kept):
+        os.remove(path)
+        return None
+    os.rename(path, kept)
+    return kept
+
+
+def neutralise_gtk_settings(gtk_root, folder, scheme, buttons, icon_theme):
+    """
+    Stop a leftover settings.ini fighting the session over four keys.
+
+    WHY THIS FILE AT ALL. `~/.config/gtk-*/settings.ini` is where GTK reads its
+    defaults, and libadwaita reads it too. On the bench it still said
+    `gtk-icon-theme-name=breeze-dark`, `gtk-cursor-theme-name=breeze_cursors`,
+    `gtk-decoration-layout=icon:minimize,maximize,close` and
+    `gtk-application-prefer-dark-theme=true` — a KDE desktop's answers, on a
+    machine that has not had KDE on it since August.
+
+    HOW MUCH OF IT THE SESSION OWNS, AND WHY NOT MORE.
+      * GTK 4 on Wayland reads most of these live from the settings portal, and
+        the portal answers from gsettings — so on a GNOME-portal machine, our
+        gsettings values already win over this file. GTK **3** does not: it has
+        no settings portal and reads settings.ini and nothing else. So the file
+        matters to every GTK 3 application, and matters again to any GTK 4 one
+        started before the portal is up.
+      * Only the four keys in GTK_SETTINGS_WE_OWN are touched. The icon theme
+        and the dark flag follow the light/dark decision; the cursor and the
+        decoration layout follow decisions Royce already made once (`aq keys`
+        puts the window buttons on the side he chose). Everything else in the
+        file — font, cursor blink, animations, toolbar style — is somebody's
+        own and is written back untouched.
+      * A file with no Plasma fingerprint that already disagrees with us is
+        LEFT ALONE, because at that point it is a person's preference. The one
+        exception is a file we wrote ourselves, which we may rewrite.
+
+    Returns a sentence for the log.
+    """
+    path = os.path.join(gtk_root, folder, "settings.ini")
+
+    wanted = {
+        "gtk-icon-theme-name": icon_theme,
+        "gtk-cursor-theme-name": CURSOR_THEME,
+        "gtk-decoration-layout": GTK_DECORATION_LAYOUTS[buttons],
+        "gtk-application-prefer-dark-theme":
+            "true" if scheme == "midnight" else "false",
+    }
+    if icon_theme is None:
+        del wanted["gtk-icon-theme-name"]
+
+    if not os.path.exists(path):
+        # Nothing to fight with. Writing a file that was not there is not this
+        # program's business: GTK's own defaults are fine, and the session sets
+        # the same things through gsettings.
+        return "%s does not exist, so there is nothing fighting us" % path
+
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            existing = handle.read()
+    except OSError as problem:
+        return "could not read %s (%s), so it is left alone" % (path, problem)
+
+    disagrees = [
+        key for key, value in wanted.items()
+        if re.search(r"^\s*%s\s*=\s*(?!%s\s*$)" % (re.escape(key), re.escape(value)),
+                     existing, re.MULTILINE)
+    ]
+    if not disagrees:
+        return "%s already agrees with the session" % path
+
+    plasma = any(sig in existing for sig in BREEZE_SETTINGS_SIGNATURES)
+    ours = any(marker in existing for marker in GTK_MARKERS)
+    if not plasma and not ours:
+        return (
+            "%s sets %s differently and looks hand-written, so it is left "
+            "alone — the Aquarius session's answers are still in gsettings, "
+            "which GTK 4 prefers" % (path, ", ".join(sorted(disagrees)))
+        )
+
+    # Keep the original once, then rewrite only our four keys in place.
+    kept = None
+    if plasma and not os.path.exists(path + RESCUE_SUFFIX):
+        shutil.copyfile(path, path + RESCUE_SUFFIX)
+        kept = path + RESCUE_SUFFIX
+
+    out = []
+    seen = set()
+    for line in existing.splitlines():
+        match = re.match(r"^\s*([a-zA-Z0-9-]+)\s*=", line)
+        key = match.group(1) if match else None
+        if key in wanted:
+            out.append("%s=%s" % (key, wanted[key]))
+            seen.add(key)
+        else:
+            out.append(line)
+
+    missing = [k for k in wanted if k not in seen]
+    if missing:
+        # Put anything that was not there under [Settings], creating that
+        # header if the file somehow has none.
+        if not any(line.strip() == "[Settings]" for line in out):
+            out.insert(0, "[Settings]")
+        at = [i for i, line in enumerate(out) if line.strip() == "[Settings]"][0]
+        for key in sorted(missing, reverse=True):
+            out.insert(at + 1, "%s=%s" % (key, wanted[key]))
+
+    write_file(path, "\n".join(out) + "\n")
+
+    return "rewrote %s in %s%s" % (
+        ", ".join(sorted(wanted)),
+        path,
+        " (the file it replaced is kept as %s)" % os.path.basename(kept) if kept else "",
+    )
+
+
+def icon_theme_for(scheme, report):
+    """
+    Which icon theme goes with this palette — IF it is on this machine.
+
+    Design handoff, §5 item 4: "the icon theme should flip with the colour
+    scheme: Aquarius-Midnight on dark, Aquarius-Ice on light (both ship). Today
+    it is Ice always."
+
+    NOTHING IS CHOSEN IF THE THEME IS NOT THERE. On a plain Fedora clone of this
+    repository neither Aquarius icon theme exists, and pointing GTK at a theme
+    that is not installed is how a desktop ends up with no icons at all. So the
+    folder is looked for first, and a machine without it keeps whatever it had.
+
+    Returns the theme name, or None.
+    """
+    wanted = ICON_THEMES[scheme]
+
+    roots = [
+        os.path.join(
+            os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share"),
+            "icons"),
+        "/usr/share/icons",
+        "/usr/local/share/icons",
+    ]
+    if not any(os.path.isdir(os.path.join(r, wanted)) for r in roots):
+        report("  note   %s is not installed; the icon theme is left as it is"
+               % wanted)
+        return None
+
+    return wanted
+
+
+def set_icon_theme(name, report):
+    """
+    Tell the machine to use it.
+
+    This is done HERE rather than in the shell's QML for the same reason the
+    window frames are: this program is the one place that already runs on every
+    light/dark flip and already knows which scheme won. One program owning
+    everything outside QML that has to follow the theme is what stops the halves
+    getting out of step.
+
+    ⚠️ THE SHELL'S OWN ICONS DO NOT FOLLOW THIS UNTIL THE NEXT LOGIN. Quickshell
+    is told which icon theme to draw from by QS_ICON_THEME, read once when it
+    starts, and there is no way to change it in a running instance. So a flip to
+    dark gives GTK applications the Midnight icons immediately and the dock the
+    Ice ones until you log in again. Said out loud rather than hidden: the
+    alternative is restarting the shell under somebody, which is worse.
+    """
+    try:
+        subprocess.run(
+            ["gsettings", "set", "org.gnome.desktop.interface",
+             "icon-theme", name],
+            check=False, timeout=10, capture_output=True,
+        )
+    except (OSError, subprocess.SubprocessError) as problem:
+        report("  note   could not set the icon theme (%s)" % problem)
+        return
+
+    report("  icons    : %s" % name)
+
+
+def apply_gtk_css(gtk_root, palette, scheme, buttons, icon_theme, report):
     """
     Put the stylesheet in place for both GTK 4 and GTK 3.
 
     Since 7 September 2026 this writes in BOTH schemes. There is no longer a
     branch that removes the file in light mode — light has its own colours now,
     and removing the file would take the round window buttons away with it.
+
+    Since 8 September 2026 it also rescues a file a PROGRAM wrote (read the long
+    note above), and it always says out loud what it did.
     """
     builders = (
         ("gtk-4.0", build_gtk_css),
@@ -1075,22 +1472,40 @@ def apply_gtk_css(gtk_root, palette, scheme, report):
                 with open(path, "r", encoding="utf-8") as handle:
                     existing = handle.read()
             except OSError as problem:
-                report("  note   could not read %s (%s); leaving it alone" % (path, problem))
+                announce("could not read %s (%s), so it is left alone. The "
+                         "Aquarius window buttons will not appear on %s "
+                         "applications." % (path, problem, folder))
                 continue
 
             if not any(marker in existing for marker in GTK_MARKERS):
-                report(
-                    "  note   %s was not written by us, so it is left alone."
-                    % path
+                reason = is_machine_written(path, existing)
+                if reason is None:
+                    announce(
+                        "%s is not something we recognise as another "
+                        "program's leftovers, so it is treated as yours and "
+                        "left exactly where it is. The Aquarius window "
+                        "buttons will not appear on %s applications until it "
+                        "is moved or deleted."
+                        % (path, folder)
+                    )
+                    continue
+
+                kept = rescue_once(path)
+                announce(
+                    "%s was not yours — %s. It has been %s and replaced with "
+                    "the Aquarius window chrome."
+                    % (path, reason,
+                       "kept as " + os.path.basename(kept) if kept
+                       else "removed (an earlier copy is already kept beside it)")
                 )
-                report(
-                    "         The Aquarius window colours are skipped for %s."
-                    % folder
-                )
-                continue
 
         write_file(path, builder(palette, scheme))
         report("  %-6s wrote %s" % (scheme, path))
+        announce("wrote the %s window chrome into %s (%s)"
+                 % (scheme, path, folder))
+
+        announce(neutralise_gtk_settings(gtk_root, folder, scheme, buttons,
+                                         icon_theme))
 
 
 # =============================================================================
@@ -1362,8 +1777,27 @@ def main(argv):
             os.remove(os.path.join(theme_out, name))
     report("  drew %d button pictures" % len(wanted))
 
+    # -- the icons, which follow light and dark like the colours do ------------
+    # Done before the GTK files, because the name it settles on is one of the
+    # four keys settings.ini is corrected to.
+    #
+    # ⚠️ ONLY WHEN THIS IS THE REAL RUN. Everything else this program does is
+    # confined to the folders it was told to write into, so pointing it at a
+    # scratch directory — which is exactly what tests/test-shell.sh section 15b
+    # does — changes nothing about the machine it runs on. The icon theme is the
+    # one exception: gsettings has no scratch folder, and a test that quietly
+    # changed the developer's own icons would be a test doing harm. So --gtk-out
+    # means "you are writing somewhere else", and somewhere else does not get to
+    # touch this machine's settings.
+    icon_theme = icon_theme_for(scheme, report)
+    if icon_theme is not None and args.gtk_out is None:
+        set_icon_theme(icon_theme, report)
+    elif icon_theme is not None:
+        report("  note   --gtk-out was given, so the machine's own icon theme "
+               "setting is left alone")
+
     # -- the GTK chrome --------------------------------------------------------
-    apply_gtk_css(gtk_out, palette, scheme, report)
+    apply_gtk_css(gtk_out, palette, scheme, buttons, icon_theme, report)
 
     # -- tell labwc ------------------------------------------------------------
     if args.reconfigure:

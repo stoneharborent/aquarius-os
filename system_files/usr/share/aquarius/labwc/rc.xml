@@ -117,9 +117,10 @@
   =============================================================================
   ONE WINDOW RULE
   =============================================================================
-  DaVinci Resolve opens maximised and never larger than the screen. It is the
-  only application named by name in this file, and the reason is written out
-  in full above the rule itself, at the bottom.
+  Every new window opens in the middle of its screen — see <placement> just
+  below <core>. DaVinci Resolve is shrunk to fit the screen if it asks for
+  more; it is the only application in this file named by name, and the long
+  reason why is written above the rule itself, at the bottom of the file.
 
   Format reference: labwc-config(5) and labwc-actions(5), both installed on
   this machine — type `man 5 labwc-config`.
@@ -134,6 +135,40 @@
     <decoration>server</decoration>
     <gap>8</gap>
   </core>
+
+  <!--
+    =========================================================================
+    WHERE A NEW WINDOW OPENS: IN THE MIDDLE. Added 2026-09-08.
+    =========================================================================
+    THIS IS A DECISION ABOUT EVERY WINDOW, not just one application, and it is
+    written here rather than buried so that nobody is surprised by it.
+
+    labwc's own default is `cascade`: each new window opens a little down and
+    to the right of the last one, walking towards the bottom-right corner of
+    the screen. That is the X11 habit. `center` puts every new window in the
+    middle of the screen it opens on — which is what a Mac does, and what
+    AquariusOS is meant to feel like.
+
+    MEASURED, not assumed, on the bench on 2026-09-08: a 600x400 window on a
+    1280x720 screen opened at x=472 (cascade, the default) and at x=340 with
+    this setting, which is exactly centred. The four policies labwc 0.20.2
+    accepts are `center`, `cursor`, `automatic` and `cascade`; `cursor` puts
+    the window under the pointer and `automatic` hunts for free space.
+
+    WHY IT IS GLOBAL AND NOT PER-APPLICATION. It has to be. labwc 0.20.2 has
+    NO action that centres a window — the full list of actions in the shipped
+    binary was read, and `Center` is not in it (labwc answers "Invalid action:
+    Center" if you ask). `<placement><policy>` is the only lever there is, and
+    it is a global one. That is not a compromise here: centring every new
+    window is the Mac behaviour we want anyway.
+
+    WHAT IT DOES NOT TOUCH. Windows that remember their own position, windows
+    an application places itself, and anything already on screen. This is
+    where a window OPENS, once.
+  -->
+  <placement>
+    <policy>center</policy>
+  </placement>
 
   <!--
     =========================================================================
@@ -553,61 +588,79 @@
 
   <!--
     =========================================================================
-    DaVinci RESOLVE OPENS AT THE SIZE OF THE SCREEN. Added 2026-09-08.
+    DaVinci RESOLVE OPENS AS A NORMAL WINDOW. Added 2026-09-08, rewritten the
+    same day after the bench.
     =========================================================================
-    THE FAULT THIS ENDS. DaVinci Resolve decides for itself how big its own
-    window should be, and on Royce's 4K screen it sometimes decides on a
-    window whose edges — including its close button — are off the display.
-    docs/restart/resolve.md used to carry a section called "The window is
-    bigger than the screen" telling people how to climb out of it by hand.
+    WHAT THIS RULE USED TO DO, AND WHY IT WAS WRONG. It ran FitToOutput and
+    then `Maximize direction="both"`, so Resolve opened filling the screen.
+    Royce ran it and reported two things:
 
-    Nothing inside Resolve can fix it: it is Resolve remembering a size from
-    a screen it is no longer on. The window manager can, because the window
-    manager is the thing that actually places the window.
+      * "The window cannot be moved or resized." Correct, and unavoidable
+        with that rule: a maximised window in labwc is pinned where it is
+        until somebody un-maximises it. He did not ask for a maximised
+        window; he asked for one that fits.
+      * "The loading splash opened top-left, not centred." Also this rule.
+        The splash is a window of Resolve's with the same class, so the rule
+        caught it too, and a Maximize on a fixed-size splash moves it to the
+        maximised geometry's corner — the top left — without resizing it.
 
-    WHAT THE TWO LINES DO, in the order they happen:
+    ROYCE'S CALL: a NORMAL window. Fits the screen, opens in the middle,
+    and can be moved and resized like anything else.
 
-      FitToOutput   If Resolve asks for a window bigger than the screen it
-                    lands on, shrink it to the screen and change nothing
-                    else. This is what keeps "never larger than the screen"
-                    true after somebody un-maximises the window later:
-                    un-maximising gives a window back the size it asked for,
-                    and by then that size fits.
-      Maximize      Then fill that screen, the way a program that knew about
-                    the screen would have opened in the first place.
+    WHAT IS LEFT, AND WHAT REPLACED THE REST:
 
-    Both run ONCE, when the window first appears. labwc has exactly one
-    window-rule event and it is "on first map"
-    (include/window-rules.h in labwc 0.20.2, the version this image builds).
-    Nothing is imposed on Resolve after that: move it, resize it, send it to
-    the other monitor, and labwc leaves it alone from then on.
+      FitToOutput   KEPT. If Resolve asks for a window bigger than the screen
+                    it lands on, shrink it to the screen. Nothing else is
+                    touched, the window stays movable and resizable, and it
+                    is what makes "never larger than the screen" true —
+                    Resolve remembers a size from whatever machine or monitor
+                    it last ran on, and on a 4K screen that has put its close
+                    button off the display.
+      Maximize      GONE.
+      centring      NOT A LINE IN THIS RULE, because labwc 0.20.2 has no
+                    action that centres a window. The complete list of
+                    actions in the shipped binary was read on 2026-09-08 and
+                    there is no `Center` in it (ask for one and labwc says
+                    "Invalid action: Center"). The only lever labwc gives is
+                    the GLOBAL `<placement><policy>center</policy>` near the
+                    top of this file, which now centres every new window —
+                    which is the Mac behaviour anyway. So Resolve, and its
+                    splash, both open in the middle.
 
-    WHICH SCREEN. Maximize fills the output the window opened on — the
-    primary display on a one-screen machine, the active one on a desk with
-    two. labwc has no "primary output" to name here, and writing a specific
-    output name (HDMI-A-1 and so on) would be right on one computer and
-    wrong on every other.
+    It runs ONCE, when the window first appears (labwc has exactly one
+    window-rule event, "on first map" — include/window-rules.h in labwc
+    0.20.2). Nothing is imposed on Resolve afterwards.
 
     HOW THE MATCH WORKS. `identifier` is the app_id for a Wayland window and
-    the WM_CLASS for an X11 one (labwc-config(5) at 0.20.2). Resolve is an
-    X11 program — it has no Wayland version on any Linux — and the class it
-    declares is `resolve`. That is the same name Blackmagic's own desktop
-    entry puts in StartupWMClass and the same name the Mac key rules use for
-    it in /usr/share/aquarius/keys/mac.yaml. Matching is case-insensitive and
-    understands `*` and `?`; this rule uses neither, so it matches Resolve
-    and nothing else on the machine.
+    the WM_CLASS for an X11 one (labwc-config(5), 0.20.2). Resolve is an X11
+    program — it has no Wayland version on any Linux — and the class it
+    declares is `resolve`, which is also the name Blackmagic's own desktop
+    entry puts in StartupWMClass and the name the Aquarius Keys rules use for
+    it. Matching is case-insensitive and understands `*` and `?`; this rule
+    uses neither, so it matches Resolve and nothing else.
+
+    ABOUT THE SPLASH, SAID PLAINLY. It is no longer treated differently, and
+    it does not need to be: FitToOutput does nothing at all to a window that
+    already fits, and the splash is small. If it ever DOES need its own rule,
+    labwc 0.20.2 can match on the window's title as well as its class —
+    `<windowRule identifier="resolve" title="DaVinci Resolve Studio">` — and
+    that was confirmed by experiment on 2026-09-08, not read in a manual: a
+    rule matching on title alone fired on the window with that title and on
+    no other. What it could not be confirmed against is Resolve's splash
+    itself, because nobody has written down what its title actually is. If
+    somebody needs it, `labwc -d` prints `[map] identifier=…, title=…` for
+    every window as it appears.
 
     IF THE BENCH EVER SEES RESOLVE GROW BACK OUT of the screen after it has
-    opened, the stronger lever is `ignoreConfigureRequest="yes"` on this same
-    rule, which stops an X11 window moving or resizing itself at all. It is
-    deliberately NOT set, because it would also take away the times Resolve
-    resizes its own window for a good reason, and a mild fault is better than
-    a heavy-handed fix nobody has yet needed.
+    opened, the stronger lever is the `ignoreConfigureRequest="yes"` property
+    on this same rule, which stops an X11 window moving and resizing itself
+    at all. It is deliberately NOT set here, because it would also take away
+    the legitimate times Resolve resizes its own window, and the mild fault
+    is better than the heavy-handed fix until somebody has seen the fault.
   -->
   <windowRules>
     <windowRule identifier="resolve">
       <action name="FitToOutput" />
-      <action name="Maximize" direction="both" />
     </windowRule>
   </windowRules>
 
