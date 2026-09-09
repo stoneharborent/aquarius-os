@@ -299,6 +299,120 @@ sudo systemctl reboot
 
 ---
 
+## ⚠️ KDE-era leftovers in your home folder
+
+*Added 2026-09-08, after the bench run found stock GNOME window buttons on a
+machine that should have had ours.*
+
+### Why this section exists
+
+Everything above this line replaces the **operating system**. Nothing above this
+line touches **your home folder** — and it must not, because your home folder is
+where your own settings live and the whole point of an atomic update is that it
+cannot lose them.
+
+But your account on this machine is old. It has been through the Bazzite line
+and through KDE Plasma, and Plasma wrote its own preferences into files that GTK
+programs still read today. Those files are now the oldest thing on the machine,
+they win over everything the new image does, and **nothing warns you**, because
+from GTK's point of view a person set a preference and it is being honoured.
+
+Royce's bench finding of 8 September is exactly this. The report was: *"GTK
+header bars show, but the hide (minimise) button is wrong: the line should be in
+the middle of the circle, not at the bottom; the X does not turn red on hover."*
+Those are not our buttons at all — they are stock libadwaita's, drawn because
+our own stylesheet was never written. The Aquarius Session's `generate-theme`
+writes `~/.config/gtk-4.0/gtk.css` **only if that file is one it wrote before**;
+finding somebody else's, it correctly declined to overwrite a personal
+customisation, and said so to nobody.
+
+### The files, and what each one does
+
+All of these are on the bench PC today. The dates are when Plasma or Bazzite
+wrote them.
+
+| File | What it does | Written |
+| --- | --- | --- |
+| `~/.config/gtk-4.0/gtk.css` | two lines: `@import 'colors.css';` and `@import 'kde_window_geometry.css';`. **This is the file that blocks ours.** | 30 Aug |
+| `~/.config/gtk-4.0/colors.css` | ~5 KB of Breeze Dark colour definitions (`@define-color borders_breeze #404149;` and a hundred more) | 30 Aug |
+| `~/.config/gtk-4.0/kde_window_geometry.css` | a trimmed piece of "Libadwaita-Breeze-Dark" that squares off window corners | 28 Aug |
+| `~/.config/gtk-4.0/settings.ini` | `gtk-icon-theme-name=breeze-dark`, `gtk-cursor-theme-name=breeze_cursors`, `gtk-decoration-layout=icon:minimize,maximize,close`, `gtk-application-prefer-dark-theme=true`, `gtk-sound-theme-name=ocean` | 30 Aug |
+| `~/.config/gtk-3.0/gtk.css` | one line: `@import 'colors.css';` | 30 Aug |
+| `~/.config/gtk-3.0/colors.css` | the same Breeze colours again, for older programs | 30 Aug |
+| `~/.config/gtk-3.0/settings.ini` | the same Breeze keys, plus `gtk-modules=colorreload-gtk-module` and `gtk-xft-dpi=147456` (a hard-coded 144 dpi from a KDE display setting) | 31 Aug |
+
+The three settings that matter most, because the Aquarius Session is supposed to
+own them and cannot while these files exist:
+
+* **`gtk-icon-theme-name=breeze-dark`** — KDE's icon set. It is not on this
+  machine any more, so GTK falls back to whatever it can find. This is the same
+  fault as the "KDE-era icon setting" reset on 7 September.
+* **`gtk-cursor-theme-name=breeze_cursors`** — KDE's mouse pointer, likewise
+  gone.
+* **`gtk-decoration-layout=icon:minimize,maximize,close`** — where the window
+  buttons go and what order they are in. That is the one Mac/Windows switch in
+  the design rules, and it is meant to follow your choice in Settings, not a
+  file Plasma wrote in August.
+
+### ✅ NOT a leftover: `~/.local/share/themes/Aquarius`
+
+Worth saying plainly, because it looks like one and deleting it would break the
+window frame. **That folder is ours.** It holds the sixteen SVG window buttons
+that `generate-theme` draws for labwc, and it is rewritten every time you flip
+between Ice and Midnight. On the bench it is dated 6 September — the Fedora
+line, not the KDE one. Leave it alone.
+
+The way to tell for yourself: our files carry a marker line naming AquariusOS.
+
+```bash
+grep -l "AquariusOS" ~/.config/gtk-4.0/gtk.css ~/.config/gtk-3.0/gtk.css 2>/dev/null
+```
+
+Nothing printed means neither file is ours — which is the state described above.
+
+### The fix — one command, and nothing is deleted
+
+⚠️ **Nothing here deletes anything.** Every file is *moved aside* with
+`.before-aquarius` on the end, so it can be put straight back. These are your
+files, even if a program you no longer use wrote them.
+
+```bash
+for f in ~/.config/gtk-4.0/gtk.css      ~/.config/gtk-4.0/colors.css          ~/.config/gtk-4.0/kde_window_geometry.css ~/.config/gtk-4.0/settings.ini          ~/.config/gtk-3.0/gtk.css      ~/.config/gtk-3.0/colors.css          ~/.config/gtk-3.0/settings.ini; do
+  [ -e "$f" ] && mv -v "$f" "$f.before-aquarius"
+done
+```
+
+Then log out and back in, or just flip the theme once to make the session write
+its own files:
+
+```bash
+gsettings set org.gnome.desktop.interface color-scheme prefer-dark
+gsettings set org.gnome.desktop.interface color-scheme default
+```
+
+**What you should see afterwards:** the Aquarius window buttons — the minimise
+line through the **middle** of its circle, and a close button that turns **red**
+when the pointer is over it. If it still looks like stock GNOME, the generator
+did not run; say so, with the output of `journalctl --user -b | grep -i theme`.
+
+**To put everything back**, take the suffix off again:
+
+```bash
+for f in ~/.config/gtk-*.0/*.before-aquarius; do mv -v "$f" "${f%.before-aquarius}"; done
+```
+
+### What is being changed so this stops needing a person
+
+The Aquarius Session's `generate-theme` is being taught to recognise these files
+as **machine-written and not a person's customisation** — Breeze's `colors.css`
+and `kde_window_geometry.css` imports, and Plasma's `settings.ini` keys — so
+that it moves them aside itself, writes ours, and logs one plain line either
+way. **That change belongs to the shell repository** (`aquarius-shell`), and it
+is being made there. Until it lands, the command above is the fix, and it only
+ever has to be run once per machine.
+
+---
+
 ## What is deliberately not there yet
 
 R1 is *"it boots and it's ours"*. It is genuinely bare compared to what the
