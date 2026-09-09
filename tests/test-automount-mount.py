@@ -54,6 +54,10 @@ import importlib.util
 import os
 import sys
 
+# Never write bytecode next to the agent: inside the image build that would
+# leave /usr/libexec/__pycache__ behind, and the image check refuses that.
+sys.dont_write_bytecode = True
+
 FAILS = []
 
 

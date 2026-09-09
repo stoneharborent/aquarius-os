@@ -121,12 +121,17 @@ rm -f /tmp/aq-automount-dry.txt
 # escaping.
 say "The agent really mounts a drive (against a fake bus)"
 if [ -r /ctx/tests/test-automount-mount.py ]; then
-    if python3 /ctx/tests/test-automount-mount.py "${AGENT}"; then
+    # -B: the test loads the agent as a module, and Python would otherwise
+    # leave /usr/libexec/__pycache__ behind in the finished image — the third
+    # build of this step (run 34301516538) failed on exactly that.
+    if python3 -B /ctx/tests/test-automount-mount.py "${AGENT}"; then
         ok "the agent asks udisks2 to mount, in the shape udisks2 expects"
     else
         bad "the agent would NOT mount a drive — see the lines above. This is the"
         bad "2026-09-08 bench fault: drives appear in Files and never in the dock."
     fi
+    # Belt and braces beside -B above: nothing of the test may stay in the image.
+    rm -rf /usr/libexec/__pycache__
 else
     bad "/ctx/tests/test-automount-mount.py is missing — the only check that proves a drive is really mounted"
 fi
