@@ -30,7 +30,8 @@
 # is deliberately out of scope: it needs apfs-fuse and is read-only, which is a
 # later decision, not this feature.
 #
-# Plain-English guide: docs/restart/automount.md
+# Plain-English guide: docs/restart/hardware.md, section "Plugging a drive in —
+# and the bug that meant we never did".
 # ==============================================================================
 
 # shellcheck source=build_files/aq-lib.sh
@@ -93,6 +94,43 @@ aq_file_has /tmp/aq-automount-dry.txt 'no password' \
     "the agent's rehearsal states that mounting needs no password"
 rm -f /tmp/aq-automount-dry.txt
 
+# ------------------------------------------------------------------------------
+# ⚠️ AND THE ONE CHECK THAT WOULD HAVE CAUGHT THE BENCH FAULT: really mount
+# ------------------------------------------------------------------------------
+# THE FAULT, 2026-09-08. Royce plugged in his drives; they appeared in Files but
+# not in the dock. The agent had crashed on EVERY mount since it shipped:
+#
+#     File ".../gi/overrides/GLib.py", line 396, in __getitem__
+#     KeyError: 0
+#
+# One line built udisks2's Mount argument the wrong way round — a GLib.Variant
+# wrapped inside another GLib.Variant, where PyGObject wants a plain dictionary.
+# The two drives in /run/media had been mounted by the Files app, not by us.
+#
+# ⚠️ AND WHY THIS STEP DID NOT NOTICE. The two checks above are `py_compile` and
+# "can Python import gi". Both passed, on every build, for five days. The broken
+# line was perfectly valid Python and the fault only exists at the moment
+# PyGObject actually builds the value — which nothing in this build ever asked
+# it to do. A check that cannot fail is not a check.
+#
+# So tests/test-automount-mount.py calls mount() for real against a fake bus.
+# The Variant is genuinely constructed, by the same PyGObject that is in this
+# image, and the argument's type string is read back and compared. It also proves
+# a refused mount logs a plain sentence instead of a traceback, and that an
+# unexpected error — the exact shape of the fault above — is caught rather than
+# escaping.
+say "The agent really mounts a drive (against a fake bus)"
+if [ -r /ctx/tests/test-automount-mount.py ]; then
+    if python3 /ctx/tests/test-automount-mount.py "${AGENT}"; then
+        ok "the agent asks udisks2 to mount, in the shape udisks2 expects"
+    else
+        bad "the agent would NOT mount a drive — see the lines above. This is the"
+        bad "2026-09-08 bench fault: drives appear in Files and never in the dock."
+    fi
+else
+    bad "/ctx/tests/test-automount-mount.py is missing — the only check that proves a drive is really mounted"
+fi
+
 # Python must be able to reach GLib and Gio in this image — the two the agent
 # imports. This is the automount equivalent of the GTK import check the Resolve
 # window has, and it catches a missing python3-gobject.
@@ -104,6 +142,18 @@ else
 fi
 rm -f /tmp/aq-gi.txt
 aq_installed python3-gobject
+
+# ⚠️ AND THE SHAPE ITSELF, READ BACK OUT OF THE FILE. The test above is the real
+# guard; this is the cheap one that names the mistake, so that a future edit
+# reintroducing it is refused with the reason attached rather than with a type
+# string nobody can read.
+if grep -q 'GLib.Variant("(a{sv})", (options,))' "${AGENT}" \
+    && grep -q 'options = GLib.Variant("a{sv}"' "${AGENT}"; then
+    bad "the agent wraps a GLib.Variant inside another GLib.Variant again — that is"
+    bad "the 2026-09-08 'KeyError: 0' and it kills every mount. Pass a plain dict."
+else
+    ok "the mount options are a plain dictionary, not a Variant inside a Variant"
+fi
 
 # ------------------------------------------------------------------------------
 # 3. The polkit rule — scoped tightly, and NOT a blanket allow

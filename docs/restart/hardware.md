@@ -366,6 +366,101 @@ is lost.
 
 ---
 
+## Plugging a drive in — and the bug that meant we never did
+
+*Added 2026-09-08, after the bench run. This page is mostly about firmware; this
+section is here because it is the other half of "I plugged something in and the
+computer did not notice", and because there was nowhere better for it.*
+
+### What is meant to happen
+
+You plug in a USB stick, an SD card or an external SSD, and it appears — no
+password, and you put it away from the dock. Four pieces do that:
+
+| | |
+| --- | --- |
+| **udisks2** | Fedora's drive-mounting service. It does the actual mounting. |
+| **`/usr/libexec/aquarius-automount`** | ours. It watches udisks2 and says "mount that" the moment something is plugged in. GNOME's Files app does this while Files is running; the Aquarius Desktop has no Files app running in the background, so without this nothing would. |
+| **A polkit rule** | `49-aquarius-udisks.rules`, which is why there is no password box — and which deliberately still asks for one for an internal disk. |
+| **A user service** | starts the agent when you log in, on both desktops. |
+
+Drives land at `/run/media/<you>/<label>`, which is where both the dock and
+Files look.
+
+### ⚠️ What actually happened on the bench, 8 September 2026
+
+Royce plugged his drives in. **They appeared in Files and never in the dock.**
+
+That looked like a dock problem. It was not. `aquarius-automount` had crashed on
+**every single mount since it shipped**, and the journal said so:
+
+```
+File "/usr/libexec/aquarius-automount", line 306, in mount
+    GLib.Variant("(a{sv})", (options,)),
+  …
+  File "/usr/lib64/python3.14/site-packages/gi/overrides/GLib.py", line 396, in __getitem__
+    KeyError: 0
+```
+
+**The two drives sitting in `/run/media/rorobeckley/` had been mounted by the
+Files app, not by us.** Files does its own auto-mounting while it is open, so
+opening Files made the drives work and closing it made the fault invisible
+again. Nothing about the drives, the sockets, the cables or udisks2 was wrong.
+
+**The cause, in one sentence:** one line built the argument for udisks2's Mount
+method the wrong way round — a `GLib.Variant` wrapped inside another
+`GLib.Variant`, where PyGObject expects a plain Python dictionary and walks it
+itself. It never reached D-Bus at all.
+
+**Why the build never noticed, which is the part worth remembering.** The build
+ran two checks on this program: "is it valid Python" and "can Python import
+`gi`". Both passed on every build for five days. The broken line *was* valid
+Python, and the fault only exists at the moment PyGObject actually builds the
+value — which nothing in the build ever asked it to do. **A check that cannot
+fail is not a check.**
+
+### What is different now
+
+* The line is fixed: the options are a plain dictionary.
+* **`tests/test-automount-mount.py`** calls `mount()` for real, against a fake
+  bus, so the value is genuinely built by the same PyGObject that is in the
+  image and its shape is read back and compared. It runs before the build and
+  again inside the finished image. It also proves that a *refused* mount and an
+  *unexpected* error both come out as one plain sentence rather than as a
+  traceback, and that neither takes the agent down.
+* The agent now logs **one plain line per attempt**: one when it starts
+  ("mounting SHOOT-2026 (/dev/sdb1)"), one when it finishes ("mounted SHOOT-2026
+  at /run/media/you/SHOOT-2026"), and one naming the drive if it could not.
+  Before, a failure was twenty lines of Python file names and no drive name.
+
+### Checking it on your own machine
+
+```bash
+# Is the agent running in your session?
+systemctl --user status aquarius-automount
+
+# What has it done this session? One line per drive.
+journalctl --user -b -u aquarius-automount
+
+# What is mounted right now?
+ls -l /run/media/"$USER"/
+
+# And the rehearsal, which changes nothing and states its own rules:
+/usr/libexec/aquarius-automount --dry-run
+```
+
+If a drive is in `ls /run/media/...` but the journal has no "mounted" line for
+it, something else mounted it — almost certainly the Files app — and the agent
+is not doing its job. That is exactly the shape of the 8 September fault.
+
+> **Still to prove on the bench.** The drives being mounted is only half of
+> "drives appear in the dock". Whether the dock notices a drive that turns up
+> *after* the shell started is the shell's half of the same finding, and it is
+> being fixed in the shell repository. Test both together: log in, *then* plug a
+> drive in, and watch both the journal line above and the dock.
+
+---
+
 ## For whoever changes this next
 
 - The list lives in **`build_files/20-hardware-media.sh`**, under the heading

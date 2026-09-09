@@ -90,11 +90,13 @@
 # is added to the image. It does NOT use GTK — there is no window here — so it
 # imports only GLib and Gio, which work with no screen.
 #
-# Plain-English guide: docs/restart/automount.md
+# Plain-English guide: docs/restart/hardware.md, section "Plugging a drive in —
+# and the bug that meant we never did".
 # =============================================================================
 
 import os
 import sys
+import traceback
 
 # The bus name and paths udisks2 publishes on. These are stable public API.
 UDISKS = "org.freedesktop.UDisks2"
@@ -291,12 +293,58 @@ class AutoMounter:
     def mount(self, object_path):
         from gi.repository import GLib
 
+        label = self._get_prop(object_path, BLOCK_IFACE, "IdLabel") or "(no label)"
+        device = self._device_node(object_path) or object_path
+
+        # ⚠️ A ONE-CHARACTER-CLASS BUG THAT BROKE EVERY MOUNT FOR FIVE DAYS.
+        # Read this before touching the two lines below.
+        #
+        # udisks2's Mount method takes ONE argument, a dictionary of options.
+        # In D-Bus terms the whole argument list of a method call is a tuple, so
+        # what has to go on the wire is `(a{sv})` — "a tuple containing one
+        # dictionary". The obvious way to build that is what this used to say:
+        #
+        #     options = GLib.Variant("a{sv}", { ... })      # the dictionary
+        #     GLib.Variant("(a{sv})", (options,))           # in a tuple
+        #
+        # and it is wrong. PyGObject's GLib.Variant() builds the WHOLE thing
+        # from plain Python values: given the type `(a{sv})` it expects a tuple
+        # whose first item is a plain `dict`, and it walks that dict itself. It
+        # was handed a GLib.Variant instead, tried to read it as a dict, asked it
+        # for key 0 — and a Variant has no key 0. So every single mount died with
+        #
+        #     File ".../gi/overrides/GLib.py", line 396, in __getitem__
+        #     KeyError: 0
+        #
+        # before it ever reached D-Bus. Nothing on the machine was broken; this
+        # program simply could not ask. On the bench (2026-09-08) the two drives
+        # sitting in /run/media were mounted by the Files app, not by us, which
+        # is why "the drives are there but not in the dock" looked like a dock
+        # problem for a day.
+        #
+        # THE ONE-LINE RULE, so this cannot come back: pass PLAIN PYTHON values
+        # to GLib.Variant(). The only place a nested GLib.Variant belongs is as
+        # the VALUE inside an `a{sv}` dictionary, because `v` means "a variant"
+        # and there is nothing else it could be.
+        #
+        # tests/test-automount-mount.py exercises this against a fake bus, so the
+        # Variant is really constructed by PyGObject. `py_compile` cannot catch
+        # it — the old line was perfectly valid Python.
+        #
         # No fstype and no path: udisks picks a sensible read/write mount and
         # puts it at /run/media/<user>/<label>. auth.no_user_interaction keeps
         # a disallowed mount quiet instead of popping a password box.
-        options = GLib.Variant("a{sv}", {
+        options = {
             "auth.no_user_interaction": GLib.Variant("b", True),
-        })
+        }
+
+        # One plain line per attempt. ⚠️ ADDED 2026-09-08 FOR THE SAME REASON:
+        # the crash above happened on every plug-in and the journal showed only
+        # a Python traceback, which reads as "something is broken" and not as
+        # "we tried to mount SHOOT-2026 and could not". A line before and a line
+        # after means the journal tells the story either way.
+        log("mounting %s (%s)" % (label, device))
+
         try:
             reply = self.bus.call_sync(
                 UDISKS,
@@ -310,7 +358,6 @@ class AutoMounter:
                 None,
             )
             where = reply.unpack()[0]
-            label = self._get_prop(object_path, BLOCK_IFACE, "IdLabel") or "(no label)"
             log("mounted %s at %s" % (label, where))
         except GLib.Error as error:
             # "AlreadyMounted" is a race, not a fault: a drive plugged in during
@@ -318,12 +365,34 @@ class AutoMounter:
             # line so a genuinely refused mount is visible in the journal.
             message = error.message or str(error)
             if "AlreadyMounted" in message:
+                log("%s was already mounted by something else — nothing to do" % label)
                 return
-            log("could not mount %s: %s" % (object_path, message))
+            log("could not mount %s (%s): %s" % (label, device, message))
 
     def consider(self, object_path):
-        if self.should_mount(object_path):
-            self.mount(object_path)
+        # ⚠️ ONE DRIVE MUST NEVER TAKE THE AGENT DOWN, AND MUST NEVER BE SILENT.
+        #
+        # This is the outermost catch, and it is here because of what a bare
+        # exception used to look like from a person's chair. The Variant fault
+        # described in mount() raised a KeyError, which is not a GLib.Error and
+        # so passed straight through every `except GLib.Error` in this file. It
+        # came out as a Python traceback in the session journal — twenty lines of
+        # file names and line numbers — and the agent carried on, so nothing was
+        # obviously dead and nothing was obviously working either.
+        #
+        # A drive that cannot be mounted is a fact worth one plain sentence. The
+        # traceback still goes to the journal underneath it, for whoever is
+        # fixing it; the sentence is for whoever is only trying to find out what
+        # happened.
+        try:
+            if self.should_mount(object_path):
+                self.mount(object_path)
+        except Exception as error:  # noqa: BLE001 — deliberate; see above
+            log("could not deal with %s: %s: %s"
+                % (object_path, type(error).__name__, error))
+            log("        (the full details are below; the drive was not mounted,")
+            log("         and this agent is still watching for others)")
+            traceback.print_exc()
 
     # -- the two ways in ----------------------------------------------------
 

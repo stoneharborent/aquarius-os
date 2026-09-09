@@ -507,6 +507,41 @@ jobs:
         run: ./tests/test-usb4-rescue.sh
 
       # ------------------------------------------------------------------------
+      # A drive plugged in really does get mounted
+      # ------------------------------------------------------------------------
+      # ⚠️ THE BENCH FAULT OF 8 SEPTEMBER 2026. Royce's drives appeared in the
+      # Files app but never in the dock. /usr/libexec/aquarius-automount had
+      # crashed on EVERY mount since it shipped — one line built udisks2's
+      # argument the wrong way round and PyGObject raised `KeyError: 0` before
+      # anything reached D-Bus. The drives in /run/media had been mounted by
+      # Files, not by us.
+      #
+      # The build's only checks were `py_compile` and "can Python import gi".
+      # Both passed for five days: the broken line was valid Python, and nothing
+      # in CI ever called mount(). This does, against a fake bus, so the value is
+      # genuinely built by PyGObject and its type string can be read back.
+      #
+      # It needs PyGObject, which the finished image always has and a build
+      # runner may not. If it cannot be installed here the step says so and
+      # stands aside — the same test runs again INSIDE the finished image
+      # (build_files/76-automount.sh), where python3-gobject is guaranteed, and
+      # that run is the one that can fail the build. This one is the fast
+      # warning. Before the build, because it takes a second.
+      - name: Check a plugged-in drive really does get mounted
+        run: |
+          set -uo pipefail
+          if ! python3 -c 'import gi' 2> /dev/null; then
+            sudo apt-get install -y python3-gi > /dev/null 2>&1 || true
+          fi
+          if ! python3 -c 'import gi' 2> /dev/null; then
+            echo "NOTE  PyGObject is not available on this runner, so the fast"
+            echo "      warning could not run. The same test runs inside the"
+            echo "      finished image, and that run can fail the build."
+            exit 0
+          fi
+          ./tests/test-automount-mount.py
+
+      # ------------------------------------------------------------------------
       # The app icons are all present, and are the sizes they claim
       # ------------------------------------------------------------------------
       # Before the build, because it takes a second and reads the same files the
