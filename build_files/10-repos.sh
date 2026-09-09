@@ -72,9 +72,42 @@ aq_dnf install dnf5-plugins
 # used to verify everything that comes from it. Installing them is what makes
 # the catalogue searchable; it installs no actual software.
 say "Adding the RPM Fusion repositories"
+# The two small "release" packages are fetched by hand, with retries, before
+# dnf sees them. mirrors.rpmfusion.org hands dnf ONE mirror and dnf gives up
+# when that mirror is slow or down — which is how two builds in a row died on
+# 2026-09-09 (mirror.fcix.net timing out, repos.eggycrew.com not resolving)
+# with nothing wrong in this tree. download1.rpmfusion.org is the project's
+# own primary server; the mirror list stays as the fallback. The files are
+# read back (a real RPM starts with the bytes ED AB EE DB) before dnf is asked
+# to install them, so a mirror's HTML error page can never be "installed".
+# fedora-bootc ships curl-minimal; if a future base drops it, install it now.
+command -v curl > /dev/null 2>&1 || aq_dnf install curl-minimal
+install -d -m 0755 /tmp/aq-rpmfusion
+for aq_flavour in free nonfree; do
+    aq_rpm="rpmfusion-${aq_flavour}-release-${FEDORA}.noarch.rpm"
+    aq_got=0
+    for aq_url in \
+        "https://download1.rpmfusion.org/${aq_flavour}/fedora/${aq_rpm}" \
+        "https://mirrors.rpmfusion.org/${aq_flavour}/fedora/${aq_rpm}"; do
+        if curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 --max-time 120 \
+                -o "/tmp/aq-rpmfusion/${aq_rpm}" "${aq_url}" \
+           && [ "$(head -c 4 "/tmp/aq-rpmfusion/${aq_rpm}" | od -An -tx1 | tr -d ' \n')" = "edabeedb" ]; then
+            echo "  fetched ${aq_rpm} from ${aq_url}"
+            aq_got=1
+            break
+        fi
+        echo "  could not fetch ${aq_rpm} from ${aq_url}; trying the next source"
+        rm -f "/tmp/aq-rpmfusion/${aq_rpm}"
+    done
+    if [ "${aq_got}" -ne 1 ]; then
+        echo "FAIL: ${aq_rpm} could not be fetched from any source — RPM Fusion is unreachable right now"
+        exit 1
+    fi
+done
 aq_dnf install \
-    "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${FEDORA}.noarch.rpm" \
-    "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FEDORA}.noarch.rpm"
+    "/tmp/aq-rpmfusion/rpmfusion-free-release-${FEDORA}.noarch.rpm" \
+    "/tmp/aq-rpmfusion/rpmfusion-nonfree-release-${FEDORA}.noarch.rpm"
+rm -rf /tmp/aq-rpmfusion
 
 # ------------------------------------------------------------------------------
 # Check they are actually there and switched on

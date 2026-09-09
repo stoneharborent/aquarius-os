@@ -147,12 +147,17 @@ aq_installed python3-gobject
 # guard; this is the cheap one that names the mistake, so that a future edit
 # reintroducing it is refused with the reason attached rather than with a type
 # string nobody can read.
-if grep -q 'GLib.Variant("(a{sv})", (options,))' "${AGENT}" \
-    && grep -q 'options = GLib.Variant("a{sv}"' "${AGENT}"; then
+# Comment lines are dropped before looking, because the agent's own comment
+# quotes the wrong shape to explain it — and the first build of this check
+# (run 34299873627) failed on exactly that quotation.
+if grep -v '^[[:space:]]*#' "${AGENT}" | grep -q 'GLib.Variant("(a{sv})", (options,))' \
+    && grep -v '^[[:space:]]*#' "${AGENT}" | grep -q 'options = GLib.Variant("a{sv}"'; then
     bad "the agent wraps a GLib.Variant inside another GLib.Variant again — that is"
     bad "the 2026-09-08 'KeyError: 0' and it kills every mount. Pass a plain dict."
-else
+elif grep -v '^[[:space:]]*#' "${AGENT}" | grep -q '^[[:space:]]*options = {'; then
     ok "the mount options are a plain dictionary, not a Variant inside a Variant"
+else
+    bad "could not find 'options = {' in the agent — the mount-options shape has changed; read mount() and update this check"
 fi
 
 # ------------------------------------------------------------------------------
