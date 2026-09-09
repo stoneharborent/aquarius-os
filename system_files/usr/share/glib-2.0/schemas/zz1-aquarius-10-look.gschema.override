@@ -96,8 +96,11 @@ accent-color='blue'
 #
 # The number after each name is the size in points. 11 and 10 are GNOME's own
 # defaults for these two slots and they suit Inter well.
+# (There used to be a document-font-name line here too. GNOME removed that
+#  key from org.gnome.desktop.interface, and the Fedora 44 schemas picked
+#  that up on 2026-09-09; a key the schema does not know breaks the whole
+#  override file, so it is gone. Applications use font-name.)
 font-name='Inter 11'
-document-font-name='Inter 11'
 monospace-font-name='JetBrains Mono 10'
 
 # The mouse pointer and the app icons.

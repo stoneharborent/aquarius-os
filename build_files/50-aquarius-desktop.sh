@@ -368,7 +368,6 @@ cat > /etc/dconf/db/gdm.d/02-aquarius-look << 'EOF'
 color-scheme='prefer-light'
 accent-color='blue'
 font-name='Inter 11'
-document-font-name='Inter 11'
 monospace-font-name='JetBrains Mono 10'
 cursor-theme='Adwaita'
 icon-theme='Aquarius-Ice'
@@ -907,7 +906,6 @@ if aq_have gsettings; then
     want org.gnome.desktop.interface color-scheme "'default'"
     want org.gnome.desktop.interface accent-color "'blue'"
     want org.gnome.desktop.interface font-name "'Inter 11'"
-    want org.gnome.desktop.interface document-font-name "'Inter 11'"
     want org.gnome.desktop.interface monospace-font-name "'JetBrains Mono 10'"
     want org.gnome.desktop.background picture-options "'zoom'"
     want org.gnome.shell.extensions.dash-to-dock dock-position "'BOTTOM'"
