@@ -833,7 +833,14 @@ aq_file_has /usr/bin/aq 'AQ_RESOLVE_ENTRY=/usr/libexec/aquarius-resolve-entry' \
 # opened one whose edges, close button included, were off the screen.
 #
 # The fix is a window rule in the Aquarius Desktop's labwc configuration, and it
-# is the ONLY rule in that file that names an application. It is checked here,
+# is the ONLY rule in that file that names an application. It runs FitToOutput
+# and NOTHING ELSE. It used to run Maximize as well (008, 2026-09-08), and the
+# bench the same day showed why that was wrong: a maximised labwc window is
+# pinned until somebody un-maximises it ("the window cannot be moved or
+# resized"), and the rule caught Resolve's splash and parked it top-left.
+# Royce's call: a normal window. Centring is not a rule action at all —
+# labwc 0.20.2 has no Center action — it is the global <placement> policy,
+# which is checked here too because Resolve is the window it was added for. It is checked here,
 # in the Resolve step, rather than in the desktop step, because it is a Resolve
 # feature that happens to be written in a desktop file — somebody tidying
 # rc.xml would have no reason to know it mattered.
@@ -865,11 +872,24 @@ PY
             *) bad "the Resolve window rule has no FitToOutput — a window larger than the screen would stay larger than the screen" ;;
         esac
         case ",${AQ_RULE}," in
-            *,Maximize,*) ok "and Resolve then fills the screen it opened on (Maximize)" ;;
-            *) bad "the Resolve window rule has no Maximize — Resolve would not open at the size of the screen" ;;
+            *,Maximize,*) bad "the Resolve window rule maximises — that pins the window and parks the splash top-left (bench 2026-09-08); Royce asked for a normal window" ;;
+            *) ok "and it does NOT maximise, so the window can be moved and resized" ;;
         esac
     else
         bad "rc.xml has no <windowRule identifier=\"resolve\"> — Resolve could open with its edges off a 4K screen again"
+    fi
+    AQ_PLACEMENT="$(python3 - "${AQ_RC}" << 'PY'
+import sys
+import xml.etree.ElementTree as ET
+root = ET.parse(sys.argv[1]).getroot()
+node = root.find("./placement/policy")
+print((node.text or "").strip() if node is not None else "")
+PY
+    )"
+    if [ "${AQ_PLACEMENT}" = "center" ]; then
+        ok "new windows open in the middle of the screen (<placement><policy>center) — Resolve and its splash included"
+    else
+        bad "rc.xml's <placement><policy> is '${AQ_PLACEMENT:-unset}', not 'center' — Resolve's splash would open top-left again"
     fi
 fi
 
