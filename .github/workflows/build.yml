@@ -6235,10 +6235,19 @@ jobs:
             *,FitToOutput,*) ok "a window bigger than the screen is shrunk to the screen" ;;
             *) bad "rc.xml's Resolve window rule has no FitToOutput — Resolve could open larger than the display again" ;;
           esac
+          # No Maximize, since the bench of 2026-09-08: a maximised labwc window is
+          # pinned and the rule was parking Resolve's splash top-left. Royce asked
+          # for a normal window; centring is the global <placement> policy.
           case ",${RULE}," in
-            *,Maximize,*) ok "and Resolve then fills the screen it opened on" ;;
-            *) bad "rc.xml's Resolve window rule has no Maximize — Resolve would not open at the size of the screen" ;;
+            *,Maximize,*) bad "rc.xml's Resolve window rule maximises again — that pins the window and parks the splash top-left; Royce asked for a normal window" ;;
+            *) ok "and it does not maximise, so the window can be moved and resized" ;;
           esac
+          PLACEMENT="$(python3 -c 'import sys, xml.etree.ElementTree as ET; n = ET.parse(sys.argv[1]).getroot().find("./placement/policy"); print((n.text or "").strip() if n is not None else "")' /usr/share/aquarius/labwc/rc.xml || true)"
+          if [ "${PLACEMENT}" = "center" ]; then
+            ok "new windows open in the middle of the screen (placement policy center)"
+          else
+            bad "rc.xml's placement policy is '${PLACEMENT:-unset}', not center — Resolve's splash would open top-left again"
+          fi
 
           echo "== and that your drives are in the same places inside =="
           # ⚠️ WHY THIS IS WORTH A BUILD CHECK. A Resolve project stores the
