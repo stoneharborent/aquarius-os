@@ -1148,7 +1148,7 @@ def build_gtk3_css(palette, scheme):
 #     @import 'colors.css';
 #     @import 'kde_window_geometry.css';
 #
-# left behind by Bazzite's KDE integration months earlier, along with a Breeze
+# left behind by a KDE Plasma desktop's GTK integration months earlier, with a Breeze
 # `colors.css`, a `kde_window_geometry.css` and a `settings.ini` naming
 # `breeze-dark` icons and `breeze_cursors`. The rule below — never overwrite a
 # file we did not write — did exactly what it was told, and, because it said so
