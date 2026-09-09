@@ -707,7 +707,8 @@ systemctl enable gdm.service
 # Setting it here costs nothing and removes the whole class of problem.
 say "Permissions"
 chmod 0755 "${AQ_LAUNCHER}" /usr/libexec/aquarius-shell-start \
-    /usr/libexec/aquarius-session-portals
+    /usr/libexec/aquarius-session-portals \
+    /usr/libexec/aquarius-wallpaper
 # The clean-up library is READ, not run, so it does not need to be executable —
 # but it does have to be readable by everybody, because every person logging in
 # reads it.
@@ -1737,6 +1738,104 @@ elif [ -e "${AQ_CC_DBUS}" ]; then
 else
     echo "  note   ${AQ_CC_DBUS} does not exist in this image; nothing to fix there"
 fi
+
+# ==============================================================================
+# 6a. THE WALLPAPER — the 2026-09-08 "the flip did not go dark" fix
+# ==============================================================================
+# ⚠️ WHAT WENT WRONG, IN ONE PARAGRAPH. Royce flipped the bench machine to dark.
+# The bar went navy, the dock went navy, the menus went navy — and the picture
+# behind all of them stayed the pale Ice "Pour". Both pictures ship; only one
+# was ever shown. The reason was in this session's own autostart file, which
+# started `swaybg` ONCE, at login, naming the Ice file, and never touched it
+# again. (He reported it as the dark theme not reaching the LOCK screen. The
+# lock screen was a red herring — what he was looking at was the desktop.)
+#
+# /usr/libexec/aquarius-wallpaper is the missing piece. It is a small program
+# whose only job is "put the right picture up": it stops the swaybg IT started
+# (its own pid file — never `pkill swaybg`, because somebody may be running one
+# of their own), starts a new one, and says one plain line in the session log.
+#
+# It is run from two places, and both of them are checked below:
+#   * labwc's autostart, with `auto`, at login — so the picture is right for the
+#     theme the machine is already in, before the bar even draws.
+#   * the Aquarius Shell, with `ice` or `midnight`, on every flip. The shell
+#     finds it through AQ_WALLPAPER_SETTER, which the launcher exports. The
+#     shell holds no path of its own and does nothing when that is unset, which
+#     is exactly the seam AQ_FRAME_GENERATOR already uses for the window frames.
+#     The contract is written down in the shell repository's docs/session.md.
+#
+# The arithmetic of this one is exercised properly in tests/test-wallpaper.sh,
+# which runs it for real against a stand-in swaybg. What is read back HERE is
+# that the finished image actually carries it, that it is runnable, and that
+# both of the two places that call it still do.
+say "The wallpaper follows light and dark"
+
+AQ_WALLPAPER_SETTER_PATH="/usr/libexec/aquarius-wallpaper"
+
+if [ -x "${AQ_WALLPAPER_SETTER_PATH}" ]; then
+    ok "${AQ_WALLPAPER_SETTER_PATH} is installed and executable"
+else
+    # Same repair-and-re-read as everywhere else in this file: a file can arrive
+    # without its executable bit (iCloud strips it on sync) and the symptom is a
+    # desktop that never changes its wallpaper, with nothing anywhere saying why.
+    chmod 0755 "${AQ_WALLPAPER_SETTER_PATH}" 2> /dev/null || true
+    if [ -x "${AQ_WALLPAPER_SETTER_PATH}" ]; then
+        ok "${AQ_WALLPAPER_SETTER_PATH} is installed (permissions corrected here)"
+    else
+        bad "${AQ_WALLPAPER_SETTER_PATH} is missing — the wallpaper would never follow the theme"
+    fi
+fi
+
+# A syntax error in it would be silent at login: autostart runs it with `|| true`
+# so that a broken wallpaper cannot stop the bar, which is right, and which also
+# means nothing would ever complain.
+if bash -n "${AQ_WALLPAPER_SETTER_PATH}" 2> /tmp/aq-wallpaper-syn.txt; then
+    ok "the wallpaper setter is valid shell"
+else
+    bad "the wallpaper setter has a syntax error:"
+    sed 's/^/      /' /tmp/aq-wallpaper-syn.txt
+fi
+rm -f /tmp/aq-wallpaper-syn.txt
+
+# `--status` RUNS the program, on the finished image, with no screen and no
+# portal in the container. It has to survive that and say something: this is the
+# cheapest possible proof that the file is not just present but works.
+if "${AQ_WALLPAPER_SETTER_PATH}" --status > /tmp/aq-wallpaper-status.txt 2>&1; then
+    ok "it runs, and --status answers even with no screen and no portal"
+    sed 's/^/      /' /tmp/aq-wallpaper-status.txt
+else
+    bad "the wallpaper setter would not run at all:"
+    sed 's/^/      /' /tmp/aq-wallpaper-status.txt
+fi
+rm -f /tmp/aq-wallpaper-status.txt
+
+# The two callers. Both are one line, and both are easy to lose in an edit.
+aq_file_has "${AQ_LABWC_DIR}/autostart" 'aquarius-wallpaper auto' \
+    "the window manager puts the right wallpaper up at login"
+aq_file_has "${AQ_LAUNCHER}" 'export AQ_WALLPAPER_SETTER' \
+    "the launcher tells the shell which program swaps the wallpaper on a flip"
+
+# ⚠️ AND THE ONE THAT WOULD COME BACK. The old line ran swaybg from autostart
+# itself, naming the Ice picture, and that is the whole bug. If it ever
+# reappears there would be TWO wallpapers at every login — the setter's and
+# autostart's — with no error anywhere and no way to tell which one won.
+if grep -Eq '^[[:space:]]*swaybg' "${AQ_LABWC_DIR}/autostart"; then
+    bad "autostart runs swaybg itself again — that is the 2026-09-08 fault, and it would now give two wallpapers at once"
+else
+    ok "autostart no longer runs swaybg itself, so there is only ever one wallpaper"
+fi
+
+# Both pictures have to be on the machine, because the setter picks between them
+# by name at run time. 50-aquarius-desktop.sh checks them for GNOME's sake; this
+# checks them for ours, and the two are the same two files on purpose.
+for aq_pic in ice midnight; do
+    aq_pic_path="/usr/share/backgrounds/aquarius/the-pour-${aq_pic}-3840x2160.png"
+    if [ -s "${aq_pic_path}" ]; then
+        ok "the ${aq_pic} wallpaper is there for the setter to put up"
+    else
+        bad "${aq_pic_path} is missing — flipping to ${aq_pic} would leave the picture that was up"
+    fi
+done
 
 # ==============================================================================
 # 6b. SCREEN SIZE — the 2026-09-03 "everything is tiny" fix

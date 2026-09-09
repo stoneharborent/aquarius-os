@@ -484,6 +484,38 @@ jobs:
         run: ./tests/test-plymouth-release.sh
 
       # ------------------------------------------------------------------------
+      # The wallpaper follows light and dark
+      # ------------------------------------------------------------------------
+      # ⚠️ THE BENCH FAULT OF 8 SEPTEMBER 2026, and the next thing on screen
+      # after the boot animation above. Royce flipped the machine to dark: the
+      # bar, the dock and the menus all went navy, and the picture behind them
+      # stayed the pale Ice "Pour". Both pictures ship; only one was ever shown,
+      # because the session's autostart file started `swaybg` ONCE at login,
+      # naming the Ice file, and nothing ever ran it again.
+      #
+      # /usr/libexec/aquarius-wallpaper is the fix, and it is the kind of program
+      # that has to be tested rather than read. It runs at every login and at
+      # every flip, BEFORE there is a desktop to show an error on, and three of
+      # the things it does are invisible when they go wrong:
+      #
+      #   * it must stop only the swaybg IT started — the lazy version of this
+      #     program is `pkill swaybg`, which works perfectly until the day
+      #     somebody is running a swaybg of their own for a second screen;
+      #   * it must REPLACE rather than pile up, or a machine grows one more
+      #     wallpaper per flip, all fighting over the same screen;
+      #   * it must never exit non-zero, because a missing picture is decoration
+      #     failing and decoration must not be able to take a login down.
+      #
+      # The test runs it for real against a stand-in swaybg that writes down
+      # every argument, and a stand-in portal answer, so none of that needs a
+      # screen. Before the build, because it takes a second; the build itself
+      # then reads the finished program back out of the image
+      # (build_files/55-aquarius-session.sh, "The wallpaper follows light and
+      # dark").
+      - name: Check the wallpaper follows the light and dark flip
+        run: ./tests/test-wallpaper.sh
+
+      # ------------------------------------------------------------------------
       # The USB4 / Thunderbolt rescue actually retries, and leaves working
       # hardware alone
       # ------------------------------------------------------------------------

@@ -100,6 +100,28 @@
 #                      something. Extra lines on our side are expected and are
 #                      not drift.
 #
+#                      ⚠️ A WORKED EXAMPLE, ADDED 8 SEPTEMBER 2026, BECAUSE
+#                      SOMEBODY WILL READ THE RULE AND WONDER IF IT IS REALLY
+#                      MEANT. Our copy now runs
+#
+#                          /usr/libexec/aquarius-wallpaper auto
+#
+#                      at login, and the shell's copy runs nothing of the kind.
+#                      That is not drift and this script says nothing about it.
+#                      The program lives in /usr/libexec on a real machine, and
+#                      the shell repository — which is meant to run from a clone
+#                      on somebody's plain Fedora box — cannot assume it exists.
+#                      Nothing was LOST from the shell's copy, which is the only
+#                      direction this check looks in, so an OS-only line like
+#                      this one is expected and allowed.
+#
+#                      (The line it replaced ran `swaybg` from this file by hand,
+#                      naming the Ice picture, and never ran again — which is the
+#                      whole reason a dark desktop kept a pale wallpaper. That it
+#                      does not come back is checked in the IMAGE build, by
+#                      build_files/55-aquarius-session.sh, not here: it is a fact
+#                      about our copy alone and the shell has no opinion on it.)
+#
 #                      Three lines are the known, deliberate exceptions, listed
 #                      in AQ_AUTOSTART_KNOWN_DIFFERENT below with a sentence
 #                      each. Anything else is a failure.

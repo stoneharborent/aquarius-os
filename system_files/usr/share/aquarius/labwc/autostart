@@ -115,14 +115,32 @@ fi
 # This is here rather than in the shell because a wallpaper should survive the
 # shell crashing. If the bar dies you should still be looking at your desktop.
 #
-# --mode fill crops to the screen rather than stretching; -c is the colour
-# behind the image while it loads, and it is the palette's navy ground (bg) from the boot
-# splash so the hand-off from Plymouth has no flash of grey.
+# ⚠️ THIS LINE USED TO BE `swaybg` ITSELF, AND THAT WAS THE BENCH FAULT OF
+#    8 SEPTEMBER 2026.
+#
+# It named the ICE picture, ran ONCE, at login, and nothing ever ran it again.
+# So Royce flipped the machine to dark, the bar and the dock and the menus all
+# went navy, and the picture behind them stayed pale. Both pictures ship; only
+# one was ever shown. (He reported it as "the flip didn't carry over to the lock
+# screen" — the lock screen was a red herring; what he was looking at was this.)
+#
+# /usr/libexec/aquarius-wallpaper is the same job done properly. `auto` asks the
+# appearance portal which theme this machine is already in and puts up the
+# matching picture, so a login is right the first time. It keeps its own pid
+# file, so the SHELL can call it again with `ice` or `midnight` on every flip —
+# through AQ_WALLPAPER_SETTER, which /usr/bin/aquarius-session exports — and get
+# a swap instead of a second wallpaper on top of the first.
+#
+# The colour behind the picture, the fill mode and the "never take a login down"
+# rule all moved into that program with the rest. Read its header; it is worth
+# the two minutes.
+#
+# It is deliberately NOT run in the background: it starts swaybg itself and then
+# returns, so all it costs the login is one portal question, and the picture is
+# up before the bar draws over it rather than after.
 # ---------------------------------------------------------------------------
-if [ -r /usr/share/backgrounds/aquarius/the-pour-ice-3840x2160.png ]; then
-    swaybg -c '#0B1220' \
-        -i /usr/share/backgrounds/aquarius/the-pour-ice-3840x2160.png \
-        -m fill >> "${AQ_LOG:-/dev/null}" 2>&1 &
+if [ -x /usr/libexec/aquarius-wallpaper ]; then
+    /usr/libexec/aquarius-wallpaper auto >> "${AQ_LOG:-/dev/null}" 2>&1 || true
 fi
 
 # ---------------------------------------------------------------------------

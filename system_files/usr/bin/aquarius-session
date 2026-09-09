@@ -74,6 +74,26 @@ AQ_SESSION_LIB="/usr/libexec/aquarius-session-lib"
 AQ_FRAME_GENERATOR="${AQ_LABWC_TEMPLATE_DIR}/generate-theme"
 export AQ_FRAME_GENERATOR
 
+# The program that puts the right wallpaper up, and the same arrangement one
+# line further down for the same reason.
+#
+# ⚠️ THIS IS THE OTHER HALF OF THE 8 SEPTEMBER 2026 "THE WALLPAPER DID NOT GO
+# DARK" FAULT. The window frames already followed the theme, because of the line
+# above. The wallpaper did not, because it was drawn by a swaybg the autostart
+# file started once at login and nothing ever ran again.
+#
+# The shell's services/SystemAppearance.qml now runs the program named here with
+# one word — `ice` or `midnight` — every time the machine flips, exactly as it
+# runs the frame generator. As with the frame generator, THE SHELL HOLDS NO PATH
+# OF ITS OWN: when this variable is unset it does nothing at all, which is what
+# makes the shell runnable on a plain Fedora machine that has no Aquarius
+# wallpaper to swap. Handing it the path is this file's job.
+#
+# The contract is written down in the shell repository's docs/session.md
+# ("The wallpaper, and the two halves that make it follow light and dark").
+AQ_WALLPAPER_SETTER="/usr/libexec/aquarius-wallpaper"
+export AQ_WALLPAPER_SETTER
+
 # -----------------------------------------------------------------------------
 # The log. Everything below this point goes to the terminal AND to the file.
 #

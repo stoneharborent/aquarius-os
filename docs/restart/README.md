@@ -287,6 +287,7 @@ thing locally. `just` with no arguments lists everything available.
 - **Mac-style keyboard shortcuts (Copy is Command-C):** [`aquarius-keys.md`](aquarius-keys.md)
 - **How big things are on the screen (and why it was too small):** [`aquarius-display.md`](aquarius-display.md)
 - **The pointer, the icons and the system sounds (and the seam for real Aquarius artwork later):** [`desktop-identity.md`](desktop-identity.md)
+- **⚠️ The wallpaper that stayed pale when the desktop went dark (8 September 2026), and the program that now swaps it:** [`desktop-identity.md`](desktop-identity.md#the-wallpaper)
 - **The login screen — why it looked like stock Fedora, and the two answers:** [`login.md`](login.md)
 - **⚠️ The BLACK login screen — twice, 4 and 5 September — and why AquariusOS now gives the login screen no display file at all:** [`login.md`](login.md#the-black-login-screen--twice-4-and-5-september-2026)
 - **DaVinci Resolve — installing it, and why it lives in a container:** [`resolve.md`](resolve.md)

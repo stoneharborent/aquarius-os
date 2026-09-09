@@ -3,6 +3,8 @@
 *Phase R5 polish. Written 2026-09-05.*
 *Updated 2026-09-06: the app icons are now ours, and so is the window frame.
 Everything else stands.*
+*Updated 2026-09-08: [the wallpaper](#the-wallpaper) now follows the light/dark
+flip too, which it did not before — see that section for what went wrong.*
 
 > **⚠️ WHAT CHANGED ON 2026-09-06, BEFORE YOU READ THE REST.** This page was
 > written to explain why AquariusOS pointed at *other people's* themes for the
@@ -492,6 +494,87 @@ wrote and which says at the top which theme and which size it was built for.
 Nothing here should look dramatic — that is the point. It should look
 *intentional and finished* rather than like leftover Fedora defaults, and it
 should match the login screen you just came through.
+
+---
+
+# The wallpaper
+
+*Added 2026-09-08.*
+
+The picture behind everything is "The Pour", and it ships in two colourways:
+**Ice** for the light look and **Midnight** for the dark one. Both are on every
+machine, at `/usr/share/backgrounds/aquarius/`. In GNOME the swap is free —
+GNOME has known how to keep a light and a dark wallpaper side by side for years,
+and it does it by itself. On the Aquarius Desktop it is ours to do, because the
+wallpaper is not drawn by the shell at all: it is drawn by a small separate
+program called `swaybg`. **That separation is deliberate and it is a good
+decision** — a wallpaper drawn outside the shell survives the shell crashing, so
+a bad night's work on the bar can never leave somebody staring at a black
+screen. The cost was that nothing re-ran it when the theme changed.
+
+⚠️ **And that is exactly what went wrong on the bench on 8 September 2026.**
+Royce flipped the machine to dark. The bar went navy, the dock went navy, the
+menus went navy, and the picture behind all of them stayed pale. He reported it
+as the dark theme not reaching the *lock* screen; the lock screen turned out to
+be a red herring, and what he was looking at was the desktop wallpaper. The
+cause was one line in the session's `labwc/autostart` that started `swaybg`
+once, at login, naming the Ice file, and never touched it again.
+
+The fix is a program of its own: **`/usr/libexec/aquarius-wallpaper`**, which
+takes one word — `ice`, `midnight`, or `auto` — and puts that picture up. `auto`
+asks the appearance portal which theme the machine is already in, which is the
+same question the shell asks and the same one the window-frame generator asks,
+so all three agree without any of them having to ask each other. Two things now
+call it, and between them they cover both moments a wallpaper can be wrong:
+**`labwc/autostart` runs `aquarius-wallpaper auto` at login**, so the picture is
+right for the theme the machine is in before the bar even draws; and **the shell
+runs it again with `ice` or `midnight` on every flip**, through
+`AQ_WALLPAPER_SETTER`, which `/usr/bin/aquarius-session` exports. That is the
+same seam the window frames already use — the shell holds no path of its own and
+does nothing at all when the variable is unset, which is what keeps the shell
+runnable from a clone on a plain Fedora machine. Ask the shell what it believes
+at any time with `qs ipc call theme status`, which prints a `desktop` line
+naming the setter it will run.
+
+Two rules are written into that program in capital letters, and both are worth
+knowing because both are the kind of thing a well-meaning edit undoes. **It
+stops only the `swaybg` it started itself** — it writes that one process's id
+down under `$XDG_RUNTIME_DIR` and checks, before killing anything, both that the
+process still exists and that it really is `swaybg`. The obvious shortcut,
+`pkill swaybg`, would kill a `swaybg` somebody else is running for a second
+screen or a presentation, and it would look like a bug in *their* program. And
+**it always exits 0**: a missing picture, a missing `swaybg`, or a portal that
+will not answer is one plain sentence in
+`~/.local/state/aquarius-session/session.log` and a clean exit, because this
+runs at login, before the desktop exists, and the worst thing decoration should
+ever be able to do is stop somebody reaching their computer. There is one place
+that rule has teeth — if the picture being asked for is not on the machine, the
+`swaybg` already running is **left alone**, because the wrong wallpaper is
+better than no wallpaper and a great deal better than flat grey.
+
+`aquarius-wallpaper --status` prints what is up now, which pictures are present,
+and what `auto` would choose and why, and it changes nothing.
+
+**How CI proves it.** `tests/test-wallpaper.sh` runs the real program against a
+stand-in `swaybg` that writes down every argument it is given, and a stand-in
+portal answer, so none of it needs a screen: it checks the arguments (`-c
+#0B1220`, `-m fill`, the right picture), that a flip replaces the old wallpaper
+instead of stacking a second one on top, that a `swaybg` started by somebody
+else survives untouched, that a stale pid file naming some innocent process does
+not get that process killed, and that a missing picture is one sentence and exit
+0. The build then reads the finished program back out of the image and checks
+that `autostart` and the launcher both still call it — and that `autostart` has
+not gone back to running `swaybg` itself, which would give two wallpapers at
+once with no error anywhere.
+
+**Bench check for Royce.** Flip the colour scheme in Quick Settings. The picture
+behind your windows should change with the bar — pale to navy — within about a
+second, with no logout and no black flash. Flip back and it should return.
+Then log out and back in with the machine left in dark: you should arrive at the
+Midnight picture, not the Ice one, from the very first frame. If either does
+nothing, `~/.local/state/aquarius-session/session.log` will have a `[wallpaper]`
+line saying what happened, and `/usr/libexec/aquarius-wallpaper --status` will
+say what it thinks is up.
 
 ---
 

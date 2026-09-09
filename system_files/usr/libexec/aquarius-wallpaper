@@ -1,0 +1,399 @@
+#!/usr/bin/bash
+# =============================================================================
+# aquarius-wallpaper — put the right picture behind everything
+# =============================================================================
+# PLAIN ENGLISH
+#
+# AquariusOS ships two wallpapers, both of them "The Pour": a pale one for the
+# light theme (Ice) and a deep navy one for the dark theme (Midnight). This
+# program puts one of them on the screen.
+#
+#     aquarius-wallpaper ice        the light picture
+#     aquarius-wallpaper midnight   the dark one
+#     aquarius-wallpaper auto       ask the computer which theme it is in
+#     aquarius-wallpaper --status   say what is up now, and change nothing
+#
+# -----------------------------------------------------------------------------
+# ⚠️ THE BENCH FINDING THIS COMES FROM (2026-09-08)
+# -----------------------------------------------------------------------------
+# Royce flipped the machine to dark and reported that "the flip to dark theme
+# didn't carry over to the lock screen". The lock screen turned out to be a red
+# herring — what he was looking at was the DESKTOP WALLPAPER, which stayed pale
+# Ice while the bar, the dock and the menus all went navy around it.
+#
+# The reason was in the session's `labwc/autostart`, which started `swaybg` ONCE
+# at login, naming the Ice file, and never touched it again. Both pictures ship;
+# only one was ever shown.
+#
+# The wallpaper is drawn by a separate program on purpose — a wallpaper that
+# survives the shell crashing means a bad night's work on the bar can never
+# leave somebody staring at a black screen. The cost was that nothing re-ran it
+# when the theme changed. This program is that missing piece, and the interface
+# it implements was written down by the shell side first, in the aquarius-shell
+# repository's docs/session.md.
+#
+# -----------------------------------------------------------------------------
+# WHO CALLS IT
+# -----------------------------------------------------------------------------
+#   /usr/share/aquarius/labwc/autostart   at login, with `auto`, so the picture
+#                                         is right for the theme the machine is
+#                                         already in.
+#   the Aquarius Shell                    on every light/dark flip, with `ice`
+#                                         or `midnight`. It finds this program
+#                                         through AQ_WALLPAPER_SETTER, which
+#                                         /usr/bin/aquarius-session exports —
+#                                         the same shape as AQ_FRAME_GENERATOR,
+#                                         which is how the window frames already
+#                                         follow the theme. The shell holds no
+#                                         path of its own and does nothing at
+#                                         all when the variable is unset.
+#
+# -----------------------------------------------------------------------------
+# ⚠️ IT STOPS ONLY THE swaybg IT STARTED. NEVER `pkill swaybg`.
+# -----------------------------------------------------------------------------
+# Somebody may be running a swaybg of their own — on a second screen, for a
+# presentation, for anything. Killing every swaybg on the machine to change our
+# own wallpaper would be rude and would look like a bug in their program.
+#
+# So the pid of the one this program started is written down, under
+# $XDG_RUNTIME_DIR, which is emptied when the person logs out. Before anything
+# is killed the pid is checked TWICE: that the process still exists, and that it
+# is really swaybg (/proc/<pid>/comm). A pid file can outlive the process it
+# names, and the number can be handed to something else entirely.
+#
+# -----------------------------------------------------------------------------
+# ⚠️ IT ALWAYS EXITS 0. A WALLPAPER MUST NEVER TAKE A LOGIN DOWN.
+# -----------------------------------------------------------------------------
+# A missing picture, a missing swaybg, a portal that will not answer: every one
+# of them is ONE PLAIN SENTENCE in the session log and a clean exit. This runs
+# at login, before the desktop exists, and the worst thing decoration can do is
+# stop somebody reaching their computer.
+#
+# The one place that rule has teeth: if the picture for the scheme being asked
+# for is not on the machine, the swaybg that is already running is LEFT ALONE.
+# The wrong wallpaper is better than no wallpaper, and it is a great deal better
+# than flat grey.
+#
+# -----------------------------------------------------------------------------
+# THE THREE TEST HOOKS, AND WHY THEY EXIST
+# -----------------------------------------------------------------------------
+# tests/test-wallpaper.sh runs this program for real, on a build machine with no
+# screen, no portal and no swaybg. Three environment variables are what make
+# that possible, and all three are for the test and nothing else:
+#
+#   AQ_WALLPAPER_SWAYBG       the program to run instead of `swaybg`
+#   AQ_WALLPAPER_DIR          the folder to take the pictures from
+#   AQ_WALLPAPER_FAKE_PORTAL  the answer to use instead of asking the portal
+#
+# None of them is set on a real machine, and none of them changes what the
+# program DECIDES — only where it looks. The parsing, the pid file, the killing
+# and the order of the steps are the same code either way, which is the whole
+# point: a test that ran a different program would prove nothing.
+#
+# Plain-English guide: docs/restart/desktop-identity.md
+# =============================================================================
+
+set -uo pipefail
+
+AQ_PICTURE_DIR="${AQ_WALLPAPER_DIR:-/usr/share/backgrounds/aquarius}"
+
+# The colour painted behind the picture while it loads. It is the palette's navy
+# ground (`bg`, #0B1220) — the same colour as the boot animation's background —
+# so the hand-off from the boot screen has no flash of grey in it.
+AQ_GROUND="#0B1220"
+
+# Where the pid of OUR swaybg is written. $XDG_RUNTIME_DIR is per-person and is
+# emptied at logout, which is exactly the lifetime this fact has. The fallback
+# is for a session odd enough not to have one; it carries the user id in its
+# name so two people on one machine cannot collide.
+AQ_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}"
+AQ_PID_FILE="${AQ_RUNTIME_DIR}/aquarius-wallpaper.pid"
+AQ_SCHEME_FILE="${AQ_RUNTIME_DIR}/aquarius-wallpaper.scheme"
+if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
+    AQ_PID_FILE="/tmp/aquarius-wallpaper-$(id -u).pid"
+    AQ_SCHEME_FILE="/tmp/aquarius-wallpaper-$(id -u).scheme"
+fi
+
+AQ_SWAYBG="${AQ_WALLPAPER_SWAYBG:-swaybg}"
+
+# -----------------------------------------------------------------------------
+# say — one plain line, in the place a person will look
+# -----------------------------------------------------------------------------
+# The session log ($AQ_LOG, ~/.local/state/aquarius-session/session.log) is where
+# everything about a login is written down, and it is where this belongs. But
+# this program is also run by hand from a terminal, and it is run by the shell
+# with its output going somewhere else again.
+#
+# So: to the log when there is one, to the terminal when there is somebody at
+# one, and to plain stdout when there is neither — which is what `autostart`
+# without AQ_LOG would be. Never twice into the same file.
+say() {
+    local line="[wallpaper] $*"
+    if [ -t 1 ]; then
+        printf '%s\n' "${line}"
+    fi
+    if [ -n "${AQ_LOG:-}" ]; then
+        printf '%s\n' "${line}" >> "${AQ_LOG}" 2> /dev/null || true
+    elif [ ! -t 1 ]; then
+        printf '%s\n' "${line}"
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# Which theme is this computer in?
+# -----------------------------------------------------------------------------
+# The desktop-independent answer is the appearance portal: every desktop that
+# has a light/dark switch publishes it there, and it is what the Aquarius Shell
+# itself reads (services/SystemAppearance.qml). The value is a number:
+#
+#     0  no preference     1  dark     2  light
+#
+# ⚠️ TWO METHOD NAMES, AND BOTH ARE TRIED. `ReadOne` is the current one and
+# returns the value directly. `Read` is the older one, still what some portal
+# versions offer, and returns the same value wrapped in one more layer. Asking
+# for only the new name on a machine with only the old one gives "no such
+# method" and a wallpaper that never follows the theme, with the reason buried
+# in a D-Bus error nobody sees.
+#
+# ⚠️ AQ_WALLPAPER_FAKE_PORTAL is for tests/test-wallpaper.sh and nothing else.
+# It stands in for what gdbus printed, so that the PARSING below — which is the
+# part that can be wrong — is exercised for real on a machine with no portal.
+aq_ask_the_portal() {
+    if [ -n "${AQ_WALLPAPER_FAKE_PORTAL+set}" ]; then
+        printf '%s' "${AQ_WALLPAPER_FAKE_PORTAL}"
+        return 0
+    fi
+    command -v gdbus > /dev/null 2>&1 || return 1
+    local out aq_method
+    for aq_method in ReadOne Read; do
+        out="$(gdbus call --session \
+            --dest org.freedesktop.portal.Desktop \
+            --object-path /org/freedesktop/portal/desktop \
+            --method "org.freedesktop.portal.Settings.${aq_method}" \
+            org.freedesktop.appearance color-scheme 2> /dev/null)"
+        if [ -n "${out}" ]; then
+            printf '%s' "${out}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# The portal's answer comes back as text: `(<uint32 1>,)` from ReadOne, or
+# `(<<uint32 1>>,)` from the older Read. Both carry exactly one number, written
+# after the word `uint32`, and that is what is matched — not the brackets, which
+# differ between the two methods and could differ again in a future glib.
+#
+# The three values, from the freedesktop specification:
+#     0  no preference     1  dark     2  light
+#
+# ⚠️ 0 MEANS ICE, not "do nothing". Ice is the default look of AquariusOS, so a
+# computer with no preference is a computer in the default one.
+aq_scheme_from_portal_text() { # aq_scheme_from_portal_text <text>
+    local value
+    value="$(printf '%s' "$1" \
+        | sed -n 's/.*uint32[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)"
+    if [ -z "${value}" ]; then
+        # A bare number, which is what a hand-written answer or a future, terser
+        # tool might give. Anything else falls through and is refused below.
+        value="$(printf '%s' "$1" | tr -cd '0-9')"
+    fi
+    case "${value}" in
+        1) printf 'midnight' ;;
+        0 | 2) printf 'ice' ;;
+        *) return 1 ;;
+    esac
+}
+
+# The fallback, and the reason it is second: gsettings is GNOME's own key, and
+# the portal reads it on this machine anyway. It is here for the case where the
+# portal is not running yet — which at login is a real possibility, because this
+# runs early.
+aq_scheme_from_gsettings() {
+    command -v gsettings > /dev/null 2>&1 || return 1
+    local v
+    v="$(gsettings get org.gnome.desktop.interface color-scheme 2> /dev/null)"
+    case "${v}" in
+        *prefer-dark*) printf 'midnight' ;;
+        *prefer-light* | *default*) printf 'ice' ;;
+        *) return 1 ;;
+    esac
+}
+
+# ⚠️ THIS ONE SETS TWO VARIABLES RATHER THAN PRINTING, AND THAT IS DELIBERATE.
+# The obvious shape — `scheme="$(aq_work_out_the_scheme)"` — runs the function in
+# a subshell, and a subshell cannot hand a second value back. The REASON is the
+# second value, and it is the whole difference between a log line that says
+# "using ice" and one that says "using ice because nothing on this computer
+# would say which theme it is in". The first is a fact; the second is an answer.
+#
+# Sets: AQ_SCHEME, AQ_SCHEME_REASON.
+aq_work_out_the_scheme() {
+    local text scheme
+    if text="$(aq_ask_the_portal)" && scheme="$(aq_scheme_from_portal_text "${text}")"; then
+        AQ_SCHEME="${scheme}"
+        AQ_SCHEME_REASON="the appearance portal says so"
+        return 0
+    fi
+    if scheme="$(aq_scheme_from_gsettings)"; then
+        AQ_SCHEME="${scheme}"
+        AQ_SCHEME_REASON="the portal did not answer, so the desktop's own setting was read"
+        return 0
+    fi
+    # ⚠️ AND THE ANSWER WHEN THERE IS NO ANSWER IS ICE, not "do nothing". Ice is
+    # the default look of AquariusOS; a machine that cannot say which theme it is
+    # in is a machine in the default one.
+    AQ_SCHEME="ice"
+    AQ_SCHEME_REASON="nothing on this computer would say which theme it is in, so the light one was used"
+    return 0
+}
+
+# -----------------------------------------------------------------------------
+# The swaybg we started before
+# -----------------------------------------------------------------------------
+# Returns the pid, but ONLY if the pid file names a process that still exists
+# AND that process really is swaybg. A pid file outlives the program it names,
+# and the number gets handed out again.
+aq_our_swaybg() {
+    local pid comm want
+    [ -r "${AQ_PID_FILE}" ] || return 1
+    pid="$(tr -cd '0-9' < "${AQ_PID_FILE}" 2> /dev/null)"
+    [ -n "${pid}" ] || return 1
+    [ -d "/proc/${pid}" ] || return 1
+    comm="$(cat "/proc/${pid}/comm" 2> /dev/null)"
+    # The name Linux records is at most fifteen characters and has no path on
+    # it, so it is compared against the basename. `swaybg` is spelled out as
+    # well as taken from AQ_WALLPAPER_SWAYBG, because that variable exists only
+    # for the test and the real answer must not depend on it.
+    want="$(basename "${AQ_SWAYBG}")"
+    if [ "${comm}" != "swaybg" ] && [ "${comm}" != "${want}" ]; then
+        return 1
+    fi
+    printf '%s' "${pid}"
+}
+
+aq_stop_ours() {
+    local pid
+    if pid="$(aq_our_swaybg)"; then
+        kill "${pid}" 2> /dev/null || true
+        # A moment for it to go, so that the new one is not fighting the old one
+        # for the screen. Not a wait loop: swaybg exits on SIGTERM at once, and a
+        # login must not stall here whatever happens.
+        sleep 0.1
+        say "stopped the wallpaper this session had up (pid ${pid})"
+        rm -f "${AQ_PID_FILE}" 2> /dev/null || true
+        return 0
+    fi
+    # Not an error, and not worth a line at login: the usual case is that there
+    # was nothing up yet.
+    rm -f "${AQ_PID_FILE}" 2> /dev/null || true
+    return 1
+}
+
+# -----------------------------------------------------------------------------
+# --status
+# -----------------------------------------------------------------------------
+aq_status() {
+    local pid aq_s
+    echo "The Aquarius wallpaper"
+    echo "  pictures : ${AQ_PICTURE_DIR}"
+    for aq_s in ice midnight; do
+        if [ -r "${AQ_PICTURE_DIR}/the-pour-${aq_s}-3840x2160.png" ]; then
+            echo "    ${aq_s}: there"
+        else
+            echo "    ${aq_s}: MISSING"
+        fi
+    done
+    if command -v "${AQ_SWAYBG}" > /dev/null 2>&1; then
+        echo "  swaybg   : $(command -v "${AQ_SWAYBG}")"
+    else
+        echo "  swaybg   : NOT INSTALLED — nothing can draw a wallpaper here"
+    fi
+    echo "  pid file : ${AQ_PID_FILE}"
+    if pid="$(aq_our_swaybg)"; then
+        echo "  running  : yes, pid ${pid}"
+    else
+        echo "  running  : no swaybg of ours is up"
+    fi
+    if [ -r "${AQ_SCHEME_FILE}" ]; then
+        echo "  showing  : $(cat "${AQ_SCHEME_FILE}" 2> /dev/null)"
+    else
+        echo "  showing  : not recorded"
+    fi
+    aq_work_out_the_scheme
+    echo "  'auto'   : would use ${AQ_SCHEME} (${AQ_SCHEME_REASON})"
+    exit 0
+}
+
+# -----------------------------------------------------------------------------
+# What was asked for
+# -----------------------------------------------------------------------------
+AQ_SCHEME=""
+AQ_SCHEME_REASON=""
+AQ_WANTED="${1:-auto}"
+
+case "${AQ_WANTED}" in
+    --status | status) aq_status ;;
+    -h | --help | help)
+        sed -n '2,80p' "$0" | sed 's/^# \{0,1\}//'
+        exit 0
+        ;;
+    auto)
+        aq_work_out_the_scheme
+        AQ_WANTED="${AQ_SCHEME}"
+        say "asked for 'auto': using ${AQ_WANTED} — ${AQ_SCHEME_REASON}"
+        ;;
+    ice | midnight) : ;;
+    *)
+        # ⚠️ NOT AN ERROR EXIT. Somebody — or some future shell — handing this a
+        # word it does not know must not be able to leave a login without a
+        # wallpaper, so it says so plainly and falls back to working it out.
+        say "'${AQ_WANTED}' is not a theme I know. I take ice, midnight or auto."
+        aq_work_out_the_scheme
+        AQ_WANTED="${AQ_SCHEME}"
+        say "using ${AQ_WANTED} instead — ${AQ_SCHEME_REASON}"
+        ;;
+esac
+
+AQ_PICTURE="${AQ_PICTURE_DIR}/the-pour-${AQ_WANTED}-3840x2160.png"
+
+# -----------------------------------------------------------------------------
+# The two things that stop this before it starts — both quietly, both exit 0
+# -----------------------------------------------------------------------------
+if ! command -v "${AQ_SWAYBG}" > /dev/null 2>&1; then
+    say "swaybg is not installed, so nothing here can draw a wallpaper."
+    say "        The desktop will be a flat colour. Everything else works."
+    exit 0
+fi
+
+if [ ! -r "${AQ_PICTURE}" ]; then
+    say "the ${AQ_WANTED} wallpaper is not on this computer:"
+    say "        ${AQ_PICTURE}"
+    # ⚠️ AND THE ONE THAT IS ALREADY UP IS LEFT ALONE. Stopping it would trade a
+    # wrong-coloured wallpaper for flat grey, which is worse in every way.
+    if aq_our_swaybg > /dev/null; then
+        say "        Leaving the wallpaper that is already up where it is."
+    fi
+    exit 0
+fi
+
+# -----------------------------------------------------------------------------
+# Out with the old, in with the new
+# -----------------------------------------------------------------------------
+aq_stop_ours || true
+
+# -m fill crops to the screen rather than stretching, so a 16:9 picture on a
+# 16:10 monitor loses a little top and bottom instead of everybody looking
+# short. -c is the colour behind it while it loads. With no -o it covers every
+# screen, which is what is wanted.
+"${AQ_SWAYBG}" -c "${AQ_GROUND}" -i "${AQ_PICTURE}" -m fill \
+    >> "${AQ_LOG:-/dev/null}" 2>&1 &
+AQ_NEW_PID=$!
+
+printf '%s\n' "${AQ_NEW_PID}" > "${AQ_PID_FILE}" 2> /dev/null || true
+printf '%s\n' "${AQ_WANTED}" > "${AQ_SCHEME_FILE}" 2> /dev/null || true
+
+say "showing the ${AQ_WANTED} wallpaper (pid ${AQ_NEW_PID}): ${AQ_PICTURE##*/}"
+
+# ⚠️ ALWAYS. See the header: a wallpaper must never be able to take a login down.
+exit 0
