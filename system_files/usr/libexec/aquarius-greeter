@@ -98,9 +98,12 @@ elif command -v logger > /dev/null 2>&1; then
     exec > >(logger -t aquarius-greeter) 2>&1
 fi
 
-# Restore the screen. Used only by the text-login fallback at the bottom.
+# Restore the screen. Used only by the text-login fallback at the bottom, and
+# it closes the two spare descriptors afterwards so that nothing this script
+# goes on to run inherits a second copy of the terminal.
 aq_take_the_screen_back() {
     exec 1>&8 2>&9
+    exec 8>&- 9>&-
 }
 
 # -----------------------------------------------------------------------------

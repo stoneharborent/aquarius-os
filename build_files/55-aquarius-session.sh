@@ -513,6 +513,46 @@ for aq_f in /usr/libexec/aquarius-greeter /usr/libexec/aquarius-greeter-shell; d
 done
 
 # ------------------------------------------------------------------------------
+# ⚠️ AND THE LOGIN SCREEN PRINTS NOTHING TO THE SCREEN
+# ------------------------------------------------------------------------------
+# THE BENCH FAULT OF 2026-09-08, and Royce's directive with it: "No commands,
+# terminals or text during boot." greetd runs /usr/libexec/aquarius-greeter on
+# virtual terminal 1 — the screen — so anything that file prints is printed
+# THERE, in white text, over the boot animation. Five lines of it were, for
+# about three seconds, on every greetd boot.
+#
+# The comment above those lines said they went "to greetd's own journal". They
+# did not: greetd hands its greeter the terminal, not the journal, and
+# `journalctl -u greetd -b` on the bench showed four lines from greetd and none
+# from that file. A wrong belief in a comment is invisible; these three checks
+# are not.
+say "The login screen prints nothing onto the screen"
+aq_file_has /usr/libexec/aquarius-greeter 'systemd-cat -t aquarius-greeter' \
+    "everything the login screen says goes to the journal, not to the screen"
+aq_file_has /usr/libexec/aquarius-greeter '^exec 8>&1 9>&2$' \
+    "and it keeps a way back to the real screen for the text login"
+aq_file_has /usr/libexec/aquarius-greeter 'aq_take_the_screen_back' \
+    "which the text-login fallback uses, because a text login in the journal helps nobody"
+# The fallback must take the boot animation down before it draws: text over a
+# held splash is unreadable, and on that path nothing is ever going to be drawn
+# over the picture.
+if awk '/^# The safety net$/,0' /usr/libexec/aquarius-greeter \
+    | grep -q 'plymouth quit'; then
+    ok "the text login takes the boot animation down before it draws"
+else
+    bad "the text-login fallback does not quit the boot animation first — it would draw onto a held splash"
+fi
+# ⚠️ AND THE OPPOSITE CHECK. `plymouth quit --retain-splash` on the fallback path
+# would leave the machine showing a picture with a text login underneath it that
+# nobody can read. That one belongs to aquarius-plymouth-release and nowhere else.
+if awk '/^# The safety net$/,0' /usr/libexec/aquarius-greeter \
+    | grep -q 'retain-splash'; then
+    bad "the text-login fallback keeps the splash picture — the text would be drawn under it"
+else
+    ok "and it does not keep the picture, so the text login can be read"
+fi
+
+# ------------------------------------------------------------------------------
 # The greeter safety net — switch back to GDM if the greeter never draws
 # ------------------------------------------------------------------------------
 # ⚠️ THIS IS THE LOAD-BEARING RULE FROM THE 2026-09-05 SAGA. `aq login use
