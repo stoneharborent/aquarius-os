@@ -1,0 +1,427 @@
+#!/usr/bin/python3
+# =============================================================================
+# aquarius-resolve-entry — make Resolve's app-menu entry a proper one
+# =============================================================================
+# PLAIN ENGLISH
+#
+# When `aq resolve install` finishes, DaVinci Resolve is inside a container and
+# a tool called distrobox writes an app-menu entry so you can start it from your
+# apps like anything else. That entry is a raw machine-written file, and on the
+# bench (2026-09-08) it was wrong in three ways that a person feels immediately:
+#
+#     Name=DaVinci Resolve (on aquarius-resolve)
+#     StartupWMClass=/usr/share/applications/com.blackmagicdesign.resolve.desktop
+#     (no GenericName, no Categories)
+#
+#   * **The name.** "DaVinci Resolve (on aquarius-resolve)" is the container's
+#     name leaking into the app menu. Nobody who uses this computer should ever
+#     have to know the container exists.
+#   * **StartupWMClass is a FILE PATH.** That key answers one question: "when a
+#     window appears, which app-menu entry does it belong to?" The dock matches
+#     a running window to its entry with it (`AppIdentity.qml`). Resolve's window
+#     calls itself `resolve`; the entry claimed to be a path; so the dock could
+#     never join the two. **That is why no Resolve icon appeared in the dock, and
+#     why the running window had no home.**
+#   * **No Categories and no GenericName.** Categories is how a menu files an app
+#     under "Video"; GenericName is the "what is this?" line search engines and
+#     menus show underneath. Without them Resolve is an app with no shelf.
+#
+# This program repairs the entry. It is separate from
+# /usr/libexec/aquarius-resolve-install for one reason: it can then be run
+# against a file in a temporary folder, in CI, on a machine with no Resolve and
+# no container — which is what tests/test-resolve-entry.sh does. The installer
+# only fixed Exec and MimeType before, and nothing anywhere proved the result.
+#
+# ⚠️ THE ICON IS BLACKMAGIC'S, ON PURPOSE. Royce decided this on 2026-09-08
+# (FEATURES 008 item 13): brand marks stay theirs, the same as Firefox and
+# Steam. This program never replaces the icon. It only checks that the file the
+# entry names actually exists, and says so if it does not.
+#
+# -----------------------------------------------------------------------------
+# WHAT IT DOES NOT TOUCH
+# -----------------------------------------------------------------------------
+#   Exec        owned by the installer, which points it at
+#               /usr/libexec/aquarius-resolve-launch. Rewriting it here would
+#               mean two programs owning one line.
+#   MimeType    the same — "Open With → DaVinci Resolve" is the installer's.
+#   Comment     Blackmagic's own description. Theirs, and good.
+#   Path        Blackmagic's working folder.
+#
+# -----------------------------------------------------------------------------
+# HOW IT IS RUN
+# -----------------------------------------------------------------------------
+#   aquarius-resolve-entry repair <file.desktop> [--container NAME]
+#       Repair one entry. Prints one plain line per change and nothing when
+#       there was nothing to do.
+#
+#   aquarius-resolve-entry hide <file.desktop>
+#       Hide an entry from the app menu — the distrobox "Terminal entering …"
+#       ones. ⚠️ This is not as simple as adding NoDisplay=true: distrobox
+#       writes NoDisplay=true at the top of its file AND NoDisplay=false further
+#       down, and in a .desktop file the LATER key wins. So this removes every
+#       NoDisplay it finds and writes exactly one.
+#
+#   aquarius-resolve-entry show <file.desktop>
+#       Print the keys that matter, one per line, for `aq resolve status`.
+#
+#   aquarius-resolve-entry check <file.desktop>
+#       Say whether the entry is fully repaired. Exit 0 if it is, 1 if not, and
+#       name what is wrong. Changes nothing.
+#
+# Plain-English guide: docs/restart/resolve.md
+# =============================================================================
+
+import os
+import re
+import sys
+
+# The entry that starts Resolve itself is the one whose Exec names Resolve's own
+# program. Blackmagic install three other things beside it — the RAW Player, the
+# speed test, the control-panel setup — and none of them is Resolve.
+RESOLVE_EXEC_MARK = "/opt/resolve/bin/resolve"
+
+# What a repaired main entry must say. These four are the whole fix.
+WANT_NAME = "DaVinci Resolve"
+WANT_GENERIC = "Video Editor"
+WANT_WMCLASS = "resolve"
+WANT_CATEGORIES = "AudioVideo;Video;"
+
+# "DaVinci Resolve (on aquarius-resolve)" → "DaVinci Resolve". The container's
+# name has no business in anybody's app menu.
+ON_CONTAINER = re.compile(r"\s*\(on\s+[^)]*\)\s*$")
+
+# The keys `aq resolve status` and the CI test read back.
+SHOW_KEYS = (
+    "Name", "GenericName", "Icon", "StartupWMClass",
+    "Categories", "Exec", "MimeType", "NoDisplay", "Terminal", "Type",
+)
+
+
+class Entry(object):
+    """One .desktop file, kept as lines so nothing unrelated is disturbed.
+
+    ⚠️ IT IS DELIBERATELY NOT A KEY/VALUE DICTIONARY THAT GETS WRITTEN BACK OUT.
+    A .desktop file carries comments, blank lines, key order and localised keys
+    (`Name[en_US]`), and re-serialising it from a dictionary throws all of that
+    away. Blackmagic's file is theirs; we change the handful of lines we own and
+    leave every other byte exactly where it was.
+    """
+
+    def __init__(self, path):
+        self.path = path
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            self.lines = handle.read().split("\n")
+        self.changes = []
+
+    # -- reading ------------------------------------------------------------
+
+    def _groups(self):
+        """Yield (index, group_name) for every line, group '' before the first."""
+        group = ""
+        for i, line in enumerate(self.lines):
+            stripped = line.strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                group = stripped[1:-1]
+                yield i, group, True
+            else:
+                yield i, group, False
+
+    def get(self, key, group="Desktop Entry"):
+        """The value of a key in a group. The LAST one wins, as the spec says."""
+        found = None
+        for i, g, is_header in self._groups():
+            if is_header or g != group:
+                continue
+            if self.lines[i].startswith(key + "="):
+                found = self.lines[i][len(key) + 1:]
+        return found
+
+    def is_the_resolve_entry(self):
+        exec_line = self.get("Exec") or ""
+        return RESOLVE_EXEC_MARK in exec_line
+
+    # -- writing ------------------------------------------------------------
+
+    def set(self, key, value, group="Desktop Entry", why=None):
+        """Set exactly one key in one group, removing any duplicates of it.
+
+        Duplicates matter. distrobox writes NoDisplay twice in its own files and
+        the later one wins, which is how a "hidden" entry ends up visible.
+        """
+        current = self.get(key, group)
+        if current == value:
+            return False
+
+        kept = []
+        seen = False
+        in_group = False
+        insert_at = None
+        for line in self.lines:
+            stripped = line.strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                if in_group and not seen:
+                    # Leaving the group without having found the key: put it in
+                    # just before we leave, so it lands inside its own group.
+                    insert_at = len(kept)
+                in_group = (stripped[1:-1] == group)
+                kept.append(line)
+                continue
+            if in_group and line.startswith(key + "="):
+                if not seen:
+                    kept.append("%s=%s" % (key, value))
+                    seen = True
+                # Any further copy is dropped.
+                continue
+            kept.append(line)
+
+        if not seen:
+            if insert_at is not None:
+                kept.insert(insert_at, "%s=%s" % (key, value))
+            elif in_group:
+                # At the end of the file, and still inside the group. Put it
+                # before any trailing blank lines, so the file does not grow a
+                # gap in the middle of its own group.
+                at = len(kept)
+                while at > 0 and kept[at - 1].strip() == "":
+                    at -= 1
+                kept.insert(at, "%s=%s" % (key, value))
+            else:
+                # The group is not in the file at all. That is not a file we
+                # should be editing, so say so rather than inventing one.
+                raise KeyError("no [%s] group in %s" % (group, self.path))
+            seen = True
+
+        self.lines = kept
+        note = "%s: %s" % (key, value)
+        if why:
+            note += "   (%s)" % why
+        self.changes.append(note)
+        return True
+
+    def drop(self, key, group="Desktop Entry", why=None):
+        if self.get(key, group) is None:
+            return False
+        kept = []
+        in_group = False
+        for line in self.lines:
+            stripped = line.strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                in_group = (stripped[1:-1] == group)
+                kept.append(line)
+                continue
+            if in_group and line.startswith(key + "="):
+                continue
+            kept.append(line)
+        self.lines = kept
+        self.changes.append("removed %s%s" % (key, "   (%s)" % why if why else ""))
+        return True
+
+    def strip_container_from(self, key):
+        """Take " (on aquarius-resolve)" off a key and every localised copy."""
+        changed = False
+        kept = []
+        in_group = False
+        for line in self.lines:
+            stripped = line.strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                in_group = (stripped[1:-1] == "Desktop Entry")
+                kept.append(line)
+                continue
+            if in_group and re.match(r"^%s(\[[^\]]*\])?=" % re.escape(key), line):
+                name, _, value = line.partition("=")
+                new_value = ON_CONTAINER.sub("", value)
+                if new_value != value:
+                    kept.append("%s=%s" % (name, new_value))
+                    changed = True
+                    self.changes.append(
+                        "%s: %s   (the container's name is not part of the app's)"
+                        % (name, new_value))
+                    continue
+            kept.append(line)
+        self.lines = kept
+        return changed
+
+    def save(self):
+        text = "\n".join(self.lines)
+        if not text.endswith("\n"):
+            text += "\n"
+        with open(self.path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+
+
+# -----------------------------------------------------------------------------
+# repair
+# -----------------------------------------------------------------------------
+def repair(path):
+    entry = Entry(path)
+
+    if entry.is_the_resolve_entry():
+        # ⚠️ THE FOUR KEYS THAT MAKE IT A REAL APP. See the header for what each
+        # one broke on the bench.
+        entry.set("Name", WANT_NAME,
+                  why="what a person calls it")
+        entry.set("GenericName", WANT_GENERIC,
+                  why="the line the menu shows underneath")
+        entry.set("StartupWMClass", WANT_WMCLASS,
+                  why="how the dock joins the running window to this entry")
+        entry.set("Categories", WANT_CATEGORIES,
+                  why="which shelf of the app menu it sits on")
+        entry.set("Type", "Application")
+        entry.set("Terminal", "false")
+        entry.set("StartupNotify", "true")
+        # An entry that was hidden by an earlier repair is un-hidden: this is the
+        # one that must always be there.
+        entry.drop("NoDisplay", why="this is the entry that starts Resolve")
+        # And the LOCALISED copies of the same keys — `Name[en_US]` and friends.
+        # distrobox writes those too, and a desktop reading in English picks the
+        # localised one in preference to the plain one, so leaving them behind
+        # would put "(on aquarius-resolve)" straight back on the screen.
+        entry.strip_container_from("Name")
+        entry.strip_container_from("GenericName")
+        entry.strip_container_from("Comment")
+    else:
+        # Every other exported entry: the container's name comes out of the
+        # app's name, and nothing else changes.
+        entry.strip_container_from("Name")
+        entry.strip_container_from("GenericName")
+        entry.strip_container_from("Comment")
+
+        # ⚠️ AND THE OTHER EXPORTED ENTRIES — the RAW Player, the speed test, the
+        # control-panel setup. distrobox gives each of them a StartupWMClass that
+        # is a FILE PATH, which is not a window class and can never match any
+        # window. Removing it is strictly better than leaving a wrong answer: with
+        # no key the desktop falls back to matching the window itself, and with a
+        # wrong one it is guaranteed never to match. We do not invent a value,
+        # because we do not know what those windows call themselves.
+        wmclass = entry.get("StartupWMClass")
+        if wmclass and "/" in wmclass:
+            entry.drop("StartupWMClass",
+                       why="it was a file path, which can never match a window")
+
+    icon = entry.get("Icon")
+    if not icon:
+        print("  NOTE  %s names no icon at all." % os.path.basename(path))
+    elif icon.startswith("/") and not os.path.exists(icon):
+        print("  NOTE  %s names an icon that is not on this computer:"
+              % os.path.basename(path))
+        print("        %s" % icon)
+        print("        Resolve still starts; its tile will fall back to a")
+        print("        generic picture. Re-running 'aq resolve install' puts")
+        print("        Blackmagic's own icon back.")
+
+    if entry.changes:
+        entry.save()
+    return entry
+
+
+# -----------------------------------------------------------------------------
+# hide
+# -----------------------------------------------------------------------------
+def hide(path):
+    entry = Entry(path)
+    # ⚠️ ONE NoDisplay, AND ONLY ONE. distrobox writes NoDisplay=true near the
+    # top of its "Terminal entering …" file and NoDisplay=false further down. In
+    # a .desktop file the later key wins, so the entry it thought it had hidden
+    # is the one Royce saw in his app menu. Entry.set() removes duplicates, which
+    # is the whole point of it.
+    entry.set("NoDisplay", "true",
+              why="a way into the container is not an app anybody launches")
+    if entry.changes:
+        entry.save()
+    return entry
+
+
+# -----------------------------------------------------------------------------
+# show / check
+# -----------------------------------------------------------------------------
+def show(path):
+    entry = Entry(path)
+    for key in SHOW_KEYS:
+        value = entry.get(key)
+        if value is not None:
+            print("%s=%s" % (key, value))
+    return 0
+
+
+def check(path):
+    entry = Entry(path)
+    problems = []
+    if not entry.is_the_resolve_entry():
+        print("%s is not the entry that starts Resolve." % path)
+        return 1
+    checks = (
+        ("Name", WANT_NAME),
+        ("GenericName", WANT_GENERIC),
+        ("StartupWMClass", WANT_WMCLASS),
+        ("Categories", WANT_CATEGORIES),
+    )
+    for key, want in checks:
+        got = entry.get(key)
+        if got != want:
+            problems.append("  %s is %r, should be %r" % (key, got, want))
+    icon = entry.get("Icon")
+    if not icon:
+        problems.append("  Icon is missing")
+    if entry.get("NoDisplay") == "true":
+        problems.append("  NoDisplay=true — this entry is hidden from the app menu")
+    if problems:
+        print("This app-menu entry is not fully repaired:")
+        for line in problems:
+            print(line)
+        print("Fix it with:  aq resolve install")
+        return 1
+    print("The DaVinci Resolve app-menu entry is complete.")
+    return 0
+
+
+def usage():
+    print(__doc__ or "", end="")
+    print("aquarius-resolve-entry repair|hide|show|check <file.desktop>")
+    return 0
+
+
+def main(argv):
+    if len(argv) < 2 or argv[1] in ("-h", "--help", "help"):
+        return usage()
+    action = argv[1]
+    if len(argv) < 3:
+        print("aquarius-resolve-entry: %s needs a .desktop file." % action,
+              file=sys.stderr)
+        return 1
+    path = argv[2]
+    if not os.path.isfile(path):
+        print("aquarius-resolve-entry: %s is not a file." % path, file=sys.stderr)
+        return 1
+
+    try:
+        if action == "repair":
+            entry = repair(path)
+            for change in entry.changes:
+                print("  %s" % change)
+            return 0
+        if action == "hide":
+            entry = hide(path)
+            for change in entry.changes:
+                print("  %s" % change)
+            return 0
+        if action == "show":
+            return show(path)
+        if action == "check":
+            return check(path)
+    except (KeyError, OSError) as error:
+        # ⚠️ NEVER A TRACEBACK. This runs in the middle of somebody's install.
+        print("aquarius-resolve-entry: could not work with %s: %s"
+              % (path, error), file=sys.stderr)
+        print("  The entry was left exactly as it was. Resolve still starts;",
+              file=sys.stderr)
+        print("  its tile in the dock may be wrong.", file=sys.stderr)
+        return 1
+
+    print("aquarius-resolve-entry: I do not understand '%s'." % action,
+          file=sys.stderr)
+    print("  It takes: repair, hide, show, check.", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

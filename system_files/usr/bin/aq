@@ -692,6 +692,7 @@ AQ_RESOLVE_UNINSTALLER_GUI=/usr/libexec/aquarius-resolve-uninstaller
 AQ_RESOLVE_LAUNCHER=/usr/libexec/aquarius-resolve-launch
 AQ_RESOLVE_CHECK=/usr/libexec/aquarius-resolve-check
 AQ_RESOLVE_UPDATER_GUI=/usr/libexec/aquarius-resolve-updater
+AQ_RESOLVE_ENTRY=/usr/libexec/aquarius-resolve-entry
 
 resolve_usage() {
     cat << 'EOF'
@@ -944,6 +945,78 @@ resolve_status() {
     echo ""
     if [ -x "${AQ_RESOLVE_INSTALLER}" ]; then
         "${AQ_RESOLVE_INSTALLER}" --sound 2>&1
+    fi
+
+    # --------------------------------------------------------------------------
+    # Is its app-menu entry a real one?
+    # --------------------------------------------------------------------------
+    # ⚠️ ADDED 2026-09-08, AFTER THE BENCH. Royce: "No Resolve icon appeared
+    # after install. After quitting, Resolve cannot be reopened and is not in the
+    # app search." The entry distrobox wrote said "DaVinci Resolve (on
+    # aquarius-resolve)" and gave a FILE PATH as its StartupWMClass — the key the
+    # dock uses to work out which app a window belongs to. A path can never match
+    # a window, so the dock had a running Resolve it could not join to anything.
+    #
+    # These three lines are therefore printed as facts, not as a claim that it
+    # was fixed: whatever the file says right now is what appears here.
+    echo ""
+    echo "  Its entry in your apps"
+    if [ ! -x "${AQ_RESOLVE_ENTRY}" ]; then
+        echo "    The AquariusOS entry helper is missing from this system, which"
+        echo "    is a fault in the operating system rather than anything you did."
+    else
+        local apps_dir found_entry
+        apps_dir="${XDG_DATA_HOME:-${HOME}/.local/share}/applications"
+        found_entry=""
+        while IFS= read -r aq_e; do
+            [ -n "${aq_e}" ] || continue
+            grep -q '/opt/resolve/bin/resolve' "${aq_e}" 2> /dev/null || continue
+            found_entry="${aq_e}"
+            break
+        done < <(find "${apps_dir}" -maxdepth 1 -type f \
+            \( -iname '*resolve*.desktop' -o -iname '*davinci*.desktop' \
+            -o -iname '*blackmagic*.desktop' \) 2> /dev/null | sort)
+
+        if [ -z "${found_entry}" ]; then
+            echo "    There is no app-menu entry that starts Resolve, so it will"
+            echo "    not be in your apps or in search. Put it back with:"
+            echo "        aq resolve install"
+        else
+            echo "    File     : ${found_entry##*/}"
+            "${AQ_RESOLVE_ENTRY}" show "${found_entry}" 2> /dev/null \
+                | while IFS='=' read -r k v; do
+                    case "${k}" in
+                        Name)           printf '    Name     : %s\n' "${v}" ;;
+                        GenericName)    printf '    Described: %s\n' "${v}" ;;
+                        Icon)           printf '    Icon     : %s\n' "${v}" ;;
+                        StartupWMClass) printf '    Window   : %s\n' "${v}" ;;
+                        Categories)     printf '    Shelf    : %s\n' "${v}" ;;
+                    esac
+                done
+            if "${AQ_RESOLVE_ENTRY}" check "${found_entry}" > /dev/null 2>&1; then
+                echo "    It is complete: the dock can match Resolve's window to it,"
+                echo "    and app search can find it."
+            else
+                echo ""
+                "${AQ_RESOLVE_ENTRY}" check "${found_entry}" 2>&1 | sed 's/^/    /'
+            fi
+            # The icon is Blackmagic's on purpose (Royce, 2026-09-08). The only
+            # thing worth saying about it is whether the file is really there.
+            local aq_icon
+            aq_icon="$("${AQ_RESOLVE_ENTRY}" show "${found_entry}" 2> /dev/null \
+                | sed -n 's/^Icon=//p' | head -1)"
+            case "${aq_icon}" in
+                /*)
+                    if [ -e "${aq_icon}" ]; then
+                        echo "    The icon file is there (it is Blackmagic's own, on purpose)."
+                    else
+                        echo "    ⚠️  The icon file it names is NOT on this computer, so the"
+                        echo "        tile will fall back to a generic picture. Fix:"
+                        echo "            aq resolve install"
+                    fi
+                    ;;
+            esac
+        fi
     fi
 
     # --------------------------------------------------------------------------

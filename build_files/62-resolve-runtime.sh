@@ -366,6 +366,7 @@ for f in /usr/libexec/aquarius-resolve-install \
     /usr/libexec/aquarius-resolve-updater \
     /usr/libexec/aquarius-resolve-check \
     /usr/libexec/aquarius-resolve-update-notify \
+    /usr/libexec/aquarius-resolve-entry \
     /usr/share/applications/aquarius-install-resolve.desktop \
     /usr/share/applications/aquarius-remove-resolve.desktop \
     /usr/share/applications/aquarius-update-resolve.desktop; do
@@ -756,6 +757,73 @@ case "${AQ_EFFECTIVE}" in
         ;;
     *) ok "'--effective-scale' answers with a number even where there are no screens" ;;
 esac
+
+# ------------------------------------------------------------------------------
+# And Resolve's entry in your apps is a real one
+# ------------------------------------------------------------------------------
+# ⚠️ THE BENCH FINDING OF 2026-09-08. Royce: "No Resolve icon appeared after
+# install. After quitting, Resolve cannot be reopened and is not in the app
+# search."
+#
+# The entry distrobox exports is raw machine output — "DaVinci Resolve (on
+# aquarius-resolve)", no GenericName, no Categories, and a StartupWMClass that
+# is a FILE PATH. That last one is the key the dock uses to work out which
+# app-menu entry a window belongs to (`AppIdentity.qml` matches on it), and a
+# path can never match a window, so the dock had a running Resolve it could not
+# join to anything.
+#
+# The installer's repair step fixed Exec and MimeType and nothing else, and
+# NOTHING ANYWHERE READ THE FINISHED ENTRY BACK. That is what changes here.
+say "DaVinci Resolve — its entry in your apps"
+
+AQ_ENTRY_TOOL=/usr/libexec/aquarius-resolve-entry
+if [ ! -f "${AQ_ENTRY_TOOL}" ]; then
+    bad "${AQ_ENTRY_TOOL} is missing — nothing would repair Resolve's app-menu entry"
+else
+    chmod 0755 "${AQ_ENTRY_TOOL}"
+    if [ -x "${AQ_ENTRY_TOOL}" ]; then
+        ok "aquarius-resolve-entry is present and runnable"
+    else
+        bad "${AQ_ENTRY_TOOL} is not runnable"
+    fi
+    if python3 -c 'import py_compile, sys; py_compile.compile(sys.argv[1], cfile="/tmp/aq-entry.pyc", doraise=True)' \
+        "${AQ_ENTRY_TOOL}" 2> /tmp/aq-entry-py.txt; then
+        ok "it is valid Python"
+    else
+        bad "aquarius-resolve-entry has a syntax error:"
+        sed 's/^/       /' /tmp/aq-entry-py.txt
+    fi
+    rm -f /tmp/aq-entry.pyc /tmp/aq-entry-py.txt
+fi
+
+# ⚠️ THE CHECK THAT ACTUALLY COUNTS: repair a REAL FILE and read every key back.
+# The test writes the exact entry distrobox wrote on the bench into a temporary
+# folder, repairs it, and checks Name, GenericName, StartupWMClass, Categories,
+# the icon, the untouched Exec and MimeType, and the two distrobox "Terminal
+# entering …" entries whose NoDisplay is written twice. It needs no Resolve, no
+# container and no screen, which is why it can run here.
+if [ -x /ctx/tests/test-resolve-entry.sh ]; then
+    if /ctx/tests/test-resolve-entry.sh "${AQ_ENTRY_TOOL}"; then
+        ok "tests/test-resolve-entry.sh passed against the copy in this image"
+    else
+        bad "tests/test-resolve-entry.sh FAILED — the dock would show no Resolve icon"
+    fi
+else
+    bad "/ctx/tests/test-resolve-entry.sh is missing — nothing would prove the entry is right"
+fi
+
+# And that the installer really calls it, and really reads the result back. Both
+# grepped, because running them needs a container and an app-menu entry.
+aq_file_has /usr/libexec/aquarius-resolve-install 'aquarius-resolve-entry' \
+    "the installer repairs the app-menu entry rather than only its Exec line"
+aq_file_has /usr/libexec/aquarius-resolve-install 'aquarius-resolve-entry check' \
+    "and reads the finished entry back before it says it is done"
+aq_file_has /usr/libexec/aquarius-resolve-install 'distrobox +enter' \
+    "it can tell the container's own 'enter a terminal' entry from a real app"
+aq_file_has /usr/libexec/aquarius-resolve-install 'distrobox rm davincibox' \
+    "and it tells you how to remove the first AquariusOS's old container rather than doing it for you"
+aq_file_has /usr/bin/aq 'AQ_RESOLVE_ENTRY=/usr/libexec/aquarius-resolve-entry' \
+    "'aq resolve status' can report the entry's name, icon and window class"
 
 # ------------------------------------------------------------------------------
 # And the window fits the screen — the labwc rule

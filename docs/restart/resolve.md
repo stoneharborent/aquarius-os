@@ -273,6 +273,119 @@ says the mode is unsupported, go to
 
 ---
 
+## Its entry in your apps
+
+*Added 2026-09-08, after the bench run. Royce: "No Resolve icon appeared after
+install. After quitting, Resolve cannot be reopened and is not in the app
+search."*
+
+### What was wrong
+
+When Resolve is installed, the tool that runs it inside its own environment
+(distrobox) writes an app-menu entry for it — the small file that puts "DaVinci
+Resolve" in your apps, gives it its icon, and tells the dock which window
+belongs to it. That file was raw machine output, and it said this:
+
+```
+Name=DaVinci Resolve (on aquarius-resolve)
+StartupWMClass=/usr/share/applications/com.blackmagicdesign.resolve.desktop
+```
+
+Three separate things, all of which a person notices:
+
+* **The name carried the container's name.** `aquarius-resolve` is a piece of
+  plumbing. Nobody using this computer should ever have to know it exists, and
+  it certainly should not be in the app menu.
+* **`StartupWMClass` was a file path — and that is why there was no icon.** That
+  one key answers one question: *when this window appears on screen, which
+  app-menu entry does it belong to?* The dock matches a running window to its
+  tile with it. Resolve's window calls itself `resolve`. The entry claimed to be
+  a path, and a path can never match a window, so the dock had a running Resolve
+  it could not join to anything — no icon, no running dot, nothing to click.
+* **No `GenericName` and no `Categories`.** `Categories` is how a menu files an
+  app under "Video"; `GenericName` is the "what is this?" line shown underneath
+  the name. Without them Resolve is an app with no shelf and no description.
+
+Beside it sat two more files that are not apps at all: distrobox's own "Terminal
+entering Aquarius-resolve" entry, and a leftover "Terminal entering Davincibox"
+from the container the **first** AquariusOS used. Both appeared in search.
+
+⚠️ The Aquarius-resolve one is worth a note, because it looks like a bug in
+this repository and is not: distrobox writes `NoDisplay=true` near the top of
+that file **and** `NoDisplay=false` further down. In a `.desktop` file the
+**later** key wins. So the entry distrobox intended to hide was visible, and
+adding another `NoDisplay=true` would have changed nothing.
+
+### What happens now
+
+Every install and every update repairs the entry — not just its `Exec` line,
+which is all that used to be repaired:
+
+| Key | What it is now | Why |
+| --- | --- | --- |
+| `Name` | `DaVinci Resolve` | what a person calls it |
+| `GenericName` | `Video Editor` | the line the menu shows underneath |
+| `Icon` | **Blackmagic's own, untouched** | Royce's decision, 2026-09-08: brand marks stay theirs, the same as Firefox's and Steam's |
+| `StartupWMClass` | `resolve` | so the dock can match Resolve's window to its tile |
+| `Categories` | `AudioVideo;Video;` | so it files itself under Video |
+| `Exec`, `MimeType` | untouched here | the installer owns those; "Open With → DaVinci Resolve" depends on them |
+
+The other things Blackmagic install beside Resolve — the RAW Player, the speed
+test, the control-panel setup — lose the container's name from theirs too, and
+lose their file-path `StartupWMClass`. **They are not given a guessed one**: we
+do not know what those windows call themselves, and no key at all is better than
+a wrong one, because with no key the desktop falls back to matching the window
+itself.
+
+The two "Terminal entering …" entries are hidden properly — every `NoDisplay`
+line is removed and exactly one is written — and the install says so.
+
+### Seeing it for yourself
+
+```
+aq resolve status
+```
+
+now prints the entry's name, description, icon, window class and shelf as facts
+read out of the file, and says whether the dock can match Resolve's window to
+it. There is also a plain report of one file:
+
+```
+/usr/libexec/aquarius-resolve-entry show ~/.local/share/applications/*blackmagicdesign.resolve.desktop
+/usr/libexec/aquarius-resolve-entry check ~/.local/share/applications/*blackmagicdesign.resolve.desktop
+```
+
+`check` changes nothing and says what, if anything, is still wrong.
+
+### The old `davincibox` container
+
+If your machine has been through the first AquariusOS, it may still have a
+container called `davincibox`. Its app-menu entry is hidden by the install, and
+the install then **tells you it is there and does not touch it**:
+
+```
+distrobox rm davincibox
+```
+
+⚠️ **That command is yours to run, not ours.** A container can hold an older
+Resolve, a licence activation, or preferences somebody still wants, and this
+operating system has no way to know whether yours does. Removing it is not
+undoable. If you are not sure, leave it — it costs disk space and nothing else.
+`distrobox list` shows what is on the machine.
+
+### What proves it
+
+`tests/test-resolve-entry.sh` writes the exact file distrobox wrote on the bench
+into a temporary folder, repairs it, and checks **every key**, one at a time —
+including that `Exec`, `MimeType`, Blackmagic's description and Blackmagic's
+icon were *not* touched, and that repairing an already-repaired entry changes
+nothing. It runs before the build and again inside the finished image.
+
+Before 8 September nothing anywhere read the finished entry back, which is how
+"no Resolve icon appeared" survived a whole release.
+
+---
+
 ## Your drives are in the same places inside
 
 Plug in an external drive and it appears in Files at a path like
@@ -853,6 +966,61 @@ And say so, because it would mean the rule did not match. The rule finds Resolve
 by the name its window gives itself, `resolve`; it is written at the bottom of
 `/usr/share/aquarius/labwc/rc.xml` with the full explanation above it.
 
+### The loading splash opens in the top-left corner
+
+*Bench, 2026-09-08: "the loading splash opened top-left, not centred."*
+
+**This is the window rule's doing, and the fix is in the window rule.** It is
+written down here so that nobody spends an evening looking for it in the
+launcher, which is the obvious place to look and the wrong one.
+
+Resolve shows a small splash picture while it loads, before its real window
+appears. The splash and the main window **have the same window class** —
+`resolve` — because they belong to the same program, and the desktop's one
+Resolve window rule matches on exactly that. So the rule written for the main
+window (shrink it to the screen, then maximise it) also lands on the splash,
+which is a 500-pixel picture being told to fill a 4K display. Where it ends up
+after that is arithmetic, not a decision.
+
+The rule lives in the four mirrored labwc files and is being changed by the
+people who own those. Two changes are wanted: the main window is **centred**
+rather than maximised (Royce's call — a normal window he can move and resize),
+and the splash is either matched separately by its title or harmlessly centred
+with everything else.
+
+#### Why the launcher cannot fix it — the investigation, written down
+
+`/usr/libexec/aquarius-resolve-launch` hands Resolve a handful of settings on
+the way in (the pointer, the interface scale, which file picker). The honest
+question was whether it could hand it something about the splash too. It cannot,
+and here is each lever and why:
+
+* **A Resolve flag.** Blackmagic document no `--nosplash` or `--splash-position`
+  of any kind for Resolve on any platform. The one flag people find,
+  **`-nogui`**, is for Studio's *headless scripting* mode — it means "run with no
+  interface at all", which is the opposite of what is wanted, and it is not a
+  splash switch. Passing an unrecognised argument is also a real risk: Resolve
+  reads its own arguments as project paths.
+* **`QT_QPA_PLATFORM`.** This chooses which platform plug-in Qt loads
+  (`xcb` here, because Resolve is an X11 program running through XWayland). It
+  is not a geometry setting and has no options that place a window. The
+  container already sets it to `xcb`, deliberately, in
+  `resolve-runtime/system_files/usr/bin/aquarius-resolve-run`.
+* **Qt's `-geometry`.** Qt 5's X11 plug-in does accept `-geometry WxH+X+Y` on
+  the command line, and it applies to the **first** top-level window shown. In
+  principle that is the splash. In practice it is a bad trade: it is
+  undocumented for Resolve, it would then *not* apply to the main window, it is
+  an extra argument handed to a program that parses its own, and it has not been
+  tested on a machine with Resolve on it. **Not done, on purpose.**
+* **A position hint from outside.** Where an X11 window opens is the
+  compositor's decision unless the program asks for a position. Resolve's splash
+  does not ask; the compositor answers. That is the window rule, which is where
+  the fix belongs.
+
+So: **no clean lever in the launcher, and nothing was changed there.** If a
+future version of Resolve grows a real flag, this is the paragraph to come back
+and delete.
+
 ### The mouse pointer inside Resolve looks wrong
 
 It should not any more. The launcher carries your desktop's cursor theme into
@@ -863,7 +1031,9 @@ installed inside the environment, so the common case works even if the shared
 folder is not where the launcher expects.
 
 If it still happens, it means the app-menu entry is not going through our
-launcher. Check:
+launcher. (If the problem is the *icon* rather than the pointer, that is a
+different key in the same file — see
+*[Its entry in your apps](#its-entry-in-your-apps)*.) Check:
 
 ```
 grep Exec ~/.local/share/applications/*[Rr]esolve*.desktop

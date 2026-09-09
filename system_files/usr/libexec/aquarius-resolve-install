@@ -1087,6 +1087,36 @@ if [ "${DRY_RUN}" = "1" ]; then
         echo "  The AquariusOS launcher is not on this system to ask."
     fi
     echo "  Pretending to check the app-menu entry goes through that launcher."
+    # Not pretended: the entry helper really is run, against a file this
+    # rehearsal writes itself. It changes nothing outside its own temporary
+    # folder, and it is the one part of step 6 that can be proved on a machine
+    # with no Resolve — which is what CI is. See tests/test-resolve-entry.sh for
+    # the thorough version.
+    if [ -x /usr/libexec/aquarius-resolve-entry ]; then
+        aq_dry_apps="$(mktemp -d)"
+        cat > "${aq_dry_apps}/rehearsal.desktop" << 'AQ_DRY_ENTRY'
+[Desktop Entry]
+Type=Application
+Name=DaVinci Resolve (on aquarius-resolve)
+Exec=/usr/libexec/aquarius-resolve-launch /opt/resolve/bin/resolve %u
+Icon=/nowhere/DV_Resolve.png
+StartupWMClass=/usr/share/applications/com.blackmagicdesign.resolve.desktop
+AQ_DRY_ENTRY
+        # A pretend icon file too, so the rehearsal does not print the "that
+        # icon is not on this computer" note about a file it invented.
+        : > "${aq_dry_apps}/rehearsal-icon.png"
+        sed -i "s#^Icon=.*#Icon=${aq_dry_apps}/rehearsal-icon.png#" \
+            "${aq_dry_apps}/rehearsal.desktop"
+        echo "  Repairing a pretend app-menu entry, to show what a real one gets:"
+        /usr/libexec/aquarius-resolve-entry repair "${aq_dry_apps}/rehearsal.desktop" \
+            2>&1 | sed 's/^/    /'
+        /usr/libexec/aquarius-resolve-entry show "${aq_dry_apps}/rehearsal.desktop" \
+            2> /dev/null | grep -E '^(Name|GenericName|StartupWMClass|Categories)=' \
+            | sed 's/^/      /'
+        rm -rf "${aq_dry_apps}"
+    else
+        echo "  The AquariusOS app-menu entry helper is not on this system."
+    fi
     echo "  Pretending to check your own size setting was not touched."
     # Not pretended either, WHEN THERE IS SOMETHING TO PRETEND WITH. Listing the
     # drives this computer has mounted changes nothing, so a rehearsal on a real
@@ -1690,6 +1720,115 @@ done < <(find "${APPS_DIR}" -maxdepth 1 -type f \
     -o -iname '*davinci*.desktop' \
     -o -iname '*blackmagic*.desktop' \) 2> /dev/null | sort)
 
+# ------------------------------------------------------------------------------
+# And the rest of the entry — the name, the icon, and the line that makes the
+# dock recognise Resolve's window
+# ------------------------------------------------------------------------------
+# ⚠️ THE BENCH FINDING OF 2026-09-08. Royce: "No Resolve icon appeared after
+# install. After quitting, Resolve cannot be reopened and is not in the app
+# search." The entry distrobox had written said, verbatim:
+#
+#     Name=DaVinci Resolve (on aquarius-resolve)
+#     StartupWMClass=/usr/share/applications/com.blackmagicdesign.resolve.desktop
+#
+# and had no GenericName and no Categories. The loops above repaired `Exec` and
+# `MimeType` and nothing else, which is why those three survived.
+#
+# `StartupWMClass` is the one that cost the icon. It answers exactly one
+# question — "when this window appears, which app-menu entry does it belong
+# to?" — and the dock matches on it. Resolve's window calls itself `resolve`;
+# the entry claimed to be a file path; a path can never match a window; so the
+# dock had a running Resolve it could not join to anything.
+#
+# ⚠️ THE ICON STAYS BLACKMAGIC'S. Royce's decision the same day (FEATURES 008
+# item 13): brand marks stay theirs, the same as Firefox's and Steam's. Nothing
+# here replaces it; the repair only says so if the file it names is missing.
+#
+# The work is done by /usr/libexec/aquarius-resolve-entry rather than by more
+# `sed` here, for one reason: a separate program can be run against a file in a
+# temporary folder, in CI, on a machine with no Resolve — which is what
+# tests/test-resolve-entry.sh does, key by key. Nothing ever read this entry
+# back before.
+RESOLVE_ENTRY_TOOL=/usr/libexec/aquarius-resolve-entry
+echo ""
+echo "Making the app-menu entry a proper one..."
+if [ ! -x "${RESOLVE_ENTRY_TOOL}" ]; then
+    echo "  ⚠️  ${RESOLVE_ENTRY_TOOL} is missing from this system, which is a"
+    echo "      fault in the operating system rather than in anything you did."
+    echo "      Resolve still starts; its name and its dock tile may be wrong."
+else
+    repaired=0
+    hidden=0
+    while IFS= read -r entry; do
+        [ -n "${entry}" ] || continue
+        # ⚠️ TWO KINDS OF FILE LIVE UNDER THESE NAMES, AND THEY GET OPPOSITE
+        # TREATMENT.
+        #
+        # distrobox writes an entry for the CONTAINER itself — "Terminal
+        # entering Aquarius-resolve" — whose whole job is to open a terminal
+        # inside it. That is a tool for whoever maintains this, not an app
+        # anybody launches, and Royce found it sitting in his app menu. It gets
+        # hidden. Everything else is a real program Blackmagic installed, and it
+        # gets repaired.
+        #
+        # The discriminator is its Exec line: `distrobox enter` and nothing else
+        # looks like that.
+        if grep -qE '^Exec=.*distrobox +enter' "${entry}"; then
+            out="$("${RESOLVE_ENTRY_TOOL}" hide "${entry}" 2>&1)"
+            if [ -n "${out}" ]; then
+                hidden=$((hidden + 1))
+                echo "  Hid ${entry##*/} — a way into the container, not an app."
+                # ⚠️ AND SAY WHEN IT IS THE OLD ONE. davincibox is the container
+                # the FIRST AquariusOS used, from before 2026-09-02. Its entry
+                # can still be sitting in somebody's app menu long after that
+                # container is gone, and it is pure noise in a search.
+                case "${entry##*/}" in
+                    davincibox.desktop)
+                        echo "      (This one is from 'davincibox', the container the FIRST"
+                        echo "       AquariusOS used. It is not used by anything now.)"
+                        ;;
+                esac
+            fi
+        else
+            out="$("${RESOLVE_ENTRY_TOOL}" repair "${entry}" 2>&1)"
+            if [ -n "${out}" ]; then
+                repaired=$((repaired + 1))
+                echo "  ${entry##*/}:"
+                printf '%s\n' "${out}"
+            fi
+        fi
+    done < <(find "${APPS_DIR}" -maxdepth 1 -type f \
+        \( -iname '*resolve*.desktop' \
+        -o -iname '*davinci*.desktop' \
+        -o -iname '*blackmagic*.desktop' \) 2> /dev/null | sort)
+
+    if [ "${repaired}" -eq 0 ] && [ "${hidden}" -eq 0 ]; then
+        echo "  Nothing needed changing — the entries were already right."
+    fi
+fi
+
+# ------------------------------------------------------------------------------
+# The old container, if it is still on this computer
+# ------------------------------------------------------------------------------
+# ⚠️ WE DO NOT DELETE IT. `davincibox` is the container the first AquariusOS
+# used for Resolve. Hiding its app-menu entry above costs nothing and is clearly
+# right; removing a container is another matter entirely — it may hold a
+# Resolve install, a licence activation, or preferences somebody still wants,
+# and this program has no way to know. So it is REPORTED, with the one command
+# that removes it, and the decision stays with the person.
+if command -v distrobox > /dev/null 2>&1 \
+    && distrobox list 2> /dev/null | grep -q '\bdavincibox\b'; then
+    echo ""
+    echo "  NOTE: there is still an old container called 'davincibox' on this"
+    echo "        computer. It is from the first AquariusOS and nothing uses it"
+    echo "        now. It is not in the way, and it is not deleted for you —"
+    echo "        it may still hold an older Resolve. To remove it yourself:"
+    echo ""
+    echo "            distrobox rm davincibox"
+    echo ""
+    echo "        (Add --force if it refuses because it is running.)"
+fi
+
 update-desktop-database "${APPS_DIR}" > /dev/null 2>&1 || true
 
 if [ "${opened}" -gt 0 ]; then
@@ -1794,6 +1933,36 @@ else
     echo "  ${ours} app-menu entry(ies), all going through the AquariusOS launcher."
 fi
 update-desktop-database "${APPS_DIR}" > /dev/null 2>&1 || true
+
+# --- 1b. and the entry a person actually sees is complete ---------------------
+# ⚠️ READ BACK, NOT ASSUMED. Step 6 repaired the entry; this asks the same
+# program whether the file on disk is now right, key by key, and prints what it
+# says. An install that repairs an entry and never looks at the result is how
+# "no Resolve icon appeared" survived a whole release.
+if [ -x /usr/libexec/aquarius-resolve-entry ]; then
+    entry_ok=0
+    while IFS= read -r entry; do
+        [ -n "${entry}" ] || continue
+        grep -q '/opt/resolve/bin/resolve' "${entry}" || continue
+        if /usr/libexec/aquarius-resolve-entry check "${entry}" > /tmp/aq-entry-check.$$ 2>&1; then
+            entry_ok=1
+            echo "  Its app-menu entry is complete:"
+            /usr/libexec/aquarius-resolve-entry show "${entry}" 2> /dev/null \
+                | grep -E '^(Name|GenericName|Icon|StartupWMClass|Categories)=' \
+                | sed 's/^/      /'
+        else
+            echo "  ⚠️  Its app-menu entry is still not right:"
+            sed 's/^/      /' /tmp/aq-entry-check.$$
+        fi
+        rm -f /tmp/aq-entry-check.$$
+    done < <(find "${APPS_DIR}" -maxdepth 1 -type f \
+        \( -iname '*resolve*.desktop' -o -iname '*davinci*.desktop' \
+        -o -iname '*blackmagic*.desktop' \) 2> /dev/null | sort)
+    if [ "${entry_ok}" -eq 0 ]; then
+        echo "  ⚠️  No app-menu entry names Resolve's own program, so there may be"
+        echo "      no way to start it from your apps. Try:  aq resolve install"
+    fi
+fi
 
 # --- 2. the launcher can still work out a size --------------------------------
 # --report asks the question and starts nothing. Its answer is the same line it

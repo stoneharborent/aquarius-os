@@ -558,6 +558,24 @@ jobs:
         run: ./tests/test-aquarius-icons.sh
 
       # ------------------------------------------------------------------------
+      # Resolve's entry in your apps is a real one
+      # ------------------------------------------------------------------------
+      # ⚠️ THE BENCH FINDING OF 8 SEPTEMBER 2026. "No Resolve icon appeared
+      # after install. After quitting, Resolve cannot be reopened and is not in
+      # the app search." distrobox's exported entry called itself "DaVinci
+      # Resolve (on aquarius-resolve)" and gave a FILE PATH as its
+      # StartupWMClass — the key the dock uses to work out which app a window
+      # belongs to. A path can never match a window, so the dock had a running
+      # Resolve it could not join to anything.
+      #
+      # The installer repaired Exec and MimeType and nothing ever read the
+      # finished entry back. This writes that exact file into a temporary folder,
+      # repairs it, and checks every key. Before the build, because it takes a
+      # second; the same test runs again inside the finished image.
+      - name: Check Resolve's app-menu entry is repaired, key by key
+        run: ./tests/test-resolve-entry.sh
+
+      # ------------------------------------------------------------------------
       # Resolve's sound is not optional
       # ------------------------------------------------------------------------
       # ⚠️ FEATURE 008 ITEM 12, 2026-09-08. `pipewire-alsa` is the piece that
