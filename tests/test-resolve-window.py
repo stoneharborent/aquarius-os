@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import runpy
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -88,7 +89,18 @@ def main():
         import shlex
         command.write_text('#!/bin/sh\n'+shlex.join([sys.executable,str(Path(__file__).resolve()),'--worker',str(root)])+'\n')
         command.chmod(0o700)
-        env=dict(os.environ,XDG_RUNTIME_DIR=str(work/'run'),XDG_CONFIG_HOME=str(work/'config'),XDG_STATE_HOME=str(work/'state'),WLR_BACKENDS='headless',WLR_HEADLESS_OUTPUTS='1',WLR_RENDERER='pixman',GDK_BACKEND='x11',GTK_A11Y='none')
+        # Pixman controls labwc, but Xwayland still tries its own GPU renderer.
+        # The NVIDIA image has GPU libraries and no GPU in CI. Use wlroots'
+        # WLR_XWAYLAND override only inside this test to skip EGL completely.
+        # Xwayland's documented -glamor off selects shared-memory rendering.
+        xwayland = shutil.which('Xwayland')
+        if xwayland is None:
+            raise RuntimeError('Window test requires Xwayland')
+        wrapper = work/'Xwayland-software'
+        wrapper.write_text('#!/bin/sh\necho "TEST: software Xwayland" >&2\nexec '
+                           + shlex.quote(xwayland) + ' -glamor off "$@"\n')
+        wrapper.chmod(0o700)
+        env=dict(os.environ,XDG_RUNTIME_DIR=str(work/'run'),XDG_CONFIG_HOME=str(work/'config'),XDG_STATE_HOME=str(work/'state'),WLR_BACKENDS='headless',WLR_HEADLESS_OUTPUTS='1',WLR_RENDERER='pixman',WLR_XWAYLAND=str(wrapper),GDK_BACKEND='x11',GTK_A11Y='none')
         env.pop('DISPLAY',None)
         env.pop('WAYLAND_DISPLAY',None)
         with (work/'log').open('w+') as log:
@@ -99,6 +111,7 @@ def main():
                     time.sleep(.5)
                     log.flush();log.seek(0);text=log.read()
                     if 'PASS: real XWayland' in text:
+                        assert 'TEST: software Xwayland' in text, 'labwc did not use the test Xwayland wrapper'
                         print(text[text.index('PASS: real XWayland'):].splitlines()[0]);return
                     if 'Traceback' in text: raise RuntimeError(text)
                 raise RuntimeError('Window test timed out:\n'+text)
