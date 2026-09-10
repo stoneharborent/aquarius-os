@@ -135,7 +135,7 @@ aq_file_has /tmp/aq-updater-dry.txt 'Current version:' \
     "the rehearsal prints the current version"
 aq_file_has /tmp/aq-updater-dry.txt 'bootc upgrade --check' \
     "the rehearsal states the check it runs"
-aq_file_has /tmp/aq-updater-dry.txt 'pkexec bootc upgrade' \
+aq_file_has /tmp/aq-updater-dry.txt 'pkexec /usr/libexec/aquarius-update-system apply' \
     "the rehearsal states how it elevates to do the update"
 rm -f /tmp/aq-updater-dry.txt
 
@@ -190,5 +190,11 @@ if "${AQ_CLI}" update --help > /dev/null 2>&1; then
 else
     bad "'aq update --help' failed — the subcommand is not wired up"
 fi
+
+
+# The privileged front door has fixed arguments and isolated Python imports.
+test -x /usr/libexec/aquarius-update-system
+python3 -B -c 'import ast; ast.parse(open("/usr/libexec/aquarius-update-system").read())'
+/usr/bin/bootc status --help | grep -q -- '--format-version'
 
 aq_finish "Check for Update window"

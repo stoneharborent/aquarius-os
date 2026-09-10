@@ -606,19 +606,12 @@ fi
 # feature and must never be two versions of one feature. The path is a contract
 # between the two repositories and the shell's own tests check its half.
 #
-# ⚠️ A MISSING SHELL IS A WARNING, NOT A FAILURE — the same rule section 6
-# applies further down, and for the same reason: a container build cannot read a
-# private repository, and an image without the shell in it is still a usable
-# image. Everything in this block is therefore skipped, loudly, if the shell is
-# not here. (The greetd configuration above is still written, because the day
-# the shell arrives it should already be pointed at.)
+# The desktop and greeter are mandatory release content.
 AQ_GREETER_SHELL_HERE=0
 if [ -s "${AQ_SHELL_DIR}/shell.qml" ]; then
     AQ_GREETER_SHELL_HERE=1
 else
-    echo "  NOTE   the Aquarius Shell is not in this image, so there is no"
-    echo "         login screen to install either. Switching to greetd would"
-    echo "         land on the plain text login screen, which still works."
+    bad "The Aquarius Shell is missing, so the greeter cannot be installed."
 fi
 
 AQ_GREETER_INFO_SRC="${AQ_SHELL_DIR}/greeter/aquarius-greeter-info"
@@ -820,33 +813,13 @@ say "The Aquarius Shell"
 
 sed 's/^/       /' /usr/share/aquarius/shell-build.txt
 
-# ⚠️ A MISSING SHELL IS A WARNING HERE, NOT A FAILURE, AND THAT IS DELIBERATE.
-#
-# The shell lives in its own repository. A container build has no GitHub
-# account, so it can read a public repository and nothing else — and there is
-# deliberately no token in this build, because a secret handed to a container
-# build is recorded in the finished image's history where anybody can read it.
-#
-# So if that repository is private on the day this runs, the image is finished
-# WITHOUT the shell. Everything else works: the window manager, the wallpaper,
-# the keyboard, screen recording, the login-screen entry. Picking "Aquarius
-# Desktop" gives a wallpaper and a dialog saying, in plain English, that the
-# shell is not installed yet and how to get back to GNOME.
-#
-# That is the "R2a platform" state of the plan and it is a reasonable thing to
-# ship. What would not be reasonable is shipping it silently, so it is said
-# here, in the image, and on the CI run.
+# Missing shell source must fail the image build.
 AQ_SHELL_PRESENT=0
 if [ -s "${AQ_SHELL_DIR}/shell.qml" ]; then
     AQ_SHELL_PRESENT=1
     ok "the shell is installed at ${AQ_SHELL_DIR}"
 else
-    echo "::warning::This image has no Aquarius Shell. The Aquarius Desktop will start and explain itself. See /usr/share/aquarius/shell-build.txt."
-    echo "  NOTE   the Aquarius Shell is NOT in this image."
-    echo "         Everything else in the Aquarius Desktop is. The session"
-    echo "         starts, shows the wallpaper, and puts a dialog on screen"
-    echo "         explaining that the bar is not installed yet."
-    echo "         The fix is to make the shell repository public and rebuild."
+    bad "The Aquarius Shell is missing; this image cannot ship."
 fi
 
 # THE CHECK THAT CATCHES THE EXPENSIVE MISTAKE.

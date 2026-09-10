@@ -178,17 +178,11 @@ fi
 # ==============================================================================
 # 4. The lock screen itself — is it actually in the image?
 # ==============================================================================
-# The QML comes from the shell repository. If the shell could not be fetched at
-# all, that is a warning and not a failure — the same rule step 5.5 applies, and
-# for the same reason — but if the shell IS here and its lock folder is not,
-# something changed in that repository and this image would ship a Super+L that
-# does nothing.
+# Both the desktop and its embedded lock screen must be present.
 say "The lock screen's own files"
 
 if [ ! -s "${AQ_SHELL_DIR}/shell.qml" ]; then
-    echo "  NOTE   the Aquarius Shell is not in this image, so there is no lock"
-    echo "         screen either. Everything above still applies the day it"
-    echo "         arrives. See /usr/share/aquarius/shell-build.txt."
+    bad "The Aquarius Shell is missing, including its lock screen."
 else
     for aq_f in qmldir LockState.qml LockLayer.qml LockSurface.qml LockCard.qml \
         LockField.qml LockVeil.qml LockBlur.qml LockIdle.qml lock.qml; do

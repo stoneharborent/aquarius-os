@@ -45,13 +45,10 @@
 # =============================================================================
 # HOW IT BECOMES ADMINISTRATOR
 # =============================================================================
-# Checking for an update needs no special powers and asks for nothing. DOING the
-# update does — it writes a new system image — so the Update button runs
-# `pkexec bootc upgrade`. pkexec is the standard "may I?" command: it puts up
-# ONE password prompt (through the session's polkit agent), and if you say yes,
-# runs the upgrade as the administrator. Restarting afterwards goes through
-# systemd's logind, which already lets the person at the screen restart their
-# own machine.
+# Both checking and updating require administrator authorization. pkexec runs
+# only our fixed system helper; this GTK window always stays the normal user.
+# The helper serializes operations and compares structured bootc digests.
+# While an operation runs, keep the window open; cancellation is not supported.
 #
 # Notes for whoever maintains this:
 #   * Colours are NOT set here. libadwaita follows the system light/dark setting
@@ -104,178 +101,80 @@ def image_ref():
         return ""
 
 
-def _run(cmd, timeout=120):
-    """Run a command, capture everything it says, never raise."""
+SYSTEM_HELPER = "/usr/libexec/aquarius-update-system"
+MESSAGES = {
+    "up-to-date": ("You're up to date", "You have the newest version of AquariusOS."),
+    "available": ("An update is available", "A newer version of AquariusOS is ready to install."),
+    "restart-required": ("Update ready", "Save your work and restart when you are ready."),
+    "declined": ("Permission not given", "Checking and updating need your administrator password. Choose Check again when you are ready."),
+    "offline": ("Couldn't reach the update server", "Check your internet connection and choose Check again."),
+    "busy": ("An update is already running", "Let the other update finish, then choose Check again."),
+    "unknown": ("Couldn't confirm the update status", "Your current system is still running. Choose Check again. If this keeps happening, open Details for support."),
+}
+
+
+def system_operation(action):
+    cmd = [SYSTEM_HELPER, action]
+    if os.geteuid() != 0:
+        cmd.insert(0, "/usr/bin/pkexec")
     try:
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            errors="replace",
-        )
-    except FileNotFoundError:
-        return 127, "", "%s is not installed" % cmd[0]
-    except subprocess.SubprocessError as exc:
-        return 1, "", str(exc)
-    return proc.returncode, proc.stdout, proc.stderr
-
-
-# -----------------------------------------------------------------------------
-# Is there an update? Ask bootc, and turn its answer into one of four states.
-# -----------------------------------------------------------------------------
-# States, so the window and the terminal agree on the words:
-#   up-to-date   there is nothing newer
-#   available    there is a newer image (version filled in when bootc says it)
-#   offline      the registry could not be reached — said plainly, not as a bug
-#   unknown      bootc ran but its answer could not be read (a version change in
-#                bootc's own wording, most likely) — treated as "try updating,
-#                it is safe" rather than pretending to know
-def check_update():
-    result = {"state": "unknown", "version": "", "log": ""}
-
-    code, out, err = _run([BOOTC, "upgrade", "--check"], timeout=90)
-    combined = (out or "") + (err or "")
-    result["log"] = combined.strip()
-
-    text = combined.lower()
-
-    # A network problem is the common, honest case on a laptop that is offline.
-    # bootc exits non-zero and says so; do not dress it up as a fault.
-    offline_markers = (
-        "no such host", "could not resolve", "connection refused",
-        "network is unreachable", "temporary failure in name resolution",
-        "timeout", "timed out", "dial tcp", "i/o error", "failed to fetch",
-    )
-    if code != 0 and any(marker in text for marker in offline_markers):
-        result["state"] = "offline"
-        return result
-
-    # bootc's own wording. "No changes" / "no update" means up to date;
-    # "Update available" means there is one. Both have been stable, but we read
-    # for the phrases rather than the exit code so a change in one does not lie.
-    if "no changes" in text or "no update available" in text or "already" in text and "latest" in text:
-        result["state"] = "up-to-date"
-        return result
-
-    if "update available" in text or "new update" in text:
-        result["state"] = "available"
-        result["version"] = _extract_version(combined)
-        return result
-
-    # bootc ran cleanly but said neither. Fall back to comparing what is booted
-    # against what is staged/available in `bootc status --json`.
-    status = _status_versions()
-    if status is not None:
-        booted, available = status
-        if available and booted and available != booted:
-            result["state"] = "available"
-            result["version"] = available
-            return result
-        if booted:
-            result["state"] = "up-to-date"
-            return result
-
-    if code != 0:
-        # Non-zero, no recognised network error, no status to fall back on: most
-        # likely there is no real deployment to check (a build container, or a
-        # machine installed some other way). Say we could not check.
-        result["state"] = "offline"
-    return result
-
-
-def _extract_version(text):
-    """Best-effort: pull a version-looking token out of bootc's message."""
-    import re
-
-    match = re.search(r"[Vv]ersion[:\s]+([^\s,]+)", text)
-    if match:
-        return match.group(1)
-    return ""
-
-
-def _status_versions():
-    """(booted_version, available_version) from `bootc status --json`, or None."""
-    code, out, _err = _run([BOOTC, "status", "--json"], timeout=30)
-    if code != 0 or not out:
-        return None
+        proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
+    except OSError as exc:
+        return dict(state="unknown", version="", log=str(exc))
+    if proc.returncode in (126, 127):
+        return dict(state="declined", version="", log=proc.stderr)
     try:
-        data = json.loads(out)
+        answer = json.loads(proc.stdout)
+        if not isinstance(answer, dict) or answer.get("state") not in MESSAGES:
+            raise ValueError("Unrecognized helper result")
+        if proc.returncode and answer["state"] in ("up-to-date", "available", "restart-required"):
+            raise ValueError("Helper failed despite a success result")
+        if not isinstance(answer.get("log", ""), str) or not isinstance(answer.get("version", ""), str):
+            raise ValueError("Invalid helper fields")
+        return answer
     except ValueError:
-        return None
-    status = data.get("status", {}) if isinstance(data, dict) else {}
-
-    def version_of(node):
-        if not isinstance(node, dict):
-            return ""
-        image = node.get("image", {})
-        version = ""
-        if isinstance(image, dict):
-            version = image.get("version") or ""
-            if not version:
-                inner = image.get("image", {})
-                if isinstance(inner, dict):
-                    version = inner.get("version") or ""
-        return version
-
-    booted = version_of(status.get("booted"))
-    # "staged" is a downloaded, not-yet-booted update; that is our "available".
-    available = version_of(status.get("staged"))
-    return booted, available
+        return dict(state="unknown", version="", log=proc.stdout + proc.stderr)
 
 
-# -----------------------------------------------------------------------------
-# HEADLESS: check  (what `aq update check` runs)
-# -----------------------------------------------------------------------------
-def headless_check():
+def check_update():
+    return system_operation("check")
+
+
+class OperationState:
+    """Owned by the GUI thread: reserve before starting any worker."""
+    def __init__(self):
+        self.busy = False
+
+    def begin(self):
+        if self.busy:
+            return False
+        self.busy = True
+        return True
+
+    def finish(self):
+        self.busy = False
+
+
+def headless_action(action):
     print("Current version: %s" % current_version())
-    result = check_update()
-    state = result["state"]
-    if state == "up-to-date":
-        print("You're up to date.")
-        return 0
-    if state == "available":
-        if result["version"]:
-            print("An update is available (version %s)." % result["version"])
-        else:
-            print("An update is available.")
-        print("Install it with:  aq update apply")
-        return 0
-    if state == "offline":
-        print("Could not reach the update server. Check your internet and try again.")
-        if result["log"]:
-            print(result["log"])
-        return 1
-    print("Could not tell whether an update is available. It is always safe to")
-    print("run 'aq update apply' — the old version stays on the disk.")
-    if result["log"]:
-        print(result["log"])
-    return 1
+    answer = system_operation(action)
+    title, message = MESSAGES[answer["state"]]
+    print(title + ". " + message)
+    if answer["state"] == "available":
+        print("Install it with: aq update apply")
+    if answer["state"] == "restart-required":
+        print("Restart when ready using the desktop power menu.")
+    if answer.get("log"):
+        print(answer["log"])
+    return 0 if answer["state"] in ("up-to-date", "available", "restart-required") else 1
 
 
-# -----------------------------------------------------------------------------
-# HEADLESS: apply  (what `aq update apply` runs)
-# -----------------------------------------------------------------------------
+def headless_check():
+    return headless_action("check")
+
+
 def headless_apply():
-    if os.geteuid() == 0:
-        cmd = [BOOTC, "upgrade"]
-    else:
-        # pkexec asks for the password once, then runs the upgrade as root. In a
-        # terminal it prompts on the terminal; under a desktop, the polkit agent
-        # puts up a dialog.
-        cmd = ["pkexec", BOOTC, "upgrade"]
-    print("Updating AquariusOS. This can take a few minutes.")
-    try:
-        code = subprocess.call(cmd)
-    except FileNotFoundError as exc:
-        print("Could not start the update: %s" % exc, file=sys.stderr)
-        return 1
-    if code == 0:
-        print("")
-        print("Update ready. Restart to finish:  sudo systemctl reboot")
-        return 0
-    print("The update did not finish (it ended with code %d)." % code, file=sys.stderr)
-    return code
+    return headless_action("apply")
 
 
 # -----------------------------------------------------------------------------
@@ -298,7 +197,9 @@ def dry_run():
     print("      An update is available (version X)")
     print("      Could not reach the update server (offline, said plainly)")
     print("  * if an update is available, the Update button runs")
-    print("    'pkexec bootc upgrade' with live output in the window")
+    print("    'pkexec /usr/libexec/aquarius-update-system apply'")
+    print("  * checks also ask for permission, then read structured bootc status")
+    print("  * keep the window open until checking or updating finishes")
     print("  * when it finishes: 'Update ready — restart to finish', with")
     print("    Restart now (systemctl reboot) or Later")
     return 0
@@ -325,8 +226,7 @@ def gui():
     class UpdaterWindow(Adw.ApplicationWindow):
         def __init__(self, app):
             super().__init__(application=app)
-            self.proc = None
-            self.cancelled = False
+            self.operation = OperationState()
             self._pulse_source = None
 
             self.set_title("Check for Update")
@@ -355,6 +255,7 @@ def gui():
             # Start checking straight away.
             self.stack.set_visible_child_name("checking")
             self._start_pulse(self.check_bar)
+            self.operation.begin()
             threading.Thread(target=self._check_worker, daemon=True).start()
 
         # -- page: checking -------------------------------------------------
@@ -411,7 +312,7 @@ def gui():
             mark, self.working_title, self.working_blurb = aquarius_ui.hero(
                 "Updating AquariusOS",
                 "This downloads the new version and prepares it. You can leave "
-                "it and come back. Nothing changes until you restart.",
+                "it running and come back. Keep this window open until it finishes.",
                 style="title-2",
             )
             self.working_status = aquarius_ui.status_glyph()
@@ -423,16 +324,14 @@ def gui():
 
             self.work_log = aquarius_ui.LogPane("Details")
 
-            self.cancel_button = aquarius_ui.pill_button("Cancel")
-            self.cancel_button.connect("clicked", self._on_cancel_clicked)
             self.retry_button = aquarius_ui.pill_button("Try again", suggested=True)
-            self.retry_button.connect("clicked", self._on_update_clicked)
+            self.retry_button.connect("clicked", self._on_recheck_clicked)
             self.retry_button.set_visible(False)
             self.fail_close = aquarius_ui.pill_button("Close")
             self.fail_close.connect("clicked", lambda _b: self.close())
             self.fail_close.set_visible(False)
             self.work_buttons = aquarius_ui.button_row(
-                [self.cancel_button, self.retry_button, self.fail_close]
+                [self.retry_button, self.fail_close]
             )
 
             return aquarius_ui.page(
@@ -491,172 +390,49 @@ def gui():
             GLib.idle_add(self._show_result, result)
 
         def _on_recheck_clicked(self, _button):
+            if not self.operation.begin():
+                return
             self.result_log.clear()
             self.stack.set_visible_child_name("checking")
             self._start_pulse(self.check_bar)
-            import threading
             threading.Thread(target=self._check_worker, daemon=True).start()
 
         def _show_result(self, result):
+            self.operation.finish()
             self._stop_pulse()
-            self.result_current.set_label("You have %s." % current_version())
-            self.result_log.clear()
-            if result.get("log"):
-                for line in result["log"].splitlines():
-                    self.result_log.append(line)
-
+            self.header_title.set_subtitle("")
             state = result["state"]
-            if state == "up-to-date":
-                aquarius_ui.set_status_glyph(self.result_glyph, ok=True)
-                self.result_title.set_label("You're up to date")
-                self.result_blurb.set_label(
-                    "You have the newest version of AquariusOS. There is nothing "
-                    "to install."
-                )
-                self.result_version.set_visible(False)
-                self.update_button.set_visible(False)
-            elif state == "available":
-                aquarius_ui.set_status_glyph(self.result_glyph, ok=True)
-                self.result_title.set_label("An update is available")
-                if result.get("version"):
-                    self.result_blurb.set_label(
-                        "A newer version of AquariusOS is ready to install."
-                    )
-                    self.result_version.set_label("New version: %s" % result["version"])
-                    self.result_version.set_visible(True)
-                else:
-                    self.result_blurb.set_label(
-                        "A newer version of AquariusOS is ready to install."
-                    )
-                    self.result_version.set_visible(False)
-                self.update_button.set_visible(True)
-                self.update_button.grab_focus()
-                self.set_default_widget(self.update_button)
-            elif state == "offline":
-                aquarius_ui.set_status_glyph(self.result_glyph, ok=False)
-                self.result_title.set_label("Couldn't check")
-                self.result_blurb.set_label(
-                    "AquariusOS could not reach the update server. Check that you "
-                    "are connected to the internet and choose \"Check again\"."
-                )
-                self.result_version.set_visible(False)
-                self.update_button.set_visible(False)
-                self.result_log.set_expanded(True)
-            else:
-                aquarius_ui.set_status_glyph(self.result_glyph, ok=False)
-                self.result_title.set_label("Couldn't tell")
-                self.result_blurb.set_label(
-                    "AquariusOS could not tell whether an update is available. "
-                    "It is always safe to update — the previous version stays on "
-                    "the disk — so you can try, or check again later."
-                )
-                self.result_version.set_visible(False)
-                self.update_button.set_visible(True)
-                self.result_log.set_expanded(True)
-
+            if state == "restart-required":
+                self.stack.set_visible_child_name("done")
+                return GLib.SOURCE_REMOVE
+            title, message = MESSAGES[state]
+            self.result_title.set_label(title)
+            self.result_blurb.set_label(message)
+            self.result_current.set_label("You have %s." % current_version())
+            aquarius_ui.set_status_glyph(self.result_glyph, ok=state in ("up-to-date", "available"))
+            self.result_version.set_visible(bool(result.get("version")))
+            self.result_version.set_label("Version: %s" % result.get("version", ""))
+            self.result_log.clear()
+            self.result_log.set_expanded(False)
+            for line in result.get("log", "").splitlines():
+                self.result_log.append(line)
+            self.update_button.set_visible(state == "available")
+            self.set_default_widget(self.update_button if state == "available" else self.recheck_button)
             self.stack.set_visible_child_name("result")
             return GLib.SOURCE_REMOVE
 
-        # -- updating -------------------------------------------------------
-
         def _on_update_clicked(self, _button):
-            import threading
-
-            self.cancelled = False
-            self.retry_button.set_visible(False)
-            self.fail_close.set_visible(False)
-            self.cancel_button.set_visible(True)
-            self.working_status.set_visible(False)
-            self.working_title.set_label("Updating AquariusOS")
-            self.working_title.remove_css_class("error")
+            if not self.operation.begin():
+                return
             self.work_log.clear()
-            self.header_title.set_subtitle("Updating")
+            self.header_title.set_subtitle("Updating — keep this window open")
             self.stack.set_visible_child_name("working")
             self._start_pulse(self.bar)
-
-            ref = image_ref()
-            if ref:
-                self.work_log.append("Updating from %s" % ref)
-
             threading.Thread(target=self._update_worker, daemon=True).start()
 
         def _update_worker(self):
-            # pkexec puts up one password prompt, then runs the upgrade as root.
-            # Its output (both streams) goes straight into the Details log.
-            cmd = ["pkexec", BOOTC, "upgrade"]
-            try:
-                self.proc = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    errors="replace",
-                    bufsize=1,
-                    start_new_session=True,
-                )
-            except OSError as exc:
-                GLib.idle_add(self._update_failed, "The update could not be started: %s" % exc)
-                return
-            for line in self.proc.stdout:
-                GLib.idle_add(self._append_work_log, line.rstrip("\n"))
-            code = self.proc.wait()
-            self.proc = None
-            GLib.idle_add(self._update_finished, code)
-
-        def _append_work_log(self, line):
-            return self.work_log.append(line)
-
-        def _update_finished(self, code):
-            self._stop_pulse()
-            if self.cancelled:
-                return GLib.SOURCE_REMOVE
-            if code == 0:
-                self.bar.set_fraction(1.0)
-                self.header_title.set_subtitle("")
-                self.stack.set_visible_child_name("done")
-                return GLib.SOURCE_REMOVE
-            # pkexec exits 126 when the person dismisses the password prompt or is
-            # not allowed; say that plainly rather than as an error.
-            if code == 126:
-                self._update_failed(
-                    "The update needs your permission and it was not given, so "
-                    "nothing was changed. Choose Try again when you are ready."
-                )
-            else:
-                self._update_failed(
-                    "The update did not finish (it ended with code %d). The "
-                    "details below say where. Nothing has changed until it "
-                    "succeeds, so it is safe to try again." % code
-                )
-            return GLib.SOURCE_REMOVE
-
-        def _update_failed(self, message):
-            self._stop_pulse()
-            self.bar.set_fraction(0.0)
-            self.header_title.set_subtitle("Stopped")
-            self.working_title.set_label("The update did not finish")
-            self.working_title.add_css_class("error")
-            self.working_status.set_visible(True)
-            aquarius_ui.set_status_glyph(self.working_status, ok=False)
-            self.working_blurb.set_label(message)
-            self.work_log.set_expanded(True)
-            self.cancel_button.set_visible(False)
-            self.retry_button.set_visible(True)
-            self.fail_close.set_visible(True)
-            self.retry_button.grab_focus()
-            return GLib.SOURCE_REMOVE
-
-        def _on_cancel_clicked(self, _button):
-            self.cancelled = True
-            self._stop_pulse()
-            if self.proc is not None:
-                try:
-                    os.killpg(os.getpgid(self.proc.pid), 15)
-                except (OSError, ProcessLookupError):
-                    pass
-            # Back to the result page — nothing was committed.
-            self.header_title.set_subtitle("")
-            self._on_recheck_clicked(None)
+            result = system_operation("apply")
+            GLib.idle_add(self._show_result, result)
 
         # -- restart --------------------------------------------------------
 
@@ -668,9 +444,11 @@ def gui():
         # -- closing --------------------------------------------------------
 
         def _on_close_request(self, _window):
-            # A running upgrade must not be abandoned by closing the window.
-            if self.proc is not None and not self.cancelled:
-                return True  # refuse to close
+            # Reserved before a worker can reach pkexec/Popen, including the
+            # password dialog. No close race and no pretend cancellation.
+            if self.operation.busy:
+                self.header_title.set_subtitle("Please wait — keep this window open")
+                return True
             return False
 
     class UpdaterApp(Adw.Application):

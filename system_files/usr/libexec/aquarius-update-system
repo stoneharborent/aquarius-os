@@ -1,0 +1,167 @@
+#!/usr/bin/python3 -I
+"""Fixed privileged operations for Aquarius Update. Never starts a GUI.
+
+Only check/apply are accepted; no caller-supplied command, image, or path.
+Status schema: bootc v1.16.10 crates/lib/src/spec.rs (format version 1).
+"""
+import fcntl
+import json
+import os
+import re
+import subprocess
+import sys
+
+BOOTC = '/usr/bin/bootc'
+
+
+def result(state, log='', version=''):
+    return dict(state=state, log=log, version=version)
+
+
+def failure(log):
+    network = ('could not resolve', 'no such host', 'network is unreachable',
+               'connection refused', 'timed out', 'timeout', 'dns error',
+               'temporary failure in name resolution')
+    return result('offline' if any(s in log.lower() for s in network) else 'unknown', log)
+
+
+def digest(image):
+    value = image.get('imageDigest') if isinstance(image, dict) else None
+    return value if isinstance(value, str) and re.fullmatch(r'sha256:[0-9a-f]{64}', value) else None
+
+
+def status_state(data, refreshed=False):
+    """Never infer a remote answer from the booted version alone."""
+    if not isinstance(data, dict) or data.get('apiVersion') != 'org.containers.bootc/v1':
+        return result('unknown')
+    status = data.get('status') or {}
+    spec = data.get('spec') or {}
+    if not isinstance(status, dict) or not isinstance(spec, dict):
+        return result('unknown')
+    booted = status.get('booted') or {}
+    staged = status.get('staged')
+    if not isinstance(booted, dict) or booted.get('incompatible') or spec.get('bootOrder', 'default') != 'default':
+        return result('unknown')
+    current = digest(booted.get('image'))
+    if not current:
+        return result('unknown')
+    if staged is not None:
+        if not isinstance(staged, dict) or staged.get('incompatible') or not digest(staged.get('image')):
+            return result('unknown')
+        if staged.get('downloadOnly'):
+            return result('unknown')  # needs a separate explicit apply flow
+        return result('restart-required', version=staged['image'].get('version') or '')
+    return result('unknown')
+
+
+def checked_state(data, output, action):
+    """Read only the successful v1.16.10 check contract, never stale cache.
+
+    cli.rs:1222-1233 prints these complete lines. store.rs returns early on
+    AlreadyPresent without clearing cachedUpdate, so that cache is NOT an answer.
+    Unknown output from a future bootc release stays unknown.
+    """
+    answer = status_state(data)
+    if answer['state'] == 'restart-required':
+        return answer
+    if (not isinstance(data, dict) or data.get('apiVersion') != 'org.containers.bootc/v1'
+            or not isinstance(data.get('status'), dict) or not isinstance(data.get('spec'), dict)):
+        return result('unknown')
+    booted = (data.get('status') or {}).get('booted') or {}
+    if not isinstance(booted, dict):
+        return result('unknown')
+    image = booted.get('image') or {}
+    if not isinstance(image, dict):
+        return result('unknown')
+    current = digest(image)
+    spec = data.get('spec') or {}
+    if not current or booted.get('incompatible') or spec.get('bootOrder', 'default') != 'default':
+        return result('unknown')
+    if image.get('image') != spec.get('image') or (data.get('status') or {}).get('staged') is not None:
+        return result('unknown')
+    lines = output.splitlines()
+    if action == 'apply':
+        return result('up-to-date') if lines == ['No update available.'] else result('unknown')
+    no_changes = [l for l in lines if re.fullmatch(r'No changes in: \S+', l)]
+    available = [l for l in lines if re.fullmatch(r'Update available for: \S+', l)]
+    digests = [l.removeprefix('  Digest: ') for l in lines if re.fullmatch(r'  Digest: sha256:[0-9a-f]{64}', l)]
+    if len(no_changes) == 1 and not available and not digests:
+        # bootc reports its configured ref already present. A separately
+        # pre-pulled but undeployed OSTree ref is outside this updater's flow.
+        return result('up-to-date')
+    if len(available) == 1 and len(digests) == 1 and not no_changes:
+        return result('up-to-date' if digests[0] == current else 'available')
+    return result('unknown')
+
+
+def run_bootc(args):
+    # No timeout/kill for a privileged update: it must finish honestly. bootc
+    # owns its own update lock too; our lock also excludes overlapping checks.
+    p = subprocess.run([BOOTC] + args, capture_output=True, text=True, errors='replace',
+                       env=dict(os.environ, LC_ALL='C', NO_COLOR='1'))
+    return p.returncode, p.stdout, p.stderr
+
+
+def operate(action, run=run_bootc):
+    logs = []
+
+    def status():
+        code, out, err = run(['status', '--format', 'json', '--format-version', '1'])
+        logs.append(err)
+        if code:
+            logs.append(out)
+            raise RuntimeError('bootc could not read system status')
+        return json.loads(out)
+
+    try:
+        before = status()
+        initial = status_state(before)
+        if initial['state'] == 'restart-required':
+            return initial
+        # Refuse to replace a queued rollback, incompatible deployment, or a
+        # download-only deployment behind the user's back.
+        st = before.get('status') or {}
+        booted = st.get('booted') or {}
+        spec = before.get('spec') or {}
+        if (before.get('apiVersion') != 'org.containers.bootc/v1'
+                or not isinstance(booted, dict) or booted.get('incompatible')
+                or not digest(booted.get('image'))
+                or booted['image'].get('image') != spec.get('image')):
+            return result('unknown', 'The running deployment is not a supported update source.')
+        if st.get('staged') is not None or (before.get('spec') or {}).get('bootOrder', 'default') != 'default':
+            return result('unknown', 'A deployment is already queued. Review it before updating.')
+        code, out, err = run(['upgrade', '--check'] if action == 'check' else ['upgrade'])
+        logs += [out, err]
+        if code:
+            return failure('\n'.join(logs))
+        answer = checked_state(status(), out, action)
+        if action == 'apply' and answer['state'] == 'available':
+            answer = result('unknown')
+        answer['log'] = '\n'.join(logs).strip()
+        return answer
+    except (OSError, ValueError, RuntimeError, TypeError, AttributeError) as exc:
+        return failure('\n'.join(logs + [str(exc)]))
+
+
+def main(argv):
+    if len(argv) != 2 or argv[1] not in ('check', 'apply') or os.geteuid() != 0:
+        print(json.dumps(result('unknown', 'Administrator authorization is required.')))
+        return 1
+    try:
+        # /run is root-owned; avoid a symlink in the world-writable /run/lock.
+        os.makedirs('/run/aquarius-update', mode=0o700, exist_ok=True)
+        with open('/run/aquarius-update/operation.lock', 'w') as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                print(json.dumps(result('busy')))
+                return 1
+            answer = operate(argv[1])
+    except OSError as exc:
+        answer = failure(str(exc))
+    print(json.dumps(answer))
+    return 0 if answer['state'] in ('up-to-date', 'available', 'restart-required') else 1
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv))

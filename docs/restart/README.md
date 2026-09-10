@@ -305,3 +305,5 @@ thing locally. `just` with no arguments lists everything available.
 - **Why the NVIDIA driver is done the way it is:** [`nvidia-notes.md`](nvidia-notes.md)
 - **Why Fedora and not Bazzite/Arch/Ubuntu:** [`../base-distro-reassessment-2026-09.md`](../base-distro-reassessment-2026-09.md)
 - **The plan for R2, R3 and R4:** `ROADMAP.md`, one folder above the repo
+
+- **Checking for system updates and restarting when ready:** [`updater.md`](updater.md)

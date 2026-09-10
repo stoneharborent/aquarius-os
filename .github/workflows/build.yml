@@ -42,6 +42,7 @@ name: Build AquariusOS
 on:
   push:
     branches:
+      - fix/readiness-updates
       # The real line, after the 4 September 2026 branch rename. Pushes here
       # build, check, publish and sign.
       - main
@@ -361,6 +362,7 @@ concurrency:
 
 jobs:
   build_push:
+    needs: [shell_tests]
     name: Build and publish (${{ matrix.variant }})
     runs-on: ubuntu-24.04
     strategy:
@@ -3669,11 +3671,7 @@ jobs:
           echo "       built as: $(cat /usr/share/aquarius/quickshell-build.txt 2>/dev/null | tr '\n' ' ')"
 
           echo "== the shell that was baked in =="
-          # A missing shell is a WARNING, not a failure. The shell lives in a
-          # separate repository and a container build has no GitHub account, so
-          # if that repository is private the image is finished without it. What
-          # ships is then a working desktop with no bar, which says so on screen.
-          # Everything else in this step still has to be right.
+          # Missing desktop source is a release failure.
           sed 's/^/       /' /usr/share/aquarius/shell-build.txt 2>/dev/null || \
             bad "there is no /usr/share/aquarius/shell-build.txt — the shell stage did not run at all"
           if [ -s /usr/share/aquarius/shell/shell.qml ]; then
@@ -3726,17 +3724,7 @@ jobs:
               fi
             done
           else
-            echo "::warning::This image has no Aquarius Shell — /usr/share/aquarius/shell-build.txt says why. The Aquarius Desktop starts and explains itself on screen. Make the shell repository public and rebuild to bake it in."
-            echo "  NOTE the Aquarius Shell is not in this image. Everything else"
-            echo "       about the Aquarius Desktop is, and the session tells the"
-            echo "       person what is going on rather than showing a blank screen."
-            # The one thing that must still be true: the image has to KNOW it is
-            # missing, so the session can say so.
-            if grep -q '^status=unavailable$' /usr/share/aquarius/shell-build.txt 2>/dev/null; then
-              ok "the image records why the shell is absent"
-            else
-              bad "the shell is absent and the image does not say why — the session would show a blank screen with no explanation"
-            fi
+            bad "The Aquarius Shell is missing; this image cannot ship."
           fi
 
           echo "== the login screen entry =="
@@ -7329,7 +7317,9 @@ jobs:
           else bad "'aquarius-updater --dry-run' failed"; cat /tmp/udry.txt; fi
           grep -q 'Current version:'    /tmp/udry.txt && ok "the rehearsal prints the current version" || bad "the rehearsal does not print the version"
           grep -q 'bootc upgrade --check' /tmp/udry.txt && ok "the rehearsal states the check it runs" || bad "the rehearsal does not state the check"
-          grep -q 'pkexec bootc upgrade' /tmp/udry.txt && ok "the rehearsal states how it elevates" || bad "the rehearsal does not state how it elevates"
+          grep -q 'pkexec /usr/libexec/aquarius-update-system apply' /tmp/udry.txt && ok "the rehearsal states how it elevates" || bad "the rehearsal does not state how it elevates"
+          test -x /usr/libexec/aquarius-update-system || bad "The fixed privileged update helper is missing"
+          python3 -B -c 'import ast; ast.parse(open("/usr/libexec/aquarius-update-system").read())' || bad "The update helper has a syntax error"
           # The launcher entry.
           DESK=/usr/share/applications/aquarius-updater.desktop
           grep -q '^Exec=/usr/libexec/aquarius-updater$' "${DESK}" && ok "the launcher runs the updater" || bad "the launcher does not run the updater"
@@ -7585,6 +7575,16 @@ jobs:
           echo "Publishing as: ${alias_tags}"
           echo "alias_tags=${alias_tags}" >> "${GITHUB_OUTPUT}"
 
+      - name: Load the exact desktop and greeter before publishing
+        run: |
+          set -euo pipefail
+          AQUARIUS_SHELL_REF="$(grep -E '^AQUARIUS_SHELL_REF=' aquarius-os.env | cut -d'"' -f2)"
+          podman run --rm --pull=never --user 65534:65534 \
+            --entrypoint /usr/bin/dbus-run-session \
+            -e EXPECT_SHELL_REF="${AQUARIUS_SHELL_REF}" \
+            -v "${PWD}/build_files/check-built-shell.sh:/tmp/check-built-shell.sh:ro" \
+            "${IMAGE_NAME}:${DEFAULT_TAG}" -- bash /tmp/check-built-shell.sh
+
       - name: Apply the tags
         if: github.ref_name == 'main' || github.ref_name == 'restart/fedora-bootc'
         env:
@@ -7675,9 +7675,7 @@ jobs:
   # for the wrong reason. So this job is honest about its size: it is the cheap
   # gate. The real one is the bench.
   #
-  # It runs in parallel with the image build and does not block it — a shell
-  # whose structure is wrong should be visible immediately, but the image build
-  # is thirty minutes and there is no sense in queueing behind a shell script.
+  # These cheap checks must pass before either image builds.
   shell_tests:
     name: The Aquarius Shell's own checks
     runs-on: ubuntu-24.04
@@ -7702,28 +7700,13 @@ jobs:
           echo "ref=${REF}" >> "${GITHUB_OUTPUT}"
           echo "shell: ${REPO} @ ${REF}"
 
-      # ⚠️ This can legitimately fail to find anything, and that is not an error.
-      #
-      # A GitHub Actions run can read THIS repository and no other. If
-      # aquarius-shell is private, this job cannot fetch it — and neither can
-      # the image build, which is why the image ships without the shell and says
-      # so on screen. Both halves have to behave the same way, so this reports a
-      # warning and stops rather than failing the run for something nobody can
-      # fix from inside this repository.
-      #
-      # The fix is one click: make github.com/stoneharborent/aquarius-shell
-      # public. Then this job runs the shell's real tests on every push, and the
-      # image bakes the shell in, with no file here changing.
+      # Fetch failures are release failures, including network outages.
       - name: Fetch the shell at that exact commit
         id: fetch
         run: |
-          set -uo pipefail
+          set -euo pipefail
           export GIT_TERMINAL_PROMPT=0
-          if ! git clone "${{ steps.pin.outputs.repo }}" aquarius-shell 2>&1; then
-            echo "::warning::Could not read ${{ steps.pin.outputs.repo }} — it is private, so this job and the image build both go without the shell. Make it public to turn this on."
-            echo "available=no" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
+          git clone "${{ steps.pin.outputs.repo }}" aquarius-shell
           cd aquarius-shell
           git checkout --detach "${{ steps.pin.outputs.ref }}"
           GOT="$(git rev-parse HEAD)"
@@ -7732,18 +7715,21 @@ jobs:
             exit 1
           fi
           git log -1 --format='%h %ad %s' --date=short
-          echo "available=yes" >> "${GITHUB_OUTPUT}"
 
       - name: Install what the checks need
-        if: steps.fetch.outputs.available == 'yes'
         run: |
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y shellcheck
           python3 -m pip install --user pyyaml
 
+      - name: Check updater lifecycle and release failures offline
+        run: |
+          python3 -B tests/test-updater.py
+          python3 -B tests/test-release-gates.py
+          python3 -B tests/test-drive-eject.py
+
       - name: Run the shell's own checks
-        if: steps.fetch.outputs.available == 'yes'
         working-directory: aquarius-shell
         run: ./tests/test-shell.sh
 
@@ -7784,14 +7770,12 @@ jobs:
       #
       # It needs python3 and nothing else, and that is already on the runner.
       - name: The image's labwc files still match the shell's
-        if: steps.fetch.outputs.available == 'yes'
         run: ./build_files/check-labwc-drift.sh aquarius-shell
 
       # The two things this repository needs to be true about the shell, which
       # the shell's own tests have no reason to check because they are about how
       # the OPERATING SYSTEM installs it.
       - name: Check the shell still looks the way the image expects
-        if: steps.fetch.outputs.available == 'yes'
         working-directory: aquarius-shell
         run: |
           set -euo pipefail
