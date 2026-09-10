@@ -122,9 +122,16 @@ USAGE
     aq ingest watch status
                         Is it watching, what, and what happened last.
 
-    aq apps list        The creator apps AquariusOS suggests, and whether you
-                        have each one. 'aq apps install <id>' adds one you
-                        skipped; 'aq apps status' says how many you have.
+    aq apps list        Every app on this computer, and the ones AquariusOS
+                        suggests. 'aq apps install <id>' adds one you skipped.
+    aq apps install FILE
+                        Install something you downloaded — an .rpm, a .deb, an
+                        AppImage, a tarball with a program in it. The same job
+                        as double-clicking it in Files, which opens Aquarius
+                        Installer. 'aq apps what FILE' says what would happen
+                        and changes nothing.
+    aq apps search TERM Find an app: here, in what AquariusOS suggests, and on
+                        Flathub. 'aq apps update --all' updates the lot.
 
     aq welcome          Show the AquariusOS welcome again — the three-step
                         window a new account sees at its first login: how the
@@ -1480,6 +1487,15 @@ ingest() {
 
 AQ_APPS_HELPER="/usr/libexec/aquarius-flatpak-preinstall"
 AQ_APPS_APPIMAGE="/usr/libexec/aquarius-appimage-install"
+# ⚠️ THE THIRD ROUTE, ADDED 2026-09-09. Aquarius Installer is the window that
+# takes anything a person downloads — an .rpm, a .deb, an AppImage, a tarball
+# with a program inside it — and lands it in their own apps. Everything it
+# decides lives in one shared file
+# (/usr/lib/aquarius/python/aquarius_installer.py) which THIS command calls too,
+# so `aq apps` and that window can never disagree about what a file is or where
+# an app went.
+AQ_APPS_INSTALLER="/usr/libexec/aquarius-installer"
+AQ_APPS_REGISTRY="${HOME:-/nonexistent}/.local/share/aquarius/apps"
 AQ_APPS_SERVICE="aquarius-flatpak-preinstall.service"
 AQ_APPS_STAMP="/etc/aquarius/flatpak-preinstall-done"
 
@@ -1494,12 +1510,25 @@ aq apps — the creator apps AquariusOS offers
                         of 'aq apps list'. Any plug-ins an app needs come with
                         it. An app from Flathub asks for your password once;
                         one of ours does not ask at all.
+    aq apps install FILE
+                        Install something you downloaded — an .rpm, a .deb, an
+                        AppImage, a .flatpakref, a tarball with a program in
+                        it. The same job as double-clicking it, from here.
     aq apps install --all
                         Install every Flathub app on the list. This is the big
                         one — roughly ten gigabytes.
-    aq apps update [ID] Check whether one of OUR apps has a newer version to
-                        install, and install it. With no ID, checks them all.
-    aq apps remove ID   Take one away again.
+    aq apps what FILE   Say what a downloaded file is and how it would be
+                        installed. Changes nothing at all.
+    aq apps search TERM Find an app: on this computer, in what AquariusOS
+                        suggests, and on Flathub.
+    aq apps update [ID] Say what has something newer waiting.
+    aq apps update --all
+                        Update everything that can be updated from here. One
+                        password prompt for the whole run.
+    aq apps remove ID [--with-data]
+                        Take one away again. Its settings stay unless you ask
+                        for them to go too; the things you MADE with it are
+                        never touched either way.
 
     Nothing here is compulsory. An app you never install costs you nothing, and
     an app you uninstall stays uninstalled — AquariusOS will not put it back.
@@ -1563,6 +1592,15 @@ apps_list() {
     '
     echo
     echo "  To install one:  aq apps install <the middle column>"
+
+    # And everything that got here some other way: a file somebody downloaded
+    # and dropped on the installer, or a Flatpak added from anywhere at all.
+    # Asked of the installer rather than kept here, so there is one list.
+    if [ -x "${AQ_APPS_INSTALLER}" ]; then
+        echo
+        echo "Everything on this computer"
+        "${AQ_APPS_INSTALLER}" --list
+    fi
 }
 
 apps_status() {
@@ -1602,7 +1640,34 @@ apps_status() {
 
 apps_install() {
     local cat have refs=() ours=() id line want ok_id
+    local files=() names=() rc=0
     [ "$#" -gt 0 ] || { apps_usage; return 1; }
+
+    # ⚠️ A FILE IS NOT A SHORT WAY OF NAMING A CATALOGUE APP. "aq apps install
+    # ./thing.deb" is the terminal's version of double-clicking a download, and
+    # it goes to the very same sorter the window uses. So the arguments are
+    # split first: real files go one way, names go the way they always did.
+    for want in "$@"; do
+        if [ -f "${want}" ]; then
+            files+=("${want}")
+        else
+            names+=("${want}")
+        fi
+    done
+
+    if [ "${#files[@]}" -gt 0 ]; then
+        if [ ! -x "${AQ_APPS_INSTALLER}" ]; then
+            echo "aq: ${AQ_APPS_INSTALLER} is missing from this copy of AquariusOS." >&2
+            return 1
+        fi
+        for want in "${files[@]}"; do
+            "${AQ_APPS_INSTALLER}" --install "${want}" || rc=1
+        done
+    fi
+    if [ "${#names[@]}" -eq 0 ]; then
+        return "${rc}"
+    fi
+    set -- "${names[@]}"
 
     if [ "$1" = "--all" ]; then
         # Flatpak's own command, because it is the one that honours "an app you
@@ -1707,6 +1772,21 @@ apps_install() {
 # GitHub does have something newer, the command says so as a note.
 apps_update() {
     local ids
+    # ⚠️ "UPDATE ALL" IS THE OS'S APPS, NEVER THE OS. The system update is its
+    # own thing (`aq update`), because it needs a restart and an app update
+    # never does. This command deliberately cannot start one.
+    if [ "${1:-}" = "--all" ]; then
+        if [ ! -x "${AQ_APPS_INSTALLER}" ]; then
+            echo "aq: ${AQ_APPS_INSTALLER} is missing from this copy of AquariusOS." >&2
+            return 1
+        fi
+        "${AQ_APPS_INSTALLER}" --update-all
+        return $?
+    fi
+    if [ "$#" -eq 0 ] && [ -x "${AQ_APPS_INSTALLER}" ]; then
+        "${AQ_APPS_INSTALLER}" --updates
+        echo
+    fi
     if [ "$#" -gt 0 ]; then
         ids="$*"
     else
@@ -1725,14 +1805,35 @@ apps_update() {
 }
 
 apps_remove() {
-    local want kind
-    [ "$#" -gt 0 ] || {
+    local want kind with_data=0 targets=()
+    # ⚠️ THE TICK BOX FROM THE WINDOW, AS A WORD. Off unless it is asked for,
+    # and it only ever covers the app's own settings — never the things a person
+    # MADE with the app, which are theirs and are not in scope at all.
+    for want in "$@"; do
+        case "${want}" in
+            --with-data | --purge) with_data=1 ;;
+            *) targets+=("${want}") ;;
+        esac
+    done
+    [ "${#targets[@]}" -gt 0 ] || {
         echo "aq: say which app to remove. 'aq apps list' shows them." >&2
         return 1
     }
-    for want in "$@"; do
+    for want in "${targets[@]}"; do
         if apps_is_ours "${want}"; then
             "${AQ_APPS_APPIMAGE}" remove "${want}" || return 1
+            continue
+        fi
+        # Anything the installer landed in this home folder. Its registry
+        # recorded exactly how it arrived, so taking it away is exact rather
+        # than a hunt for files that look related.
+        if [ -x "${AQ_APPS_INSTALLER}" ] \
+            && [ -f "${AQ_APPS_REGISTRY}/${want}.ini" ]; then
+            if [ "${with_data}" -eq 1 ]; then
+                "${AQ_APPS_INSTALLER}" --remove "${want}" --with-data || return 1
+            else
+                "${AQ_APPS_INSTALLER}" --remove "${want}" || return 1
+            fi
             continue
         fi
         kind="$(apps_catalog | awk -F'\t' -v w="${want}" '$1 == w {print "found"}')"
@@ -2326,12 +2427,46 @@ login() {
     esac
 }
 
+# What is this file, and how would it be installed? Answers and changes
+# nothing — the very same reading the window does before it shows you anything.
+apps_what() {
+    [ "$#" -gt 0 ] || {
+        echo "aq: say which file. 'aq apps what ~/Downloads/thing.deb'" >&2
+        return 1
+    }
+    if [ ! -x "${AQ_APPS_INSTALLER}" ]; then
+        echo "aq: ${AQ_APPS_INSTALLER} is missing from this copy of AquariusOS." >&2
+        return 1
+    fi
+    "${AQ_APPS_INSTALLER}" --sort "$1"
+}
+
+apps_search() {
+    [ "$#" -gt 0 ] || {
+        echo "aq: say what to look for. 'aq apps search obs'" >&2
+        return 1
+    }
+    if [ ! -x "${AQ_APPS_INSTALLER}" ]; then
+        echo "aq: ${AQ_APPS_INSTALLER} is missing from this copy of AquariusOS." >&2
+        return 1
+    fi
+    "${AQ_APPS_INSTALLER}" --search "$*"
+}
+
 apps() {
     case "${1:-}" in
         "" | -h | --help | help) apps_usage ;;
         list) apps_list ;;
         status) apps_status ;;
         catalog) apps_catalog ;;
+        what | sort)
+            shift
+            apps_what "$@"
+            ;;
+        search | find)
+            shift
+            apps_search "$@"
+            ;;
         update)
             shift
             apps_update "$@"
@@ -2346,7 +2481,8 @@ apps() {
             ;;
         *)
             echo "aq: '${1}' is not something 'aq apps' knows how to do." >&2
-            echo "    It understands: list, status, install." >&2
+            echo "    It understands: list, status, search, what, install," >&2
+            echo "    update and remove." >&2
             return 1
             ;;
     esac
