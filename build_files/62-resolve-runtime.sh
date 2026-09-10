@@ -189,7 +189,7 @@ fi
 # for them by name and that change fails here, in the step whose name says why
 # they matter, instead of on somebody's desk.
 say "DaVinci Resolve — what the installer window is built out of"
-aq_dnf install python3-gobject gtk4 libadwaita
+aq_dnf install python3-gobject python3-xlib gtk4 libadwaita
 aq_installed python3-gobject gtk4 libadwaita
 
 # The import is the real test. A package can install perfectly and still leave
@@ -1404,5 +1404,19 @@ echo "  The Rocky Linux runtime is NOT baked into this image."
 echo "  It is about a gigabyte and it is fetched the first time somebody sets"
 echo "  Resolve up. Baking it in would make every AquariusOS download bigger"
 echo "  for a feature not everybody uses."
+
+
+# Display preferences and the host-side normal-window memory helper.
+aq_installed python3-xlib
+if python3 -c 'from Xlib import display; from Xlib.ext import randr'; then
+    ok 'Resolve window memory can read XWayland screens'
+else
+    bad 'Resolve window memory cannot load its XWayland library'
+fi
+for helper in aquarius-resolve-settings aquarius-resolve-window; do
+    test -x "/usr/libexec/${helper}"
+    python3 -c 'import ast, sys; ast.parse(open(sys.argv[1]).read())' "/usr/libexec/${helper}"
+done
+desktop-file-validate /usr/share/applications/aquarius-resolve-settings.desktop
 
 aq_finish "DaVinci Resolve"

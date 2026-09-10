@@ -1462,3 +1462,34 @@ icon in the app grid does not.
 - **The full codec picture:** [`../codec-research.md`](../codec-research.md)
 - **Moving the bench machine to the new line:** [`bench-rebase.md`](bench-rebase.md)
 - **Why the NVIDIA driver is done the way it is:** [`nvidia-notes.md`](nvidia-notes.md)
+
+
+## Display settings and remembering the window (September 2026)
+
+Open **DaVinci Resolve Display Settings** from the app menu. **Interface size**
+lets you choose Auto, 100%, 125%, or 150%. The new size applies the next time you
+open Resolve; choosing it never closes a project. Auto uses the desktop size,
+with a 125% minimum on a known, unscaled 4K display. A custom size previously
+set from the command line is displayed and kept until you choose another one.
+
+**Reset window position** brings the normal editing window back onto a current
+screen. If Resolve is closed, the request is remembered for its next launch.
+The helper remembers the last normal size and position across launches. It
+leaves deliberate maximize, minimize, fullscreen and separate dialog windows
+alone; Reset is the explicit exception for maximize/fullscreen. If an output
+changes while editing, the normal window is moved back into the available area.
+Resolve has a minimum interface size, so a very small screen may not fit every
+control even though the title bar remains reachable.
+
+Only the main XWayland project window is tracked (Resolve's window class, normal
+window type and project title must all match). The small host helper starts from
+the Resolve launcher, waits for its first project window, and exits if launch
+fails or the last project window closes. RAW Player and other companion tools
+never start it. Normal geometry is saved in
+`~/.local/state/aquarius/resolve-window.json`; interface size remains in
+`~/.config/aquarius/resolve.conf`. These are display preferences, not project data.
+
+The image tests map the actual GTK controls and run a synthetic Resolve window
+inside a private labwc/XWayland desktop. They check restoration, manual maximize,
+Reset, and shrinking the output while the window remains open. A real project
+still needs the next-boot bench check, especially across different monitor scales.

@@ -460,6 +460,13 @@ resolve_work_folder() { # resolve_work_folder <program inside the container>
 
 WORK_FOLDER="$(resolve_work_folder "${RUN_ARGS[0]}")"
 
+# Remember the normal project window on the host. A singleton lock keeps repeated
+# launches from starting competing watchers; RAW tools and --report never do this.
+if [ "${RUN_ARGS[0]}" = /opt/resolve/bin/resolve ] && [ -x /usr/libexec/aquarius-resolve-window ]; then
+    /usr/libexec/aquarius-resolve-window > /dev/null 2>&1 &
+fi
+
+
 # `distrobox enter --additional-flags` takes ONE string, so the flags are joined
 # into one. None of these values can contain a space in practice — a cursor
 # theme name is a folder name — and joining is what distrobox's own documented

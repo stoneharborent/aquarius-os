@@ -2812,6 +2812,19 @@ jobs:
             --entrypoint /usr/bin/python3 \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" /tmp/test-resolve-done-window.py /
 
+      - name: Check Resolve display controls and window memory in the finished image
+        run: |
+          set -euo pipefail
+          podman run --rm --pull=never \
+            -v "${GITHUB_WORKSPACE}/tests/test-installer-window.py:/tmp/test-installer-window.py:ro" \
+            -v "${GITHUB_WORKSPACE}/tests/test-resolve-settings.py:/tmp/test-resolve-settings.py:ro" \
+            --entrypoint /usr/bin/python3 \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" /tmp/test-resolve-settings.py /
+          podman run --rm --pull=never \
+            -v "${GITHUB_WORKSPACE}/tests/test-resolve-window.py:/tmp/test-resolve-window.py:ro" \
+            --entrypoint /usr/bin/python3 \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" /tmp/test-resolve-window.py /
+
       - name: Check Resolve scale choices in the finished image
         run: |
           set -euo pipefail
