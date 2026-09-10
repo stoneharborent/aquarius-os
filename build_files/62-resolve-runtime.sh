@@ -209,7 +209,9 @@ say "DaVinci Resolve — the files"
 
 for f in /usr/libexec/aquarius-resolve-install \
     /usr/libexec/aquarius-resolve-launch \
-    /usr/libexec/aquarius-resolve-update-notify; do
+    /usr/libexec/aquarius-resolve-update-notify \
+    /usr/libexec/aquarius-resolve-browser/xdg-open \
+    /usr/libexec/aquarius-resolve-browser/setup; do
     if [ ! -f "${f}" ]; then
         bad "${f} is missing"
         continue
@@ -231,6 +233,16 @@ for f in /usr/libexec/aquarius-resolve-install \
         bad "${f} has a syntax error"
     fi
 done
+
+# Check the real files shipped in this image. No browser/account opens here.
+if python3 /ctx/tests/test-resolve-browser.py /; then
+    ok "Resolve browser handoff preserves links, private errors and the original opener"
+else
+    bad "Resolve browser handoff or existing-container migration failed"
+fi
+aq_file_has /usr/libexec/aquarius-resolve-launch \
+    '/run/host/usr/libexec/aquarius-resolve-browser/setup' \
+    "existing Resolve installations receive the browser bridge at launch"
 
 # ------------------------------------------------------------------------------
 # The shared window pieces

@@ -499,5 +499,14 @@ exec distrobox enter --name "${CONTAINER}" --additional-flags "${EXTRA}" \
         cd "$1" 2> /dev/null || printf "%s\n" \
             "aquarius-resolve: $1 is not in this container; starting from $PWD instead." >&2
         shift
+        # Repair the absolute opener Resolve uses for Login via web. This
+        # runs inside the mutable container; a failure must not stop editing.
+        if ! /bin/sh /run/host/usr/libexec/aquarius-resolve-browser/setup; then
+            printf "%s\n" "Resolve browser integration could not be prepared." >&2
+            /usr/bin/distrobox-host-exec /usr/bin/notify-send --app-name="DaVinci Resolve" \
+                -- "Browser integration needs attention" \
+                "Resolve can still open. Restart it after the OS update to retry browser setup." \
+                >/dev/null 2>&1 || :
+        fi
         exec /usr/bin/aquarius-resolve-run "$@"
     ' sh "${WORK_FOLDER}" "${RUN_ARGS[@]}"
