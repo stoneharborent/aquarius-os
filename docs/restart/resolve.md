@@ -1456,6 +1456,7 @@ icon in the app grid does not.
 
 ## Where to go next
 
+- **Blackmagic Cloud's browser login and its remaining sign-in check:** [Browser login](resolve-cloud-browser.md)
 - **The ingest helper, which fixes the codec table above:** `aq-ingest --help`
 - **Why Fedora for the OS but Rocky for Resolve:**
   [`../base-distro-reassessment-2026-09.md`](../base-distro-reassessment-2026-09.md) §1 and §3.2
