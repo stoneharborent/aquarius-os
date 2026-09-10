@@ -701,7 +701,10 @@ jobs:
             "application/x-aquarius-run-installer:*.run" \
             "application/vnd.snap:*.snap" \
             "application/x-apple-installer-package:*.pkg"; do
-            if grep -qx "60:${pair}" "${TMP}/globs2"; then
+            # -F: the pair is a literal line, not a pattern. Read as a pattern,
+            # the "*" in "*.run" never matches, and this step failed on a
+            # correct list twice on 2026-09-10 before anybody noticed why.
+            if grep -qxF "60:${pair}" "${TMP}/globs2"; then
               echo "  OK   ${pair}"
             else
               echo "  FAIL ${pair} did not come out of the shared list at weight 60"
