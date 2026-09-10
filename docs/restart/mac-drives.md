@@ -285,19 +285,8 @@ mount table says the mount is yours (`user_id=`). apfs-fuse's mounts always
 carry that, Fedora 44 is far past 2.34, and `build_files/82-apfs-drives.sh`
 reads both the version and the setuid bit back out of the finished image.
 
-If step 7 of the checklist above shows that the dock's Eject does *not* work
-while `aq drive eject` does, that rule is not applying, and the fix is one line
-in the shell: `aquarius-shell/components/dock/DockDrive.qml` currently runs
-
-```qml
-Quickshell.execDetached(["gio", "mount", "-u", "-f", root.mountPath]);
-```
-
-and would become
-
-```qml
-Quickshell.execDetached(["aq", "drive", "eject", root.mountLabel]);
-```
-
-which routes both kinds of drive through the one command that handles both.
-Nothing else in the shell would change.
+The dock now waits for ordinary unmount to finish and keeps a busy drive on
+screen with a useful explanation. Close files or apps using the drive, then try
+again. It does not force or lazily detach a busy volume. The terminal's
+`aq drive eject NAME` follows the same rule. If a physical drive has several
+volumes, unmount all of them before unplugging it.

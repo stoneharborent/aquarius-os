@@ -2794,10 +2794,9 @@ drive_eject() {
         found=1
         case "${fstype}" in
             fuse.* | fuse)
-                if fusermount3 -u "${target}" 2> /tmp/aq-eject.$$ \
-                    || fusermount3 -u -z "${target}" 2> /tmp/aq-eject.$$; then
+                if fusermount3 -u "${target}" 2> /tmp/aq-eject.$$; then
                     rmdir "${target}" 2> /dev/null || true
-                    echo "\"${name}\" is closed. It is safe to unplug it."
+                    echo "\"${name}\" is unmounted. Unmount any other volumes on this drive before unplugging it."
                 else
                     echo "aq: \"${name}\" could not be closed:" >&2
                     sed 's/^/    /' /tmp/aq-eject.$$ >&2
@@ -2809,8 +2808,8 @@ drive_eject() {
                 rm -f /tmp/aq-eject.$$
                 ;;
             *)
-                if gio mount -u -f "${target}" 2> /tmp/aq-eject.$$; then
-                    echo "\"${name}\" is closed. It is safe to unplug it."
+                if gio mount -u "${target}" 2> /tmp/aq-eject.$$; then
+                    echo "\"${name}\" is unmounted. Unmount any other volumes on this drive before unplugging it."
                 else
                     echo "aq: \"${name}\" could not be closed:" >&2
                     sed 's/^/    /' /tmp/aq-eject.$$ >&2
