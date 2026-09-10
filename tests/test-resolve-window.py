@@ -29,6 +29,7 @@ def worker(root):
     win.show_all()
     proc = subprocess.Popen([str(helper)])
     d = display.Display()
+    assert not d.has_extension('GLX'), 'geometry test unexpectedly enabled GLX'
     xwin = d.create_resource_object('window', win.get_window().get_xid())
     def pump(seconds):
         until=time.monotonic()+seconds
@@ -91,14 +92,16 @@ def main():
         command.chmod(0o700)
         # Pixman controls labwc, but Xwayland still tries its own GPU renderer.
         # The NVIDIA image has GPU libraries and no GPU in CI. Use wlroots'
-        # WLR_XWAYLAND override only inside this test to skip EGL completely.
-        # Xwayland's documented -glamor off selects shared-memory rendering.
+        # WLR_XWAYLAND override only inside this test selects shared-memory
+        # rendering. Disable GLX too: even with glamor off its swrast loader
+        # enumerates EGL vendors and crashes in NVIDIA's GBM code without a GPU.
+        # These geometry checks use no OpenGL; real sessions keep acceleration.
         xwayland = shutil.which('Xwayland')
         if xwayland is None:
             raise RuntimeError('Window test requires Xwayland')
         wrapper = work/'Xwayland-software'
         wrapper.write_text('#!/bin/sh\necho "TEST: software Xwayland" >&2\nexec '
-                           + shlex.quote(xwayland) + ' -glamor off "$@"\n')
+                           + shlex.quote(xwayland) + ' -glamor off -extension GLX "$@"\n')
         wrapper.chmod(0o700)
         env=dict(os.environ,XDG_RUNTIME_DIR=str(work/'run'),XDG_CONFIG_HOME=str(work/'config'),XDG_STATE_HOME=str(work/'state'),WLR_BACKENDS='headless',WLR_HEADLESS_OUTPUTS='1',WLR_RENDERER='pixman',WLR_XWAYLAND=str(wrapper),GDK_BACKEND='x11',GTK_A11Y='none')
         env.pop('DISPLAY',None)
