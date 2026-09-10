@@ -26,9 +26,16 @@
 # matters.
 #
 # The filesystems those drives are formatted as — exFAT for camera cards, NTFS
-# for Windows drives — are installed and checked by step 20. APFS (a Mac drive)
-# is deliberately out of scope: it needs apfs-fuse and is read-only, which is a
-# later decision, not this feature.
+# for Windows drives — are installed and checked by step 20.
+#
+# ⚠️ APFS (a Mac drive) IS NO LONGER OUT OF SCOPE, and this step is no longer the
+# whole story. Since 2026-09-09 the agent takes a second path for exactly one
+# kind of drive: a Mac drive, which udisks2 cannot mount because Linux has no
+# APFS. It mounts those itself, read-only, with apfs-fuse, as the person. That
+# half is installed and checked by build_files/82-apfs-drives.sh and explained in
+# docs/restart/mac-drives.md. This step still owns everything else — udisks2, the
+# polkit rule, the service — and it still runs tests/test-automount-mount.py,
+# which now covers both paths.
 #
 # Plain-English guide: docs/restart/hardware.md, section "Plugging a drive in —
 # and the bug that meant we never did".
@@ -131,7 +138,10 @@ if [ -r /ctx/tests/test-automount-mount.py ]; then
         bad "2026-09-08 bench fault: drives appear in Files and never in the dock."
     fi
     # Belt and braces beside -B above: nothing of the test may stay in the image.
-    rm -rf /usr/libexec/__pycache__
+    # /usr/lib/aquarius/python is in the list because the agent imports the
+    # shared Mac-drive reader from there, and Python writes a __pycache__ folder
+    # beside any module it imports.
+    rm -rf /usr/libexec/__pycache__ /usr/lib/aquarius/python/__pycache__
 else
     bad "/ctx/tests/test-automount-mount.py is missing — the only check that proves a drive is really mounted"
 fi

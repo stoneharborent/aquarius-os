@@ -559,6 +559,18 @@ jobs:
       # (build_files/76-automount.sh), where python3-gobject is guaranteed, and
       # that run is the one that can fail the build. This one is the fast
       # warning. Before the build, because it takes a second.
+      #
+      # ⚠️ SINCE 2026-09-09 THIS TEST ALSO COVERS MAC DRIVES (APFS), which are
+      # the one kind udisks2 cannot mount at all — the agent runs apfs-fuse
+      # itself, read-only, as the person. None of that can be exercised on a
+      # build machine (no Mac drive, no FUSE, no root), so the test drives it
+      # against three CAPTURED apfsutil listings kept beside it: an ordinary
+      # external drive, a Mac's internal disk with its five volumes, and a
+      # FileVault drive. What it proves is the part a person cannot check by
+      # reading: the exact apfs-fuse command line (read-only, this person's uid
+      # and gid, and NOT allow_other), that a locked drive produces a
+      # notification and not a silent nothing, and that unplugging really closes
+      # the mount — because nothing else on the computer ever will.
       - name: Check a plugged-in drive really does get mounted
         run: |
           set -uo pipefail
@@ -572,6 +584,27 @@ jobs:
             exit 0
           fi
           ./tests/test-automount-mount.py
+
+      # ------------------------------------------------------------------------
+      # The folder every drive appears in is made at login — and can never stop
+      # a login
+      # ------------------------------------------------------------------------
+      # /usr/libexec/aquarius-media-dir creates /run/media/<you> when somebody
+      # logs in, and makes it theirs. Two things depend on it, and both fail
+      # invisibly: the dock lists drives by WATCHING that folder (and Qt's
+      # watcher silently lists the home directory when the folder is missing —
+      # the 2026-09-06 "thirty random folders in the dock" bug), and a Mac drive
+      # is mounted by the PERSON, so the person has to be able to create a
+      # folder in there.
+      #
+      # ⚠️ AND IT RUNS ON THE LOGIN PATH. systemd runs it before the session
+      # starts, so a failure there is an account that cannot log in. "It always
+      # exits 0" is therefore the most important thing this test checks, and it
+      # is checked against every way it can go wrong: no such account, no
+      # argument, a name with a slash in it, and a folder it is not allowed to
+      # create. Seconds, before the build; it runs again inside the image.
+      - name: Check the drives folder is made at login, and never stops one
+        run: ./tests/test-media-dir.sh
 
       # ------------------------------------------------------------------------
       # The app icons are all present, and are the sizes they claim

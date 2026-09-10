@@ -579,6 +579,40 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     /ctx/build_files/79-usb4-rescue.sh
 
+# 7j. Reading a Mac drive.
+#
+#     Royce works on a Mac and on this computer. A drive that comes off the Mac
+#     is formatted APFS, and until this step plugging one in did nothing at all:
+#     Linux's kernel cannot read APFS, so step 7f's automount agent asked
+#     udisks2 to mount it and udisks2 had nothing to mount it with.
+#
+#     What this installs is `apfs-fuse`, from Fedora's own repository, which
+#     reads APFS in ordinary user space. It is READ-ONLY, and that is the honest
+#     ceiling rather than an unfinished feature: Apple has never published how
+#     APFS works, so every program on Linux that WRITES it is working from
+#     guesswork, and guessing is not a thing to do with somebody's only copy of
+#     a shoot. "Plug the Mac drive in, copy the files off it" is the feature.
+#
+#     ⚠️ NOTHING IN THIS PATH IS PRIVILEGED, AND THAT IS THE DESIGN. A udev rule
+#     hands an APFS device to whoever is logged in at the screen — the same
+#     standard mechanism that gives you your own webcam — and apfs-fuse then
+#     runs as that person. There is no service of ours, no polkit rule, no
+#     setuid program of ours and no password anywhere. The argument for why that
+#     is safe is written in the rule file itself: AquariusOS is never installed
+#     on APFS, so "this device is APFS" is the same statement as "this device is
+#     not the system disk".
+#
+#     ⚠️ AND EVERY FAILURE OF THIS FEATURE LOOKS THE SAME: you plug the drive in
+#     and nothing happens. A missing package, a device you may not open, a
+#     folder you may not write to, a setuid bit that is not set — none of them
+#     produces an error anybody sees. So the step asks about each one by name,
+#     and runs the real code against three captured Mac drives and a fake bus.
+#
+#     After step 7f (the automount agent it extends) and step 5 (its files).
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache/libdnf5 \
+    /ctx/build_files/82-apfs-drives.sh
+
 # 7e. The gaming layer: Steam, Proton's supporting cast, gamescope, gamemode,
 #     MangoHud, the 32-bit graphics libraries a Windows game needs, and the
 #     Xbox controller drivers. In BOTH images — this machine is meant to be a
