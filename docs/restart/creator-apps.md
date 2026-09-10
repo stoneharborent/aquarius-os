@@ -8,6 +8,39 @@ rather than a nicely branded Fedora.
 
 ---
 
+## ⚠️ What changed on 2026-09-09 — read this first
+
+**There is now a fourth way an app gets onto this machine, and one visible app
+for all of them: [Aquarius Installer](installer-app.md).**
+
+You download something — an `.rpm`, a `.deb`, an AppImage, a `.flatpakref`, a
+tarball with a program inside it — you double-click it, one window says what it
+is and where it will go, you press Install, and the icon is in your apps. It is
+also where you **remove** an app, where **Update All** lives, and where you
+**search** for something new.
+
+**Nothing on this page stopped being true.** The three ways below are still the
+three ways, the catalogue is still the one catalogue, and the window described
+further down is still the second step of the welcome. Two things changed:
+
+- **"Aquarius Apps" is no longer an icon in the app grid.** It is still here, it
+  still opens at a first login as step 2 of the welcome, `aq apps` still reaches
+  it, and its list is exactly what Aquarius Installer shows under **"AquariusOS
+  suggests"** — read through the same `--catalog` command. It lost its icon
+  because two app-store-shaped icons in one grid is how a person ends up in the
+  wrong one.
+- **`/usr/libexec/aquarius-creator-apps-install` now does four jobs, not one.**
+  Install by app id (exactly as before, unchanged, and the default), install a
+  `.flatpakref` or `.flatpak` file, uninstall, and update. All four through the
+  same one `pkexec` prompt, because writing a second privileged helper would
+  have been a second thing to keep root-owned and a second place to forget the
+  "ask the system, never the exit code" rule.
+
+The plain-language guide to the new window is
+**[`installer-app.md`](installer-app.md)**. The design of record is FEATURES 010.
+
+---
+
 ## The one idea to hold on to
 
 There are **three ways** an app gets onto this machine, and which one an app

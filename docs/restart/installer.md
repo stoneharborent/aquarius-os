@@ -4,6 +4,10 @@
 [`boot-branding.md`](boot-branding.md), focused only on the **installer** — the
 program that runs off the USB stick and writes AquariusOS onto a computer's disk.*
 
+> **Not to be confused with [`installer-app.md`](installer-app.md)**, which is about
+> **Aquarius Installer** — the app that installs *other apps* once AquariusOS is
+> already running. This page is about installing the operating system itself.
+
 ---
 
 ## The one-paragraph version
