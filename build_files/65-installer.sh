@@ -181,10 +181,29 @@ else
 fi
 # And the import that has to stay late. Importing aquarius_ui pulls GTK in, and
 # every headless mode above has to work in a build container with no screen.
-if grep -n 'import aquarius_ui' "${WINDOW}" | grep -qv '^[0-9]*: *import aquarius_ui$'; then
-    ok "aquarius_ui is imported inside the function that draws, not at the top"
+if python3 - "${WINDOW}" <<'PY_IMPORTS'
+import ast
+import sys
+from pathlib import Path
+
+tree = ast.parse(Path(sys.argv[1]).read_text())
+window = next(node for node in tree.body
+              if isinstance(node, ast.FunctionDef) and node.name == "run_window")
+inside_window = set(ast.walk(window))
+graphical = []
+for node in ast.walk(tree):
+    names = ([alias.name for alias in node.names] if isinstance(node, ast.Import)
+             else [node.module or ""] if isinstance(node, ast.ImportFrom) else [])
+    if any(name.split(".")[0] in ("gi", "aquarius_ui") for name in names):
+        graphical.append(node)
+assert graphical, "No graphical imports found in the window"
+assert all(node in inside_window for node in graphical), \
+    "A graphical import runs outside run_window"
+PY_IMPORTS
+then
+    ok "graphical imports stay inside the function that draws the window"
 else
-    bad "aquarius_ui is imported at the top of the window — --sort and --dry-run would need a screen"
+    bad "graphical imports are missing or outside run_window — headless modes must not load GTK"
 fi
 
 # ==============================================================================
@@ -198,10 +217,9 @@ if grep -vE '^[[:space:]]*#' "${WINDOW}" "${MODULE}" | grep -qE '"sudo"|\bsudo '
 else
     ok "nothing in it runs sudo"
 fi
-aq_file_has "${MODULE}" 'def running_as_root' \
-    "it knows how to tell whether it is running as an administrator"
-aq_file_has "${MODULE}" 'if running_as_root\(\)' \
-    "and it checks before it installs or removes anything"
+# The sorter test below simulates root and an ordinary user, checks the
+# rehearsal exception, and calls install/remove to prove refusal changes no
+# files. Checking the spelling of the helper cannot prove that protection.
 
 say "Route C is off, and the window says so"
 aq_file_has "${MODULE}" 'OS_MARKERS = \[' \
