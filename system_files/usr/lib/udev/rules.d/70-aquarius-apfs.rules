@@ -1,0 +1,86 @@
+# ==============================================================================
+# Let the person at the screen read a Mac-formatted (APFS) drive
+# ==============================================================================
+# PLAIN ENGLISH
+#
+# A Mac drive is formatted as APFS, and Linux's own kernel cannot read APFS at
+# all. What CAN read it is a program called apfs-fuse, which runs as an ordinary
+# program — no special powers, no system service — and hands the contents of the
+# drive to the desktop as a read-only folder.
+#
+# For that to work, the program has to be able to OPEN the drive. On Linux a
+# drive is a file, /dev/sdb1 or similar, and by default only the administrator
+# may open one. So this file's single rule says:
+#
+#     when a drive turns up and Linux has identified it as APFS,
+#     give the person sitting at this screen permission to read it
+#
+# That is what `TAG+="uaccess"` means. It is not ours and it is not a trick: it
+# is systemd's standard way of handing a device to whoever is logged in at the
+# machine — the same mechanism that lets you use your own webcam, sound card,
+# scanner and joystick without being an administrator. logind adds a permission
+# for exactly one person on exactly one device, and takes it away again the
+# moment you log out or somebody else switches to their session.
+#
+# ------------------------------------------------------------------------------
+# WHY THIS IS SAFE — the argument, written down so it can be checked
+# ------------------------------------------------------------------------------
+# The worry with "let the user open a raw disk" is the SYSTEM disk: the one the
+# operating system itself lives on. Read access to that is read access to every
+# file on the computer, including other people's.
+#
+# It cannot be that disk. AquariusOS is never installed on APFS — it is btrfs,
+# and the installer cannot even offer APFS, because Linux cannot write it. Nor
+# can any other Linux, for the same reason. So "this device is formatted APFS"
+# is, on this computer, the same statement as "this device is not the system
+# disk and never will be". The permission is granted to one device node, for one
+# seat, for as long as that person is logged in at it — not to a class of
+# devices and not to anybody over the network.
+#
+# The honest remaining case is a second APFS disk permanently bolted inside the
+# machine that somebody wanted to keep private from the person at the keyboard.
+# That is not a situation AquariusOS is built for — this is one creator's
+# workstation — and it is written here so nobody has to guess whether we thought
+# about it.
+#
+# ------------------------------------------------------------------------------
+# ⚠️ WHY THE FILE IS CALLED 70-, AND WHY THAT NUMBER IS NOT DECORATION
+# ------------------------------------------------------------------------------
+# udev reads the rule files in NUMBER ORDER and each one can only use what the
+# earlier ones have worked out. This rule sits between two of Fedora's own:
+#
+#   60-persistent-storage.rules   looks INSIDE the drive and works out what
+#                                 filesystem is on it. It is what sets
+#                                 ID_FS_TYPE — the value this rule tests. Before
+#                                 60, ID_FS_TYPE does not exist yet and this
+#                                 rule would match nothing at all, silently.
+#
+#   71-seat.rules                 works out which screen-and-keyboard ("seat") a
+#   73-seat-late.rules            device belongs to, and then ACTS on the
+#                                 uaccess tag — 73-seat-late.rules is the file
+#                                 that contains
+#                                     TAG=="uaccess" … RUN{builtin}+="uaccess"
+#                                 which is the line that actually hands the
+#                                 device to the logged-in person. A tag added
+#                                 AFTER that line has run is a tag nobody reads.
+#
+# So: after 60, before 71. Anything from 61 to 70 would do; 70 is the number
+# systemd's own documentation uses for exactly this kind of rule.
+#
+# ------------------------------------------------------------------------------
+# WHAT EACH PIECE OF THE LINE MEANS
+# ------------------------------------------------------------------------------
+#   SUBSYSTEM=="block"        a disk or a partition, not a mouse or a printer
+#   ENV{ID_FS_TYPE}=="apfs"   Linux looked inside and found Apple's filesystem.
+#                             (util-linux's blkid has recognised APFS since
+#                             2019; Fedora 44's does.)
+#   TAG+="uaccess"            "hand this to whoever is logged in at this screen"
+#
+# There is no ACTION== test on purpose: the tag is a property of the device and
+# should be there whenever udev looks at it, including the replay of every
+# already-plugged-in device that happens at each boot.
+#
+# Plain-English guide: docs/restart/mac-drives.md
+# ==============================================================================
+
+SUBSYSTEM=="block", ENV{ID_FS_TYPE}=="apfs", TAG+="uaccess"

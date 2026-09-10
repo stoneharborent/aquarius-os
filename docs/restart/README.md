@@ -300,6 +300,7 @@ thing locally. `just` with no arguments lists everything available.
 - **Gaming: what ships, the launch options worth knowing, and what is deliberately not here:** [`gaming.md`](gaming.md)
 - **Wi-Fi, Bluetooth and graphics firmware — what it is and how to check it:** [`hardware.md`](hardware.md)
 - **⚠️ An external drive that is not there AT ALL — the USB4 / Thunderbolt controller that did not wake up on 7 September 2026, and the retry that now ships (unverified on real hardware):** [`usb4.md`](usb4.md)
+- **Reading a drive that came off a Mac — what works, why it is read-only for ever, FileVault, and the disks no PC can read:** [`mac-drives.md`](mac-drives.md)
 - **Which kernel AquariusOS ships, and why it is pinned:** [`kernel.md`](kernel.md)
 - **Why the NVIDIA driver is done the way it is:** [`nvidia-notes.md`](nvidia-notes.md)
 - **Why Fedora and not Bazzite/Arch/Ubuntu:** [`../base-distro-reassessment-2026-09.md`](../base-distro-reassessment-2026-09.md)

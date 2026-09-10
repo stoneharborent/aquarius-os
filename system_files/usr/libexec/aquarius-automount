@@ -50,6 +50,43 @@
 # and not ours to automate).
 #
 # -----------------------------------------------------------------------------
+# THE ONE EXCEPTION: A MAC DRIVE (APFS), WHICH WE MOUNT OURSELVES
+# -----------------------------------------------------------------------------
+# Everything above is udisks2 doing the work and this program only asking. There
+# is exactly one kind of drive where that cannot happen: a drive formatted on a
+# Mac, which Apple calls APFS.
+#
+# Linux's kernel cannot read APFS at all, and udisks2 will not mount a
+# filesystem the kernel does not have. So for this one type we do the mount
+# ourselves, with a program called apfs-fuse that reads the drive in ordinary
+# user space and hands its contents to the desktop as a folder. It is READ-ONLY
+# and always will be: APFS is undocumented, every Linux program that writes it is
+# working from guesswork, and writing is where a lost shoot lives. Reading a Mac
+# drive to copy files off it is the honest feature.
+#
+# When we see one, instead of asking udisks2 to mount it we:
+#
+#   1. ask `apfsutil` what volumes are inside it (a Mac drive is a container
+#      holding one or more volumes — an external drive normally has one; a Mac's
+#      internal SSD has five or six, most of them Apple's own machinery);
+#   2. skip the machinery volumes (Preboot, Recovery, VM, Update, and the rest —
+#      the list is in /usr/lib/aquarius/python/aquarius_apfs.py);
+#   3. mount each of the others, READ-ONLY, as the person, at
+#      /run/media/<you>/<the volume's name> — exactly where udisks2 would have
+#      put it, so the dock and Files see no difference;
+#   4. and, if a volume is locked with FileVault, mount NOTHING and put a
+#      notification on screen offering to unlock it. Never a silent nothing.
+#
+# No password is involved anywhere in that, and neither is any privilege. A udev
+# rule (/usr/lib/udev/rules.d/70-aquarius-apfs.rules) hands an APFS device to
+# whoever is logged in at the screen, in the same standard way Linux hands you
+# your own webcam, and apfs-fuse then runs as you. There is no service, no
+# `sudo` and no setuid program of ours anywhere in this path.
+#
+# The whole thing in plain English, including what does NOT work:
+# docs/restart/mac-drives.md.
+#
+# -----------------------------------------------------------------------------
 # WHY NO PASSWORD
 # -----------------------------------------------------------------------------
 # The mount call is made as YOU — this program runs in your own session with no
@@ -95,8 +132,29 @@
 # =============================================================================
 
 import os
+import subprocess
 import sys
 import traceback
+
+# -----------------------------------------------------------------------------
+# The shared Mac-drive reader
+# -----------------------------------------------------------------------------
+# /usr/lib/aquarius/python/aquarius_apfs.py knows how to read what `apfsutil`
+# prints and which volumes are worth showing a person. It is shared with
+# /usr/libexec/aquarius-drive-unlock, because two copies of that parser would be
+# two chances to disagree about whether a drive is locked.
+#
+# The path is worked out RELATIVE TO THIS FILE, which makes it the same
+# expression in both places it has to work: in the finished image this file is
+# /usr/libexec/aquarius-automount, so "../lib/aquarius/python" is
+# /usr/lib/aquarius/python; in the repository it is
+# system_files/usr/libexec/aquarius-automount, so the same expression finds
+# system_files/usr/lib/aquarius/python. That is what lets the tests run before
+# anything is installed.
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "lib", "aquarius", "python"))
+sys.path.insert(1, "/usr/lib/aquarius/python")
+import aquarius_apfs  # noqa: E402
 
 # The bus name and paths udisks2 publishes on. These are stable public API.
 UDISKS = "org.freedesktop.UDisks2"
@@ -109,6 +167,23 @@ FS_IFACE = "org.freedesktop.UDisks2.Filesystem"
 # The mounts we will never, ever put a second mount on top of. udisks2's
 # HintSystem should already keep us away from these; this is the seatbelt.
 CRITICAL_MOUNTS = ("/", "/boot", "/boot/efi", "/efi", "/var", "/home", "/usr")
+
+# ⚠️ The one filesystem udisks2 cannot mount and we mount ourselves. Read the
+# "MAC DRIVE" section of this file's header before touching anything below that
+# mentions it.
+APFS = "apfs"
+
+# The three programs the Mac-drive path uses. All from Fedora's own packages:
+# apfs-fuse and apfsutil come from `apfs-fuse`, fusermount3 from `fuse3`.
+FUSERMOUNT = "/usr/bin/fusermount3"
+
+# The window that asks for a FileVault password. Ours; see its own header. It
+# sits in the same folder as this program, so the path is worked out from this
+# file — /usr/libexec/aquarius-drive-unlock in the finished image, and the copy
+# in the repository when the tests run before anything is installed. Same trick,
+# same reason, as the sys.path line above.
+UNLOCK_HELPER = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "aquarius-drive-unlock")
 
 
 def log(message):
@@ -143,6 +218,20 @@ def dry_run():
     print("    for a removable drive in the active local session")
     print("  * passes auth.no_user_interaction=true so a disallowed mount fails")
     print("    quietly instead of interrupting the person")
+    print("")
+    print("And the one exception, a Mac drive (APFS), which udisks2 cannot mount:")
+    print("  * asks apfsutil which volumes are inside it")
+    print("  * skips the volumes that are Apple's own machinery: %s"
+          % ", ".join(sorted(aquarius_apfs.SKIP_ROLES)))
+    print("  * mounts each of the others READ-ONLY, as this person, with")
+    print("    apfs-fuse -o ro,uid=,gid=,subtype=apfs — never allow_other")
+    print("  * puts them at /run/media/<user>/<volume name>, exactly where")
+    print("    udisks2 puts everything else, so the dock sees no difference")
+    print("  * a FileVault-locked volume is NOT mounted and NOT silent: it")
+    print("    sends a notification offering to unlock it (%s)" % UNLOCK_HELPER)
+    print("  * never stores a password, anywhere, ever")
+    print("  * when the drive is unplugged, unmounts with %s -u -z and" % FUSERMOUNT)
+    print("    removes the empty folder it made")
     return 0
 
 
@@ -154,24 +243,18 @@ def dry_run():
 # nvme0n1p2 -> nvme0n1) so that no partition of the system disk can be touched.
 def critical_disks():
     disks = set()
-    try:
-        with open("/proc/self/mountinfo", "r") as handle:
-            for line in handle:
-                parts = line.split()
-                # Field layout: ... - <fstype> <source> <superopts>
-                # The mount point is field 5 (index 4); the source is after the
-                # standalone "-" separator.
-                try:
-                    mount_point = parts[4]
-                    dash = parts.index("-")
-                    source = parts[dash + 2]
-                except (IndexError, ValueError):
-                    continue
-                if mount_point in CRITICAL_MOUNTS and source.startswith("/dev/"):
-                    disks.add(_whole_disk(source))
-    except OSError:
-        pass
+    for mount in read_mounts():
+        if mount["mount_point"] in CRITICAL_MOUNTS and mount["source"].startswith("/dev/"):
+            disks.add(_whole_disk(mount["source"]))
     return disks
+
+
+# The two "where are the drives" helpers live in the shared module, because
+# /usr/libexec/aquarius-drive-unlock needs exactly the same answers. They are
+# given their old names here so that the rest of this file — and the tests that
+# call them — read the way they always did.
+read_mounts = aquarius_apfs.read_mounts
+media_root = aquarius_apfs.media_root
 
 
 def _whole_disk(dev_path):
@@ -196,6 +279,67 @@ class AutoMounter:
         self.protected = critical_disks()
         if self.protected:
             log("leaving the system disk(s) alone: %s" % ", ".join(sorted(self.protected)))
+
+        # Who we are. A Mac drive is mounted BY this person, so apfs-fuse is
+        # told to present every file as belonging to them — an APFS drive
+        # carries a Mac's user numbers, which mean nothing on this computer.
+        self.uid = os.getuid()
+        self.gid = os.getgid()
+
+        # The Mac-drive mounts THIS program made, so that unplugging the drive
+        # takes them away again. Keyed by the udisks2 object path, because that
+        # is what udisks2 names when the device disappears.
+        #   {object_path: [{"mount_point": ..., "device": ...}, ...]}
+        self.apfs_mounts = {}
+
+    # -- running other programs (the two places this program is faked) ------
+    #
+    # Everything this program runs goes through one of these two, and NOTHING
+    # else in the file calls subprocess. That is deliberate: it is the seam the
+    # tests replace, so that tests/test-automount-mount.py can hand it a real
+    # captured `apfsutil` listing and read back the exact apfs-fuse command line
+    # — on a machine with no Mac drive, no FUSE and no root.
+
+    def run(self, argv, timeout=120):
+        """Run a program, wait for it, and return (exit code, output, errors).
+
+        Never raises: a missing program is an exit code, not a crash.
+        """
+        try:
+            proc = subprocess.run(
+                argv,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                errors="replace",
+            )
+        except FileNotFoundError:
+            return 127, "", "%s is not installed on this computer" % argv[0]
+        except subprocess.SubprocessError as error:
+            return 1, "", str(error)
+        return proc.returncode, proc.stdout, proc.stderr
+
+    def spawn(self, argv):
+        """Start a program and do NOT wait for it.
+
+        Used for exactly one thing: putting the "this Mac drive is locked"
+        notification on screen. That helper waits for somebody to press a button,
+        which could be an hour — and this program has to stay free to mount the
+        next drive somebody plugs in.
+        """
+        try:
+            subprocess.Popen(
+                argv,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            return True
+        except (OSError, ValueError) as error:
+            log("could not start %s: %s" % (argv[0], error))
+            return False
 
     # -- reading udisks2 ----------------------------------------------------
 
@@ -287,6 +431,240 @@ class AutoMounter:
         except TypeError:
             return ""
         return data.split(b"\x00", 1)[0].decode("utf-8", "replace")
+
+    def id_type(self, object_path):
+        """What Linux thinks is on this device: 'exfat', 'ntfs', 'apfs', ''…
+
+        This is udisks2 repeating what blkid worked out when the drive was
+        plugged in. It is the ONE thing that sends a drive down the Mac path
+        instead of the udisks2 one.
+        """
+        return str(self._get_prop(object_path, BLOCK_IFACE, "IdType") or "")
+
+    # =======================================================================
+    # A MAC DRIVE (APFS) — the one kind we mount ourselves
+    # =======================================================================
+    # Read the "MAC DRIVE" section of this file's header first. In one line:
+    # Linux cannot read APFS, so udisks2 will not mount it, so we run apfs-fuse
+    # as the person and put the result exactly where udisks2 would have.
+
+    def apfs_should_mount(self, object_path):
+        """The same three udisks2 hints and the same seatbelt as everything else.
+
+        It deliberately does NOT ask whether udisks2 has a Filesystem interface
+        for the device, the way should_mount() does. udisks2 publishes one for
+        APFS today (it recognises the filesystem even though it cannot mount it)
+        but that is its decision to change, and a drive we could read going
+        invisible because udisks2 stopped advertising a type it never supported
+        would be a silly way to lose the feature.
+        """
+        hint_auto = self._get_prop(object_path, BLOCK_IFACE, "HintAuto")
+        hint_ignore = self._get_prop(object_path, BLOCK_IFACE, "HintIgnore")
+        hint_system = self._get_prop(object_path, BLOCK_IFACE, "HintSystem")
+
+        if not hint_auto:
+            return False
+        if hint_ignore:
+            return False
+        if hint_system:
+            log("%s is a system device — leaving it alone" % object_path)
+            return False
+
+        device = self._device_node(object_path)
+        if not device:
+            return False
+        if _whole_disk(device) in self.protected:
+            log("%s (%s) is on the system disk — refusing" % (object_path, device))
+            return False
+
+        # Already done? Two ways this happens and both are ordinary: the initial
+        # sweep can see a drive twice, and a session restarted with the drive
+        # still plugged in finds its own earlier mounts still there.
+        already = self.apfs_mounted_from(device)
+        if already:
+            log("%s is already open at %s — nothing to do"
+                % (device, ", ".join(already)))
+            return False
+
+        return True
+
+    def apfs_mounted_from(self, device):
+        """The folders where this device is already mounted by a FUSE program.
+
+        apfs-fuse names the mount after the device it read (it sets fsname to
+        the device path), so the machine's own mount table is the truthful
+        answer to "is this drive already open?" — truer than anything this
+        program could remember, because it survives the program restarting.
+        """
+        found = []
+        for mount in read_mounts():
+            if mount["source"] == device and mount["fstype"].startswith("fuse"):
+                found.append(mount["mount_point"])
+        return found
+
+    def mount_apfs(self, object_path):
+        """Open every readable volume on a Mac drive, read-only, as this person."""
+        device = self._device_node(object_path) or object_path
+
+        root = media_root()
+        if not root:
+            log("could not work out where to put %s (no /run/media folder for this account)"
+                % device)
+            return
+        if not os.path.isdir(root):
+            # /usr/libexec/aquarius-media-dir makes this at login. If it is not
+            # there we can try, and say so plainly if we may not.
+            try:
+                os.makedirs(root, 0o700)
+            except OSError as error:
+                log("%s is a Mac drive, but %s does not exist and could not be"
+                    " made (%s). aquarius-media-dir should have made it at login."
+                    % (device, root, error))
+                return
+
+        log("%s is a Mac drive (APFS) — reading what is on it" % device)
+        volumes = aquarius_apfs.read_volumes(
+            device, run=lambda argv, timeout: self.run(argv, timeout))
+        if not volumes:
+            log("could not read the volumes on %s. If it is a Mac's built-in disk"
+                " from a T2 or Apple-silicon machine, its encryption is in the"
+                " Mac's own chip and no other computer can read it." % device)
+            return
+
+        wanted = [volume for volume in volumes if volume.should_mount]
+        skipped = len(volumes) - len(wanted)
+        if skipped:
+            log("%s: ignoring %d Apple system volume(s) — nobody's files live there"
+                % (device, skipped))
+        if not wanted:
+            log("%s has nothing on it a person would open" % device)
+            return
+
+        for volume in wanted:
+            if volume.encrypted:
+                self.apfs_locked(device, volume)
+                continue
+            self.apfs_mount_volume(object_path, device, root, volume)
+
+    def apfs_mount_volume(self, object_path, device, root, volume):
+        """One volume: make the folder, run apfs-fuse, say what happened."""
+        name = volume.display_name
+        target = aquarius_apfs.unique_mount_point(root, name)
+        if target is None:
+            log("could not find a free folder name for %s in %s" % (name, root))
+            return
+
+        try:
+            os.mkdir(target, 0o700)
+        except OSError as error:
+            log("could not make the folder for %s at %s: %s" % (name, target, error))
+            return
+
+        # ⚠️ THE COMMAND LINE, AND WHY EACH PIECE OF IT IS THERE.
+        #
+        #   -v <n>          which volume inside the container. A Mac drive is a
+        #                   box with volumes in it; this is which one.
+        #   ro              read-only. apfs-fuse adds this itself as well, and we
+        #                   say it anyway: it is the promise this whole feature
+        #                   makes, and it should not depend on somebody else's
+        #                   default staying what it is today.
+        #   uid= gid=       present every file as belonging to the person at the
+        #                   keyboard. The numbers stored on an APFS drive are a
+        #                   Mac's user numbers and mean nothing here; without
+        #                   this, a copied folder can arrive unreadable.
+        #   subtype=apfs    makes the mount call itself "fuse.apfs" in the
+        #                   machine's mount table instead of a bare "fuse".
+        #                   That is what `aq drive list`, the Files app and GIO
+        #                   read to tell a Mac drive from anything else.
+        #
+        # ⚠️ AND WHAT IS DELIBERATELY NOT THERE: allow_other. That option would
+        # let every account on the computer read the drive, and it needs
+        # user_allow_other switching on in /etc/fuse.conf. We need neither: the
+        # mount is made by the person, for the person, and their own desktop is
+        # the only thing that has to see it. build_files/82-apfs-drives.sh fails
+        # the build if this line ever grows one.
+        options = "ro,uid=%d,gid=%d,subtype=apfs" % (self.uid, self.gid)
+        argv = [aquarius_apfs.APFS_FUSE, "-v", str(volume.index),
+                "-o", options, device, target]
+
+        log("mounting %s (%s, Mac drive, read-only)" % (name, device))
+        code, _out, err = self.run(argv)
+        if code == 0:
+            self.apfs_mounts.setdefault(object_path, []).append(
+                {"mount_point": target, "device": device})
+            log("mounted %s at %s" % (name, target))
+            return
+
+        # It failed. Take the empty folder away again — an empty folder in
+        # /run/media is a drive tile in the dock that opens onto nothing.
+        try:
+            os.rmdir(target)
+        except OSError:
+            pass
+        reason = (err or "").strip().splitlines()
+        reason = reason[-1] if reason else "apfs-fuse exited with code %d" % code
+        log("could not mount %s (%s): %s" % (name, device, reason))
+
+    def apfs_locked(self, device, volume):
+        """A FileVault volume: mount nothing, and never be silent about it."""
+        name = volume.display_name
+        log("%s on %s is locked with FileVault — not mounting it, and asking"
+            " whether you want to unlock it" % (name, device))
+        if not os.path.exists(UNLOCK_HELPER):
+            log("        (%s is missing, so there is nothing to ask with. Run"
+                " 'aq drive unlock \"%s\"' in a terminal.)" % (UNLOCK_HELPER, name))
+            return
+        self.spawn([UNLOCK_HELPER, "--notify", device, str(volume.index), name])
+
+    # -- putting a Mac drive away again -------------------------------------
+
+    def apfs_forget(self, object_path):
+        """The drive at this udisks2 object has gone. Take its mounts with it."""
+        for entry in self.apfs_mounts.pop(object_path, []):
+            self.apfs_unmount(entry["mount_point"])
+
+    def apfs_forget_vanished(self):
+        """Net under the above: any mount of ours whose device no longer exists.
+
+        udisks2 usually tells us which object went away, and apfs_forget() deals
+        with it. This catches the case where it does not — a controller that
+        drops off the bus, a dock unplugged with three drives on it — by asking
+        the simplest possible question about each mount we made: is the drive
+        still there at all?
+        """
+        for object_path in list(self.apfs_mounts.keys()):
+            keep = []
+            for entry in self.apfs_mounts[object_path]:
+                if os.path.exists(entry["device"]):
+                    keep.append(entry)
+                else:
+                    log("%s has been unplugged" % entry["device"])
+                    self.apfs_unmount(entry["mount_point"])
+            if keep:
+                self.apfs_mounts[object_path] = keep
+            else:
+                del self.apfs_mounts[object_path]
+
+    def apfs_unmount(self, mount_point):
+        """Close one Mac-drive mount and take its empty folder away.
+
+        `fusermount3 -u -z`: -u is "unmount", -z is "even if something still has
+        a file open on it". The -z matters because the usual way this runs is
+        somebody pulling the cable out — at which point every open file on that
+        drive is already broken and holding the mount open forever helps nobody.
+        """
+        code, _out, err = self.run([FUSERMOUNT, "-u", "-z", mount_point], timeout=30)
+        if code != 0:
+            reason = (err or "").strip().splitlines()
+            log("could not close %s: %s"
+                % (mount_point, reason[-1] if reason else "exit code %d" % code))
+        else:
+            log("closed %s" % mount_point)
+        try:
+            os.rmdir(mount_point)
+        except OSError:
+            # Still busy, or already gone. Neither is worth alarming anybody.
+            pass
 
     # -- doing it -----------------------------------------------------------
 
@@ -385,6 +763,14 @@ class AutoMounter:
         # fixing it; the sentence is for whoever is only trying to find out what
         # happened.
         try:
+            # ⚠️ THE FORK IN THE ROAD, AND IT IS ONE LINE. A Mac drive cannot go
+            # to udisks2 — udisks2 has no APFS to mount with and would refuse —
+            # so it goes down our own path instead. Every other drive on earth
+            # goes the way it always did.
+            if self.id_type(object_path) == APFS:
+                if self.apfs_should_mount(object_path):
+                    self.mount_apfs(object_path)
+                return
             if self.should_mount(object_path):
                 self.mount(object_path)
         except Exception as error:  # noqa: BLE001 — deliberate; see above
@@ -417,7 +803,15 @@ class AutoMounter:
             return
         objects = reply.unpack()[0]
         for object_path, interfaces in objects.items():
-            if FS_IFACE in interfaces:
+            # ⚠️ WHY THIS LOOKS AT PLAIN BLOCK DEVICES TOO, AND NOT ONLY AT ONES
+            # udisks2 CALLS FILESYSTEMS. Because of Mac drives. udisks2 marks a
+            # device as a "Filesystem" when it recognises what is on it, and it
+            # does recognise APFS today — but it has never been able to MOUNT
+            # APFS, and a future udisks2 that stopped advertising a type it
+            # cannot use would make every Mac drive quietly invisible to us.
+            # consider() asks what the device is before it does anything, so the
+            # cost of looking at all of them is one extra question per device.
+            if FS_IFACE in interfaces or BLOCK_IFACE in interfaces:
                 self.consider(object_path)
 
     # ⚠️ THE TRAILING *_user_data IS NOT OPTIONAL. Gio's signal_subscribe hands
@@ -427,8 +821,25 @@ class AutoMounter:
     # first time a drive was plugged in. *_user_data swallows it.
     def _on_interfaces_added(self, _conn, _sender, _path, _iface, _signal, params, *_user_data):
         object_path, interfaces = params.unpack()
-        if FS_IFACE in interfaces:
+        # Same reasoning as in sweep(): a Block interface is enough to look.
+        if FS_IFACE in interfaces or BLOCK_IFACE in interfaces:
             self.consider(object_path)
+
+    # ⚠️ THE SAME TRAILING *_user_data RULE AS ABOVE. Gio hands the callback a
+    # user_data argument on the end whether we passed one or not.
+    def _on_interfaces_removed(self, _conn, _sender, _path, _iface, _signal, params, *_user_data):
+        """A drive has gone. If we had a Mac drive open on it, close it."""
+        try:
+            object_path = params.unpack()[0]
+        except (IndexError, TypeError):
+            return
+        try:
+            self.apfs_forget(object_path)
+            self.apfs_forget_vanished()
+        except Exception as error:  # noqa: BLE001 — same rule as consider()
+            log("could not tidy up after %s: %s: %s"
+                % (object_path, type(error).__name__, error))
+            traceback.print_exc()
 
     def watch(self):
         """Mount what is here, then keep mounting what turns up."""
@@ -444,6 +855,21 @@ class AutoMounter:
             None,
             0,
             self._on_interfaces_added,
+        )
+        # ⚠️ AND THE OTHER HALF, WHICH ONLY MAC DRIVES NEED. Every other drive
+        # on this computer is mounted by udisks2, and udisks2 cleans up after
+        # itself when one is unplugged. A Mac drive is mounted by US, so nothing
+        # but us will ever put it away — and a mount left behind on a drive that
+        # has physically gone is a folder in the dock that opens onto an
+        # input/output error.
+        self.bus.signal_subscribe(
+            UDISKS,
+            OM_IFACE,
+            "InterfacesRemoved",
+            UDISKS_PATH,
+            None,
+            0,
+            self._on_interfaces_removed,
         )
         log("watching for drives")
 

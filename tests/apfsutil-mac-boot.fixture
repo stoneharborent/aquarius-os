@@ -1,0 +1,40 @@
+Found partitions:
+C12A7328-F81F-11D2-BA4B-00A0C93EC93B 8AE1D3B1-7F2C-4E56-9B10-2C7F0A4E1D22 0000000000000028 0000000000103027 0000000000000000 EFI System Partition
+7C3457EF-0000-11AA-AA11-00306543ECAC 3F9B0E71-5A44-4B31-9E1F-6D2A88C5B0E4 0000000000103028 000000003A2F1FDF 0000000000000000 Container
+First APFS partition is 2
+
+Volume 0 1F0C63A8-9D2E-45C1-8B77-0E4A3F215B6D
+---------------------------------------------
+Role:               System
+Name:               Macintosh HD
+Capacity Consumed:  10938417152 Bytes
+FileVault:          No
+
+Volume 1 4B2E9F70-C1A5-4D8E-9F31-77A0E6D42C18
+---------------------------------------------
+Role:               Preboot
+Name:               Preboot
+Capacity Consumed:  636289024 Bytes
+FileVault:          No
+
+Volume 2 A7D51C93-2E60-4F1B-B8C4-5E9017FA3D22
+---------------------------------------------
+Role:               Recovery
+Name:               Recovery
+Capacity Consumed:  1094533120 Bytes
+FileVault:          No
+
+Volume 3 D30B48E2-6C79-4A55-97F0-1B8E2D64A0C7
+---------------------------------------------
+Role:               VM
+Name:               VM
+Capacity Consumed:  20971520 Bytes
+FileVault:          No
+
+Volume 4 92E4F1AB-3D08-4C6F-A21B-C5730E9D46F5
+---------------------------------------------
+Role:               Data
+Name:               Macintosh HD - Data
+Capacity Consumed:  402653184000 Bytes
+FileVault:          No
+
