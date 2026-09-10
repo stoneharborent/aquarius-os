@@ -1113,6 +1113,10 @@ resolve_scale_get() {
 resolve_scale_set() {
     local value="$1" tmp
     mkdir -p "${AQ_CONF_DIR}" || return 1
+    if [ -e "${AQ_RESOLVE_CONF}" ] && [ ! -r "${AQ_RESOLVE_CONF}" ]; then
+        echo "aq: cannot read ${AQ_RESOLVE_CONF}; existing settings were left unchanged." >&2
+        return 1
+    fi
     tmp="$(mktemp "${AQ_RESOLVE_CONF}.new.XXXXXX")" || return 1
     # Keep comments and every unrelated option, including options from a newer
     # version. Only replace scale assignments; Auto removes all of them.
@@ -1125,7 +1129,10 @@ resolve_scale_set() {
     if [ -n "${value}" ]; then
         printf '\nscale=%s\n' "${value}" >> "${tmp}" || { rm -f "${tmp}"; return 1; }
     fi
-    mv -f "${tmp}" "${AQ_RESOLVE_CONF}"
+    if ! mv -f "${tmp}" "${AQ_RESOLVE_CONF}"; then
+        rm -f "${tmp}"
+        return 1
+    fi
 }
 
 resolve_scale_status() {

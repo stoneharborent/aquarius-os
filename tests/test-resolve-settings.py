@@ -58,6 +58,28 @@ def check(root):
         subprocess.run(['bash', str(root/'usr/bin/aq'), 'resolve', 'scale', value], check=True, capture_output=True)
         assert '# keep this note' in config.read_text() and 'future_option=yes' in config.read_text()
     assert 'scale=' not in config.read_text()
+    # A writable parent does not grant permission to discard an unreadable
+    # settings file. Under root, DAC overrides make this fixture inapplicable.
+    if os.geteuid() != 0:
+        original = config.read_bytes()
+        config.chmod(0)
+        try:
+            result = subprocess.run(['bash', str(root/'usr/bin/aq'), 'resolve', 'scale', '1.25'], capture_output=True, text=True)
+            assert result.returncode != 0 and 'left unchanged' in result.stderr
+        finally:
+            config.chmod(0o600)
+        assert config.read_bytes() == original
+        assert not list(config.parent.glob('resolve.conf.new.*'))
+    # Simulate a filesystem refusing the final atomic replacement.
+    fake_bin = config.parent/'test-bin'
+    fake_bin.mkdir()
+    (fake_bin/'mv').write_text('#!/bin/sh\nexit 1\n')
+    (fake_bin/'mv').chmod(0o700)
+    original = config.read_bytes()
+    result = subprocess.run(['bash', str(root/'usr/bin/aq'), 'resolve', 'scale', '1.25'],
+                            env=dict(os.environ, PATH=str(fake_bin)+':'+os.environ['PATH']), capture_output=True)
+    assert result.returncode != 0 and config.read_bytes() == original
+    assert not list(config.parent.glob('resolve.conf.new.*'))
     w.destroy()
     app.quit()
     print('PASS: real GTK display controls map; scale, reset and failure actions work')
