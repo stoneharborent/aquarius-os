@@ -31,10 +31,22 @@
 #   AQ_FIRST_UID    the lowest user number that counts as a real person.
 #
 # and one fake command: a `getent` earlier on the PATH than the real one, which
-# answers with whatever account this test wants to pretend exists. The user
-# number it answers with is THIS test's own, so that the chown the program does
-# is a real chown that really succeeds — a test that ran as root would prove
-# something a login never does.
+# answers with whatever account this test wants to pretend exists.
+#
+# ⚠️ WHOSE USER NUMBER THE FAKE ACCOUNT GETS — this bit a build once.
+# The program ignores user numbers below 1000 (the machine's own accounts). This
+# test runs in two very different places:
+#
+#   * in GitHub's checkout step and on a developer's machine, as an ordinary
+#     person (user number 1000 or more). The fake account is given THAT number,
+#     so the chown the program does is a real chown that really succeeds.
+#   * INSIDE THE IMAGE BUILD, as root (user number 0) — which is also exactly
+#     how systemd runs the real program at login. If the fake account were given
+#     root's number, the program would (correctly) treat it as a machine account
+#     and quietly do nothing, and every "did it make the folder" check would
+#     fail. On 2026-09-09 that turned the build red while the same test passed
+#     in the checkout step. So as root the fake account is user 1000, and root
+#     can give the folder to 1000 just as it gives it to you at login.
 #
 # HOW TO RUN IT
 #   ./tests/test-media-dir.sh
@@ -66,9 +78,41 @@ fail() {
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "${WORK}"' EXIT
+# mktemp makes a folder only its owner can enter. When this runs as root the
+# "can the person make a folder in there" check acts as user 1000, who has to
+# be able to walk THROUGH this folder to reach theirs. 0711 = pass through,
+# not look around.
+chmod 0711 "${WORK}"
 
 ME_UID="$(id -u)"
 ME_GID="$(id -g)"
+
+# The made-up person's user and group numbers — see "WHOSE USER NUMBER" above.
+if [ "${ME_UID}" -eq 0 ]; then
+    TESTER_UID=1000
+    TESTER_GID=1000
+elif [ "${ME_UID}" -ge 1000 ]; then
+    TESTER_UID="${ME_UID}"
+    TESTER_GID="${ME_GID}"
+else
+    echo "test-media-dir: I am user number ${ME_UID}. Run me as yourself (1000+) or as root;" >&2
+    echo "test-media-dir: a system account can neither be the tester nor give a folder away." >&2
+    exit 1
+fi
+
+# "Can the person really make a folder in there?" only proves something when
+# it is tried AS THE PERSON. Root can create a folder anywhere, so as root the
+# attempt is made as the tester instead (setpriv is part of util-linux).
+as_tester() {
+    if [ "${ME_UID}" -ne 0 ]; then
+        "$@"
+    elif command -v setpriv > /dev/null 2>&1; then
+        setpriv --reuid="${TESTER_UID}" --regid="${TESTER_GID}" --clear-groups "$@"
+    else
+        echo "       (setpriv is missing, so this could not be tried as user ${TESTER_UID})"
+        return 1
+    fi
+}
 
 # ------------------------------------------------------------------------------
 # The fake `getent`, which is the only way this program learns about accounts
@@ -80,9 +124,9 @@ cat > "${WORK}/bin/getent" << EOF
 # colon-separated shape the real getent uses:
 #   name:password:uid:gid:comment:home:shell
 case "\$2" in
-    tester | ${ME_UID}) echo "tester:x:${ME_UID}:${ME_GID}:Test person:/home/tester:/bin/bash" ;;
-    machine | 42)       echo "machine:x:42:42:A system account:/var/lib/machine:/sbin/nologin" ;;
-    odd/name)           echo "odd/name:x:${ME_UID}:${ME_GID}::/home/odd:/bin/bash" ;;
+    tester | ${TESTER_UID}) echo "tester:x:${TESTER_UID}:${TESTER_GID}:Test person:/home/tester:/bin/bash" ;;
+    machine | 42)           echo "machine:x:42:42:A system account:/var/lib/machine:/sbin/nologin" ;;
+    odd/name)               echo "odd/name:x:${TESTER_UID}:${TESTER_GID}::/home/odd:/bin/bash" ;;
     *) exit 2 ;;
 esac
 EOF
@@ -103,7 +147,7 @@ echo ""
 # 1. An ordinary person logging in
 # ------------------------------------------------------------------------------
 BASE="${WORK}/case1"
-code="$(run_helper "${BASE}" "${ME_UID}")"
+code="$(run_helper "${BASE}" "${TESTER_UID}")"
 if [ "${code}" = "0" ]; then
     pass "it exits 0 for an ordinary login"
 else
@@ -134,13 +178,14 @@ if [ -d "${BASE}/tester" ]; then
     else
         fail "the person's folder is mode ${mode}, expected 700"
     fi
-    if [ "${owner}" = "${ME_UID}" ]; then
+    if [ "${owner}" = "${TESTER_UID}" ]; then
         pass "and it BELONGS to them, which is what lets a Mac drive be mounted by their own session"
     else
-        fail "the folder belongs to uid ${owner}, not ${ME_UID} — apfs-fuse could not create a mount folder in it"
+        fail "the folder belongs to uid ${owner}, not ${TESTER_UID} — apfs-fuse could not create a mount folder in it"
     fi
-    # The whole point of owning it: they can make a folder inside it.
-    if mkdir "${BASE}/tester/SHOOT 2026" 2> /dev/null; then
+    # The whole point of owning it: they can make a folder inside it. Tried as
+    # the person, not as whoever is running this test.
+    if as_tester mkdir "${BASE}/tester/SHOOT 2026" 2> /dev/null; then
         pass "and they really can create a mount folder in it (the thing udisks2's own version forbids)"
         rmdir "${BASE}/tester/SHOOT 2026"
     else
@@ -163,10 +208,10 @@ fi
 # 3. Running twice changes nothing (every login runs it)
 # ------------------------------------------------------------------------------
 BASE="${WORK}/case3"
-run_helper "${BASE}" "${ME_UID}" > /dev/null
+run_helper "${BASE}" "${TESTER_UID}" > /dev/null
 chmod 0711 "${BASE}/tester"
 before="$(stat -c '%a %u' "${BASE}/tester")"
-code="$(run_helper "${BASE}" "${ME_UID}")"
+code="$(run_helper "${BASE}" "${TESTER_UID}")"
 after="$(stat -c '%a %u' "${BASE}/tester")"
 if [ "${code}" = "0" ] && [ "${before}" = "${after}" ]; then
     pass "a second login leaves a folder that is already there exactly as it is"
@@ -203,7 +248,7 @@ fi
 
 # A place it cannot possibly create anything. /proc is a kernel folder and
 # nothing can be made in it, by anybody, ever.
-code="$(run_helper "/proc/aquarius-cannot-exist" "${ME_UID}")"
+code="$(run_helper "/proc/aquarius-cannot-exist" "${TESTER_UID}")"
 if [ "${code}" = "0" ]; then
     pass "a folder it is not allowed to create: exits 0, and says so plainly"
     if grep -qi "could not create" "${WORK}/out.txt"; then
