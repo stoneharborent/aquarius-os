@@ -120,6 +120,18 @@ aq_dnf install \
     file-roller \
     file-roller-nautilus
 
+# Work around the GTK window-icon crash seen when closing Files merge dialogs.
+# Both app-menu launch and D-Bus activation must use the same launcher.
+# Keep Fedora's translated entries and actions. See docs/restart/files-crash.md.
+say "Protecting Files from the GTK window-icon crash"
+install -Dm755 /ctx/system_files/usr/libexec/aquarius-files /usr/libexec/aquarius-files
+python3 /ctx/build_files/wire-files-launchers.py \
+    /usr/share/applications/org.gnome.Nautilus.desktop \
+    /usr/share/dbus-1/services/org.gnome.Nautilus.service
+cmp /ctx/system_files/usr/libexec/aquarius-files /usr/libexec/aquarius-files
+test -x /usr/libexec/aquarius-files
+python3 /ctx/tests/test-files-launchers.py
+
 # ------------------------------------------------------------------------------
 # The small handful of apps
 # ------------------------------------------------------------------------------
