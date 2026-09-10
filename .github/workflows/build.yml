@@ -608,6 +608,23 @@ jobs:
         run: ./tests/test-resolve-entry.sh
 
       # ------------------------------------------------------------------------
+      # The Resolve install record can be sourced without running anything
+      # ------------------------------------------------------------------------
+      # ⚠️ THE BENCH FINDING OF 9 SEPTEMBER 2026. `aq resolve status` printed
+      # "installed.env: line 10: name: command not found". The installer had
+      # written a note to itself — `AQ_RESOLVE_VERSION_FROM=the name of the
+      # file downloaded from Blackmagic` — with no quotes, and `aq` reads that
+      # file by sourcing it, so the shell set the variable to "the" and then
+      # tried to run a command called "name". A file name with a space would
+      # have done the same. Every value is now written in single quotes; this
+      # writes a record through the installer's own function with the worst
+      # values it can think of, sources it under `set -eu`, and requires
+      # silence on standard error and every value back exactly, from all three
+      # readers. Seconds, before the build.
+      - name: Check the Resolve install record sources cleanly
+        run: ./tests/test-resolve-record.sh
+
+      # ------------------------------------------------------------------------
       # Resolve's sound is not optional
       # ------------------------------------------------------------------------
       # ⚠️ FEATURE 008 ITEM 12, 2026-09-08. `pipewire-alsa` is the piece that

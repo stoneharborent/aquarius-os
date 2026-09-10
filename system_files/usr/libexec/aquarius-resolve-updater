@@ -66,6 +66,7 @@
 
 import os
 import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -127,7 +128,15 @@ def record_values():
                 if not line or line.startswith("#") or "=" not in line:
                     continue
                 name, _, value = line.partition("=")
-                values[name.strip()] = value.strip().strip("\"'")
+                # Since 2026-09-09 every value is written in single quotes, the
+                # way a shell wants them, so that a space in a file name can
+                # never turn into a command when `aq resolve status` sources
+                # the file. shlex takes those quotes off exactly as a shell
+                # would, and hands an older, unquoted record back whole.
+                try:
+                    values[name.strip()] = " ".join(shlex.split(value))
+                except ValueError:
+                    values[name.strip()] = value.strip().strip("\"'")
     except OSError:
         return {}
     return values

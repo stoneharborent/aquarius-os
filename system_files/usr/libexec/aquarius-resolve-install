@@ -726,12 +726,68 @@ mime_defaults_restore() { # mime_defaults_restore <the snapshot text>
 # ------------------------------------------------------------------------------
 # What this machine already has, and what the checker says is newest
 # ------------------------------------------------------------------------------
-# The record is a plain NAME=value file. It is READ with sed rather than sourced,
-# because sourcing a file from somebody's home folder into a script that then
-# runs commands is a habit worth not having.
+# The record is a plain NAME='value' file. It is READ with sed rather than
+# sourced here, because sourcing a file from somebody's home folder into a
+# script that then runs commands is a habit worth not having.
+#
+# ⚠️ EVERY VALUE IS WRITTEN IN SINGLE QUOTES, AND HERE IS WHY. `aq resolve
+# status` does source this file, and on the bench on 9 September 2026 it printed
+#
+#     installed.env: line 10: name: command not found
+#
+# because one line read `AQ_RESOLVE_VERSION_FROM=the name of the file ...`,
+# unquoted. To a shell that is "set the variable to `the`, then run a command
+# called `name`". A file name with a space in it — which browsers produce the
+# second time anyone downloads the same file, `..._Linux (1).zip` — would have
+# done the same to AQ_RESOLVE_SOURCE. So every value goes through record_quote,
+# which wraps it in single quotes and escapes any single quote inside it the
+# way a shell wants (`'\''`), and record_value takes those quotes back off.
+# tests/test-resolve-record.sh writes a record with the worst values it can
+# think of, sources it, and checks nothing is printed and nothing is run.
+record_quote() { # record_quote <NAME> <value>   → prints NAME='value'
+    local value="${2:-}"
+    value="${value//\'/\'\\\'\'}"
+    printf "%s='%s'\n" "$1" "${value}"
+}
+
 record_value() { # record_value <NAME>
+    local raw
     [ -r "${RECORD}" ] || return 0
-    sed -n "s/^${1}=//p" "${RECORD}" 2> /dev/null | tail -1
+    raw="$(sed -n "s/^${1}=//p" "${RECORD}" 2> /dev/null | tail -1)"
+    # Records written before 2026-09-09 carry no quotes; those are handed back
+    # as they are. Quoted ones lose the quotes and get their inner quotes back.
+    case "${raw}" in
+        \'*\')
+            raw="${raw#\'}"
+            raw="${raw%\'}"
+            raw="${raw//"'\\''"/"'"}"
+            ;;
+    esac
+    printf '%s' "${raw}"
+}
+
+# Writes the whole record in one go, from the values the install or update
+# ended with. It is the ONLY thing that writes this file, so that the quoting
+# rule above has exactly one place to be right.
+#
+#   write_record <file> <installer file> <image> <digest> <gpu method>
+write_record() {
+    local file="$1" installer="$2" image="$3" digest="$4" gpu_method="$5"
+    {
+        echo "# Written by aquarius-resolve-install. Read by 'aq resolve status'"
+        echo "# and by 'aq resolve check'. Every value is in single quotes so"
+        echo "# that a space in a file name can never turn into a command."
+        record_quote AQ_RESOLVE_INSTALLED_AT "$(date -Is)"
+        record_quote AQ_RESOLVE_IMAGE "${image}"
+        record_quote AQ_RESOLVE_DIGEST "${digest}"
+        record_quote AQ_RESOLVE_GPU_METHOD "${gpu_method}"
+        record_quote AQ_RESOLVE_SOURCE "$(basename "${installer}")"
+        # free or studio. Empty when the file name did not say, and everything
+        # that reads this treats empty as "do not know", never as "free".
+        record_quote AQ_RESOLVE_EDITION "$(edition_from_name "${installer}")"
+        record_quote AQ_RESOLVE_VERSION "$(version_from_name "${installer}")"
+        record_quote AQ_RESOLVE_VERSION_FROM "the name of the file downloaded from Blackmagic"
+    } > "${file}"
 }
 
 # One field out of aquarius-resolve-check --json. That output is printed one
@@ -2017,24 +2073,14 @@ report_drives
 # top of this script; the short version is that it is the only place both facts
 # are stated by Blackmagic in a form we can read without running their software,
 # and an empty answer here is better than a guessed one.
+#
+# The file itself is written by write_record, beside record_value near the top
+# of this script, so that the two agree on the quoting.
 mkdir -p "${RECORD_DIR}" 2> /dev/null || true
 DIGEST="$(podman image inspect --format '{{index .RepoDigests 0}}' "${IMAGE}" 2> /dev/null || echo 'unknown')"
 RECORDED_EDITION="$(edition_from_name "${INSTALLER}")"
 RECORDED_VERSION="$(version_from_name "${INSTALLER}")"
-{
-    echo "# Written by aquarius-resolve-install. Read by 'aq resolve status'"
-    echo "# and by 'aq resolve check'."
-    echo "AQ_RESOLVE_INSTALLED_AT=$(date -Is)"
-    echo "AQ_RESOLVE_IMAGE=${IMAGE}"
-    echo "AQ_RESOLVE_DIGEST=${DIGEST}"
-    echo "AQ_RESOLVE_GPU_METHOD=${GPU_METHOD}"
-    echo "AQ_RESOLVE_SOURCE=$(basename "${INSTALLER}")"
-    # free or studio. Empty when the file name did not say, and everything that
-    # reads this treats empty as "do not know", never as "free".
-    echo "AQ_RESOLVE_EDITION=${RECORDED_EDITION}"
-    echo "AQ_RESOLVE_VERSION=${RECORDED_VERSION}"
-    echo "AQ_RESOLVE_VERSION_FROM=the name of the file downloaded from Blackmagic"
-} > "${RECORD}"
+write_record "${RECORD}" "${INSTALLER}" "${IMAGE}" "${DIGEST}" "${GPU_METHOD}"
 
 if [ -z "${RECORDED_VERSION}" ] || [ -z "${RECORDED_EDITION}" ]; then
     echo ""
