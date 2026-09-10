@@ -687,6 +687,14 @@ jobs:
           cp "${SRC}" "${TMP}/packages/"
           update-mime-database "${TMP}"
           echo "  OK   the shared file-type list rebuilds with it in"
+          # What the rebuilt list actually says about our endings, printed
+          # every time, because a FAIL below is unreadable without it (this
+          # step passed on a developer's Ubuntu and failed on the runner on
+          # 2026-09-10 with no way to tell why).
+          echo "== the rebuilt list, for the endings we care about =="
+          echo "  update-mime-database: $(dpkg-query -W -f='${Version}' shared-mime-info 2>/dev/null || echo unknown)"
+          grep -n '\.run$\|\.snap$\|\.pkg$\|\.rpm$' "${TMP}/globs2" | sed 's/^/  globs2 /' || echo "  globs2 has none of them"
+          ls -la "${TMP}" | sed 's/^/  /'
           echo "== and the endings really resolve to our names =="
           fails=0
           for pair in \
