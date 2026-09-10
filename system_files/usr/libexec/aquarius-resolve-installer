@@ -173,6 +173,30 @@ def cli_query(*args):
 StepRow = aquarius_ui.StepRow
 
 
+def installed_resolve_icon():
+    """Use Blackmagic's icon exported with this person's installed Resolve.
+
+    The OS does not bundle this artwork. distrobox exports the application's
+    own icon and names it in the desktop entry after installation finishes.
+    """
+    data = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+    entry = os.path.join(data, "applications",
+                         "aquarius-resolve-com.blackmagicdesign.resolve.desktop")
+    try:
+        app = Gio.DesktopAppInfo.new_from_filename(entry)
+    except (TypeError, GLib.Error):
+        return None
+    if app is None:
+        return None
+    icon = app.get_icon()
+    if isinstance(icon, Gio.FileIcon):
+        return icon if icon.get_file().query_exists(None) else None
+    if isinstance(icon, Gio.ThemedIcon):
+        theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
+        return icon if any(theme.has_icon(name) for name in icon.get_names()) else None
+    return None
+
+
 class InstallerWindow(Adw.ApplicationWindow):
     def __init__(self, app, dry_run=False, preset_file=None):
         super().__init__(application=app)
@@ -541,23 +565,16 @@ class InstallerWindow(Adw.ApplicationWindow):
     def _build_done_page(self):
         """The last page: it worked, and the two things to do next.
 
-        ⚠️ THIS WAS AN Adw.StatusPage UNTIL 2026-09-04 AND MUST NOT GO BACK TO
-        BEING ONE. A StatusPage draws a small system symbol, its own heading and
-        its own description, and there is no way to give it the Aquarius mark —
-        so the page you landed on after a fifteen-minute install was blank at
-        the top while both pages before it carry the logo. It is now an ordinary
-        column built from the shared `hero`, exactly like the creator-apps
-        window's "All set." page, which had the identical fault on the identical
-        day.
-
-        The tick still has a job — it says at a glance that everything arrived —
-        so it sits on the same line as the heading rather than being a second
-        big picture underneath the mark.
+        The app's own exported icon is loaded again when installation finishes:
+        it does not exist yet when this page is first constructed. The tick
+        stays beside the heading, and no Blackmagic artwork ships in the OS.
         """
-        mark, self.done_title, self.done_blurb = aquarius_ui.hero(
+        _mark, self.done_title, self.done_blurb = aquarius_ui.hero(
             "DaVinci Resolve is installed.",
             "It is in your apps now, and the file you downloaded can be deleted.",
         )
+        self.done_logo = Gtk.Image(pixel_size=96, halign=Gtk.Align.CENTER)
+        self._refresh_done_logo()
 
         self.done_status = aquarius_ui.status_glyph()
         aquarius_ui.set_status_glyph(self.done_status, ok=True)
@@ -588,10 +605,18 @@ class InstallerWindow(Adw.ApplicationWindow):
         buttons = aquarius_ui.button_row([open_button, close_button], margin_top=0)
 
         return aquarius_ui.page(
-            [mark, heading, self.done_blurb, buttons, tips],
+            [self.done_logo, heading, self.done_blurb, buttons, tips],
             maximum_size=560,
             spacing=12,
         )
+
+    def _refresh_done_logo(self):
+        icon = installed_resolve_icon()
+        if icon is not None:
+            self.done_logo.set_from_gicon(icon)
+        else:
+            # A rehearsal or failed export still gets a visible video symbol.
+            self.done_logo.set_from_icon_name("video-x-generic-symbolic")
 
     # -- running the installer ----------------------------------------------
 
@@ -743,6 +768,8 @@ class InstallerWindow(Adw.ApplicationWindow):
         if self.cancelled:
             return GLib.SOURCE_REMOVE
         if self.finished and code == 0:
+            # This page was built before installation exported the real icon.
+            self._refresh_done_logo()
             self.header_title.set_subtitle("")
             self.stack.set_visible_child_name("done")
             self.open_button.grab_focus()

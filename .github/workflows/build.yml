@@ -47,6 +47,7 @@ on:
       - main
       # Installer window repair: build and check only; never publish.
       - fix/installer-window-startup
+      - fix/next-version-desktop
       # The real line, before that rename. Same treatment, for exactly as long
       # as this branch name still exists.
       - restart/fedora-bootc
@@ -2784,6 +2785,15 @@ jobs:
             -v "${GITHUB_WORKSPACE}/tests/test-installer-window.py:/tmp/test-installer-window.py:ro" \
             --entrypoint /usr/bin/python3 \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" /tmp/test-installer-window.py /
+
+      - name: Check Resolve completion page in the finished image
+        run: |
+          set -euo pipefail
+          podman run --rm --pull=never \
+            -v "${GITHUB_WORKSPACE}/tests/test-installer-window.py:/tmp/test-installer-window.py:ro" \
+            -v "${GITHUB_WORKSPACE}/tests/test-resolve-done-window.py:/tmp/test-resolve-done-window.py:ro" \
+            --entrypoint /usr/bin/python3 \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" /tmp/test-resolve-done-window.py /
 
       # And the window's own rehearsal, inside the image: it really unpacks a
       # real archive into a throwaway home folder, really refuses a payload that
