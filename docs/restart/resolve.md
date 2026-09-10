@@ -247,15 +247,19 @@ notice, and there is nothing to change.
 
 **It should already be the right size.** Resolve used to open tiny on a 4K
 screen, and every guide on the internet still tells you to fix that by hand.
-AquariusOS does it for you: the launcher reads the size your desktop is set to
-and hands it to Resolve on the way in.
+AquariusOS reads the current desktop scale. When every enabled screen is known
+to be at least 3200×1800 and running at 100%, Resolve starts at **125%**. Mixed
+small and large screens, or an unknown arrangement, keep the usual scale.
+This enlarges the **whole interface**, including menus; it does not change
+your media’s aspect ratio or export resolution. Your explicit Resolve scale
+setting always wins.
 
 If you want Resolve at a different size from everything else:
 
 ```
 aq resolve scale 1.5     Resolve at 150%, whatever the desktop is at
 aq resolve scale         what it is set to, and where that came from
-aq resolve scale auto    go back to following the desktop
+aq resolve scale auto    go back to the automatic Resolve size
 ```
 
 It takes effect the next time Resolve starts. Resolve's own setting — **DaVinci
@@ -935,8 +939,8 @@ the runtime image needs a package adding to
 
 ### Resolve's interface is still too small (or too big)
 
-AquariusOS hands Resolve the size your desktop is set to. If that has not
-worked, there are two things to try, in this order.
+AquariusOS follows the desktop scale, with a 125% minimum on unscaled 4K
+arrangements as described above. If you need a different size, try these steps.
 
 **One: set it yourself.**
 
@@ -1452,9 +1456,41 @@ icon in the app grid does not.
 
 ## Where to go next
 
+- **Blackmagic Cloud's browser login and its remaining sign-in check:** [Browser login](resolve-cloud-browser.md)
 - **The ingest helper, which fixes the codec table above:** `aq-ingest --help`
 - **Why Fedora for the OS but Rocky for Resolve:**
   [`../base-distro-reassessment-2026-09.md`](../base-distro-reassessment-2026-09.md) §1 and §3.2
 - **The full codec picture:** [`../codec-research.md`](../codec-research.md)
 - **Moving the bench machine to the new line:** [`bench-rebase.md`](bench-rebase.md)
 - **Why the NVIDIA driver is done the way it is:** [`nvidia-notes.md`](nvidia-notes.md)
+
+
+## Display settings and remembering the window (September 2026)
+
+Open **DaVinci Resolve Display Settings** from the app menu. **Interface size**
+lets you choose Auto, 100%, 125%, or 150%. The new size applies the next time you
+open Resolve; choosing it never closes a project. Auto uses the desktop size,
+with a 125% minimum on a known, unscaled 4K display. A custom size previously
+set from the command line is displayed and kept until you choose another one.
+
+**Reset window position** brings the normal editing window back onto a current
+screen. If Resolve is closed, the request is remembered for its next launch.
+The helper remembers the last normal size and position across launches. It
+leaves deliberate maximize, minimize, fullscreen and separate dialog windows
+alone; Reset is the explicit exception for maximize/fullscreen. If an output
+changes while editing, the normal window is moved back into the available area.
+Resolve has a minimum interface size, so a very small screen may not fit every
+control even though the title bar remains reachable.
+
+Only the main XWayland project window is tracked (Resolve's window class, normal
+window type and project title must all match). The small host helper starts from
+the Resolve launcher, waits for its first project window, and exits if launch
+fails or the last project window closes. RAW Player and other companion tools
+never start it. Normal geometry is saved in
+`~/.local/state/aquarius/resolve-window.json`; interface size remains in
+`~/.config/aquarius/resolve.conf`. These are display preferences, not project data.
+
+The image tests map the actual GTK controls and run a synthetic Resolve window
+inside a private labwc/XWayland desktop. They check restoration, manual maximize,
+Reset, and shrinking the output while the window remains open. A real project
+still needs the next-boot bench check, especially across different monitor scales.

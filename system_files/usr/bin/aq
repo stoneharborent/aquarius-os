@@ -774,7 +774,7 @@ aq resolve — DaVinci Resolve on AquariusOS
     aq resolve scale [N]
                     How big Resolve's own interface is drawn. With no number it
                     says what it is set to. A number between 0.5 and 3 fixes it
-                    there; 'auto' goes back to following your desktop.
+                    there; 'auto' restores the automatic Resolve size.
 
 WHY A SEPARATE ENVIRONMENT
     Resolve ships its own copy of a library from 2021 that clashes with any
@@ -1095,7 +1095,7 @@ resolve_status() {
 #
 #   aq resolve scale        what is it set to, and where that answer came from
 #   aq resolve scale 1.5    fix it there, whatever the rest of the desktop does
-#   aq resolve scale auto   go back to following the desktop
+#   aq resolve scale auto   restore the automatic Resolve size
 #
 # It takes effect the next time Resolve starts. Nothing is asked of a running
 # Resolve, because Qt reads its scale once, when it starts, and nothing can
@@ -1112,44 +1112,27 @@ resolve_scale_get() {
 
 resolve_scale_set() {
     local value="$1" tmp
-    mkdir -p "${AQ_CONF_DIR}" || {
-        echo "aq: could not create ${AQ_CONF_DIR}." >&2
+    mkdir -p "${AQ_CONF_DIR}" || return 1
+    if [ -e "${AQ_RESOLVE_CONF}" ] && [ ! -r "${AQ_RESOLVE_CONF}" ]; then
+        echo "aq: cannot read ${AQ_RESOLVE_CONF}; existing settings were left unchanged." >&2
         return 1
-    }
-    tmp="${AQ_RESOLVE_CONF}.new.$$"
-    {
-        cat << 'EOF'
-# How DaVinci Resolve is started. Written by 'aq resolve scale'.
-#
-#   scale=1.5                    Resolve's interface at 150%, whatever the rest
-#                                of the desktop is at. Delete the line, or run
-#                                'aq resolve scale auto', to follow the desktop.
-#
-#   qt_variable=device-pixel-ratio
-#                                Use Resolve's OTHER scaling variable instead of
-#                                the default one. Only worth trying if the
-#                                default makes the interface look wrong — see
-#                                docs/restart/resolve.md.
-#
-#   file_dialogs=own             Always use Resolve's own Open/Save windows.
-#   file_dialogs=shared          Always ask for the desktop's shared file
-#                                picker, the one Files and Firefox use.
-#   file_dialogs=auto            Look inside Resolve for the piece that makes
-#                                the shared picker possible, and use it if it is
-#                                there. This is what happens with no line at
-#                                all. 'aq resolve status' says which you get.
-EOF
-        # ⚠️ EVERY OTHER SETTING IN THIS FILE IS CARRIED ACROSS. This function
-        # rewrites the whole file, so a key missing from this list is a key
-        # silently deleted the next time somebody runs 'aq resolve scale'.
-        if [ -r "${AQ_RESOLVE_CONF}" ]; then
-            grep -E '^[[:space:]]*(qt_variable|file_dialogs)[[:space:]]*=' "${AQ_RESOLVE_CONF}" || true
+    fi
+    tmp="$(mktemp "${AQ_RESOLVE_CONF}.new.XXXXXX")" || return 1
+    # Keep comments and every unrelated option, including options from a newer
+    # version. Only replace scale assignments; Auto removes all of them.
+    if [ -r "${AQ_RESOLVE_CONF}" ]; then
+        if ! sed '/^[[:space:]]*scale[[:space:]]*=/d' "${AQ_RESOLVE_CONF}" > "${tmp}"; then
+            rm -f "${tmp}"
+            return 1
         fi
-        if [ -n "${value}" ]; then
-            echo "scale=${value}"
-        fi
-    } > "${tmp}" || return 1
-    mv -f "${tmp}" "${AQ_RESOLVE_CONF}"
+    fi
+    if [ -n "${value}" ]; then
+        printf '\nscale=%s\n' "${value}" >> "${tmp}" || { rm -f "${tmp}"; return 1; }
+    fi
+    if ! mv -f "${tmp}" "${AQ_RESOLVE_CONF}"; then
+        rm -f "${tmp}"
+        return 1
+    fi
 }
 
 resolve_scale_status() {
@@ -1161,7 +1144,7 @@ resolve_scale_status() {
         echo "  It stays there whatever the rest of the desktop is set to."
     else
         session="$(display_effective_scale)"
-        echo "  ${session} — following the rest of the desktop (no setting of your own)."
+        echo "  ${session} — automatic Resolve size (no setting of your own)."
         echo "  Change the desktop with 'aq display scale', or fix Resolve on its"
         echo "  own with 'aq resolve scale 1.5'."
     fi
@@ -1176,7 +1159,7 @@ resolve_scale_status() {
 display_effective_scale() {
     local n=""
     if [ -x "${AQ_DISPLAY_HELPER}" ]; then
-        n="$("${AQ_DISPLAY_HELPER}" --effective-scale 2> /dev/null)"
+        n="$("${AQ_DISPLAY_HELPER}" --resolve-scale 2> /dev/null)"
     fi
     case "${n}" in
         '' | *[!0-9.]* | *.*.*) printf '1' ;;
@@ -1189,7 +1172,7 @@ resolve_scale() {
         "" | status) resolve_scale_status ;;
         auto)
             resolve_scale_set "" || return 1
-            echo "Resolve now follows the rest of the desktop, which is at $(display_effective_scale)."
+            echo "Resolve now uses its automatic interface size: $(display_effective_scale)."
             echo "  It applies the next time you open Resolve."
             ;;
         *)

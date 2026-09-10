@@ -1,0 +1,29 @@
+#!/bin/sh
+# Run only inside Resolve's mutable container. Updating this at launch also
+# repairs existing installations, without downloading Resolve again.
+set -eu
+if [ ! -e /run/.containerenv ] && [ ! -e /.dockerenv ]; then
+    exit 1
+fi
+SOURCE=/run/host/usr/libexec/aquarius-resolve-browser/xdg-open
+TARGET=/usr/bin/xdg-open
+ORIGINAL=/usr/libexec/aquarius-original-xdg-open
+[ -r "$SOURCE" ] || exit 1
+if cmp -s "$SOURCE" "$TARGET"; then
+    exit 0
+fi
+if [ "$(id -u)" != 0 ]; then
+    exec sudo -n /bin/sh "$0"
+fi
+# Keep the distro's opener once, even across subsequent OS updates. Do not
+# follow a distrobox symlink while installing: that could modify host-exec.
+if [ ! -e "$ORIGINAL" ] && [ ! -L "$ORIGINAL" ]; then
+    mkdir -p /usr/libexec
+    cp -P "$TARGET" "$ORIGINAL"
+fi
+# Install to a temporary sibling then rename, so a partial copy cannot replace
+# a working opener. The explicit filename never comes from a URL or user input.
+TEMP=$(mktemp /usr/bin/.aquarius-xdg-open.XXXXXX)
+trap 'rm -f "$TEMP"' EXIT HUP INT TERM
+install -m 0755 "$SOURCE" "$TEMP"
+mv -f "$TEMP" "$TARGET"

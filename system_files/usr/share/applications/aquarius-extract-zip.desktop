@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Extract ZIP
+Comment=Unpack ZIP files into a new folder beside the archive
+Exec=/usr/libexec/aquarius-extract-zip %F
+TryExec=/usr/libexec/aquarius-extract-zip
+Icon=package-x-generic
+Terminal=false
+NoDisplay=true
+StartupNotify=false
+MimeType=application/zip;application/x-zip;application/x-zip-compressed;

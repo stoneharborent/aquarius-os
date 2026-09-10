@@ -586,80 +586,21 @@
 
   </mouse>
 
-  <!--
-    =========================================================================
-    DaVinci RESOLVE OPENS AS A NORMAL WINDOW. Added 2026-09-08, rewritten the
-    same day after the bench.
-    =========================================================================
-    WHAT THIS RULE USED TO DO, AND WHY IT WAS WRONG. It ran FitToOutput and
-    then `Maximize direction="both"`, so Resolve opened filling the screen.
-    Royce ran it and reported two things:
+  <!-- Resolve's main editor asks for no frame and can restore a maximized
+       state of its own. On the bench this left no usable title bar for moving
+       or restoring the window. Give only the project editor our normal frame
+       and restore it once when it appears. The class, normal-window type and
+       project-title pattern together exclude the splash and dialogs.
 
-      * "The window cannot be moved or resized." Correct, and unavoidable
-        with that rule: a maximised window in labwc is pinned where it is
-        until somebody un-maximises it. He did not ask for a maximised
-        window; he asked for one that fits.
-      * "The loading splash opened top-left, not centred." Also this rule.
-        The splash is a window of Resolve's with the same class, so the rule
-        caught it too, and a Maximize on a fixed-size splash moves it to the
-        maximised geometry's corner — the top left — without resizing it.
-
-    ROYCE'S CALL: a NORMAL window. Fits the screen, opens in the middle,
-    and can be moved and resized like anything else.
-
-    WHAT IS LEFT, AND WHAT REPLACED THE REST:
-
-      FitToOutput   KEPT. If Resolve asks for a window bigger than the screen
-                    it lands on, shrink it to the screen. Nothing else is
-                    touched, the window stays movable and resizable, and it
-                    is what makes "never larger than the screen" true —
-                    Resolve remembers a size from whatever machine or monitor
-                    it last ran on, and on a 4K screen that has put its close
-                    button off the display.
-      Maximize      GONE.
-      centring      NOT A LINE IN THIS RULE, because labwc 0.20.2 has no
-                    action that centres a window. The complete list of
-                    actions in the shipped binary was read on 2026-09-08 and
-                    there is no `Center` in it (ask for one and labwc says
-                    "Invalid action: Center"). The only lever labwc gives is
-                    the GLOBAL `<placement><policy>center</policy>` near the
-                    top of this file, which now centres every new window —
-                    which is the Mac behaviour anyway. So Resolve, and its
-                    splash, both open in the middle.
-
-    It runs ONCE, when the window first appears (labwc has exactly one
-    window-rule event, "on first map" — include/window-rules.h in labwc
-    0.20.2). Nothing is imposed on Resolve afterwards.
-
-    HOW THE MATCH WORKS. `identifier` is the app_id for a Wayland window and
-    the WM_CLASS for an X11 one (labwc-config(5), 0.20.2). Resolve is an X11
-    program — it has no Wayland version on any Linux — and the class it
-    declares is `resolve`, which is also the name Blackmagic's own desktop
-    entry puts in StartupWMClass and the name the Aquarius Keys rules use for
-    it. Matching is case-insensitive and understands `*` and `?`; this rule
-    uses neither, so it matches Resolve and nothing else.
-
-    ABOUT THE SPLASH, SAID PLAINLY. It is no longer treated differently, and
-    it does not need to be: FitToOutput does nothing at all to a window that
-    already fits, and the splash is small. If it ever DOES need its own rule,
-    labwc 0.20.2 can match on the window's title as well as its class —
-    `<windowRule identifier="resolve" title="DaVinci Resolve Studio">` — and
-    that was confirmed by experiment on 2026-09-08, not read in a manual: a
-    rule matching on title alone fired on the window with that title and on
-    no other. What it could not be confirmed against is Resolve's splash
-    itself, because nobody has written down what its title actually is. If
-    somebody needs it, `labwc -d` prints `[map] identifier=…, title=…` for
-    every window as it appears.
-
-    IF THE BENCH EVER SEES RESOLVE GROW BACK OUT of the screen after it has
-    opened, the stronger lever is the `ignoreConfigureRequest="yes"` property
-    on this same rule, which stops an X11 window moving and resizing itself
-    at all. It is deliberately NOT set here, because it would also take away
-    the legitimate times Resolve resizes its own window, and the mild fault
-    is better than the heavy-handed fix until somebody has seen the fault.
-  -->
+       No fixed size and no ignoreConfigureRequest: Resolve may still resize
+       itself, and the user may maximize it afterwards. FitToOutput also keeps
+       older saved geometry from putting the controls beyond the screen. -->
   <windowRules>
     <windowRule identifier="resolve">
+      <action name="FitToOutput" />
+    </windowRule>
+    <windowRule identifier="resolve" title="DaVinci Resolve* - *" type="normal" serverDecoration="yes">
+      <action name="UnMaximize" direction="both" />
       <action name="FitToOutput" />
     </windowRule>
   </windowRules>

@@ -1,0 +1,187 @@
+#!/usr/bin/python3
+"""Remember only Resolve's normal project window; leave dialogs/maximize alone."""
+import argparse
+import fcntl
+import json
+import os
+from pathlib import Path
+import time
+
+
+def fit(rect, areas):
+    """Keep the entire client inside the nearest remaining screen, with frame room."""
+    x, y, w, h = rect
+    def overlap(a):
+        ax, ay, aw, ah = a
+        return max(0, min(x+w, ax+aw)-max(x, ax))*max(0, min(y+h, ay+ah)-max(y, ay))
+    area = max(areas, key=lambda a: (overlap(a), -((x-a[0])**2+(y-a[1])**2)))
+    ax, ay, aw, ah = area
+    w, h = min(max(320, w), max(1, aw-32)), min(max(240, h), max(1, ah-64))
+    return [max(ax+16, min(x, ax+aw-w-16)), max(ay+40, min(y, ay+ah-h-24)), w, h]
+
+
+def saved(path):
+    try:
+        rect = json.loads(path.read_text())
+        if isinstance(rect, list) and len(rect) == 4 and all(type(v) is int and abs(v) < 100000 for v in rect) and min(rect[2:]) > 0:
+            return rect
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def store(path, rect):
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    tmp = path.with_suffix('.tmp')
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as stream:
+        json.dump(rect, stream)
+    tmp.replace(path)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--reset', action='store_true')
+    parser.add_argument('--request-reset', action='store_true', help='Save the request and return immediately')
+    args = parser.parse_args()
+    directory = Path(os.environ.get('XDG_STATE_HOME', str(Path.home()/'.local/state'))) / 'aquarius'
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path = directory/'resolve-window.json'
+    marker = directory/'resolve-window-reset'
+    if args.reset or args.request_reset:
+        path.unlink(missing_ok=True)
+        marker.touch(mode=0o600)
+    if args.request_reset:
+        return
+    if not os.environ.get('DISPLAY'):
+        return
+    lock = (directory/'resolve-window.lock').open('w')
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return  # Existing watcher will see the reset request.
+    from Xlib import X, display, error, protocol
+    from Xlib.ext import randr
+    d = display.Display()
+    d.set_error_handler(lambda *_: None)  # A window can close between two reads.
+    root = d.screen().root
+    atom = d.intern_atom
+    def prop(win, name):
+        p = win.get_full_property(atom(name), X.AnyPropertyType)
+        return p.value if p is not None else []
+    def areas():
+        result = []
+        try:
+            for m in randr.get_monitors(root, True).monitors:
+                result.append([m.x, m.y, m.width_in_pixels, m.height_in_pixels])
+        except (error.XError, AttributeError):
+            pass
+        if not result:
+            g = root.get_geometry()
+            result = [[0, 0, g.width, g.height]]
+        # The global work area reserves panels/docks where the WM publishes it.
+        work = list(prop(root, '_NET_WORKAREA'))
+        desktop = list(prop(root, '_NET_CURRENT_DESKTOP'))
+        offset = 4 * (int(desktop[0]) if desktop else 0)
+        if len(work) >= offset+4:
+            wx, wy, ww, wh = work[offset:offset+4]
+            clipped = []
+            for x, y, w, h in result:
+                left, top = max(x, wx), max(y, wy)
+                right, bottom = min(x+w, wx+ww), min(y+h, wy+wh)
+                if right > left and bottom > top:
+                    clipped.append([left, top, right-left, bottom-top])
+            if clipped:
+                result = clipped
+        return result
+    def geometry(win):
+        g = win.get_geometry()
+        p = root.translate_coords(win, 0, 0)
+        return [p.x, p.y, g.width, g.height]
+    def send(win, name, values):
+        event = protocol.event.ClientMessage(window=win, client_type=atom(name), data=(32, values))
+        root.send_event(event, event_mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask)
+        d.flush()
+    def move(win, rect, reset=False):
+        if reset:
+            send(win, '_NET_WM_STATE', [0, atom('_NET_WM_STATE_MAXIMIZED_VERT'), atom('_NET_WM_STATE_MAXIMIZED_HORZ'), 1, 0])
+            send(win, '_NET_WM_STATE', [0, atom('_NET_WM_STATE_FULLSCREEN'), 0, 1, 0])
+        win.configure(x=rect[0], y=rect[1], width=rect[2], height=rect[3])
+        d.flush()
+    seen, previous_areas = {}, None
+    initial = {}
+    pending_recovery = set()
+    deadline = time.monotonic()+180
+    found_once = False
+    while time.monotonic() < deadline:
+        screen_areas = areas()
+        changed = previous_areas is not None and previous_areas != screen_areas
+        reset = marker.exists()
+        alive = set()
+        for xid in prop(root, '_NET_CLIENT_LIST'):
+            win = d.create_resource_object('window', int(xid))
+            try:
+                cls = win.get_wm_class() or ()
+                title = bytes(prop(win, '_NET_WM_NAME')).decode('utf-8', 'replace')
+                types = list(prop(win, '_NET_WM_WINDOW_TYPE'))
+                if 'resolve' not in cls or not title.startswith('DaVinci Resolve') or ' - ' not in title or atom('_NET_WM_WINDOW_TYPE_NORMAL') not in types or win.get_wm_transient_for():
+                    continue
+                alive.add(int(xid))
+                if changed:
+                    pending_recovery.add(int(xid))
+                found_once = True
+                deadline = time.monotonic()+10
+                states = list(prop(win, '_NET_WM_STATE'))
+                special = any(atom(n) in states for n in ('_NET_WM_STATE_MAXIMIZED_VERT', '_NET_WM_STATE_MAXIMIZED_HORZ', '_NET_WM_STATE_FULLSCREEN', '_NET_WM_STATE_HIDDEN'))
+                first, restored, last = seen.get(int(xid), (time.monotonic(), False, None))
+                rect = geometry(win)
+                if reset:
+                    a = screen_areas[0]
+                    target = fit([a[0]+80, a[1]+80, int(a[2]*.8), int(a[3]*.8)], screen_areas)
+                    move(win, target, True)
+                    seen[int(xid)] = (first, True, None)
+                    continue
+                # Sample the first normal geometry after the map settles. If the
+                # person moves it during startup, their placement wins.
+                if not special and time.monotonic()-first >= 1:
+                    initial.setdefault(int(xid), rect)
+                if time.monotonic()-first < 3:
+                    seen[int(xid)] = (first, restored, last)
+                    continue
+                if not restored:
+                    # Never undo a deliberate maximize. The compositor already
+                    # handles Resolve's forced initial maximize when it maps.
+                    target = saved(path)
+                    if target and not special and initial.get(int(xid), rect) == rect:
+                        move(win, fit(target, screen_areas))
+                    seen[int(xid)] = (first, True, None)
+                    continue
+                if not special:
+                    target = fit(rect, screen_areas)
+                    if int(xid) in pending_recovery:
+                        pending_recovery.discard(int(xid))
+                        if target != rect:
+                            move(win, target)
+                    elif rect == last and saved(path) != rect:
+                        try:
+                            store(path, rect)  # Stable for a full tick, not mid-drag.
+                        except OSError:
+                            pass  # A full/read-only home must not stop recovery.
+                    seen[int(xid)] = (first, True, rect)
+            except (error.XError, ValueError, TypeError):
+                continue
+        if reset and alive:
+            marker.unlink(missing_ok=True)
+        seen = {k:v for k,v in seen.items() if k in alive}
+        initial = {k:v for k,v in initial.items() if k in alive}
+        pending_recovery.intersection_update(alive)
+        previous_areas = screen_areas
+        if found_once and not alive:
+            # Project switching can replace the main window; allow a short gap.
+            pass
+        time.sleep(1)
+    d.close()
+
+
+if __name__ == '__main__':
+    main()

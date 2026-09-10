@@ -1,0 +1,18 @@
+#!/bin/sh
+# Resolve sometimes calls /usr/bin/xdg-open by its full name. This small bridge
+# lives at that name INSIDE its container and opens links/files on the desktop.
+# distrobox-host-exec uses the host session environment: Resolve's private Qt
+# libraries and hard-coded DISPLAY=:0.0 must not follow the browser outside.
+# Never print a URL: a sign-in link can contain a temporary authentication code.
+if [ ! -e /run/.containerenv ] && [ ! -e /.dockerenv ]; then
+    printf '%s\n' 'The Resolve browser bridge must run inside its environment.' >&2
+    exit 1
+fi
+if /usr/bin/distrobox-host-exec /usr/bin/xdg-open "$@" >/dev/null 2>&1; then
+    exit 0
+fi
+printf '%s\n' 'Resolve could not open the desktop browser or file handler.' >&2
+/usr/bin/distrobox-host-exec /usr/bin/notify-send --app-name='DaVinci Resolve' \
+    --urgency=normal -- 'Could not open the browser or file' \
+    'Check your default browser in Settings, then try the link again.' >/dev/null 2>&1 || :
+exit 1

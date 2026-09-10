@@ -59,7 +59,9 @@
 # What CAN be done is to tell the toolkit inside the application. Resolve is
 # built on Qt 5, which reads its scale out of the environment, so the launcher
 # reads the size your desktop is set to and passes it in. That is the whole
-# feature: Resolve opens at the size everything else is.
+# feature: Resolve follows the desktop, with a 125% minimum when every known
+# enabled screen is at least 3200x1800 and is running at 100%. This grows the
+# whole interface; it does not alter a clip's proportions or its export size.
 #
 # ⚠️ WHICH VARIABLE — this is the part that is a judgement, so it is written
 #    down rather than assumed:
@@ -213,7 +215,7 @@ conf_value() { # conf_value <key>
 session_scale() {
     local n=""
     if [ -x /usr/libexec/aquarius-display-scale ]; then
-        n="$(/usr/libexec/aquarius-display-scale --effective-scale 2> /dev/null)"
+        n="$(/usr/libexec/aquarius-display-scale --resolve-scale 2> /dev/null)"
     fi
     case "${n}" in
         '' | *[!0-9.]* | *.*.*) printf '1' ;;
@@ -458,6 +460,13 @@ resolve_work_folder() { # resolve_work_folder <program inside the container>
 
 WORK_FOLDER="$(resolve_work_folder "${RUN_ARGS[0]}")"
 
+# Remember the normal project window on the host. A singleton lock keeps repeated
+# launches from starting competing watchers; RAW tools and --report never do this.
+if [ "${RUN_ARGS[0]}" = /opt/resolve/bin/resolve ] && [ -x /usr/libexec/aquarius-resolve-window ]; then
+    /usr/libexec/aquarius-resolve-window > /dev/null 2>&1 &
+fi
+
+
 # `distrobox enter --additional-flags` takes ONE string, so the flags are joined
 # into one. None of these values can contain a space in practice — a cursor
 # theme name is a folder name — and joining is what distrobox's own documented
@@ -497,5 +506,14 @@ exec distrobox enter --name "${CONTAINER}" --additional-flags "${EXTRA}" \
         cd "$1" 2> /dev/null || printf "%s\n" \
             "aquarius-resolve: $1 is not in this container; starting from $PWD instead." >&2
         shift
+        # Repair the absolute opener Resolve uses for Login via web. This
+        # runs inside the mutable container; a failure must not stop editing.
+        if ! /bin/sh /run/host/usr/libexec/aquarius-resolve-browser/setup; then
+            printf "%s\n" "Resolve browser integration could not be prepared." >&2
+            /usr/bin/distrobox-host-exec /usr/bin/notify-send --app-name="DaVinci Resolve" \
+                -- "Browser integration needs attention" \
+                "Resolve can still open. Restart it after the OS update to retry browser setup." \
+                >/dev/null 2>&1 || :
+        fi
         exec /usr/bin/aquarius-resolve-run "$@"
     ' sh "${WORK_FOLDER}" "${RUN_ARGS[@]}"

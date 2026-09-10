@@ -99,9 +99,9 @@ def check_window(root):
     print("PASS: real Installer window mapped all four pages; progress, failure and success work")
 
 
-def main():
+def main(check=check_window):
     if len(sys.argv) > 1 and sys.argv[1] == "--worker":
-        check_window(Path(sys.argv[2]))
+        check(Path(sys.argv[2]))
         return
     root = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else (
         Path(__file__).resolve().parent.parent / "system_files")
@@ -146,7 +146,7 @@ def main():
                 env["WAYLAND_DISPLAY"] = sockets[0].name
                 subprocess.run(["dbus-run-session", "--config-file", str(bus_config),
                                 "--", sys.executable,
-                                str(Path(__file__).resolve()), "--worker", str(root)],
+                                str(Path(sys.argv[0]).resolve()), "--worker", str(root)],
                                env=env, check=True, timeout=30)
             finally:
                 compositor.terminate()

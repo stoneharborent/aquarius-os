@@ -415,16 +415,29 @@ for type in application/x-rpm \
     fi
 done
 
-# And the two we deliberately do NOT take over. A .zip is far more often a
-# folder of footage than an app, and a .sh is a text file people edit; taking
-# either would break a normal day's work to fix a rare one. Dropping either ON
-# the window still works, because the window looks inside the file itself.
-#
-# ⚠️ THE ENTRY MUST NOT EVEN LIST THEM. Until 2026-09-10 it listed zip and the
-# tar types as "things I can open", meaning to appear under Open With. But the
-# desktop makes the ONLY app that lists a type its default for that type, and
-# on this image nothing else lists application/zip — so a double-click on a zip
-# of footage opened the installer. Not listing them is the only reliable "no".
+# ZIP double-click is background extraction, with Archive Manager still
+# available under Open With. Inspect the desktop's actual answer, not our file.
+aq_installed file-roller libnotify
+test -r /usr/share/dbus-1/services/org.gnome.ArchiveManager1.service
+for type in application/zip application/x-zip application/x-zip-compressed; do
+    answer="$(default_app "${type}")"
+    if [ "${answer}" = "aquarius-extract-zip.desktop" ]; then
+        ok "${type} extracts beside the original ZIP"
+    else
+        bad "${type} opens with '${answer:-nothing}' instead of ZIP extraction"
+    fi
+done
+if [ -x /usr/libexec/aquarius-extract-zip ]; then
+    ok "ZIP extraction helper is executable"
+else
+    bad "ZIP extraction helper is missing or not executable"
+fi
+python3 /ctx/tests/test-extract-zip.py
+
+# The Installer must not take over ZIPs or shell scripts. ZIPs now extract;
+# shell scripts retain their text editor. Dropping an archive onto Installer
+# still lets it inspect a supported installer inside, without claiming archives
+# as the Installer's own file types.
 for type in application/zip application/x-shellscript; do
     answer="$(default_app "${type}")"
     if [ "${answer}" = "aquarius-installer.desktop" ]; then

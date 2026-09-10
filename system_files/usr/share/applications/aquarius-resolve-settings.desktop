@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=DaVinci Resolve Display Settings
+Comment=Change interface size or bring the Resolve window back onto your screen
+Exec=/usr/libexec/aquarius-resolve-settings
+Icon=video-display-symbolic
+Terminal=false
+Categories=Settings;
+Keywords=DaVinci;Resolve;scale;window;display;

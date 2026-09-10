@@ -189,7 +189,7 @@ fi
 # for them by name and that change fails here, in the step whose name says why
 # they matter, instead of on somebody's desk.
 say "DaVinci Resolve — what the installer window is built out of"
-aq_dnf install python3-gobject gtk4 libadwaita
+aq_dnf install python3-gobject python3-xlib gtk4 libadwaita
 aq_installed python3-gobject gtk4 libadwaita
 
 # The import is the real test. A package can install perfectly and still leave
@@ -209,7 +209,9 @@ say "DaVinci Resolve — the files"
 
 for f in /usr/libexec/aquarius-resolve-install \
     /usr/libexec/aquarius-resolve-launch \
-    /usr/libexec/aquarius-resolve-update-notify; do
+    /usr/libexec/aquarius-resolve-update-notify \
+    /usr/libexec/aquarius-resolve-browser/xdg-open \
+    /usr/libexec/aquarius-resolve-browser/setup; do
     if [ ! -f "${f}" ]; then
         bad "${f} is missing"
         continue
@@ -231,6 +233,16 @@ for f in /usr/libexec/aquarius-resolve-install \
         bad "${f} has a syntax error"
     fi
 done
+
+# Check the real files shipped in this image. No browser/account opens here.
+if python3 /ctx/tests/test-resolve-browser.py /; then
+    ok "Resolve browser handoff preserves links, private errors and the original opener"
+else
+    bad "Resolve browser handoff or existing-container migration failed"
+fi
+aq_file_has /usr/libexec/aquarius-resolve-launch \
+    '/run/host/usr/libexec/aquarius-resolve-browser/setup' \
+    "existing Resolve installations receive the browser bridge at launch"
 
 # ------------------------------------------------------------------------------
 # The shared window pieces
@@ -338,10 +350,16 @@ for AQ_GUI in /usr/libexec/aquarius-resolve-installer \
     # it is a page a person can be left looking at, and it gets the mark too.
     aq_file_has "${AQ_GUI}" 'mark, self\.working_title, self\.working_blurb = aquarius_ui\.hero\(' \
         "and so does the page a failed or cancelled run is left on"
-    # The glyph says how it went. On the last page it starts as a tick; on the
-    # working page it is hidden until there is an outcome to report.
-    aq_file_has "${AQ_GUI}" 'aquarius_ui\.set_status_glyph\(self\.done_status, ok=True\)' \
-        "${AQ_NAME} puts a tick beside the heading when it worked"
+    # Installation finishes with Resolve's exported logo. The other two
+    # windows still use a tick; all three keep their working-page warning.
+    # The real GTK completion test also checks icon loading and launch failure.
+    if [ "${AQ_NAME}" = aquarius-resolve-installer ]; then
+        aq_file_has "${AQ_GUI}" 'self\._refresh_done_logo\(\)' \
+            "the installer refreshes Resolve's logo after installation"
+    else
+        aq_file_has "${AQ_GUI}" 'aquarius_ui\.set_status_glyph\(self\.done_status, ok=True\)' \
+            "${AQ_NAME} puts a tick beside the heading when it worked"
+    fi
     aq_file_has "${AQ_GUI}" 'aquarius_ui\.set_status_glyph\(self\.working_status, ok=False\)' \
         "and a warning beside it when it did not"
     aq_file_has "${AQ_GUI}" 'aquarius_ui\.heading_row\(' \
@@ -715,7 +733,7 @@ aq_file_has "${AQ_LAUNCH}" 'QT_SCALE_FACTOR=\$\{SCALE\}' \
     "the session's scale is handed to Resolve"
 aq_file_has "${AQ_LAUNCH}" 'QT_DEVICE_PIXEL_RATIO=\$\{SCALE\}' \
     "and the other Qt 5 variable is reachable for the bench to compare"
-aq_file_has "${AQ_LAUNCH}" 'aquarius-display-scale --effective-scale' \
+aq_file_has "${AQ_LAUNCH}" 'aquarius-display-scale --resolve-scale' \
     "the scale is asked of the same helper 'aq display' asks"
 aq_file_has "${AQ_LAUNCH}" 'XCURSOR_THEME=' "your cursor theme is carried in"
 aq_file_has "${AQ_LAUNCH}" 'XCURSOR_SIZE=' "so is its size"
@@ -765,13 +783,13 @@ aq_file_has /usr/libexec/aquarius-resolve-install 'conf_fingerprint' \
 # The helper has to actually answer, with a number, on a machine with no screen
 # at all — which is what a build container is, and what running Resolve from
 # GNOME or over SSH looks like too.
-AQ_EFFECTIVE="$(/usr/libexec/aquarius-display-scale --effective-scale 2>&1 || true)"
-echo "  --effective-scale on this machine (no screens at all): '${AQ_EFFECTIVE}'"
+AQ_EFFECTIVE="$(/usr/libexec/aquarius-display-scale --resolve-scale 2>&1 || true)"
+echo "  --resolve-scale on this machine (no screens at all): '${AQ_EFFECTIVE}'"
 case "${AQ_EFFECTIVE}" in
     '' | *[!0-9.]*)
-        bad "'--effective-scale' did not print a plain number, so the launcher would have nothing to hand Resolve"
+        bad "'--resolve-scale' did not print a plain number, so the launcher would have nothing to hand Resolve"
         ;;
-    *) ok "'--effective-scale' answers with a number even where there are no screens" ;;
+    *) ok "'--resolve-scale' answers with a number even where there are no screens" ;;
 esac
 
 # ------------------------------------------------------------------------------
@@ -1172,11 +1190,32 @@ aq_file_has "${AQ_LAUNCH}" 'conf_value file_dialogs' \
     "and ~/.config/aquarius/resolve.conf can override the answer either way, for the bench"
 aq_file_has /usr/bin/aq 'file dialogs: ' \
     "'aq resolve status' reads the same answer off the same launcher"
-# The one that would silently undo all of it: 'aq resolve scale' rewrites
-# resolve.conf, and a key missing from the list it carries across is a key
-# deleted the next time somebody changes the size.
-aq_file_has /usr/bin/aq 'qt_variable\|file_dialogs' \
-    "'aq resolve scale' carries the file-picker setting across when it rewrites resolve.conf"
+# Exercise the writer itself: changing size must preserve every other option,
+# including settings introduced by a newer version. Use an isolated config.
+if python3 - <<'AQ_CONFIG_CHECK'
+import os
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+with tempfile.TemporaryDirectory(prefix="aq-resolve-config-") as temporary:
+    config = Path(temporary) / "aquarius" / "resolve.conf"
+    config.parent.mkdir()
+    kept = "# keep this note\nqt_variable=QT_SCALE_FACTOR\nfile_dialogs=own\nfuture_option=yes\n"
+    config.write_text(kept + "scale=1.5\n scale = 2\n")
+    env = dict(os.environ, XDG_CONFIG_HOME=temporary)
+    for value, expected in (("1.25", ["1.25"]), ("auto", [])):
+        subprocess.run(["/usr/bin/aq", "resolve", "scale", value], env=env,
+                       check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        result = config.read_text()
+        assert result.startswith(kept), "changing scale discarded unrelated settings"
+        assert re.findall(r"^\s*scale\s*=\s*(.*)$", result, re.M) == expected
+AQ_CONFIG_CHECK
+then
+    ok "'aq resolve scale' preserves comments, file-picker and unknown settings"
+else
+    bad "'aq resolve scale' lost settings or failed to replace the scale"
+fi
 
 # And the front door for changing it by hand.
 if /usr/bin/aq resolve scale > /tmp/aq-resolve-scale.txt 2>&1; then
@@ -1392,5 +1431,19 @@ echo "  The Rocky Linux runtime is NOT baked into this image."
 echo "  It is about a gigabyte and it is fetched the first time somebody sets"
 echo "  Resolve up. Baking it in would make every AquariusOS download bigger"
 echo "  for a feature not everybody uses."
+
+
+# Display preferences and the host-side normal-window memory helper.
+aq_installed python3-xlib
+if python3 -c 'from Xlib import display; from Xlib.ext import randr'; then
+    ok 'Resolve window memory can read XWayland screens'
+else
+    bad 'Resolve window memory cannot load its XWayland library'
+fi
+for helper in aquarius-resolve-settings aquarius-resolve-window; do
+    test -x "/usr/libexec/${helper}"
+    python3 -c 'import ast, sys; ast.parse(open(sys.argv[1]).read())' "/usr/libexec/${helper}"
+done
+desktop-file-validate /usr/share/applications/aquarius-resolve-settings.desktop
 
 aq_finish "DaVinci Resolve"
