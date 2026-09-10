@@ -924,6 +924,286 @@ def test_names(core):
     check(core.human_size(2 * 1000 ** 3) == "2.0 GB", core.human_size(2 * 1000 ** 3))
 
 
+
+def test_install_transactions(core, work):
+    """A broken update must leave the app the person can already open intact."""
+    import contextlib
+    import io
+    import multiprocessing
+    from unittest import mock
+
+    heading("failed replacements, shared folders and concurrent installers")
+
+    def archive(name, app="transaction", body="old", runnable=True):
+        path = os.path.join(work, name + ".tar")
+        members = {
+            "app.desktop": ("[Desktop Entry]\nType=Application\nName=Transaction\n"
+                            "Icon=%s\nExec=/AppRun\n" % app, 0o644),
+            "icon.svg": ('<svg xmlns="http://www.w3.org/2000/svg"/>', 0o644),
+        }
+        # Use an icon theme to prove failed installs preserve the old icon too.
+        members["usr/share/icons/hicolor/scalable/apps/%s.svg" % app] = (
+            '<svg xmlns="http://www.w3.org/2000/svg"><title>%s</title></svg>' % body,
+            0o644)
+        members["AppRun" if runnable else "README"] = (
+            "#!/bin/sh\nprintf '%s\\n'\n" % body, 0o755 if runnable else 0o644)
+        with tarfile.open(path, "w") as tar:
+            for member, (text, mode) in members.items():
+                data = text.encode()
+                info = tarfile.TarInfo(member)
+                info.size, info.mode = len(data), mode
+                tar.addfile(info, io.BytesIO(data))
+        return path
+
+    old = archive("transaction-old")
+    new = archive("transaction-new", body="new")
+    broken = archive("transaction-broken", runnable=False)
+
+    @contextlib.contextmanager
+    def isolated():
+        with tempfile.TemporaryDirectory(prefix="aq-transaction-home-") as folder:
+            # Never replace the test runner's real HOME.
+            with mock.patch.object(core, "home", return_value=folder), \
+                    mock.patch.object(core, "REHEARSAL", True):
+                yield folder
+
+    def contents(folder):
+        result = {}
+        for base, dirs, files in os.walk(folder):
+            for name in dirs + files:
+                path = os.path.join(base, name)
+                key = os.path.relpath(path, folder)
+                if name == ".install.lock":
+                    continue
+                if os.path.islink(path):
+                    result[key] = ("link", os.readlink(path))
+                elif os.path.isfile(path):
+                    with open(path, "rb") as handle:
+                        result[key] = (os.stat(path).st_mode, handle.read())
+        return result
+
+    for installed in (False, True):
+        for failure in ("no-program", "entry-write", "record-write", "icon-copy",
+                        "menu-publish", "record-publish", "link-publish"):
+            with isolated() as folder:
+                if installed:
+                    initial = core.install(core.sort_path(old))
+                    if not check(initial.ok, "working app exists before " + failure):
+                        continue
+                before = contents(folder)
+                with contextlib.ExitStack() as patches:
+                    if failure == "entry-write":
+                        original = core.write_entry
+
+                        def fail_entry(*args, **kwargs):
+                            original(*args, **kwargs)
+                            raise OSError("injected menu write failure")
+                        patches.enter_context(mock.patch.object(core, "write_entry", fail_entry))
+                    elif failure == "record-write":
+                        original = core.Record.save
+
+                        def fail_record(*args, **kwargs):
+                            original(*args, **kwargs)
+                            raise OSError("injected registry write failure")
+                        patches.enter_context(mock.patch.object(core.Record, "save", fail_record))
+                    elif failure == "icon-copy":
+                        original = core.install_icon
+
+                        def fail_icon(*args, **kwargs):
+                            original(*args, **kwargs)
+                            raise OSError("injected icon copy failure")
+                        patches.enter_context(mock.patch.object(core, "install_icon", fail_icon))
+                    elif failure.endswith("-publish"):
+                        destinations = {
+                            "menu-publish": os.path.join(core.desktop_dir(), "transaction.desktop"),
+                            "record-publish": core.Record("transaction").path(),
+                            "link-publish": os.path.join(core.app_root(), "transaction"),
+                        }
+                        original = core.os.replace
+                        fired = [False]
+
+                        def fail_publish(source, destination):
+                            if destination == destinations[failure] and not fired[0]:
+                                fired[0] = True
+                                raise OSError("injected publication failure")
+                            return original(source, destination)
+                        patches.enter_context(mock.patch.object(core.os, "replace", fail_publish))
+                    result = core.install(core.sort_path(broken if failure == "no-program" else new))
+                check(not result.ok, "%s reports failure (%s install)" %
+                      (failure, "replacement" if installed else "first"))
+                check(contents(folder) == before,
+                      "%s preserves all existing files, icons and links" % failure)
+                if installed:
+                    program = os.path.join(initial.record.install_path, "AppRun")
+                    check(subprocess.check_output([program], text=True).strip() == "old",
+                          "the previous executable still runs after " + failure)
+
+    with isolated() as folder:
+        core.install(core.sort_path(old))
+        before = contents(folder)
+        verdict = core.sort_path(broken)
+        verdict.version = "2"
+        check(not core.install(verdict).ok and contents(folder) == before,
+              "a broken newer version also preserves the working installation")
+
+    with isolated():
+        core.install(core.sort_path(old))
+        with mock.patch.object(core, "tidy_old_versions", side_effect=OSError("cleanup failed")):
+            result = core.install(core.sort_path(new))
+        check(result.ok and subprocess.check_output(
+              [os.path.join(result.record.install_path, "AppRun")], text=True).strip() == "new",
+              "cleanup failure does not report a committed installation as failed")
+
+    with isolated():
+        initial = core.install(core.sort_path(old))
+        original = core.os.replace
+        failed = [False]
+
+        def broken_rollback(source, destination):
+            if destination == os.path.join(core.app_root(), "transaction") and not failed[0]:
+                failed[0] = True
+                raise OSError("publication failed")
+            if failed[0] and destination == core.Record("transaction").path():
+                raise OSError("the filesystem also refused rollback")
+            return original(source, destination)
+        with mock.patch.object(core.os, "replace", broken_rollback):
+            result = core.install(core.sort_path(new))
+        menu = core.read_entry(initial.record.entry_path)
+        check(not result.ok and os.path.isfile(menu["TryExec"]),
+              "if rollback itself fails, the visible menu's payload is retained")
+        check(os.path.isfile(os.path.join(initial.record.install_path, "AppRun")),
+              "a filesystem refusing rollback still cannot overwrite the old executable")
+
+    with isolated():
+        first = core.install(core.sort_path(old))
+        second = core.install(core.sort_path(new))
+        check(first.ok and second.ok and first.record.version == second.record.version,
+              "replacing the same version succeeds")
+        check(second.ok and subprocess.check_output(
+              [os.path.join(second.record.install_path, "AppRun")], text=True).strip() == "new",
+              "the replacement launches the new executable")
+        check(not os.path.exists(first.record.install_path),
+              "the old generation is removed only after a successful replacement")
+
+    with isolated() as folder:
+        initial = core.install(core.sort_path(old))
+        before = contents(folder)
+        reserved = archive("reserved", app="versions")
+        check(not core.install(core.sort_path(reserved)).ok,
+              "the shared versions folder cannot become an app")
+        check(contents(folder) == before,
+              "a reserved name preserves every installed app")
+        for unsafe in ("versions", "../transaction", "/tmp/transaction"):
+            check(not core.install(core.sort_path(new), update_of=unsafe).ok,
+                  "unsafe explicit update id is refused: " + unsafe)
+            check(not core.remove(unsafe).ok,
+                  "unsafe removal id is refused: " + unsafe)
+        check(contents(folder) == before, "unsafe ids do not change files")
+
+    for collision_type in ("folder", "file"):
+        with isolated() as folder:
+            collision = os.path.join(core.app_root(), "transaction")
+            os.makedirs(os.path.dirname(collision), exist_ok=True)
+            if collision_type == "folder":
+                os.makedirs(collision)
+                sentinel = os.path.join(collision, "keep")
+            else:
+                sentinel = collision
+            with open(sentinel, "w") as handle:
+                handle.write("unrelated")
+            before = contents(folder)
+            check(not core.install(core.sort_path(new)).ok,
+                  "an existing %s at the shortcut is preserved" % collision_type)
+            check(contents(folder) == before, "the shortcut collision loses no content")
+
+    with isolated():
+        app = core.install(core.sort_path(archive("shared-data", app="applications")))
+        sentinel = os.path.join(core.desktop_dir(), "unrelated.desktop")
+        with open(sentinel, "w") as handle:
+            handle.write("unrelated")
+        # Also cover notes written by the older, unsafe guesser.
+        app.record.data_dirs += "," + core.desktop_dir()
+        app.record.save()
+        check(core.remove(app.record.id, with_data=True).ok,
+              "an app named applications can be removed")
+        check(os.path.isfile(sentinel), "removal never guesses shared menus are app settings")
+
+    with isolated() as folder:
+        app = core.install(core.sort_path(old))
+        documents = os.path.join(folder, "Documents")
+        os.makedirs(documents)
+        sentinel = os.path.join(documents, "film")
+        with open(sentinel, "w") as handle:
+            handle.write("mine")
+        app.record.install_path = documents
+        app.record.save()
+        before = contents(folder)
+        check(not core.remove(app.record.id, with_data=True).ok,
+              "an out-of-store removal path is refused")
+        check(contents(folder) == before, "a damaged record cannot delete documents")
+
+    # Two actual processes, as when the window and the terminal act together.
+    # Pause the first after unpacking, then prove the second cannot finish until
+    # the first releases the transaction. The final executable is read back.
+    for action in ("install", "remove"):
+        with isolated():
+            initial = core.install(core.sort_path(old))
+            ctx = multiprocessing.get_context("fork")
+            paused, release, started, done = [ctx.Event() for _ in range(4)]
+            results = ctx.Queue()
+
+            def first_process():
+                original = core.write_entry
+
+                def pause_entry(*args, **kwargs):
+                    paused.set()
+                    if not release.wait(5):
+                        raise OSError("test never released the first installer")
+                    return original(*args, **kwargs)
+                core.write_entry = pause_entry
+                result = core.install(core.sort_path(new))
+                results.put(("first", result.ok))
+
+            def second_process():
+                started.set()
+                result = (core.install(core.sort_path(old)) if action == "install"
+                          else core.remove("transaction"))
+                results.put(("second", result.ok))
+                done.set()
+
+            first = ctx.Process(target=first_process)
+            second = ctx.Process(target=second_process)
+            first.start()
+            try:
+                check(paused.wait(3), "the first installer reaches preparation")
+                second.start()
+                check(started.wait(3) and not done.wait(0.2),
+                      "a concurrent %s waits for the active installation" % action)
+            finally:
+                release.set()
+                first.join(5)
+                if second.pid:
+                    second.join(5)
+                for process in (first, second):
+                    if process.pid and process.is_alive():
+                        process.terminate()
+                        process.join()
+            check(first.exitcode == 0 and second.exitcode == 0,
+                  "both concurrent processes finish normally")
+            reported = dict(results.get(timeout=2) for _ in range(2))
+            check(all(reported.values()), "both serialized operations succeed")
+            current = core.Record.load("transaction")
+            if action == "install":
+                check(subprocess.check_output([os.path.join(current.install_path, "AppRun")],
+                      text=True).strip() == "old", "the second installer wins without losing its files")
+                check(len(os.listdir(os.path.dirname(current.install_path))) == 1,
+                      "concurrent replacement leaves exactly one complete generation")
+            else:
+                check(not current.install_path and not os.path.lexists(
+                      os.path.join(core.app_root(), "transaction")),
+                      "the waiting removal removes the newly committed version")
+
+
 # ==============================================================================
 # Run them
 # ==============================================================================
@@ -946,6 +1226,7 @@ def main(argv):
         test_route_a(core, work)
         test_archive_routes(core, work)
         test_update_by_dropping(core, work)
+        test_install_transactions(core, work)
         test_escaping_archive(core, work)
         test_route_c_is_off(core, work)
         test_ldd_failure(core, work)

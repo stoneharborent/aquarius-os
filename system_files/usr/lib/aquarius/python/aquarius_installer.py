@@ -66,6 +66,8 @@
 
 import configparser
 import datetime
+import fcntl
+import functools
 import hashlib
 import os
 import re
@@ -950,6 +952,88 @@ def safe_name(text, fallback="app"):
     return text or fallback
 
 
+def valid_app_id(app_id):
+    # "versions" is the shared store, never an app's shortcut.
+    return bool(app_id and app_id != "versions" and safe_name(app_id) == app_id)
+
+
+def serial_home_change(function):
+    """The GUI can open twice; the CLI must wait its turn too."""
+    @functools.wraps(function)
+    def locked(*args, **kwargs):
+        if refuse_root():
+            return function(*args, **kwargs)
+        try:
+            os.makedirs(registry_dir(), exist_ok=True)
+            # Keep this file: deleting it lets a new caller bypass waiting callers.
+            with open(os.path.join(registry_dir(), ".install.lock"), "a") as handle:
+                fcntl.flock(handle, fcntl.LOCK_EX)
+                return function(*args, **kwargs)
+        except (OSError, ValueError) as exc:
+            progress = kwargs.get("progress") or Progress()
+            why = "Could not finish that change: %s" % exc
+            progress.fail(why)
+            return Result(False, why)
+    return locked
+
+
+class InstallFiles:
+    """Keep the previous menu, registry and shortcut until all three are ready.
+
+    Backups stay beside their files, so restoring one is a rename even when
+    the disk is full. Nothing overwrites the old executable or old icon.
+    This handles reported failures, not power loss between separate renames.
+    """
+    def __init__(self):
+        self.temporary = []
+        self.undo = []
+        self.committed = False
+
+    def stage(self, destination):
+        parent = os.path.dirname(destination)
+        os.makedirs(parent, exist_ok=True)
+        fd, path = tempfile.mkstemp(prefix=".aquarius-install-", dir=parent)
+        os.close(fd)
+        self.temporary.append(path)
+        return path
+
+    def replace(self, staged, destination):
+        backup = None
+        if os.path.lexists(destination):
+            if not (os.path.islink(destination) or os.path.isfile(destination)):
+                raise OSError("An existing folder blocks %s" % destination)
+            backup = self.stage(destination)
+            os.unlink(backup)
+            os.link(destination, backup, follow_symlinks=False)
+        self.undo.append((destination, backup))
+        os.replace(staged, destination)
+
+    def finish(self, progress):
+        if not self.committed:
+            for destination, backup in reversed(self.undo):
+                if backup:
+                    os.replace(backup, destination)
+                elif os.path.lexists(destination):
+                    os.unlink(destination)
+        for path in self.temporary:
+            try:
+                if os.path.lexists(path):
+                    os.unlink(path)
+            except OSError as exc:
+                progress.log("An unused installation backup could not be removed: %s" % exc)
+
+
+def check_app_paths(short):
+    if not valid_app_id(short):
+        raise ValueError("That app name is reserved or unsafe.")
+    for folder in (versions_root(), os.path.join(versions_root(), short)):
+        if os.path.islink(folder):
+            raise ValueError("The app store contains an unexpected shortcut.")
+    link = os.path.join(app_root(), short)
+    if os.path.lexists(link) and not os.path.islink(link):
+        raise ValueError("An existing folder or file uses that app's name.")
+
+
 def write_entry(values, program, arguments, name, icon_name, out_path):
     """Write OUR menu entry for an app that has just landed in a home folder.
 
@@ -1126,7 +1210,7 @@ class Record:
     def note(self, what):
         self.log.append("%s %s" % (now(), what))
 
-    def save(self):
+    def save(self, destination=None):
         parser = configparser.RawConfigParser()
         parser.add_section("app")
         for field in self.FIELDS:
@@ -1134,13 +1218,23 @@ class Record:
         parser.add_section("log")
         for number, line in enumerate(self.log, start=1):
             parser.set("log", str(number), line)
-        os.makedirs(registry_dir(), exist_ok=True)
-        with open(self.path(), "w") as handle:
-            parser.write(handle)
-        return self.path()
+        destination = destination or self.path()
+        os.makedirs(os.path.dirname(destination), exist_ok=True)
+        fd, staged = tempfile.mkstemp(prefix=".aquarius-record-",
+                                      dir=os.path.dirname(destination))
+        try:
+            with os.fdopen(fd, "w") as handle:
+                parser.write(handle)
+            os.replace(staged, destination)
+        finally:
+            if os.path.exists(staged):
+                os.unlink(staged)
+        return destination
 
     @classmethod
     def load(cls, app_id):
+        if not valid_app_id(app_id):
+            return None
         path = os.path.join(registry_dir(), "%s.ini" % app_id)
         if not os.path.isfile(path):
             return None
@@ -1152,6 +1246,8 @@ class Record:
         if not parser.has_section("app"):
             return None
         values = dict(parser.items("app"))
+        if values.get("id", app_id) != app_id:
+            return None
         record = cls(values.get("id", app_id))
         for field in cls.FIELDS[1:]:
             setattr(record, field, values.get(field, ""))
@@ -1211,6 +1307,7 @@ def sha256(path):
     return digest.hexdigest()
 
 
+@serial_home_change
 def install(verdict, progress=None, update_of=None):
     """Land one sorted file on this computer. The whole of Routes A and home."""
     progress = progress or Progress()
@@ -1231,6 +1328,9 @@ def install(verdict, progress=None, update_of=None):
 
     total = 6
     work = tempfile.mkdtemp(prefix="aquarius-installer-")
+    files = InstallFiles()
+    target = ""
+    icon_name = ""
     try:
         # --- 1. open it ------------------------------------------------------
         progress.step(1, total, "Opening %s" % verdict.name)
@@ -1274,55 +1374,41 @@ def install(verdict, progress=None, update_of=None):
         version = safe_name(version, "1")
         progress.percent(60)
 
-        # --- 5. move it into place, and only then move the link --------------
-        progress.step(5, total, "Putting it into your apps")
-        target = os.path.join(versions_root(), short, version)
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        partial = target + ".partial"
-        shutil.rmtree(partial, ignore_errors=True)
-        shutil.rmtree(target, ignore_errors=True)
+        # Validate the executable before touching anything already installed.
+        check_app_paths(short)
         normalise_permissions(payload)
-        shutil.move(payload, partial)
-        os.rename(partial, target)
-
-        # ⚠️ THE LINK MOVES LAST, AND IT IS THE ONLY MOMENT ANYTHING VISIBLE
-        #    CHANGES. Everything above wrote into a folder nothing points at, so
-        #    a failure anywhere up to here leaves the app you already had
-        #    exactly as it was.
-        link = os.path.join(app_root(), short)
-        os.makedirs(app_root(), exist_ok=True)
-        if os.path.islink(link) or os.path.exists(link):
-            try:
-                os.unlink(link)
-            except OSError:
-                shutil.rmtree(link, ignore_errors=True)
-        os.symlink(os.path.join("versions", short, version), link)
-
-        # The program was found inside the folder we have just moved, so its
-        # path has to be re-based onto where that folder landed.
-        if program:
-            program = os.path.join(target, os.path.relpath(program, payload))
-        else:
-            program = find_program(target, short)
+        program = program or find_program(payload, short)
         if not program or not os.path.isfile(program):
             why = "There is no program inside that file to start."
             progress.failed(verdict.name, why)
             return Result(False, why)
+        relative_program = os.path.relpath(os.path.realpath(program), payload)
+        if relative_program == ".." or relative_program.startswith(".." + os.sep):
+            raise ValueError("The program points outside the downloaded app.")
         os.chmod(program, os.stat(program).st_mode | 0o755)
 
-        icon_name = install_icon(target, values, short)
-        entry_out = os.path.join(desktop_dir(), "%s.desktop" % short)
-        write_entry(values, program, exec_arguments(values.get("Exec", "")),
-                    name, icon_name, entry_out)
-        refresh_desktop_database()
-        progress.percent(85)
+        # A repeated version number must never overwrite the working copy.
+        progress.step(5, total, "Putting it into your apps")
+        parent = os.path.join(versions_root(), short)
+        os.makedirs(parent, exist_ok=True)
+        target = tempfile.mkdtemp(prefix=version + "-", dir=parent)
+        os.rmdir(target)
+        shutil.move(payload, target)
+        program = os.path.join(target, relative_program)
 
-        # --- 6. ASK, do not assume -------------------------------------------
+        # Each generation has its own icons, so preparing an update cannot
+        # overwrite icons still used by the previous menu entry.
+        icon_id = short + "-" + os.path.basename(target)
+        icon_name = icon_id  # Also clean up if copying an icon fails halfway.
+        icon_name = install_icon(target, values, icon_id)
+        entry_out = os.path.join(desktop_dir(), "%s.desktop" % short)
+        staged_entry = files.stage(entry_out)
+        write_entry(values, program, exec_arguments(values.get("Exec", "")),
+                    name, icon_name, staged_entry)
+        progress.percent(85)
         progress.step(6, total, "Checking it is really there")
-        if not (os.path.isfile(program) and os.path.isfile(entry_out)):
-            why = "It unpacked but is not where it should be."
-            progress.failed(verdict.name, why)
-            return Result(False, why)
+        if not (os.path.isfile(program) and os.path.isfile(staged_entry)):
+            raise OSError("It unpacked but is not where it should be.")
 
         # ⚠️ DROPPING A NEWER FILE ON AN APP YOU ALREADY HAVE IS AN UPDATE, NOT A
         #    SECOND COPY. Nothing special makes that true: the id comes out of
@@ -1332,6 +1418,7 @@ def install(verdict, progress=None, update_of=None):
         #    in the log — "installed" twice would make the log a liar.
         record = Record.load(short)
         was_here = record is not None and bool(record.install_path)
+        old_icon = record.icon_name if record else ""
         record = record or Record(short)
         record.name = name
         record.route = verdict.route
@@ -1348,15 +1435,47 @@ def install(verdict, progress=None, update_of=None):
         record.note("%s %s from %s" %
                     ("updated to" if (was_here or update_of) else "installed",
                      version, verdict.path))
-        record.save()
+        staged_record = files.stage(record.path())
+        record.save(staged_record)
+        link = os.path.join(app_root(), short)
+        staged_link = files.stage(link)
+        os.unlink(staged_link)
+        os.symlink(os.path.relpath(target, app_root()), staged_link)
 
-        tidy_old_versions(short, target, progress)
+        files.replace(staged_entry, entry_out)
+        files.replace(staged_record, record.path())
+        files.replace(staged_link, link)
+        files.committed = True
+
+        # Cleanup cannot turn a successfully committed install into a failure.
+        try:
+            tidy_old_versions(short, target, progress)
+            if old_icon and old_icon != icon_name:
+                remove_icons(old_icon)
+            refresh_desktop_database()
+        except OSError as exc:
+            progress.log("Installed; some old files could not be cleaned up: %s" % exc)
         progress.percent(100)
         progress.ok(short)
         progress.done()
         return Result(True, "%s is installed." % name, record=record)
+    except (OSError, ValueError) as exc:
+        why = "Could not install %s: %s" % (verdict.name, exc)
+        progress.failed(verdict.name, why)
+        return Result(False, why)
     finally:
-        shutil.rmtree(work, ignore_errors=True)
+        restored = False
+        try:
+            files.finish(progress)
+            restored = True
+        finally:
+            # If even rollback fails, retain both generations for recovery.
+            if not files.committed and restored:
+                if target:
+                    shutil.rmtree(target, ignore_errors=True)
+                if icon_name:
+                    remove_icons(icon_name)
+            shutil.rmtree(work, ignore_errors=True)
 
 
 def normalise_permissions(root):
@@ -1388,6 +1507,38 @@ def normalise_permissions(root):
                 pass
 
 
+SHARED_DATA_NAMES = frozenset((
+    "applications", "icons", "aquarius", "fonts", "mime", "flatpak", "trash",
+    "dconf", "gtk-3.0", "gtk-4.0", "labwc", "quickshell", "systemd",
+    "autostart", "environment.d", "containers", "keyrings", "gvfs-metadata",
+    "desktop-directories", "dbus-1", "glib-2.0", "gnome-shell", "kservices5",
+))
+
+
+def app_data_path(folder):
+    """Only a named app folder, never a shared folder or a link elsewhere."""
+    folder = os.path.abspath(folder)
+    bases = [os.path.join(home(), part) for part in
+             (".config", ".local/share", ".cache")]
+    name = os.path.basename(folder)
+    return (os.path.dirname(folder) in bases and valid_app_id(name)
+            and name not in SHARED_DATA_NAMES and not os.path.islink(folder))
+
+
+def check_removal_paths(record, app_id):
+    check_app_paths(app_id)
+    if record.id != app_id:
+        raise ValueError("That app's saved name does not match its record.")
+    if record.install_path:
+        expected = os.path.join(versions_root(), app_id)
+        if (os.path.dirname(os.path.abspath(record.install_path)) != expected
+                or os.path.islink(record.install_path)):
+            raise ValueError("That app's saved folder is outside its app store.")
+    if record.entry_path and record.entry_path != os.path.join(
+            desktop_dir(), app_id + ".desktop"):
+        raise ValueError("That app's saved menu entry is outside its app store.")
+
+
 def guess_data_dirs(short, values):
     """Where this app's own settings live, as far as anybody can know.
 
@@ -1405,7 +1556,9 @@ def guess_data_dirs(short, values):
         for base in (os.path.join(home(), ".config"),
                      os.path.join(home(), ".local", "share"),
                      os.path.join(home(), ".cache")):
-            dirs.append(os.path.join(base, name))
+            folder = os.path.join(base, name)
+            if app_data_path(folder):
+                dirs.append(folder)
     return dirs
 
 
@@ -1486,16 +1639,21 @@ def removal_plan(app_id):
     record = Record.load(app_id)
     if record is None:
         return None
+    try:
+        check_removal_paths(record, app_id)
+    except ValueError:
+        return None
     app_bytes = directory_size(record.install_path) \
         if record.install_path and os.path.isdir(record.install_path) else 0
     data = []
     for folder in [d for d in (record.data_dirs or "").split(",") if d]:
-        if os.path.isdir(folder):
+        if app_data_path(folder) and os.path.isdir(folder):
             data.append((folder, directory_size(folder)))
     return {"record": record, "app_bytes": app_bytes, "data": data,
             "data_bytes": sum(size for _folder, size in data)}
 
 
+@serial_home_change
 def remove(app_id, with_data=False, progress=None):
     """Take a home-folder app away again. No password, and nothing else touched.
 
@@ -1515,20 +1673,18 @@ def remove(app_id, with_data=False, progress=None):
         progress.fail(why)
         return Result(False, why)
 
+    check_removal_paths(record, app_id)
     freed = 0
     if record.install_path and os.path.isdir(record.install_path):
         freed += directory_size(record.install_path)
-        shutil.rmtree(record.install_path, ignore_errors=True)
+        shutil.rmtree(record.install_path)
     parent = os.path.dirname(record.install_path or "")
     if parent and os.path.isdir(parent) and not os.listdir(parent):
         shutil.rmtree(parent, ignore_errors=True)
 
     link = os.path.join(app_root(), app_id)
-    if os.path.islink(link) or os.path.exists(link):
-        try:
-            os.unlink(link)
-        except OSError:
-            shutil.rmtree(link, ignore_errors=True)
+    if os.path.islink(link):
+        os.unlink(link)
 
     if record.entry_path and os.path.isfile(record.entry_path):
         os.remove(record.entry_path)
@@ -1538,9 +1694,9 @@ def remove(app_id, with_data=False, progress=None):
 
     if with_data:
         for folder in [d for d in (record.data_dirs or "").split(",") if d]:
-            if os.path.isdir(folder):
+            if app_data_path(folder) and os.path.isdir(folder):
                 freed += directory_size(folder)
-                shutil.rmtree(folder, ignore_errors=True)
+                shutil.rmtree(folder)
 
     record.install_path = ""
     record.entry_path = ""

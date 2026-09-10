@@ -189,24 +189,49 @@ If nothing matches anywhere, it says the one useful thing:
 
 ---
 
+## What “remove settings too” can identify
+
+The settings checkbox starts unchecked. Installer estimates app settings from the
+app's name and the names supplied in its menu entry. It excludes shared folders such
+as the app menu, icons and desktop configuration, and ignores shortcuts to other
+folders. Old installation notes are checked again when removing an app.
+
+Those names are still estimates: two unrelated apps can use the same settings name.
+Leave the checkbox unchecked if you want to preserve their settings. Your installed
+program is removed either way.
+
+---
+
 ## Where your apps actually live
 
 Everything installed from a downloaded file goes **inside your own home folder**. Nothing
 outside your account is touched, which is why it never asks for a password.
 
 ```
-~/.local/lib/aquarius/versions/<app>/<version>/   the app itself
+~/.local/lib/aquarius/versions/<app>/<version>-<unique-copy>/   the app itself
 ~/.local/lib/aquarius/<app>                       a shortcut to the version in use
 ~/.local/share/applications/<app>.desktop         its entry in your apps
-~/.local/share/icons/hicolor/…/<app>.png          its icon
+~/.local/share/icons/hicolor/…/<app>-<unique-copy>.png          its icon
 ~/.local/share/aquarius/apps/<app>.ini            the note about how it got here
 ~/.cache/aquarius/installer/                      things it downloaded for you
 ```
 
-**Why the version is in the path, with a shortcut on top.** An update unpacks the new
-version *beside* the old one and only then moves the shortcut, which takes no time at all.
-If a download dies half way through, the shortcut never moves and the app you already had
-keeps working. There is no moment where you have half an app.
+**Why each copy has its own folder.** An update prepares a new copy *beside* the
+working one, even when both downloads claim the same version number. It checks the
+program and prepares its menu entry, icon and installation note before replacing the
+current entries. If opening the file, writing those entries or replacing them fails,
+it restores the previous entries and leaves the working app intact. The old copy is
+removed only after the replacement succeeds.
+
+If two Installer windows are open, or a terminal command runs at the same time, their
+installs and removals wait their turn. An app cannot use the shared `versions` folder
+as its own name, and Installer will stop if an unrelated file or folder already uses
+its shortcut's name.
+
+These checks cover failures the computer reports while Installer is running. They
+are not a guarantee against losing power or forcibly stopping Installer between file
+changes. If the filesystem also refuses to restore a previous entry, Installer keeps
+both app copies and reports the failure instead of deleting a copy an entry may need.
 
 Apps from Flathub are not in there — Flathub keeps its own, for the whole computer.
 
