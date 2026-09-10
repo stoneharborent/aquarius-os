@@ -686,9 +686,75 @@ jobs:
       - name: Check double-clicking a download opens Aquarius Installer
         run: |
           set -uo pipefail
+          sudo apt-get install -y shared-mime-info desktop-file-utils
           fails=0
           ENTRY=system_files/usr/share/applications/aquarius-installer.desktop
           LIST=system_files/etc/xdg/mimeapps.list
+
+          echo "== ask the desktop's own tool, in a temporary root =="
+          # The real question, asked the real way: build a small XDG root out of
+          # our three files plus the system's own file-type list, and ask `gio`
+          # which app opens each type. This is the only check that covers the
+          # whole chain at once — the type exists, the entry declares it, the
+          # defaults file is in a folder that is actually read, and the answer
+          # that comes back is us.
+          #
+          # ⚠️ THE Exec/TryExec ARE REWRITTEN IN THE COPY, and that is not a
+          # fudge. GIO refuses a menu entry whose TryExec names a program it
+          # cannot find, silently — and /usr/libexec/aquarius-installer does not
+          # exist on a build runner, only inside the image. Without this the
+          # answer to every question below would be "nothing" on a perfectly
+          # correct set of files. Everything else about the entry is untouched.
+          T="$(mktemp -d)"
+          mkdir -p "${T}/share/applications" "${T}/share/mime/packages" \
+                   "${T}/config" "${T}/home-config" "${T}/home-data"
+          cp /usr/share/mime/packages/freedesktop.org.xml "${T}/share/mime/packages/"
+          cp system_files/usr/share/mime/packages/aquarius-installer.xml "${T}/share/mime/packages/"
+          update-mime-database "${T}/share/mime"
+          cp "${ENTRY}" "${T}/share/applications/"
+          cp "${LIST}" "${T}/config/"
+          sed -i 's|^Exec=.*|Exec=/bin/true %F|; s|^TryExec=.*|TryExec=/bin/true|' \
+              "${T}/share/applications/aquarius-installer.desktop"
+          update-desktop-database "${T}/share/applications" 2> /dev/null || true
+
+          default_app() {
+            XDG_CURRENT_DESKTOP=GNOME \
+              XDG_CONFIG_HOME="${T}/home-config" \
+              XDG_DATA_HOME="${T}/home-data" \
+              XDG_CONFIG_DIRS="${T}/config" \
+              XDG_DATA_DIRS="${T}/share" \
+              gio mime "$1" 2> /dev/null \
+              | sed -n 's/^Default application for.*: //p' | head -1
+          }
+          for type in application/x-rpm \
+            application/vnd.debian.binary-package \
+            application/vnd.appimage \
+            application/vnd.flatpak.ref \
+            application/vnd.flatpak \
+            application/x-aquarius-run-installer \
+            application/vnd.snap \
+            application/x-apple-diskimage \
+            application/x-apple-installer-package \
+            application/x-msi \
+            application/vnd.microsoft.portable-executable; do
+            answer="$(default_app "${type}")"
+            if [ "${answer}" = "aquarius-installer.desktop" ]; then
+              echo "  OK   ${type} opens with Aquarius Installer"
+            else
+              echo "  FAIL ${type} opens with '${answer:-nothing}'"
+              fails=1
+            fi
+          done
+          for type in application/zip application/x-shellscript; do
+            answer="$(default_app "${type}")"
+            if [ "${answer}" = "aquarius-installer.desktop" ]; then
+              echo "  FAIL ${type} was taken over — that was a deliberate no"
+              fails=1
+            else
+              echo "  OK   ${type} is left alone"
+            fi
+          done
+          rm -rf "${T}"
           for f in "${ENTRY}" "${LIST}"; do
             if [ -r "${f}" ]; then echo "  OK   ${f} is here"
             else echo "  FAIL ${f} is missing"; fails=1; fi

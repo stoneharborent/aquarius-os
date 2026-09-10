@@ -324,9 +324,13 @@ path = os.path.join(folder, sys.argv[1])
 open(path, "wb").write(b"\0" * 8)
 done = subprocess.run(["gio", "info", "-a", "standard::content-type", path],
                       capture_output=True, text=True)
+# ⚠️ SPLIT ON "content-type:", NOT ON THE FIRST COLON. The line reads
+#   standard::content-type: application/x-rpm
+# and the obvious `split(":", 1)` hands back ":content-type: application/x-rpm",
+# so every check below would fail against a perfectly correct image.
 for line in done.stdout.splitlines():
     if "content-type:" in line:
-        print(line.split(":", 1)[1].strip())
+        print(line.split("content-type:", 1)[1].strip())
         break
 PY
 )"
@@ -354,6 +358,13 @@ fi
 # answered from a CHAIN of files read in a fixed order, and a right answer in
 # the wrong file in that chain is worth nothing. So this asks the desktop's own
 # tool, with the same folders set that a real session has.
+#
+# ⚠️ AND ONE SILENT WAY THIS FAILS, WORTH KNOWING ABOUT. GIO refuses a menu
+# entry whose `TryExec=` names a program it cannot find — the entry does not
+# error, it simply is not there, and every answer below comes back "nothing".
+# So if these lines ever fail on an image where mimeapps.list is plainly
+# correct, look at whether /usr/libexec/aquarius-installer really arrived and
+# is really runnable before looking at anything else.
 say "Double-clicking a download really does open Aquarius Installer"
 AQ_XDG_HOME="$(mktemp -d)"
 AQ_XDG_DATA="$(mktemp -d)"
