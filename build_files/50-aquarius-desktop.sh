@@ -477,7 +477,7 @@ EOF
 # It reports through bad(), like every other check in this file, so one build
 # tells you about every wrong key at once instead of only the first.
 aq_check_gdm_keys_are_real() {
-    local aq_file aq_schema aq_key aq_line
+    local aq_file aq_schema aq_key aq_keys aq_line
 
     if ! aq_have gsettings; then
         bad "the 'gsettings' command is not in this image — login-screen keys cannot be checked"
@@ -509,8 +509,13 @@ aq_check_gdm_keys_are_real() {
                         bad "$(basename "${aq_file}"): the schema ${aq_schema} is not in this image"
                         continue
                     fi
-                    if gsettings list-keys "${aq_schema}" 2> /dev/null \
-                        | grep -qx "${aq_key}"; then
+                    # Run gsettings to completion FIRST, then look in what it
+                    # said. Piping it straight into `grep -q` under pipefail is
+                    # the broken-pipe trap described above aq_output_has in
+                    # aq-lib.sh: on 2026-09-09 it reported color-scheme missing
+                    # from a schema that had it, once, on one image.
+                    aq_keys="$(gsettings list-keys "${aq_schema}" 2> /dev/null || true)"
+                    if grep -qx "${aq_key}" <<< "${aq_keys}"; then
                         ok "${aq_schema} really has a key called '${aq_key}'"
                     else
                         bad "${aq_schema} has NO key called '${aq_key}' — this is the 2026-09-05 class of bug"
