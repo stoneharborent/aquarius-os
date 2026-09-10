@@ -82,7 +82,12 @@ color-scheme='default'
 #
 # So: 'blue', which is #3584e4. It is the nearest of the nine to Aquarius Blue
 # and it is a good match.
-accent-color='blue'
+#
+# (There used to be an accent-color='blue' line here. GNOME removed that key
+#  from org.gnome.desktop.interface, and the Fedora 44 schemas picked that up
+#  on 2026-09-10 — the same thing that happened to document-font-name the day
+#  before. A key the schema does not know breaks the whole override file, so
+#  the line is gone. The note above is kept for whoever looks for it.)
 
 # The three AquariusOS typefaces. All three already ship in the image —
 # build_files/build.sh installs Inter and JetBrains Mono as packages and copies

@@ -337,9 +337,11 @@ EOF
 #                     Honest limitation, reported upstream by others: even in
 #                     light mode a few pieces of GNOME's own top bar can stay
 #                     dark. We are not chasing those.
-#   accent-color      'blue' — the nearest of GNOME's nine fixed words to
-#                     Aquarius Blue. Same compromise, same reason, as the
-#                     desktop: see the note at the top of this file.
+#   (accent-color     used to be here — 'blue', the nearest of GNOME's nine
+#                     fixed words to Aquarius Blue. GNOME removed that key
+#                     from org.gnome.desktop.interface and the Fedora 44
+#                     schemas picked it up on 2026-09-10; a key the schema
+#                     does not know breaks the whole file, so it is gone.)
 #   font-name         Inter, the interface typeface, so the person's name under
 #                     their picture is set in ours and not Fedora's.
 #   cursor-theme      the pointer. Adwaita — and as of Phase R5 (2026-09-05)
@@ -366,7 +368,6 @@ EOF
 cat > /etc/dconf/db/gdm.d/02-aquarius-look << 'EOF'
 [org/gnome/desktop/interface]
 color-scheme='prefer-light'
-accent-color='blue'
 font-name='Inter 11'
 monospace-font-name='JetBrains Mono 10'
 cursor-theme='Adwaita'
@@ -904,7 +905,6 @@ if aq_have gsettings; then
         fi
     }
     want org.gnome.desktop.interface color-scheme "'default'"
-    want org.gnome.desktop.interface accent-color "'blue'"
     want org.gnome.desktop.interface font-name "'Inter 11'"
     want org.gnome.desktop.interface monospace-font-name "'JetBrains Mono 10'"
     want org.gnome.desktop.background picture-options "'zoom'"
