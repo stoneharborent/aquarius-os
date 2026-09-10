@@ -8,10 +8,17 @@ The original ZIP stays where it is.
 
 Every ZIP gets its own folder, even if it already contains a single folder.
 This keeps the result predictable and avoids spreading files across Downloads.
-A notification tells you where the files were extracted. A password-protected
+The completion notification includes **Show extracted files**. Click it to open
+the new folder in Files. Dismissing it leaves your windows alone. If you extract
+several ZIPs, waiting to click one notification does not hold up the next ZIP.
+
+A password-protected
 ZIP shows Archive Manager's password prompt. An error produces a notification;
 any partial output stays in the new folder and is described as incomplete.
-A ZIP on a read-only drive must first be copied to somewhere writable.
+A full drive produces a clear message to free up space or copy the ZIP to
+another drive. A read-only drive produces a message to copy the ZIP somewhere
+writable first. A folder you cannot write to has its own permission message.
+The original ZIP is preserved in all these cases.
 
 To look inside a ZIP without extracting, right-click it and choose
 **Open With → Archive Manager**. Other archive types keep their existing opener.
@@ -35,7 +42,11 @@ remain File Roller's job. This helper does not implement an archive decoder.
 
 The D-Bus call uses GDBus's no-timeout setting, so a large video archive is not
 stopped after the default 25 seconds. The desktop entry never opens a terminal
-or archive-browsing window. Extraction errors and completion return to the helper.
+or archive-browsing window. Extraction errors and completion return to the helper. A separate notification
+worker uses the desktop's normal notification action protocol and opens the
+folder through its default handler only after **Show extracted files** is
+clicked. File paths are passed as file URIs, never shell commands. If the drive
+was disconnected or the folder was moved, the action reports that instead.
 
 We deliberately do not use File Roller's `--extract-here`: it can select an
 existing destination. Its `--notify` option also shows a completion dialog in
@@ -45,7 +56,10 @@ File Roller 44.7, which would interrupt the requested background flow.
 
 Run `python3 tests/test-extract-zip.py` from the image repository. It checks
 collision naming, existing symlinks, input validation, the D-Bus contract and
-success/error feedback. Image step 65 also asks GIO which app actually opens
+success/error feedback, filesystem error messages, action dismissal and folder
+opening. `python3 tests/test-extract-zip-notification.py` creates a private
+notification bus and checks real `notify-send` action registration and delivery;
+it does not contact your desktop or open a window. Image step 65 also asks GIO which app actually opens
 each ZIP MIME type and verifies the executable is present.
 
 For the real engine check, use an isolated desktop and bus so no existing Files

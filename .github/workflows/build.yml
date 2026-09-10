@@ -730,6 +730,12 @@ jobs:
       # double-clicking a download does nothing at all, which is the Linux
       # experience this feature exists to end. This asks the desktop's own tool,
       # in a temporary root with the same folders a real session has.
+      - name: Check ZIP extraction feedback and notification actions
+        run: |
+          sudo apt-get install -y python3-gi libnotify-bin dbus-x11
+          /usr/bin/python3 tests/test-extract-zip.py
+          /usr/bin/python3 tests/test-extract-zip-notification.py
+
       - name: Check double-clicking a download opens Aquarius Installer
         run: |
           set -uo pipefail
@@ -740,7 +746,7 @@ jobs:
 
           echo "== ask the desktop's own tool, in a temporary root =="
           # The real question, asked the real way: build a small XDG root out of
-          # our three files plus the system's own file-type list, and ask `gio`
+          # our desktop entries and defaults plus the system's own file-type list, and ask `gio`
           # which app opens each type. This is the only check that covers the
           # whole chain at once — the type exists, the entry declares it, the
           # defaults file is in a folder that is actually read, and the answer
@@ -759,9 +765,11 @@ jobs:
           cp system_files/usr/share/mime/packages/aquarius-installer.xml "${T}/share/mime/packages/"
           update-mime-database "${T}/share/mime"
           cp "${ENTRY}" "${T}/share/applications/"
+          cp system_files/usr/share/applications/aquarius-extract-zip.desktop "${T}/share/applications/"
           cp "${LIST}" "${T}/config/"
           sed -i 's|^Exec=.*|Exec=/bin/true %F|; s|^TryExec=.*|TryExec=/bin/true|' \
-              "${T}/share/applications/aquarius-installer.desktop"
+              "${T}/share/applications/aquarius-installer.desktop" \
+              "${T}/share/applications/aquarius-extract-zip.desktop"
           update-desktop-database "${T}/share/applications" 2> /dev/null || true
 
           default_app() {
@@ -792,13 +800,22 @@ jobs:
               fails=1
             fi
           done
+          for type in application/zip application/x-zip application/x-zip-compressed; do
+            answer="$(default_app "${type}")"
+            if [ "${answer}" = "aquarius-extract-zip.desktop" ]; then
+              echo "  OK   ${type} opens with background ZIP extraction"
+            else
+              echo "  FAIL ${type} opens with '${answer:-nothing}' instead of ZIP extraction"
+              fails=1
+            fi
+          done
           for type in application/zip application/x-shellscript; do
             answer="$(default_app "${type}")"
             if [ "${answer}" = "aquarius-installer.desktop" ]; then
               echo "  FAIL ${type} was taken over — that was a deliberate no"
               fails=1
             else
-              echo "  OK   ${type} is left alone"
+              echo "  OK   ${type} is not claimed by the Installer"
             fi
           done
           rm -rf "${T}"
@@ -820,13 +837,13 @@ jobs:
               fails=1
             fi
           done < "${LIST}"
-          echo "== and the two we deliberately do NOT take over =="
+          echo "== the Installer must not claim ZIPs or shell scripts =="
           for type in application/zip application/x-shellscript; do
-            if grep -q "^${type}=" "${LIST}"; then
+            if grep -q "^${type}=aquarius-installer.desktop" "${LIST}"; then
               echo "  FAIL ${type} is claimed as a default — that was a deliberate no"
               fails=1
             else
-              echo "  OK   ${type} is left alone"
+              echo "  OK   ${type} is not claimed by the Installer"
             fi
           done
           if [ "${fails}" -ne 0 ]; then

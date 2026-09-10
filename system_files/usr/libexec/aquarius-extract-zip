@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 """Extract ZIPs beside the original through File Roller's background service."""
+import errno
 import os
 from pathlib import Path
 import subprocess
@@ -50,7 +51,58 @@ def extract(archive, destination):
     )
 
 
-def notify(title, message, failed=False):
+def failure_reason(error, directory=None):
+    """Translate filesystem failures, including File Roller's remote errors."""
+    code = getattr(error, "errno", None)
+    # GIO preserves typed errors when the service returns them. File Roller can
+    # also wrap an extractor's error as a generic D-Bus error, with its message.
+    try:
+        from gi.repository import Gio, GLib
+        if isinstance(error, GLib.Error):
+            for kind, number in ((Gio.IOErrorEnum.NO_SPACE, errno.ENOSPC),
+                                 (Gio.IOErrorEnum.READ_ONLY, errno.EROFS),
+                                 (Gio.IOErrorEnum.PERMISSION_DENIED, errno.EACCES)):
+                if error.matches(Gio.io_error_quark(), kind):
+                    code = number
+    except ImportError:
+        pass
+    message = str(error)
+    lower = message.lower()
+    if directory is not None and code is None and not any(
+        text in lower for text in ("corrupt", "damaged", "crc", "checksum", "password", "cancel")
+    ):
+        try:
+            status = os.statvfs(directory)
+            if status.f_flag & os.ST_RDONLY:
+                code = errno.EROFS
+            elif status.f_bavail == 0:
+                code = errno.ENOSPC
+        except OSError:
+            pass
+    if code == errno.EROFS or "read-only" in lower or "read only" in lower:
+        return "This drive is read-only. Copy the ZIP to a writable drive or folder, then extract it there."
+    if code in (errno.ENOSPC, errno.EDQUOT) or any(text in lower for text in (
+        "no space left", "not enough space", "not enough free space", "disk full", "disk quota exceeded",
+    )):
+        return "There is not enough available space on this drive. Free up space, or copy the ZIP to another drive and extract it there."
+    if code in (errno.EACCES, errno.EPERM) or "permission denied" in lower:
+        return "You do not have permission to extract here. Copy the ZIP to a folder you can write to, then extract it there."
+    return message
+
+
+def notify(title, message, failed=False, destination=None):
+    if destination is not None:
+        # Waiting for an action must not stall another ZIP in the same request.
+        # This short-lived worker has no shell and never interprets file names.
+        try:
+            subprocess.Popen([
+                sys.executable, str(Path(__file__).resolve()),
+                "--completion-notification", str(destination), title, message,
+            ], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+               stderr=subprocess.DEVNULL, start_new_session=True)
+            return
+        except OSError:
+            pass  # Still deliver plain completion if a worker cannot start.
     try:
         subprocess.run([
             "/usr/bin/notify-send", "--app-name=ZIP Extraction",
@@ -61,10 +113,35 @@ def notify(title, message, failed=False):
         print(f"{title}: {message}", file=sys.stderr)
 
 
+def completion_notification(destination, title, message):
+    try:
+        notification = subprocess.run([
+            "/usr/bin/notify-send", "--app-name=ZIP Extraction",
+            "--icon=package-x-generic", "--urgency=normal",
+            "--action=show=Show extracted files", "--", title, message,
+        ], check=False, capture_output=True, text=True)
+        if notification.returncode == 0 and notification.stdout.strip() == "show":
+            folder = Path(destination)
+            if not folder.is_dir():
+                notify("Cannot show extracted files", "The extracted folder was moved or the drive is no longer available.", failed=True)
+                return 1
+            # A file URI keeps spaces, leading hyphens and shell punctuation
+            # literal. The default folder handler is Aquarius Files.
+            opened = subprocess.run(["/usr/bin/xdg-open", folder.as_uri()], check=False)
+            if opened.returncode:
+                notify("Cannot show extracted files", f"Open Files and go to {folder}.", failed=True)
+                return 1
+        return 0
+    except OSError as error:
+        print(f"{title}: {message}: {error}", file=sys.stderr)
+        return 1
+
+
 def main(arguments):
     result = 0
     for argument in arguments:
         destination = None
+        archive = None
         try:
             archive = archive_path(argument)
             destination = reserve_destination(archive)
@@ -73,15 +150,17 @@ def main(arguments):
             # Keep any partial output; deleting it could lose data the person
             # put there while extraction was running. Make the incomplete state
             # explicit rather than reporting a successful unpack.
-            detail = f"{Path(argument).name}\n{error}"
+            detail = f"{Path(argument).name}\n{failure_reason(error, archive.parent if archive else None)}"
             if destination is not None:
                 detail += f"\nAny incomplete files remain in {destination}."
             notify("Could not extract ZIP", detail, failed=True)
             result = 1
         else:
-            notify("ZIP extracted", f"{archive.name}\nFiles are in {destination}.")
+            notify("ZIP extracted", f"{archive.name}\nFiles are in {destination}.", destination=destination)
     return result
 
 
 if __name__ == "__main__":
+    if len(sys.argv) == 5 and sys.argv[1] == "--completion-notification":
+        raise SystemExit(completion_notification(*sys.argv[2:]))
     raise SystemExit(main(sys.argv[1:]))
