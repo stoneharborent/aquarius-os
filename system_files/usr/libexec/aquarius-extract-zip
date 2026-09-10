@@ -1,0 +1,87 @@
+#!/usr/bin/python3
+"""Extract ZIPs beside the original through File Roller's background service."""
+import os
+from pathlib import Path
+import subprocess
+import sys
+import zipfile
+
+
+def archive_path(argument):
+    # Desktop %F gives paths; accepting file: URIs also makes direct calls useful.
+    if argument.startswith("file:"):
+        from gi.repository import Gio
+        argument = Gio.File.new_for_uri(argument).get_path()
+        if argument is None:
+            raise ValueError("This ZIP must be on a locally mounted drive.")
+    path = Path(os.path.abspath(argument))
+    if not path.is_file() or not zipfile.is_zipfile(path):
+        raise ValueError("This file is not a readable ZIP archive, or it is damaged.")
+    return path
+
+
+def reserve_destination(archive):
+    # mkdir is atomic: two simultaneous double-clicks never choose the same
+    # directory. Existing files, directories and symlinks all count as occupied.
+    stem = archive.stem if archive.suffix.lower() == ".zip" else archive.name + " extracted"
+    if stem in ("", ".", ".."):
+        stem = "Archive"
+    number = 1
+    while True:
+        name = stem if number == 1 else f"{stem} ({number})"
+        destination = archive.parent / name
+        try:
+            destination.mkdir(mode=0o700)
+            return destination
+        except FileExistsError:
+            number += 1
+
+
+def extract(archive, destination):
+    from gi.repository import Gio, GLib
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    # G_MAXINT means no timeout in GDBus. Large footage archives and password
+    # prompts must not be cut off by the normal 25-second D-Bus timeout.
+    bus.call_sync(
+        "org.gnome.ArchiveManager1", "/org/gnome/ArchiveManager1",
+        "org.gnome.ArchiveManager1", "Extract",
+        GLib.Variant("(ssb)", (archive.as_uri(), destination.as_uri(), False)),
+        GLib.VariantType.new("()"), Gio.DBusCallFlags.NONE, GLib.MAXINT, None,
+    )
+
+
+def notify(title, message, failed=False):
+    try:
+        subprocess.run([
+            "/usr/bin/notify-send", "--app-name=ZIP Extraction",
+            "--icon=package-x-generic", "--urgency=" + ("critical" if failed else "normal"),
+            "--", title, message,
+        ], check=False)
+    except OSError:
+        print(f"{title}: {message}", file=sys.stderr)
+
+
+def main(arguments):
+    result = 0
+    for argument in arguments:
+        destination = None
+        try:
+            archive = archive_path(argument)
+            destination = reserve_destination(archive)
+            extract(archive, destination)
+        except Exception as error:
+            # Keep any partial output; deleting it could lose data the person
+            # put there while extraction was running. Make the incomplete state
+            # explicit rather than reporting a successful unpack.
+            detail = f"{Path(argument).name}\n{error}"
+            if destination is not None:
+                detail += f"\nAny incomplete files remain in {destination}."
+            notify("Could not extract ZIP", detail, failed=True)
+            result = 1
+        else:
+            notify("ZIP extracted", f"{archive.name}\nFiles are in {destination}.")
+    return result
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
