@@ -45,6 +45,8 @@ on:
       # The real line, after the 4 September 2026 branch rename. Pushes here
       # build, check, publish and sign.
       - main
+      # Installer window repair: build and check only; never publish.
+      - fix/installer-window-startup
       # The real line, before that rename. Same treatment, for exactly as long
       # as this branch name still exists.
       - restart/fedora-bootc
@@ -2772,6 +2774,16 @@ jobs:
               python3 /tmp/t/tests/test-installer-sorter.py \
                 /usr/lib/aquarius/python/aquarius_installer.py
             '
+
+      # CLI checks never construct GTK widgets. Open the actual shipped window
+      # on an invisible desktop as well, so a bad page cannot ship again.
+      - name: Open Aquarius Installer in the finished image
+        run: |
+          set -euo pipefail
+          podman run --rm --pull=never \
+            -v "${GITHUB_WORKSPACE}/tests/test-installer-window.py:/tmp/test-installer-window.py:ro" \
+            --entrypoint /usr/bin/python3 \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" /tmp/test-installer-window.py /
 
       # And the window's own rehearsal, inside the image: it really unpacks a
       # real archive into a throwaway home folder, really refuses a payload that

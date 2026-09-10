@@ -210,7 +210,7 @@ def run_window(open_files):
             self.cancel_button.connect("clicked", lambda _b: self.show_browse())
 
             return aquarius_ui.page([mark, heading, self.working_blurb,
-                                     self.bar, self.steps, self.details,
+                                     self.bar, self.steps, self.details.widget,
                                      aquarius_ui.button_row([copy,
                                                              self.cancel_button])])
 
@@ -225,7 +225,7 @@ def run_window(open_files):
             close.connect("clicked", lambda _b: self.show_browse())
             self.done_details = aquarius_ui.LogPane()
             return aquarius_ui.page([mark, heading, self.done_blurb,
-                                     self.done_details,
+                                     self.done_details.widget,
                                      aquarius_ui.button_row([close,
                                                              self.open_button])])
 
