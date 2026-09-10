@@ -1279,6 +1279,50 @@ def rescue_once(path):
     return kept
 
 
+def sync_gtk_button_layout(gtk_root, folder, buttons):
+    """The Mac/Windows choice owns button placement, even with a custom theme.
+
+    Only this one key is changed. A repaired settings.ini no longer looks like
+    Breeze, so the legacy-theme rescue below cannot keep this setting in sync.
+    GTK applications without a settings portal also need it on a fresh login.
+    """
+    path = os.path.join(gtk_root, folder, "settings.ini")
+    try:
+        existing = read_file(path) if os.path.exists(path) else ""
+        lines = existing.splitlines(keepends=True)
+        wanted = "gtk-decoration-layout=" + GTK_DECORATION_LAYOUTS[buttons] + "\n"
+        in_settings = False
+        header = None
+        found = False
+        for index, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                in_settings = stripped == "[Settings]"
+                if in_settings:
+                    header = index
+            elif in_settings and re.match(r"^\s*gtk-decoration-layout\s*=", line):
+                lines[index] = wanted
+                found = True
+        if not found:
+            if header is None:
+                if lines and not lines[-1].endswith("\n"):
+                    lines[-1] += "\n"
+                lines.extend(["[Settings]\n", wanted])
+            else:
+                if not lines[header].endswith("\n"):
+                    lines[header] += "\n"
+                lines.insert(header + 1, wanted)
+        updated = "".join(lines)
+        if updated != existing:
+            if (any(signature in existing for signature in BREEZE_SETTINGS_SIGNATURES)
+                    and not os.path.exists(path + RESCUE_SUFFIX)):
+                shutil.copyfile(path, path + RESCUE_SUFFIX)
+            write_file(path, updated)
+        return "window button placement follows %s mode in %s" % (buttons, path)
+    except OSError as problem:
+        return "could not update button placement in %s (%s)" % (path, problem)
+
+
 def neutralise_gtk_settings(gtk_root, folder, scheme, buttons, icon_theme):
     """
     Stop a leftover settings.ini fighting the session over four keys.
@@ -1303,9 +1347,9 @@ def neutralise_gtk_settings(gtk_root, folder, scheme, buttons, icon_theme):
         puts the window buttons on the side he chose). Everything else in the
         file — font, cursor blink, animations, toolbar style — is somebody's
         own and is written back untouched.
-      * A file with no Plasma fingerprint that already disagrees with us is
-        LEFT ALONE, because at that point it is a person's preference. The one
-        exception is a file we wrote ourselves, which we may rewrite.
+      * A file with no Plasma fingerprint keeps its theme preferences. Button
+        placement is synchronized separately by sync_gtk_button_layout(),
+        because the Mac/Windows switch is the one owner of that decision.
 
     Returns a sentence for the log.
     """
@@ -1465,6 +1509,7 @@ def apply_gtk_css(gtk_root, palette, scheme, buttons, icon_theme, report):
     )
 
     for folder, builder in builders:
+        announce(sync_gtk_button_layout(gtk_root, folder, buttons))
         path = os.path.join(gtk_root, folder, "gtk.css")
 
         if os.path.exists(path):
