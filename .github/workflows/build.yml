@@ -608,6 +608,120 @@ jobs:
         run: ./tests/test-resolve-entry.sh
 
       # ------------------------------------------------------------------------
+      # Aquarius Installer sorts a download correctly, and refuses what it must
+      # ------------------------------------------------------------------------
+      # ⚠️ EVERY FAILURE MODE OF A SORTER IS SILENT. A package that should have
+      # been refused installs into a home folder and leaves a dead icon. A menu
+      # entry with the wrong window class puts a second, nameless icon in the
+      # dock. A menu entry with a `Path=` naming a folder this computer does not
+      # have makes the desktop refuse to start the app AT ALL, with nothing in
+      # any log a person would read — the fault that cost a week on the bench in
+      # September 2026.
+      #
+      # So this builds real files (a real .deb with a maintainer script in it, a
+      # real archive, a payload carrying system services and kernel bits, an
+      # app needing a library this computer does not have), really installs them
+      # into a throwaway home folder, and really reads back what happened. The
+      # .deb's script would leave a file behind if it were ever run, which is
+      # the only way to PROVE "no scripts, ever" rather than assert it.
+      #
+      # Before the build, because it takes two seconds. The same test runs again
+      # INSIDE the finished image, against the copy that will actually run on
+      # Royce's machine, and that run is the one that counts.
+      - name: Check Aquarius Installer sorts, installs and removes correctly
+        run: ./tests/test-installer-sorter.py
+
+      # ------------------------------------------------------------------------
+      # The file types Aquarius Installer adds are well formed
+      # ------------------------------------------------------------------------
+      # Same reason, and the same danger, as the Resolve project type below:
+      # a malformed file here would not merely fail to add our types, it would
+      # stop the WHOLE shared file-type list from rebuilding and take every
+      # other file type on the machine with it.
+      - name: Check the installer's file types are well formed
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libxml2-utils shared-mime-info
+          SRC=system_files/usr/share/mime/packages/aquarius-installer.xml
+          echo "== is it XML at all? =="
+          xmllint --noout "${SRC}"
+          echo "  OK   ${SRC} is well-formed XML"
+          echo "== does the freedesktop tool accept it? =="
+          TMP="$(mktemp -d)"
+          mkdir -p "${TMP}/packages"
+          cp /usr/share/mime/packages/freedesktop.org.xml "${TMP}/packages/"
+          cp "${SRC}" "${TMP}/packages/"
+          update-mime-database "${TMP}"
+          echo "  OK   the shared file-type list rebuilds with it in"
+          echo "== and the endings really resolve to our names =="
+          fails=0
+          for pair in \
+            "application/x-aquarius-run-installer:*.run" \
+            "application/vnd.snap:*.snap" \
+            "application/x-apple-installer-package:*.pkg"; do
+            if grep -qx "60:${pair}" "${TMP}/globs2"; then
+              echo "  OK   ${pair}"
+            else
+              echo "  FAIL ${pair} did not come out of the shared list at weight 60"
+              fails=1
+            fi
+          done
+          if [ "${fails}" -ne 0 ]; then
+            echo "::error::${SRC} did not teach the shared list the endings it is for."
+            exit 1
+          fi
+          rm -rf "${TMP}"
+
+      # ------------------------------------------------------------------------
+      # ...and the installer really is what opens them
+      # ------------------------------------------------------------------------
+      # ⚠️ THE CHECK THE WHOLE FEATURE RESTS ON, AND THE ONE THAT LOOKS LIKE
+      # PAPERWORK. "Which app opens this type" is answered from a CHAIN of files
+      # read in a fixed order, so a right answer written into the wrong file in
+      # that chain is worth exactly nothing — and the symptom is that
+      # double-clicking a download does nothing at all, which is the Linux
+      # experience this feature exists to end. This asks the desktop's own tool,
+      # in a temporary root with the same folders a real session has.
+      - name: Check double-clicking a download opens Aquarius Installer
+        run: |
+          set -uo pipefail
+          fails=0
+          ENTRY=system_files/usr/share/applications/aquarius-installer.desktop
+          LIST=system_files/etc/xdg/mimeapps.list
+          for f in "${ENTRY}" "${LIST}"; do
+            if [ -r "${f}" ]; then echo "  OK   ${f} is here"
+            else echo "  FAIL ${f} is missing"; fails=1; fi
+          done
+          echo "== every type the list claims is a type the entry declares =="
+          # If mimeapps.list makes us the default for something the entry never
+          # says it can open, some desktops quietly ignore the line — which is a
+          # double-click that does nothing, again.
+          while IFS='=' read -r type app; do
+            case "${type}" in ''|'['*|'#'*) continue ;; esac
+            [ "${app}" = "aquarius-installer.desktop" ] || continue
+            if grep -q "MimeType=.*${type};" "${ENTRY}"; then
+              echo "  OK   ${type} is declared by the entry as well"
+            else
+              echo "  FAIL ${type} is claimed as a default but the entry does not declare it"
+              fails=1
+            fi
+          done < "${LIST}"
+          echo "== and the two we deliberately do NOT take over =="
+          for type in application/zip application/x-shellscript; do
+            if grep -q "^${type}=" "${LIST}"; then
+              echo "  FAIL ${type} is claimed as a default — that was a deliberate no"
+              fails=1
+            else
+              echo "  OK   ${type} is left alone"
+            fi
+          done
+          if [ "${fails}" -ne 0 ]; then
+            echo "::error::Aquarius Installer would not open the files it is meant to."
+            exit 1
+          fi
+
+      # ------------------------------------------------------------------------
       # The Resolve install record can be sourced without running anything
       # ------------------------------------------------------------------------
       # ⚠️ THE BENCH FINDING OF 9 SEPTEMBER 2026. `aq resolve status` printed
@@ -764,17 +878,30 @@ jobs:
           done
 
           echo "== the app icon that carries the mark =="
-          # One icon carries the mark and the other eleven do not. That is the
-          # durable form of "only aquarius-apps changed when the apex changed":
-          # if the mark ever spreads to a second icon, or leaves this one, this
-          # says so.
+          # ONE DRAWING carries the mark, and it ships under two names. That is
+          # the durable form of "only aquarius-apps changed when the apex
+          # changed": if the mark ever spreads to a drawing that should not have
+          # it, or leaves this one, this says so.
+          #
+          # ⚠️ THE SECOND NAME IS DELIBERATE (2026-09-09). aquarius-installer.svg
+          # is the SAME FILE as aquarius-apps.svg — Aquarius Installer and
+          # Aquarius Apps are two faces of one idea, and only the Installer is
+          # visible in the app grid now. branding/icons/render.mjs writes both
+          # from one entry in ALIASES, so they cannot drift; the byte-for-byte
+          # check below is what proves that is still true. When the Installer
+          # gets a drawing of its own, this list goes back to one name.
           for theme in Aquarius-Ice Aquarius-Midnight; do
             dir="system_files/usr/share/icons/${theme}/scalable/apps"
             carriers="$(grep -lF "${WANT_ICON}" "${dir}"/*.svg 2> /dev/null | xargs -n1 basename 2> /dev/null | sort | tr '\n' ' ')"
-            if [ "${carriers}" = "aquarius-apps.svg " ]; then
-              ok "${theme}: exactly one icon carries the mark, and it is aquarius-apps"
+            if [ "${carriers}" = "aquarius-apps.svg aquarius-installer.svg " ]; then
+              ok "${theme}: the mark is carried by the app-chooser drawing and its second name"
             else
-              bad "${theme}: the mark is carried by [${carriers:-nothing}], expected aquarius-apps.svg alone"
+              bad "${theme}: the mark is carried by [${carriers:-nothing}], expected aquarius-apps.svg and aquarius-installer.svg"
+            fi
+            if cmp -s "${dir}/aquarius-apps.svg" "${dir}/aquarius-installer.svg"; then
+              ok "${theme}: aquarius-installer.svg is byte-for-byte aquarius-apps.svg"
+            else
+              bad "${theme}: aquarius-installer.svg has drifted from aquarius-apps.svg — they are meant to be one drawing"
             fi
           done
           for f in branding/icons/ice/aquarius-apps.svg branding/icons/midnight/aquarius-apps.svg; do
@@ -2511,6 +2638,44 @@ jobs:
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" -c '
               set -e
               bash /tmp/t/tests/test-aquarius-icons.sh /
+            '
+
+      # The installer's sorter and its routes, run against the copy inside the
+      # FINISHED image — the only version that will ever run on Royce's machine.
+      # The step before the build proved the repository's copy; a mis-copied
+      # file, a missing chmod, or a `cpio` that did not survive the image
+      # packaging would all pass there and fail here. Same test file, given the
+      # installed path, so the two can never drift.
+      #
+      # This run also does more than the pre-build one: the finished image has
+      # rpm2cpio and cpio, so the .rpm half of Route A is exercised for real
+      # rather than skipped.
+      - name: Check Aquarius Installer in the finished image
+        run: |
+          set -euo pipefail
+          podman run --rm --pull=never \
+            -v "${GITHUB_WORKSPACE}/tests/test-installer-sorter.py:/tmp/t/tests/test-installer-sorter.py:ro" \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" -c '
+              set -e
+              python3 /tmp/t/tests/test-installer-sorter.py \
+                /usr/lib/aquarius/python/aquarius_installer.py
+            '
+
+      # And the window's own rehearsal, inside the image: it really unpacks a
+      # real archive into a throwaway home folder, really refuses a payload that
+      # wants the operating system, really writes a menu entry, really reads it
+      # back and really removes it. The build step ran this too; running it
+      # again here proves the SHIPPED program still does it, which a build step
+      # cannot (it runs before the image is packaged).
+      - name: Check Aquarius Installer rehearses every route in the finished image
+        run: |
+          set -euo pipefail
+          podman run --rm --pull=never \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" -c '
+              set -e
+              /usr/libexec/aquarius-installer --dry-run
             '
 
       # Part B of the same photograph: our OWN login screen, drawn by the

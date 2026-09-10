@@ -499,6 +499,32 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     /ctx/build_files/67-welcome.sh
 
+# 7e. Aquarius Installer — the one app that installs anything. Download
+#     something, double-click it, one window says what it is and where it will
+#     go, press Install, the icon is in your apps. The same three seconds
+#     whether the file was an .rpm, a .deb, an AppImage, a .flatpakref or a
+#     tarball with a program inside it.
+#
+#     ⚠️ IT NEVER CHANGES THE OPERATING SYSTEM, AND THAT IS THE DESIGN (Royce's
+#     decision, 2026-09-08). /usr is read-only here and updates replace the
+#     whole image, which is exactly why updates always work; a package that
+#     wants to be part of the system is refused, in plain words, rather than
+#     half-installed. Nor does it ever run a package's own install scripts, and
+#     nor does it convert one kind of package into another.
+#
+#     ⚠️ THIS STEP HIDES THE STEP 7d WINDOW FROM THE APP GRID. "Aquarius Apps"
+#     is still the welcome's second step and still the one catalogue behind the
+#     Installer's suggestions — it just no longer has an icon of its own, because
+#     two app-store-shaped icons is how somebody ends up in the wrong one.
+#
+#     After 7c and 7d because it reuses both of their halves: the privileged
+#     Flatpak helper (which grows three more jobs here) and the shared window
+#     pieces. After 7d-bis because it checks the welcome still opens the chooser
+#     by its full path, which is what makes hiding the icon safe.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache/libdnf5 \
+    /ctx/build_files/65-installer.sh
+
 # 7f. External drives mount by themselves, with no password. The agent, the user
 #     service and the polkit rule all arrived with system_files at step 5; this
 #     confirms udisks2 is there (from step 2), checks the agent loads with no
