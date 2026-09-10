@@ -1,0 +1,9 @@
+#!/usr/bin/bash
+# GTK 4.22.4 can crash when Files closes a merge/replace dialog: its Wayland
+# window icons destroy the same buffer twice. Disable only that optional
+# protocol for Files; leave rendering and every other app's settings alone.
+# Remove this launcher and its wiring after Fedora GTK includes upstream
+# 4fb8cf94599c623b563ceea7ad75dca750dd4901 and the window probe passes without it.
+# Details and reproduction: docs/restart/files-crash.md.
+export GDK_WAYLAND_DISABLE="${GDK_WAYLAND_DISABLE:+${GDK_WAYLAND_DISABLE},}xdg_toplevel_icon_manager_v1"
+exec /usr/bin/nautilus "$@"
