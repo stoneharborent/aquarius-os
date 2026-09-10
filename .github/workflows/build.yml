@@ -5578,7 +5578,13 @@ jobs:
           if aq --help 2>&1 | grep -q 'aq apps'; then ok "'aq apps' is in aq's own help"
           else bad "'aq apps' is not mentioned by 'aq --help' — nobody would find it"; fi
 
-          AQ_LISTED="$(aq apps list 2>/dev/null | grep -c 'installed\|^  -')"
+          # Count only the catalog rows: two spaces, then "installed" or "-",
+          # then the app's id. `aq apps list` goes on to print everything the
+          # Installer has added, and on a fresh image that section is one
+          # sentence: "Nothing has been installed with Aquarius Installer
+          # yet." — which a looser 'installed' match counted as a 17th app on
+          # 2026-09-09.
+          AQ_LISTED="$(aq apps list 2>/dev/null | grep -cE '^  (installed|-) +[A-Za-z0-9._-]+ ')"
           if [ "${AQ_LISTED}" -eq "${VISIBLE}" ]; then
             ok "'aq apps list' shows the same ${AQ_LISTED} apps as the catalog"
           else
