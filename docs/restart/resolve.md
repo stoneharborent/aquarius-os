@@ -247,15 +247,19 @@ notice, and there is nothing to change.
 
 **It should already be the right size.** Resolve used to open tiny on a 4K
 screen, and every guide on the internet still tells you to fix that by hand.
-AquariusOS does it for you: the launcher reads the size your desktop is set to
-and hands it to Resolve on the way in.
+AquariusOS reads the current desktop scale. When every enabled screen is known
+to be at least 3200×1800 and running at 100%, Resolve starts at **125%**. Mixed
+small and large screens, or an unknown arrangement, keep the usual scale.
+This enlarges the **whole interface**, including menus; it does not change
+your media’s aspect ratio or export resolution. Your explicit Resolve scale
+setting always wins.
 
 If you want Resolve at a different size from everything else:
 
 ```
 aq resolve scale 1.5     Resolve at 150%, whatever the desktop is at
 aq resolve scale         what it is set to, and where that came from
-aq resolve scale auto    go back to following the desktop
+aq resolve scale auto    go back to the automatic Resolve size
 ```
 
 It takes effect the next time Resolve starts. Resolve's own setting — **DaVinci
@@ -935,8 +939,8 @@ the runtime image needs a package adding to
 
 ### Resolve's interface is still too small (or too big)
 
-AquariusOS hands Resolve the size your desktop is set to. If that has not
-worked, there are two things to try, in this order.
+AquariusOS follows the desktop scale, with a 125% minimum on unscaled 4K
+arrangements as described above. If you need a different size, try these steps.
 
 **One: set it yourself.**
 

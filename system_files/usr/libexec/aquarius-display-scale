@@ -73,8 +73,10 @@
 #                                       print ONE number and nothing else: the
 #                                       scale this session is running at. For
 #                                       programs, not for people — it is how
-#                                       aquarius-resolve-launch knows how big to
-#                                       make DaVinci Resolve.
+#                                       other callers read the desktop policy.
+#   aquarius-display-scale --resolve-scale
+#                                       Resolve only: use the live output scale,
+#                                       with a 125% minimum on unscaled 4K desks.
 #
 # The friendly front door is `aq display`. Try `aq display --help`.
 #
@@ -136,6 +138,7 @@ def outputs_from_json(text):
             "mm_width": int(physical.get("width", 0) or 0),
             "mm_height": int(physical.get("height", 0) or 0),
             "scale": float(entry.get("scale", 1.0) or 1.0),
+            "scale_known": entry.get("scale") is not None,
             "enabled": bool(entry.get("enabled", True)),
         })
     return screens
@@ -169,7 +172,7 @@ def outputs_from_text(text):
                 "description": head.group(2),
                 "width": 0, "height": 0, "refresh": 0.0,
                 "mm_width": 0, "mm_height": 0,
-                "scale": 1.0, "enabled": True,
+                "scale": 1.0, "scale_known": False, "enabled": True,
             }
             screens.append(current)
             continue
@@ -187,6 +190,7 @@ def outputs_from_text(text):
         found = _TEXT_SCALE.match(line)
         if found:
             current["scale"] = float(found.group(1))
+            current["scale_known"] = True
             continue
         found = _TEXT_MODE.match(line)
         if found and "current" in found.group(4).lower():
@@ -455,6 +459,27 @@ def effective_scale(screens, conf, monitors_xml_text):
     return 1.0
 
 
+def resolve_scale(screens, conf, monitors_xml_text):
+    """Resolve's whole interface, with a modest minimum on unscaled 4K desks.
+
+    Read the actual enabled output scales when available. Do not change the
+    desktop, or guess a larger Resolve interface for a mixed or unknown setup.
+    The launcher handles a person's explicit Resolve override before asking us.
+    """
+    enabled = [screen for screen in screens if screen.get("enabled")]
+    known = enabled and all(screen.get("scale_known", True)
+                            and 0.5 <= screen.get("scale", 0) <= 3
+                            for screen in enabled)
+    base = max(screen["scale"] for screen in enabled) if known else (
+        effective_scale(screens, conf, monitors_xml_text))
+    if known and all(screen.get("width", 0) >= 3200
+                     and screen.get("height", 0) >= 1800
+                     and abs(screen["scale"] - 1) < 0.001
+                     for screen in enabled):
+        return max(base, 1.25)
+    return base
+
+
 def apply(decisions, dry_run, runner=None):
     """Tell the window manager. One wlr-randr call per screen that needs one."""
     runner = runner or _run
@@ -503,6 +528,8 @@ def main(argv=None):
     # ends in a number and 1 is the last resort.
     parser.add_argument("--effective-scale", action="store_true",
                         help="print the one number this session is scaled by")
+    parser.add_argument("--resolve-scale", action="store_true",
+                        help="print Resolve's interface scale without changing the desktop")
     # --outputs-from exists so that this program can be tested without a
     # monitor, in a container, in CI. It is not for people.
     parser.add_argument("--outputs-from", metavar="FILE",
@@ -556,6 +583,10 @@ def main(argv=None):
             monitors_for_scale = handle.read()
     except OSError:
         pass
+
+    if args.resolve_scale:
+        print("%g" % resolve_scale(screens, conf_for_scale, monitors_for_scale))
+        return 0
 
     if args.effective_scale:
         print("%g" % effective_scale(screens, conf_for_scale, monitors_for_scale))

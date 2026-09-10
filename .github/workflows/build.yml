@@ -2795,6 +2795,14 @@ jobs:
             --entrypoint /usr/bin/python3 \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" /tmp/test-resolve-done-window.py /
 
+      - name: Check Resolve scale choices in the finished image
+        run: |
+          set -euo pipefail
+          podman run --rm --pull=never \
+            -v "${GITHUB_WORKSPACE}/tests/test-resolve-scale.py:/tmp/test-resolve-scale.py:ro" \
+            --entrypoint /usr/bin/python3 \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" /tmp/test-resolve-scale.py /
+
       # And the window's own rehearsal, inside the image: it really unpacks a
       # real archive into a throwaway home folder, really refuses a payload that
       # wants the operating system, really writes a menu entry, really reads it
@@ -6276,15 +6284,15 @@ jobs:
           # And the size and pointer Resolve is started with.
           LAUNCH=/usr/libexec/aquarius-resolve-launch
           for want in QT_AUTO_SCREEN_SCALE_FACTOR=0 'QT_SCALE_FACTOR=${SCALE}' \
-                      'QT_DEVICE_PIXEL_RATIO=${SCALE}' 'aquarius-display-scale --effective-scale' \
+                      'QT_DEVICE_PIXEL_RATIO=${SCALE}' 'aquarius-display-scale --resolve-scale' \
                       XCURSOR_THEME= XCURSOR_SIZE= XCURSOR_PATH=; do
             if grep -qF "$want" "$LAUNCH"; then ok "the launcher passes $want"
             else bad "the launcher no longer passes $want — Resolve would open small, or with the wrong pointer"; fi
           done
-          EFF="$(/usr/libexec/aquarius-display-scale --effective-scale 2>&1 || true)"
+          EFF="$(/usr/libexec/aquarius-display-scale --resolve-scale 2>&1 || true)"
           case "$EFF" in
-            ''|*[!0-9.]*) bad "'--effective-scale' printed '$EFF', not a number — the launcher would have nothing to hand Resolve" ;;
-            *) ok "'--effective-scale' answers '$EFF' even on a machine with no screens" ;;
+            ''|*[!0-9.]*) bad "'--resolve-scale' printed '$EFF', not a number — the launcher would have nothing to hand Resolve" ;;
+            *) ok "'--resolve-scale' answers '$EFF' even on a machine with no screens" ;;
           esac
           # Importing needs no screen — it loads the typelib files and stops.
           # This is the check that catches a missing python3-gobject, which is

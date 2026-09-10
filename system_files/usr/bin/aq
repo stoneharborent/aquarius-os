@@ -774,7 +774,7 @@ aq resolve — DaVinci Resolve on AquariusOS
     aq resolve scale [N]
                     How big Resolve's own interface is drawn. With no number it
                     says what it is set to. A number between 0.5 and 3 fixes it
-                    there; 'auto' goes back to following your desktop.
+                    there; 'auto' restores the automatic Resolve size.
 
 WHY A SEPARATE ENVIRONMENT
     Resolve ships its own copy of a library from 2021 that clashes with any
@@ -1095,7 +1095,7 @@ resolve_status() {
 #
 #   aq resolve scale        what is it set to, and where that answer came from
 #   aq resolve scale 1.5    fix it there, whatever the rest of the desktop does
-#   aq resolve scale auto   go back to following the desktop
+#   aq resolve scale auto   restore the automatic Resolve size
 #
 # It takes effect the next time Resolve starts. Nothing is asked of a running
 # Resolve, because Qt reads its scale once, when it starts, and nothing can
@@ -1123,7 +1123,7 @@ resolve_scale_set() {
 #
 #   scale=1.5                    Resolve's interface at 150%, whatever the rest
 #                                of the desktop is at. Delete the line, or run
-#                                'aq resolve scale auto', to follow the desktop.
+#                                'aq resolve scale auto', for the automatic size.
 #
 #   qt_variable=device-pixel-ratio
 #                                Use Resolve's OTHER scaling variable instead of
@@ -1161,7 +1161,7 @@ resolve_scale_status() {
         echo "  It stays there whatever the rest of the desktop is set to."
     else
         session="$(display_effective_scale)"
-        echo "  ${session} — following the rest of the desktop (no setting of your own)."
+        echo "  ${session} — automatic Resolve size (no setting of your own)."
         echo "  Change the desktop with 'aq display scale', or fix Resolve on its"
         echo "  own with 'aq resolve scale 1.5'."
     fi
@@ -1176,7 +1176,7 @@ resolve_scale_status() {
 display_effective_scale() {
     local n=""
     if [ -x "${AQ_DISPLAY_HELPER}" ]; then
-        n="$("${AQ_DISPLAY_HELPER}" --effective-scale 2> /dev/null)"
+        n="$("${AQ_DISPLAY_HELPER}" --resolve-scale 2> /dev/null)"
     fi
     case "${n}" in
         '' | *[!0-9.]* | *.*.*) printf '1' ;;
@@ -1189,7 +1189,7 @@ resolve_scale() {
         "" | status) resolve_scale_status ;;
         auto)
             resolve_scale_set "" || return 1
-            echo "Resolve now follows the rest of the desktop, which is at $(display_effective_scale)."
+            echo "Resolve now uses its automatic interface size: $(display_effective_scale)."
             echo "  It applies the next time you open Resolve."
             ;;
         *)

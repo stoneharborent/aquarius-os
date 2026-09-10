@@ -24,7 +24,7 @@ def check(root):
     spec.loader.exec_module(ui)
     module = runpy.run_path(str(root / "usr/libexec/aquarius-resolve-installer"),
                             run_name="resolve_done_test")
-    from gi.repository import Adw, Gio, GLib
+    from gi.repository import Adw, GdkPixbuf, Gio, GLib
 
     app = Adw.Application(application_id="org.aquariusos.ResolveDoneTest",
                           flags=Gio.ApplicationFlags.NON_UNIQUE)
@@ -50,6 +50,10 @@ def check(root):
     window.finished = True
     window._process_exited(0)
     assert window.done_logo.get_gicon().get_file().get_path() == str(icon)
+    decoded = GdkPixbuf.Pixbuf.new_from_file(str(icon))
+    assert decoded.get_width() > 0 and decoded.get_height() > 0
+    assert window.done_logo.get_parent() is window.done_title.get_parent()
+    assert window.done_status is window.done_logo
     window.present()
     until = time.monotonic() + 1
     while time.monotonic() < until:
@@ -57,7 +61,16 @@ def check(root):
         time.sleep(0.005)
     assert window.done_logo.get_mapped()
     if os.environ.get("AQ_RESOLVE_TEST_SCREENSHOT"):
-        subprocess.run(["grim", os.environ["AQ_RESOLVE_TEST_SCREENSHOT"]], check=True)
+        capture = subprocess.Popen(["grim", os.environ["AQ_RESOLVE_TEST_SCREENSHOT"]])
+        deadline = time.monotonic() + 5
+        while capture.poll() is None and time.monotonic() < deadline:
+            GLib.MainContext.default().iteration(False)
+            time.sleep(0.005)
+        assert capture.wait(timeout=1) == 0
+    window.dry_run = False
+    with patch.object(subprocess, "Popen", side_effect=OSError("test refusal")):
+        window._on_open_clicked(None)
+    assert window.done_status.get_icon_name() == "dialog-warning-symbolic"
     icon.unlink()
     window._refresh_done_logo()
     assert window.done_logo.get_icon_name() == "video-x-generic-symbolic"

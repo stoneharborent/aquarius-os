@@ -715,7 +715,7 @@ aq_file_has "${AQ_LAUNCH}" 'QT_SCALE_FACTOR=\$\{SCALE\}' \
     "the session's scale is handed to Resolve"
 aq_file_has "${AQ_LAUNCH}" 'QT_DEVICE_PIXEL_RATIO=\$\{SCALE\}' \
     "and the other Qt 5 variable is reachable for the bench to compare"
-aq_file_has "${AQ_LAUNCH}" 'aquarius-display-scale --effective-scale' \
+aq_file_has "${AQ_LAUNCH}" 'aquarius-display-scale --resolve-scale' \
     "the scale is asked of the same helper 'aq display' asks"
 aq_file_has "${AQ_LAUNCH}" 'XCURSOR_THEME=' "your cursor theme is carried in"
 aq_file_has "${AQ_LAUNCH}" 'XCURSOR_SIZE=' "so is its size"
@@ -765,13 +765,13 @@ aq_file_has /usr/libexec/aquarius-resolve-install 'conf_fingerprint' \
 # The helper has to actually answer, with a number, on a machine with no screen
 # at all — which is what a build container is, and what running Resolve from
 # GNOME or over SSH looks like too.
-AQ_EFFECTIVE="$(/usr/libexec/aquarius-display-scale --effective-scale 2>&1 || true)"
-echo "  --effective-scale on this machine (no screens at all): '${AQ_EFFECTIVE}'"
+AQ_EFFECTIVE="$(/usr/libexec/aquarius-display-scale --resolve-scale 2>&1 || true)"
+echo "  --resolve-scale on this machine (no screens at all): '${AQ_EFFECTIVE}'"
 case "${AQ_EFFECTIVE}" in
     '' | *[!0-9.]*)
-        bad "'--effective-scale' did not print a plain number, so the launcher would have nothing to hand Resolve"
+        bad "'--resolve-scale' did not print a plain number, so the launcher would have nothing to hand Resolve"
         ;;
-    *) ok "'--effective-scale' answers with a number even where there are no screens" ;;
+    *) ok "'--resolve-scale' answers with a number even where there are no screens" ;;
 esac
 
 # ------------------------------------------------------------------------------

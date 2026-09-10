@@ -566,18 +566,17 @@ class InstallerWindow(Adw.ApplicationWindow):
         """The last page: it worked, and the two things to do next.
 
         The app's own exported icon is loaded again when installation finishes:
-        it does not exist yet when this page is first constructed. The tick
-        stays beside the heading, and no Blackmagic artwork ships in the OS.
+        it does not exist yet when this page is first constructed. The icon
+        sits beside the heading, and no Blackmagic artwork ships in the OS.
         """
         _mark, self.done_title, self.done_blurb = aquarius_ui.hero(
             "DaVinci Resolve is installed.",
             "It is in your apps now, and the file you downloaded can be deleted.",
         )
-        self.done_logo = Gtk.Image(pixel_size=96, halign=Gtk.Align.CENTER)
+        self.done_logo = Gtk.Image(pixel_size=48, halign=Gtk.Align.CENTER)
         self._refresh_done_logo()
 
-        self.done_status = aquarius_ui.status_glyph()
-        aquarius_ui.set_status_glyph(self.done_status, ok=True)
+        self.done_status = self.done_logo
         heading = aquarius_ui.heading_row(self.done_status, self.done_title)
 
         # One thing to check, not two. Resolve used to open tiny on a 4K screen
@@ -588,10 +587,10 @@ class InstallerWindow(Adw.ApplicationWindow):
             "Worth checking the first time you open it: Preferences → System → "
             "Memory and GPU, where the GPU processing mode should say CUDA and "
             "your card should be listed.\n\n"
-            "Resolve opens at the size your desktop is set to. If you want it "
-            "different from everything else, run  aq resolve scale 1.5  in a "
-            "terminal, or use Resolve's own Preferences → User → UI Settings → "
-            "Interface Scale."
+            "Resolve follows your desktop size, with a 125% minimum on unscaled "
+            "4K screens. This changes the whole interface, not your media. "
+            "To adjust it, open Resolve's Preferences → User → UI Settings → "
+            "Interface Scale, then restart Resolve."
         )
         tips.set_margin_top(6)
 
@@ -605,7 +604,7 @@ class InstallerWindow(Adw.ApplicationWindow):
         buttons = aquarius_ui.button_row([open_button, close_button], margin_top=0)
 
         return aquarius_ui.page(
-            [self.done_logo, heading, self.done_blurb, buttons, tips],
+            [heading, self.done_blurb, buttons, tips],
             maximum_size=560,
             spacing=12,
         )

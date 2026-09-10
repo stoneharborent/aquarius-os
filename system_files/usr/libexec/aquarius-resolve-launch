@@ -59,7 +59,9 @@
 # What CAN be done is to tell the toolkit inside the application. Resolve is
 # built on Qt 5, which reads its scale out of the environment, so the launcher
 # reads the size your desktop is set to and passes it in. That is the whole
-# feature: Resolve opens at the size everything else is.
+# feature: Resolve follows the desktop, with a 125% minimum when every known
+# enabled screen is at least 3200x1800 and is running at 100%. This grows the
+# whole interface; it does not alter a clip's proportions or its export size.
 #
 # ⚠️ WHICH VARIABLE — this is the part that is a judgement, so it is written
 #    down rather than assumed:
@@ -213,7 +215,7 @@ conf_value() { # conf_value <key>
 session_scale() {
     local n=""
     if [ -x /usr/libexec/aquarius-display-scale ]; then
-        n="$(/usr/libexec/aquarius-display-scale --effective-scale 2> /dev/null)"
+        n="$(/usr/libexec/aquarius-display-scale --resolve-scale 2> /dev/null)"
     fi
     case "${n}" in
         '' | *[!0-9.]* | *.*.*) printf '1' ;;
