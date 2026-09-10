@@ -264,13 +264,25 @@ def make_rpm(path, **kw):
         build_payload(os.path.join(work, "root"), **kw)
         spec = os.path.join(work, "testapp.spec")
         with open(spec, "w") as handle:
+            # ⚠️ Built by joining pieces, NOT with Python's % formatting: an
+            # RPM spec is full of %-words (%description, %install, %files),
+            # and Python's % operator applies to the WHOLE run of adjacent
+            # string literals, so "%description" once became a "%d" directive
+            # and this fixture crashed the CI job (2026-09-10) on the one
+            # machine that had rpmbuild — this branch never runs where it
+            # does not. The two %global lines switch off RPM's strip and
+            # debuginfo passes, which would otherwise try to read the fake
+            # binary in the payload as a real program.
+            root = os.path.join(work, "root")
             handle.write(
+                "%global debug_package %{nil}\n"
+                "%global __os_install_post %{nil}\n"
                 "Name: testapp\nVersion: 1.2.3\nRelease: 1\n"
                 "Summary: a test\nLicense: MIT\nBuildArch: x86_64\n"
                 "%description\na test\n"
-                "%install\ncp -a %s/. %%{buildroot}/\n" % os.path.join(work, "root")
-                + "%files\n/opt/testapp\n/usr/share/applications\n"
-                  "/usr/share/icons\n")
+                "%install\ncp -a " + root + "/. %{buildroot}/\n"
+                "%files\n/opt/testapp\n/usr/share/applications\n"
+                "/usr/share/icons\n")
         done = subprocess.run(
             ["rpmbuild", "-bb", "--define", "_topdir %s" % work,
              "--define", "_rpmdir %s" % work, spec],
