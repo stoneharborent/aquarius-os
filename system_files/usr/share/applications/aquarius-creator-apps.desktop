@@ -9,6 +9,16 @@ TryExec=/usr/libexec/aquarius-creator-apps
 Icon=aquarius-apps
 Terminal=false
 StartupNotify=true
+# ⚠️ HIDDEN FROM THE APP GRID SINCE 2026-09-09, AND STILL VERY MUCH ALIVE.
+# Aquarius Installer is now the one visible app for installing things, and two
+# app-store-shaped icons in one grid is how a person ends up in the wrong one.
+# This window is still the SECOND STEP OF THE WELCOME, which starts it by its
+# full path (/usr/libexec/aquarius-creator-apps --embedded-flow) and does not
+# care what the app grid shows; `aq apps` still reaches the same catalogue; and
+# the Installer's "AquariusOS suggests" group IS this list, read through the
+# same --catalog command. Nothing was removed — one door was closed because
+# there were two doors into one room.
+NoDisplay=true
 StartupWMClass=org.aquariusos.CreatorApps
 Categories=System;PackageManager;
 Keywords=apps;creator;install;add;remove;software;flatpak;obs;blender;kdenlive;krita;gimp;studio;
