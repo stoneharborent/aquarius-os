@@ -62,6 +62,7 @@ ICON_NAMES=(
     org.gnome.Ptyxis
     aquarius-console
     aquarius-apps
+    aquarius-installer
     aquarius-welcome
     aquarius-install-resolve
     aquarius-remove-resolve
@@ -74,6 +75,7 @@ ICON_NAMES=(
 # borrows the Settings icon until that flow moves into System Settings. Not a
 # mistake, and not a gap waiting for artwork.
 DESKTOP_ICONS=(
+    "usr/share/applications/aquarius-installer.desktop|aquarius-installer"
     "usr/share/applications/aquarius-creator-apps.desktop|aquarius-apps"
     "usr/share/applications/aquarius-welcome.desktop|aquarius-welcome"
     "etc/xdg/autostart/aquarius-welcome-firstrun.desktop|aquarius-welcome"

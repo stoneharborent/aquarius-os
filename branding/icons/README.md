@@ -18,10 +18,18 @@ If you just want to look at them, open any file in [`ice/`](./ice) or
 | Files | `org.gnome.Nautilus` *and* `aquarius-files` |
 | Settings | `org.gnome.Settings` *and* `aquarius-settings` |
 | Console | `org.gnome.Ptyxis` *and* `aquarius-console` |
-| Aquarius Apps | `aquarius-apps` |
+| Aquarius Apps | `aquarius-apps` *and* `aquarius-installer` |
 | Aquarius Welcome | `aquarius-welcome` |
 | Install DaVinci Resolve | `aquarius-install-resolve` |
 | Remove DaVinci Resolve | `aquarius-remove-resolve` |
+
+**Why the app-chooser drawing has two names** (2026-09-09). Aquarius Installer is the
+"install anything" window and Aquarius Apps is the first-login chooser behind it — the same
+idea wearing two hats, and since the Installer shipped it is the only one of the two visible
+in the app grid. The same drawing ships under both names rather than a second, nearly
+identical plate being drawn. **This is a placeholder, and an open design item:** when the
+Installer earns a drawing of its own it gets an entry in `icons.mjs` and loses its place in
+`ALIASES`.
 
 **Why three of them have two names.** Files, Settings and the Console are somebody else's
 programs — GNOME's Nautilus, GNOME's Settings, and Ptyxis, which is Fedora's terminal and

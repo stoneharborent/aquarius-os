@@ -119,6 +119,7 @@ ICON_NAMES=(
     org.gnome.Ptyxis
     aquarius-console
     aquarius-apps
+    aquarius-installer
     aquarius-welcome
     aquarius-install-resolve
     aquarius-remove-resolve
@@ -131,6 +132,7 @@ ICON_NAMES=(
 # it wears the Settings icon until that flow moves into System Settings where it
 # belongs. Not an oversight; do not "fix" it by drawing it one.
 DESKTOP_ICONS=(
+    "${APPS_DIR}/aquarius-installer.desktop|aquarius-installer"
     "${APPS_DIR}/aquarius-creator-apps.desktop|aquarius-apps"
     "${APPS_DIR}/aquarius-welcome.desktop|aquarius-welcome"
     "${AUTOSTART_DIR}/aquarius-welcome-firstrun.desktop|aquarius-welcome"
