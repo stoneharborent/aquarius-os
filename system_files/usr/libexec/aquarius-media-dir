@@ -1,0 +1,220 @@
+#!/usr/bin/bash
+# =============================================================================
+# aquarius-media-dir — make sure /run/media/<you> exists before anything needs it
+# =============================================================================
+# PLAIN ENGLISH
+#
+# Every drive you plug into this computer appears in one folder:
+#
+#     /run/media/<your user name>/<the drive's name>
+#
+# That is where the dock looks, where the Files app looks, and where a person
+# looks. This little program creates the /run/media/<your user name> part, once,
+# when you log in.
+#
+# ------------------------------------------------------------------------------
+# WHY THAT NEEDS A PROGRAM AT ALL — two separate reasons
+# ------------------------------------------------------------------------------
+# Normally nobody has to think about this folder, because udisks2 (Fedora's
+# drive-mounting service) creates it the first time it mounts something and
+# removes it again after the last drive is unplugged. Two things go wrong with
+# leaving it at that:
+#
+# 1. ⚠️ THE DOCK CANNOT WATCH A FOLDER THAT IS NOT THERE. The Aquarius dock
+#    lists your drives by watching that folder (aquarius-shell,
+#    components/dock/DockDrives.qml). The Qt component it uses does something
+#    genuinely dangerous when the folder is missing — it silently lists the
+#    program's own working directory instead, which is your home folder. The
+#    shell has an elaborate three-level guard against exactly that, written
+#    after it drew thirty of Royce's home folders as "drives" on 6 September
+#    2026. Making the folder exist from the moment you log in removes the
+#    situation the guard is guarding against, rather than relying on the guard.
+#
+# 2. ⚠️ A MAC DRIVE IS MOUNTED BY YOU, NOT BY udisks2. This is the real reason.
+#    Linux cannot read APFS (a Mac drive) at all; the program that can,
+#    apfs-fuse, is an ordinary program that runs as YOU with no special powers.
+#    An ordinary program cannot create a folder in a place it does not own — and
+#    udisks2's own version of this folder is owned by the administrator, with
+#    read-only permission for you. So if we left it to udisks2, mounting a Mac
+#    drive would fail with "permission denied" on a computer where the person is
+#    the only person. This program makes the folder yours.
+#
+# ------------------------------------------------------------------------------
+# ⚠️ WHERE THIS DELIBERATELY DIFFERS FROM udisks2, AND WHY
+# ------------------------------------------------------------------------------
+# udisks2 makes this folder like this (its source, src/udiskslinuxfilesystem.c):
+#
+#     /run/media                 mode 0755, owned by the administrator
+#     /run/media/<user>          mode 0750, owned by the administrator, plus an
+#                                extra permission ("ACL") letting <user> LOOK
+#                                but not WRITE
+#
+# We make the first one identically and the second one like this:
+#
+#     /run/media/<user>          mode 0700, owned by <user>
+#
+# The difference is the second line, and it is on purpose. Reason 2 above: your
+# own session has to be able to create a folder in there to mount a Mac drive
+# onto. 0700-owned-by-you is also STRICTER than what udisks2 makes, not looser —
+# nobody else on the machine can even list it, where udisks2's version lets your
+# own group look in.
+#
+# udisks2 does not mind. It checks whether the folder exists and, if it does,
+# uses it exactly as it is; it never inspects the permissions. Every non-Mac
+# drive therefore mounts precisely as it did before.
+#
+# ------------------------------------------------------------------------------
+# HOW IT IS RUN
+# ------------------------------------------------------------------------------
+# It is not a service you start. systemd runs it as the administrator at the
+# start of every person's login, through a small addition to systemd's own
+# per-user service:
+#
+#     /usr/lib/systemd/system/user@.service.d/aquarius-media-dir.conf
+#
+# systemd names that service after your USER NUMBER, not your name (user@1000),
+# so that is what this program is given and what it looks up.
+#
+#     aquarius-media-dir 1000        do it for user number 1000
+#     aquarius-media-dir royce       a name works too, for typing by hand
+#     aquarius-media-dir --dry-run   say what it would do and change nothing
+#     aquarius-media-dir --help      this header
+#
+# ⚠️ IT ALWAYS EXITS 0, EVEN WHEN IT FAILS. It runs at the front of the login
+# path. A program that can fail there is a program that can stop somebody
+# logging in, and no convenience folder is worth that. Anything that goes wrong
+# is written to the journal as one plain sentence and the login carries on.
+# (The systemd file also carries a "-", which tells systemd to ignore a failure
+# here, so there are two independent nets under the same worry.)
+#
+# Plain-English guide: docs/restart/mac-drives.md
+# =============================================================================
+
+set -uo pipefail
+
+# The folder all of this is about. Overridable ONLY so the test can point it at
+# a temporary directory — nothing on a real machine sets it.
+MEDIA_BASE="${AQ_MEDIA_BASE:-/run/media}"
+
+# Ordinary people have user numbers of 1000 and up. Below that are the machine's
+# own accounts — the login screen's account, service accounts — and none of them
+# ever plugs a drive in. Overridable for the test.
+FIRST_REAL_UID="${AQ_FIRST_UID:-1000}"
+
+say() { echo "aquarius-media-dir: $*"; }
+
+usage() {
+    sed -n '2,/^# =\{70,\}$/p' "$0" | sed 's/^# \{0,1\}//' | head -n 200
+}
+
+DRY_RUN=0
+WHO=""
+
+for arg in "$@"; do
+    case "${arg}" in
+        --dry-run) DRY_RUN=1 ;;
+        -h | --help | help)
+            usage
+            exit 0
+            ;;
+        -*)
+            say "I do not understand '${arg}'."
+            exit 0
+            ;;
+        *) WHO="${arg}" ;;
+    esac
+done
+
+if [ "${DRY_RUN}" -eq 1 ] && [ -z "${WHO}" ]; then
+    echo "aquarius-media-dir --dry-run"
+    echo "Nothing is created or changed. This is the rehearsal the build runs."
+    echo ""
+    echo "What it does when it runs for real, once per login:"
+    echo "  * is given a user number by systemd (user@1000.service -> 1000)"
+    echo "  * does nothing at all for user numbers below ${FIRST_REAL_UID} —"
+    echo "    those are the machine's own accounts, and they plug nothing in"
+    echo "  * creates ${MEDIA_BASE} if it is missing, mode 0755, owned by root,"
+    echo "    exactly as udisks2 would"
+    echo "  * creates ${MEDIA_BASE}/<user> if it is missing, mode 0700, OWNED BY"
+    echo "    THAT USER — one step stricter than udisks2's own version, and"
+    echo "    writable by them, which is what lets a Mac (APFS) drive be mounted"
+    echo "    by the person's own session with no privilege at all"
+    echo "  * never removes anything, and never changes a folder that is there"
+    echo "  * always exits 0, because it runs on the login path"
+    exit 0
+fi
+
+if [ -z "${WHO}" ]; then
+    say "I was not told who to do this for, so I have done nothing."
+    exit 0
+fi
+
+# ------------------------------------------------------------------------------
+# Who is this? Accept a user number (what systemd passes) or a name (for typing).
+# ------------------------------------------------------------------------------
+entry="$(getent passwd "${WHO}" 2> /dev/null || true)"
+if [ -z "${entry}" ]; then
+    say "there is no account called '${WHO}' on this computer — nothing to do."
+    exit 0
+fi
+
+user_name="$(printf '%s\n' "${entry}" | cut -d: -f1)"
+user_uid="$(printf '%s\n' "${entry}" | cut -d: -f3)"
+user_gid="$(printf '%s\n' "${entry}" | cut -d: -f4)"
+
+case "${user_uid}" in
+    '' | *[!0-9]*)
+        say "could not read a user number for '${WHO}' — nothing to do."
+        exit 0
+        ;;
+esac
+
+if [ "${user_uid}" -lt "${FIRST_REAL_UID}" ]; then
+    # Not a fault and not worth a line in everybody's journal.
+    exit 0
+fi
+
+# A user name with a slash in it could not be part of a path. udisks2 refuses
+# the same case and falls back to /media; we simply do nothing, which leaves
+# udisks2 to make exactly the decision it would have made anyway.
+case "${user_name}" in
+    */*)
+        say "the account name '${user_name}' cannot be part of a folder name — leaving this to udisks2."
+        exit 0
+        ;;
+esac
+
+target="${MEDIA_BASE}/${user_name}"
+
+# ------------------------------------------------------------------------------
+# 1. /run/media itself — mode 0755, owned by root. Identical to udisks2.
+# ------------------------------------------------------------------------------
+if [ ! -d "${MEDIA_BASE}" ]; then
+    if ! mkdir -p "${MEDIA_BASE}" 2> /dev/null; then
+        say "could not create ${MEDIA_BASE}. Drives will still mount; udisks2 will make it later."
+        exit 0
+    fi
+    chmod 0755 "${MEDIA_BASE}" 2> /dev/null || true
+fi
+
+# ------------------------------------------------------------------------------
+# 2. /run/media/<user> — mode 0700, owned by them. See the header for the why.
+# ------------------------------------------------------------------------------
+if [ -d "${target}" ]; then
+    # Already there — somebody plugged a drive in before this ran, or this is a
+    # second login. Leave it exactly as it is: changing a folder that already
+    # has a mounted drive underneath it is a way to break something that works.
+    exit 0
+fi
+
+if ! mkdir "${target}" 2> /dev/null; then
+    say "could not create ${target}. Ordinary drives will still mount (udisks2"
+    say "    makes this folder itself); a Mac drive may not."
+    exit 0
+fi
+
+chown "${user_uid}:${user_gid}" "${target}" 2> /dev/null \
+    || say "could not give ${target} to ${user_name} — a Mac drive may not mount."
+chmod 0700 "${target}" 2> /dev/null || true
+
+exit 0
