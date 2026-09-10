@@ -26,6 +26,27 @@
 #     sudo /usr/libexec/aquarius-creator-apps-install org.kde.kdenlive//stable
 #
 # ------------------------------------------------------------------------------
+# ⚠️ IT DOES FOUR JOBS NOW, NOT ONE (2026-09-09, Aquarius Installer)
+# ------------------------------------------------------------------------------
+# Aquarius Installer (/usr/libexec/aquarius-installer) is the window that
+# installs anything a person downloads, and its Flatpak route, its Remove and
+# its Update All all need exactly what this script already is: the one place
+# where everything privileged happens, inside ONE password prompt.
+#
+# Rather than write a second, nearly identical privileged helper — which would
+# be a second thing to keep root-owned, a second thing for pkexec to trust, and
+# a second place for the "ask the system, never the exit code" rule to be
+# forgotten — this one grew three more modes:
+#
+#     --mode install        what it always did: install by app id
+#     --mode install-file   install a .flatpakref or a .flatpak file
+#     --mode uninstall      remove apps by id, then tidy up unused runtimes
+#     --mode update         update apps by id — ONE prompt for the whole run
+#
+# Left off, the mode is `install`, and the script behaves EXACTLY as it did
+# before this line was written. That is what the build checks.
+#
+# ------------------------------------------------------------------------------
 # WHY ONE APP AT A TIME AND NOT ALL OF THEM IN ONE COMMAND
 # ------------------------------------------------------------------------------
 # `flatpak install a b c` is one command with one answer at the end: it worked,
@@ -87,6 +108,9 @@ DRY_RUN=0
 #    Left unset it behaves exactly as it always did.
 STEP_OFFSET=0
 STEP_TOTAL=0
+# install | install-file | uninstall | update. Anything else is refused before
+# a single privileged command runs.
+MODE="install"
 REFS=()
 
 say() { printf '%s\n' "$*"; }
@@ -119,10 +143,13 @@ usage() {
     cat <<'USAGE'
 aquarius-creator-apps-install — install creator apps, one at a time
 
-    aquarius-creator-apps-install [--progress-fd N] [--dry-run] <ref> [<ref>...]
+    aquarius-creator-apps-install [--mode M] [--progress-fd N] [--dry-run]
+                                  <ref> [<ref>...]
 
     <ref>            a Flatpak reference: an app id, optionally with a branch,
-                     as in  org.kde.kdenlive//stable
+                     as in  org.kde.kdenlive//stable — or, in install-file
+                     mode, the path to a .flatpakref or .flatpak file
+    --mode M         install (the default) | install-file | uninstall | update
     --progress-fd N  also write short progress lines to file descriptor N
     --cancel-file F  stop cleanly, between apps, as soon as file F appears
     --step-offset N  this run's first app is really step N+1 of a bigger job
@@ -168,6 +195,14 @@ while [ "$#" -gt 0 ]; do
             STEP_TOTAL="${1#*=}"
             shift
             ;;
+        --mode)
+            MODE="${2:-install}"
+            shift 2 || true
+            ;;
+        --mode=*)
+            MODE="${1#*=}"
+            shift
+            ;;
         --dry-run)
             DRY_RUN=1
             shift
@@ -188,8 +223,18 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
+case "${MODE}" in
+    install | install-file | uninstall | update) ;;
+    *)
+        say "aquarius-creator-apps-install: '${MODE}' is not one of the four"
+        say "jobs this can do (install, install-file, uninstall, update)."
+        progress "FAIL AquariusOS asked for something this helper cannot do."
+        exit 2
+        ;;
+esac
+
 if [ "${#REFS[@]}" -eq 0 ]; then
-    say "Nothing to install — no apps were named."
+    say "Nothing to do — no apps were named."
     progress "FAIL Nothing was chosen, so there is nothing to install."
     exit 2
 fi
@@ -235,7 +280,12 @@ TOTAL="${#REFS[@]}"
 # run's own apps, which is what it always was.
 [ "${STEP_TOTAL}" -gt 0 ] 2> /dev/null || STEP_TOTAL="${TOTAL}"
 
-say "Installing ${TOTAL} $([ "${TOTAL}" -eq 1 ] && echo app || echo apps) for this computer."
+case "${MODE}" in
+    uninstall) AQ_VERB="Removing" ;;
+    update) AQ_VERB="Updating" ;;
+    *) AQ_VERB="Installing" ;;
+esac
+say "${AQ_VERB} ${TOTAL} $([ "${TOTAL}" -eq 1 ] && echo app || echo apps) for this computer."
 say ""
 
 FAILED_IDS=()
@@ -259,6 +309,49 @@ cancelled() {
     [ -n "${CANCEL_FILE}" ] && [ -e "${CANCEL_FILE}" ]
 }
 
+# ------------------------------------------------------------------------------
+# ref_file_id — the app id inside a .flatpakref, or nothing
+# ------------------------------------------------------------------------------
+# A .flatpakref is a small text file, and the line called Name= is the app id.
+# A .flatpak bundle carries the app itself and says no such thing, so this prints
+# nothing for one — and "nothing" is handled honestly further down rather than
+# guessed at from the file name.
+ref_file_id() {                 # ref_file_id <path>
+    [ -r "$1" ] || return 0
+    case "$1" in
+        *.flatpakref)
+            grep -m1 '^Name=' "$1" 2> /dev/null | cut -d= -f2- | tr -d ' \r'
+            ;;
+    esac
+}
+
+# ------------------------------------------------------------------------------
+# verify_installed — ask the system, never the exit code
+# ------------------------------------------------------------------------------
+# The rule this whole script is written around, in one place now that three of
+# the four modes need it.
+verify_installed() {            # verify_installed <id> <exit-code>
+    local vid="$1" vrc="$2"
+    if flatpak info --system "${vid}" > /dev/null 2>&1; then
+        say ""
+        say "${vid} is installed."
+        DONE_COUNT=$((DONE_COUNT + 1))
+        progress "OK ${vid}"
+        return 0
+    fi
+    say ""
+    say "${vid} did NOT install. The lines above say why."
+    FAILED_IDS+=("${vid}")
+    if [ "${vrc}" -eq 0 ]; then
+        # Exited happily and is not there. Rare, and worth saying plainly rather
+        # than pretending we know more than we do.
+        progress "FAILED ${vid} Flatpak reported success but the app is not here."
+    else
+        progress "FAILED ${vid} Flatpak could not install it. Open Details to see why."
+    fi
+    return 1
+}
+
 CANCELLED=0
 
 for i in "${!REFS[@]}"; do
@@ -276,7 +369,16 @@ for i in "${!REFS[@]}"; do
     # The id is the ref without its architecture and branch. Everything we
     # report and everything we verify uses the id, because that is what a person
     # sees and what `flatpak info` answers to.
-    id="${ref%%/*}"
+    #
+    # ⚠️ IN install-file MODE THE REF IS A FILE PATH, NOT AN ID. A .flatpakref
+    #    carries the id inside it on a line called Name=; a .flatpak bundle does
+    #    not say so at all, and for that one the honest answer is "we will find
+    #    out by looking at what appeared". Either way the id is never invented.
+    if [ "${MODE}" = "install-file" ]; then
+        id="$(ref_file_id "${ref}")"
+    else
+        id="${ref%%/*}"
+    fi
 
     progress "STEP $((STEP_OFFSET + n))/${STEP_TOTAL} ${id}"
     say "──────────────────────────────────────────────────────────────────────"
@@ -284,70 +386,198 @@ for i in "${!REFS[@]}"; do
     say "──────────────────────────────────────────────────────────────────────"
 
     if [ "${DRY_RUN}" -eq 1 ]; then
-        say "(rehearsal: would run  flatpak install --system -y --noninteractive flathub ${ref})"
+        case "${MODE}" in
+            install)
+                say "(rehearsal: would run  flatpak install --system -y --noninteractive flathub ${ref})"
+                ;;
+            install-file)
+                say "(rehearsal: would run  flatpak install --system -y --noninteractive ${ref})"
+                ;;
+            uninstall)
+                say "(rehearsal: would run  flatpak uninstall --system -y --noninteractive ${id})"
+                ;;
+            update)
+                say "(rehearsal: would run  flatpak update --system -y --noninteractive ${id})"
+                ;;
+        esac
         DONE_COUNT=$((DONE_COUNT + 1))
         progress "OK ${id}"
         progress "PERCENT $(((STEP_OFFSET + DONE_COUNT) * 100 / STEP_TOTAL))"
         continue
     fi
 
-    # Already here? Then say so and move on. This is what makes the window safe
-    # to run again after a partial failure: the apps that arrived last time are
-    # not downloaded twice.
-    if flatpak info --system "${id}" > /dev/null 2>&1; then
-        say "Already installed. Nothing to do."
-        DONE_COUNT=$((DONE_COUNT + 1))
-        progress "OK ${id}"
-        progress "PERCENT $(((STEP_OFFSET + DONE_COUNT) * 100 / STEP_TOTAL))"
-        continue
-    fi
+    case "${MODE}" in
+        # ----------------------------------------------------------------------
+        # install — by app id, from Flathub. What this script has always done.
+        # ----------------------------------------------------------------------
+        install)
+            # Already here? Then say so and move on. This is what makes the
+            # window safe to run again after a partial failure: the apps that
+            # arrived last time are not downloaded twice.
+            if flatpak info --system "${id}" > /dev/null 2>&1; then
+                say "Already installed. Nothing to do."
+                DONE_COUNT=$((DONE_COUNT + 1))
+                progress "OK ${id}"
+                progress "PERCENT $(((STEP_OFFSET + DONE_COUNT) * 100 / STEP_TOTAL))"
+                continue
+            fi
 
-    # --noninteractive is what stops it asking questions at a terminal nobody is
-    # watching. We are already root, so no permission question can arise here —
-    # that was answered once, by pkexec, before this script started.
-    flatpak install --system -y --noninteractive flathub "${ref}" 2>&1
-    rc=$?
+            # --noninteractive is what stops it asking questions at a terminal
+            # nobody is watching. We are already root, so no permission question
+            # can arise here — that was answered once, by pkexec, before this
+            # script started.
+            flatpak install --system -y --noninteractive flathub "${ref}" 2>&1
+            rc=$?
+            verify_installed "${id}" "${rc}" || true
+            ;;
 
-    # ⚠️ THE EXIT CODE IS NOT THE ANSWER. Ask the system.
-    if flatpak info --system "${id}" > /dev/null 2>&1; then
-        say ""
-        say "${id} is installed."
-        DONE_COUNT=$((DONE_COUNT + 1))
-        progress "OK ${id}"
-    else
-        say ""
-        say "${id} did NOT install. The lines above say why."
-        FAILED_IDS+=("${id}")
-        if [ "${rc}" -eq 0 ]; then
-            # Exited happily and is not there. Rare, and worth saying plainly
-            # rather than pretending we know more than we do.
-            progress "FAILED ${id} Flatpak reported success but the app is not here."
-        else
-            progress "FAILED ${id} Flatpak could not install it. Open Details to see why."
-        fi
-    fi
+        # ----------------------------------------------------------------------
+        # install-file — a .flatpakref or a .flatpak somebody downloaded
+        # ----------------------------------------------------------------------
+        # ⚠️ THE FILE IS HANDED TO FLATPAK AS A FILE. A .flatpakref names an app
+        #    and the remote it lives on; a .flatpak carries the whole app inside
+        #    it. Flatpak understands both, so there is nothing for us to
+        #    interpret and nothing for us to get wrong.
+        install-file)
+            if [ ! -r "${ref}" ]; then
+                say "That file is not there any more."
+                FAILED_IDS+=("${ref}")
+                progress "FAILED ${ref} That file is not there any more."
+                progress "PERCENT $(((STEP_OFFSET + DONE_COUNT) * 100 / STEP_TOTAL))"
+                continue
+            fi
+            before="$(flatpak list --system --app --columns=application 2> /dev/null | sort || true)"
+            flatpak install --system -y --noninteractive "${ref}" 2>&1
+            rc=$?
+            if [ -n "${id}" ]; then
+                verify_installed "${id}" "${rc}" || true
+            else
+                # A bundle that never told us its id. The honest test is "what
+                # is here now that was not here before".
+                after="$(flatpak list --system --app --columns=application 2> /dev/null | sort || true)"
+                # ⚠️ NOT `grep -Fxv -f`, WHICH IS THE OBVIOUS WAY AND IS WRONG
+                #    HERE: on a computer with no Flatpaks yet, "before" is one
+                #    empty line, an empty pattern matches EVERY line, and -v
+                #    then throws away the very app that has just been installed.
+                #    awk asks the question the way it was meant.
+                new_id="$(awk 'NR == FNR { seen[$0] = 1; next }
+                    $0 != "" && !($0 in seen) { print; exit }' \
+                    <(printf '%s\n' "${before}") <(printf '%s\n' "${after}"))"
+                if [ -n "${new_id}" ]; then
+                    say ""
+                    say "${new_id} is installed."
+                    DONE_COUNT=$((DONE_COUNT + 1))
+                    progress "OK ${new_id}"
+                else
+                    say ""
+                    say "Nothing new appeared, so that file did not install."
+                    FAILED_IDS+=("${ref}")
+                    progress "FAILED ${ref} Nothing new appeared, so that file did not install."
+                fi
+            fi
+            ;;
+
+        # ----------------------------------------------------------------------
+        # uninstall — the exact reverse, through the same one prompt
+        # ----------------------------------------------------------------------
+        uninstall)
+            if ! flatpak info --system "${id}" > /dev/null 2>&1; then
+                say "It is not installed for this computer. Nothing to do."
+                DONE_COUNT=$((DONE_COUNT + 1))
+                progress "OK ${id}"
+                progress "PERCENT $(((STEP_OFFSET + DONE_COUNT) * 100 / STEP_TOTAL))"
+                continue
+            fi
+            flatpak uninstall --system -y --noninteractive "${id}" 2>&1
+            rc=$?
+            # ⚠️ THE EXIT CODE IS NOT THE ANSWER, in this direction either.
+            if flatpak info --system "${id}" > /dev/null 2>&1; then
+                say ""
+                say "${id} is STILL installed. The lines above say why."
+                FAILED_IDS+=("${id}")
+                progress "FAILED ${id} It could not be removed. Open Details to see why."
+            else
+                say ""
+                say "${id} has been removed."
+                say "Its settings are in your home folder and were not touched."
+                DONE_COUNT=$((DONE_COUNT + 1))
+                progress "OK ${id}"
+            fi
+            ;;
+
+        # ----------------------------------------------------------------------
+        # update — and the one honest way to know whether anything changed
+        # ----------------------------------------------------------------------
+        # ⚠️ "UPDATED" IS NOT "THE COMMAND WORKED". An app that was already
+        #    current updates with a happy exit code and no change at all, which
+        #    is fine and must not be reported as a failure; an app that could not
+        #    update fails in ways that vary. So we write down the version stamp
+        #    Flatpak calls a commit before and after, and let the two answer it.
+        update)
+            before="$(flatpak info --system --show-commit "${id}" 2> /dev/null || true)"
+            flatpak update --system -y --noninteractive "${id}" 2>&1
+            rc=$?
+            after="$(flatpak info --system --show-commit "${id}" 2> /dev/null || true)"
+            if [ -z "${after}" ]; then
+                say ""
+                say "${id} is no longer installed, so it could not be updated."
+                FAILED_IDS+=("${id}")
+                progress "FAILED ${id} It is not installed any more, so there was nothing to update."
+            elif [ "${before}" != "${after}" ]; then
+                say ""
+                say "${id} has been updated."
+                DONE_COUNT=$((DONE_COUNT + 1))
+                progress "OK ${id}"
+            elif [ "${rc}" -eq 0 ]; then
+                say ""
+                say "${id} was already up to date."
+                DONE_COUNT=$((DONE_COUNT + 1))
+                progress "OK ${id}"
+            else
+                say ""
+                say "${id} could not be updated. The lines above say why."
+                FAILED_IDS+=("${id}")
+                progress "FAILED ${id} It could not be updated. Open Details to see why."
+            fi
+            ;;
+    esac
     progress "PERCENT $(((STEP_OFFSET + DONE_COUNT) * 100 / STEP_TOTAL))"
 done
+
+# Runtimes nobody needs any more, once every app that was asked for has gone.
+# Left to the very end so that removing three apps that share one runtime does
+# not consider it three times over.
+if [ "${MODE}" = "uninstall" ] && [ "${DRY_RUN}" -eq 0 ]; then
+    say ""
+    say "Tidying up the shared pieces no app needs any more…"
+    flatpak uninstall --system -y --noninteractive --unused 2>&1 || true
+fi
 
 # ==============================================================================
 # What happened, in one sentence
 # ==============================================================================
 say ""
 say "══════════════════════════════════════════════════════════════════════"
+# The one word that changes with the job. Said this way rather than with four
+# copies of the paragraph below, because the paragraph is the same paragraph.
+case "${MODE}" in
+    uninstall) AQ_PAST="removed" ;;
+    update) AQ_PAST="updated" ;;
+    *) AQ_PAST="installed" ;;
+esac
 if [ "${CANCELLED}" -eq 1 ]; then
-    say "Stopped at your request. ${DONE_COUNT} of ${TOTAL} were installed."
-    say "The rest are still waiting for you in Aquarius Apps."
+    say "Stopped at your request. ${DONE_COUNT} of ${TOTAL} were ${AQ_PAST}."
+    say "The rest are still waiting for you in Aquarius Installer."
 elif [ "${#FAILED_IDS[@]}" -eq 0 ]; then
-    say "All ${TOTAL} installed."
+    say "All ${TOTAL} ${AQ_PAST}."
 else
-    say "${DONE_COUNT} of ${TOTAL} installed. These did not:"
+    say "${DONE_COUNT} of ${TOTAL} ${AQ_PAST}. These did not:"
     for id in "${FAILED_IDS[@]}"; do
         say "    ${id}"
     done
     say ""
     say "Nothing is broken — you can try them again at any time from Aquarius"
-    say "Apps, or in a terminal with:"
-    say "    sudo flatpak install --system flathub <the id>"
+    say "Installer."
 fi
 say "══════════════════════════════════════════════════════════════════════"
 
