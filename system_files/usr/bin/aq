@@ -170,6 +170,19 @@ USAGE
                         which looks small on a big monitor, and cannot black
                         out. Any copy already made is removed.
 
+    aq drive list       Every drive plugged in right now, where it is, and
+                        whether you can write to it. A Mac drive is marked
+                        "Mac drive — read only", because that is the most we can
+                        ever safely do with one.
+
+    aq drive eject NAME Put a drive away safely, the same as right-clicking it
+                        in the dock. Do this before you pull the cable out.
+
+    aq drive unlock NAME
+                        Open a Mac drive that is protected with FileVault. It
+                        asks for the password you use for it on the Mac; nothing
+                        is shown as you type and nothing is saved.
+
     aq usb4 status      The chip that runs this computer's fast USB-C sockets
                         (USB4 / Thunderbolt): is its driver attached, and what
                         does the Thunderbolt device list say? Run this first
@@ -2500,6 +2513,213 @@ usb4() {
     esac
 }
 
+# =============================================================================
+# aq drive — the drives plugged into this computer
+# =============================================================================
+# WHAT THIS IS FOR
+#
+# Almost nobody should ever need it. Plug a drive in and it appears; right-click
+# its tile in the dock and choose Eject and it goes away. This is here for the
+# three moments when the pictures are not enough:
+#
+#   * "is it actually mounted, and can I write to it?"  -> aq drive list
+#   * "the dock is not showing it and I want it gone"   -> aq drive eject
+#   * "it is a Mac drive with FileVault on it"          -> aq drive unlock
+#
+# THE ONE THING WORTH KNOWING ABOUT MAC DRIVES: they are READ ONLY on this
+# computer, and always will be. Apple has never published how APFS works, so
+# every program on Linux that writes it is working from guesswork, and guessing
+# is not something to do with somebody's only copy of a shoot. You can read a
+# Mac drive and copy every file off it. You cannot save to it, rename anything
+# on it, or delete anything from it. Use exFAT for a drive that has to go both
+# ways. docs/restart/mac-drives.md explains all of it.
+# -----------------------------------------------------------------------------
+AQ_DRIVE_UNLOCK="/usr/libexec/aquarius-drive-unlock"
+
+drive_usage() {
+    cat << 'EOF'
+aq drive — the drives plugged into this computer
+
+    aq drive list        What is plugged in, where it is, and whether you can
+                         write to it.
+    aq drive eject NAME  Put a drive away safely before unplugging it. NAME is
+                         what the drive is called — the name under its tile in
+                         the dock.
+    aq drive unlock NAME Open a Mac drive protected with FileVault.
+
+A Mac (APFS) drive is always read-only on AquariusOS. You can copy files OFF it;
+you cannot write TO it. See docs/restart/mac-drives.md.
+EOF
+}
+
+# Where drives appear. udisks2 puts every drive it mounts here, and so do we.
+drive_root() {
+    printf '/run/media/%s\n' "${USER:-$(id -un)}"
+}
+
+# ------------------------------------------------------------------------------
+# The list of what is mounted, read from the kernel's own mount table
+# ------------------------------------------------------------------------------
+# /proc/self/mountinfo is the truth about what is mounted. Its layout is
+#
+#   ID PARENT MAJOR:MINOR ROOT MOUNT-POINT OPTIONS [tags…] - FSTYPE SOURCE SUPER
+#
+# with a variable number of optional tags before the "-", which is why this
+# looks for the "-" rather than counting columns. Spaces in a name are written
+# as \040, so they are turned back into spaces.
+#
+# It prints one line per drive: mount point, filesystem type, device, options.
+drive_table() {
+    local root
+    root="$(drive_root)/"
+    awk -v root="${root}" '
+        {
+            sep = 0
+            for (i = 7; i <= NF; i++) { if ($i == "-") { sep = i; break } }
+            if (sep == 0) next
+            target = $5; opts = $6; fstype = $(sep + 1); source = $(sep + 2)
+            gsub(/\\040/, " ", target)
+            gsub(/\\040/, " ", source)
+            if (index(target, root) == 1)
+                printf "%s\t%s\t%s\t%s\n", target, fstype, source, opts
+        }
+    ' /proc/self/mountinfo
+}
+
+drive_list() {
+    local any=0 target fstype source opts kind access
+
+    while IFS=$'\t' read -r target fstype source opts; do
+        [ -n "${target}" ] || continue
+        any=1
+        case "${opts}" in
+            ro | ro,*) access="read only" ;;
+            *) access="you can write to it" ;;
+        esac
+        case "${fstype}" in
+            fuse.apfs | fuse.apfs-fuse | apfs) kind="Mac drive — read only" ;;
+            exfat) kind="exFAT — works on Macs, PCs and cameras" ;;
+            ntfs | ntfs3 | fuseblk) kind="Windows drive" ;;
+            vfat) kind="FAT — an old, small-file format" ;;
+            ext4 | btrfs | xfs) kind="Linux drive" ;;
+            hfsplus) kind="old Mac drive (HFS+)" ;;
+            *) kind="${fstype}" ;;
+        esac
+        printf '%s\n' "$(basename "${target}")"
+        printf '    %s\n' "${kind}"
+        printf '    at %s\n' "${target}"
+        printf '    on %s, %s\n' "${source}" "${access}"
+        printf '\n'
+    done < <(drive_table)
+
+    if [ "${any}" -eq 0 ]; then
+        echo "Nothing is plugged in — or nothing is mounted yet."
+        echo
+        echo "If you have just plugged something in, give it a second. If it still"
+        echo "does not appear, 'journalctl --user -b -u aquarius-automount' says why."
+        echo
+    fi
+
+    # And the Mac drives that are plugged in but NOT open — the locked ones.
+    # This is the whole reason a person would run this command at all.
+    if [ -x "${AQ_DRIVE_UNLOCK}" ]; then
+        local locked
+        locked="$("${AQ_DRIVE_UNLOCK}" --list 2> /dev/null | grep -i 'locked' || true)"
+        if [ -n "${locked}" ]; then
+            echo "Locked Mac drives:"
+            printf '%s\n' "${locked}"
+            echo
+        fi
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# aq drive eject NAME
+# ------------------------------------------------------------------------------
+# Two kinds of drive, two ways to put it away, and the difference matters:
+#
+#   a Mac drive   was mounted by YOU, by a program called apfs-fuse, so it is
+#                 closed with fusermount3 — the standard command for exactly
+#                 that. No password, no service, no permission needed: you are
+#                 closing something you opened.
+#   everything    was mounted by udisks2, so it goes back through GVfs, which is
+#   else          the same road the dock's own Eject takes.
+drive_eject() {
+    local name="$1" root target fstype source opts found=0
+
+    if [ -z "${name}" ]; then
+        echo "aq: which drive? Try 'aq drive list' to see the names." >&2
+        return 1
+    fi
+    root="$(drive_root)"
+
+    while IFS=$'\t' read -r target fstype source opts; do
+        [ "$(basename "${target}")" = "${name}" ] || continue
+        found=1
+        case "${fstype}" in
+            fuse.* | fuse)
+                if fusermount3 -u "${target}" 2> /tmp/aq-eject.$$ \
+                    || fusermount3 -u -z "${target}" 2> /tmp/aq-eject.$$; then
+                    rmdir "${target}" 2> /dev/null || true
+                    echo "\"${name}\" is closed. It is safe to unplug it."
+                else
+                    echo "aq: \"${name}\" could not be closed:" >&2
+                    sed 's/^/    /' /tmp/aq-eject.$$ >&2
+                    echo "    Something is probably still reading it — close the Files" >&2
+                    echo "    window or the app that has a file open on it, and try again." >&2
+                    rm -f /tmp/aq-eject.$$
+                    return 1
+                fi
+                rm -f /tmp/aq-eject.$$
+                ;;
+            *)
+                if gio mount -u -f "${target}" 2> /tmp/aq-eject.$$; then
+                    echo "\"${name}\" is closed. It is safe to unplug it."
+                else
+                    echo "aq: \"${name}\" could not be closed:" >&2
+                    sed 's/^/    /' /tmp/aq-eject.$$ >&2
+                    rm -f /tmp/aq-eject.$$
+                    return 1
+                fi
+                rm -f /tmp/aq-eject.$$
+                ;;
+        esac
+    done < <(drive_table)
+
+    if [ "${found}" -eq 0 ]; then
+        echo "aq: nothing called \"${name}\" is mounted under ${root}." >&2
+        echo "    'aq drive list' shows what is." >&2
+        return 1
+    fi
+    return 0
+}
+
+drive() {
+    case "${1:-list}" in
+        list | status | "") drive_list ;;
+        eject | unmount) drive_eject "${2:-}" ;;
+        unlock)
+            if [ ! -x "${AQ_DRIVE_UNLOCK}" ]; then
+                echo "aq: ${AQ_DRIVE_UNLOCK} is missing from this copy of AquariusOS." >&2
+                echo "    That is a fault in the operating system, not in what you typed." >&2
+                return 1
+            fi
+            if [ -z "${2:-}" ]; then
+                echo "aq: which drive? Try 'aq drive list' to see the names." >&2
+                return 1
+            fi
+            "${AQ_DRIVE_UNLOCK}" --terminal "$2"
+            ;;
+        -h | --help | help) drive_usage ;;
+        *)
+            echo "aq: '${1}' is not something 'aq drive' knows how to do." >&2
+            echo >&2
+            drive_usage >&2
+            return 1
+            ;;
+    esac
+}
+
 # -----------------------------------------------------------------------------
 # Which subcommand?
 # -----------------------------------------------------------------------------
@@ -2545,6 +2765,10 @@ case "${1:-}" in
     usb4)
         shift
         usb4 "$@"
+        ;;
+    drive | drives)
+        shift
+        drive "$@"
         ;;
     keys)
         case "${2:-}" in
