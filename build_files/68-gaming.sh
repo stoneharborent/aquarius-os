@@ -107,11 +107,20 @@ say "Adding Terra (the repository Steam comes from)"
 FEDORA="$(rpm -E %fedora)"
 echo "Fedora release in this image: ${FEDORA}"
 
+# ⚠️ `--refresh` is not optional. The build keeps dnf's download cache between
+# runs (the Containerfile mounts /var/cache/libdnf5), and Terra republishes its
+# package index several times a day. Without --refresh, dnf trusts the cached
+# index from an earlier build, asks Terra for a file that index names, and
+# Terra has since replaced it: "Status code: 404 ... primary.xml.zck", then
+# "No match for argument: terra-release". That stopped both images on
+# 2026-09-09, each with a different stale index. --refresh makes dnf fetch
+# today's index first, so the cache can only ever help, never mislead.
+#
 # The single quotes below are deliberate and shellcheck's SC2016 is wrong here:
 # $releasever is dnf's own variable, not the shell's, and dnf has to receive it
 # unexpanded so that it fills in the Fedora version itself.
 # shellcheck disable=SC2016
-aq_dnf install --nogpgcheck \
+aq_dnf install --refresh --nogpgcheck \
     --repofrompath 'terra,https://repos.fyralabs.com/terra$releasever' \
     terra-release
 

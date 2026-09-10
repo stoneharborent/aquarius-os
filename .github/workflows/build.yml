@@ -2261,9 +2261,11 @@ jobs:
               /usr/share/aquarius/branding/aquarius-logo.png \
               prefer-light \
               'Inter 11' \
-              'JetBrains Mono 10' \
-              blue
+              'JetBrains Mono 10'
             do
+              # (accent-color 'blue' used to be on this list. GNOME removed the
+              # key from its schema, so ea6bfaf stopped setting it; this copy of
+              # the check was missed and failed the NVIDIA image on 2026-09-09.)
               if grep -a -q "${want}" /etc/dconf/db/gdm; then
                 ok "the login screen carries '${want}'"
               else
