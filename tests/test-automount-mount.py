@@ -42,6 +42,36 @@
 #      class of thing the KeyError was — is caught by consider(), logged as one
 #      sentence, and the agent carries on.
 #
+# =============================================================================
+# AND THE SECOND HALF: MAC DRIVES (APFS)
+# =============================================================================
+# Added 2026-09-09 with the Mac-drive feature. A Mac drive is the ONE kind this
+# computer cannot hand to udisks2 — Linux has no APFS, so udisks2 has nothing to
+# mount it with — so the agent runs apfs-fuse itself, as the person, read-only.
+#
+# Every part of that is unrunnable on a build machine: there is no Mac drive, no
+# FUSE, no root, and no udisks2. So all of it is faked, and what is checked is
+# the two things a fake CAN prove and a person cannot check by reading:
+#
+#   8.  the parser really reads what apfsutil really prints. The inputs are
+#       three captured listings kept beside this file — an ordinary external
+#       drive, a Mac's internal disk with its five volumes, and a FileVault
+#       drive — so a future apfs-fuse that changed its output would be caught
+#       here rather than by a drive that quietly never appears.
+#   9.  an APFS drive takes the Mac path and NEVER asks udisks2 to mount it.
+#       (udisks2 would refuse, log nothing a person could read, and the drive
+#       would simply not turn up.)
+#   10. the apfs-fuse command line is EXACTLY the designed one: read-only, this
+#       person's uid and gid, subtype=apfs — and no allow_other, which would
+#       hand the drive to every account on the machine.
+#   11. a FileVault volume is NOT mounted and NOT silent: the notification
+#       helper is started instead, and nothing is mounted.
+#   12. Apple's own machinery volumes (Preboot, Recovery, VM) are left alone.
+#   13. a drive that is already open is not opened twice.
+#   14. unplugging the drive really closes the mount and takes the empty folder
+#       away — because nothing else on the computer will. Every other drive is
+#       udisks2's to clean up; this one is ours.
+#
 # HOW TO RUN IT
 #   ./tests/test-automount-mount.py
 #   ./tests/test-automount-mount.py /usr/libexec/aquarius-automount
@@ -52,7 +82,9 @@
 
 import importlib.util
 import os
+import shutil
 import sys
+import tempfile
 
 # Never write bytecode next to the agent: inside the image build that would
 # leave /usr/libexec/__pycache__ behind, and the image check refuses that.
@@ -289,13 +321,297 @@ def main(argv):
         bad("an unexpected error escaped consider() as %s — the exact 2026-09-08 shape"
             % type(error).__name__)
 
+    # ------------------------------------------------------------------------
+    # 8–14. Mac drives (APFS)
+    # ------------------------------------------------------------------------
+    mac_drives(agent, GLib, lines)
+
     print("")
     if FAILS:
         print("::error::aquarius-automount would not mount drives correctly "
-              "(%d check(s) failed). See docs/restart/hardware.md." % len(FAILS))
+              "(%d check(s) failed). See docs/restart/mac-drives.md and "
+              "docs/restart/hardware.md." % len(FAILS))
         return 1
     print("All automount mount checks passed.")
     return 0
+
+
+# =============================================================================
+# Mac drives (APFS) — the whole second half
+# =============================================================================
+FIXTURES = os.path.dirname(os.path.abspath(__file__))
+
+
+def fixture(name):
+    with open(os.path.join(FIXTURES, name), "r") as handle:
+        return handle.read()
+
+
+class Recorder:
+    """Stands in for every program the agent runs, and writes down every call.
+
+    The agent funnels EVERYTHING it runs through two methods — run() and
+    spawn() — precisely so that this can exist. Nothing here needs a Mac drive,
+    FUSE, root or a screen.
+    """
+
+    def __init__(self, apfsutil_output="", fuse_code=0, fuse_error=""):
+        self.calls = []
+        self.spawned = []
+        self.apfsutil_output = apfsutil_output
+        self.fuse_code = fuse_code
+        self.fuse_error = fuse_error
+
+    def run(self, argv, timeout=120):
+        del timeout
+        self.calls.append(list(argv))
+        program = os.path.basename(argv[0])
+        if program == "apfsutil":
+            return 0, self.apfsutil_output, ""
+        if program == "apfs-fuse":
+            return self.fuse_code, "", self.fuse_error
+        return 0, "", ""
+
+    def spawn(self, argv):
+        self.spawned.append(list(argv))
+        return True
+
+    def named(self, program):
+        return [call for call in self.calls if os.path.basename(call[0]) == program]
+
+
+def apfs_bus(agent, GLib, device=b"/dev/sdz1\x00", label="SHOOT 2026",
+             hint_system=False):
+    """A fake udisks2 answering the way it answers for a plugged-in Mac drive."""
+    del agent
+    return FakeBus(GLib, props={
+        "IdType": GLib.Variant("s", "apfs"),
+        "IdLabel": GLib.Variant("s", label),
+        "Device": GLib.Variant("ay", list(device)),
+        "HintAuto": GLib.Variant("b", True),
+        "HintIgnore": GLib.Variant("b", False),
+        "HintSystem": GLib.Variant("b", hint_system),
+    })
+
+
+OBJECT = "/org/freedesktop/UDisks2/block_devices/sdz1"
+
+
+def mac_drives(agent, GLib, lines):
+    print("")
+    print("== a Mac drive (APFS) is read, read-only, and put away again ==")
+
+    # --- 8. the parser, against three real apfsutil listings ----------------
+    apfs = agent.aquarius_apfs
+
+    single = apfs.parse_apfsutil(fixture("apfsutil-external-drive.fixture"))
+    if len(single) == 1 and single[0].name == "SHOOT 2026" and not single[0].encrypted:
+        ok("an ordinary Mac drive reads as one unlocked volume called SHOOT 2026")
+    else:
+        bad("an ordinary Mac drive was read as %r" % (single,))
+    if single and single[0].display_name == "SHOOT 2026":
+        ok("and the '(Case-insensitive)' apfsutil prints after the name is not"
+           " part of the folder name")
+    else:
+        bad("the case-sensitivity note leaked into the name: %r"
+            % (single[0].display_name if single else None))
+
+    boot = apfs.parse_apfsutil(fixture("apfsutil-mac-boot.fixture"))
+    if len(boot) == 5:
+        ok("a Mac's internal disk reads as five volumes")
+    else:
+        bad("a Mac's internal disk read as %d volume(s), expected 5" % len(boot))
+    wanted = [volume.display_name for volume in boot if volume.should_mount]
+    if wanted == ["Macintosh HD", "Macintosh HD - Data"]:
+        ok("and only the two a person would open: %s" % ", ".join(wanted))
+    else:
+        bad("the volumes we would mount are %r — Preboot, Recovery and VM are"
+            " Apple's own machinery and must be left alone" % (wanted,))
+
+    locked = apfs.parse_apfsutil(fixture("apfsutil-encrypted.fixture"))
+    if len(locked) == 1 and locked[0].encrypted and locked[0].display_name == "Archive":
+        ok("a FileVault drive reads as locked, and its NAME is still readable"
+           " (which is what lets us say which drive is locked)")
+    else:
+        bad("a FileVault drive was read as %r" % (locked,))
+
+    # --- the fake machine everything below runs on --------------------------
+    work = tempfile.mkdtemp(prefix="aq-apfs-test-")
+    media = os.path.join(work, "run", "media", "tester")
+    os.makedirs(media)
+    mountinfo = os.path.join(work, "mountinfo")
+    with open(mountinfo, "w") as handle:
+        handle.write("25 1 8:2 / / rw,relatime shared:1 - btrfs /dev/sda2 rw\n")
+    os.environ["AQ_MEDIA_ROOT"] = media
+    os.environ["AQ_MOUNTINFO"] = mountinfo
+
+    try:
+        _mac_drive_cases(agent, GLib, lines, media, mountinfo)
+    finally:
+        os.environ.pop("AQ_MEDIA_ROOT", None)
+        os.environ.pop("AQ_MOUNTINFO", None)
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def _mac_drive_cases(agent, GLib, lines, media, mountinfo):
+    uid, gid = os.getuid(), os.getgid()
+    expected_options = "ro,uid=%d,gid=%d,subtype=apfs" % (uid, gid)
+
+    # --- 9 & 10. one ordinary Mac drive -------------------------------------
+    bus = apfs_bus(agent, GLib)
+    mounter = agent.AutoMounter(bus)
+    rec = Recorder(apfsutil_output=fixture("apfsutil-external-drive.fixture"))
+    mounter.run, mounter.spawn = rec.run, rec.spawn
+    del lines[:]
+    mounter.consider(OBJECT)
+
+    if not [call for call in bus.calls if call["method"] == "Mount"]:
+        ok("a Mac drive never asks udisks2 to Mount — udisks2 has no APFS and"
+           " would refuse, leaving the drive silently missing")
+    else:
+        bad("a Mac drive was handed to udisks2's Mount, which cannot mount APFS")
+
+    utils = rec.named("apfsutil")
+    if len(utils) == 1 and utils[0][1] == "/dev/sdz1":
+        ok("it asks apfsutil what is on the drive, once")
+    else:
+        bad("apfsutil was called %d time(s): %r" % (len(utils), utils))
+
+    fuses = rec.named("apfs-fuse")
+    if len(fuses) == 1:
+        ok("it mounts exactly one volume")
+        expected = [
+            agent.aquarius_apfs.APFS_FUSE, "-v", "0",
+            "-o", expected_options,
+            "/dev/sdz1", os.path.join(media, "SHOOT 2026"),
+        ]
+        if fuses[0] == expected:
+            ok("and the command line is exactly the designed one: read-only,"
+               " this person's uid and gid, subtype=apfs")
+        else:
+            bad("the command line is\n         %r\n       expected\n         %r"
+                % (fuses[0], expected))
+        # ⚠️ Said again as its own check, because it is the one option whose
+        # presence would quietly widen this from "my drive" to "everybody's".
+        if "allow_other" not in " ".join(fuses[0]):
+            ok("and it does NOT pass allow_other — the drive is the person's own,"
+               " not every account's")
+        else:
+            bad("the command line passes allow_other, which hands the drive to"
+                " every account on the computer and needs /etc/fuse.conf changed")
+    else:
+        bad("apfs-fuse was called %d time(s), expected 1: %r" % (len(fuses), fuses))
+
+    if os.path.isdir(os.path.join(media, "SHOOT 2026")):
+        ok("the folder it mounts onto is /run/media/<user>/SHOOT 2026 — exactly"
+           " where udisks2 puts everything else, which is what the dock watches")
+    else:
+        bad("no folder was made at %s" % os.path.join(media, "SHOOT 2026"))
+
+    joined = "\n".join(lines)
+    if "read-only" in joined and "SHOOT 2026" in joined:
+        ok("and it says in the journal, in one plain line, that it is read-only")
+    else:
+        bad("the journal does not say what happened. It said:\n%s" % joined)
+
+    # --- 14. unplugging it --------------------------------------------------
+    del lines[:]
+    rec.calls[:] = []
+    mounter._on_interfaces_removed(
+        None, None, None, None, None,
+        GLib.Variant("(oas)", (OBJECT, ["org.freedesktop.UDisks2.Block"])))
+
+    unmounts = rec.named("fusermount3")
+    if len(unmounts) == 1 and unmounts[0][1:3] == ["-u", "-z"]:
+        ok("unplugging the drive closes the mount with fusermount3 -u -z")
+    else:
+        bad("unplugging the drive ran %r — nothing else on this computer will"
+            " ever close a mount we made" % (unmounts,))
+    if not os.path.exists(os.path.join(media, "SHOOT 2026")):
+        ok("and takes the empty folder away, so the dock does not keep a tile"
+           " that opens onto nothing")
+    else:
+        bad("the folder %s was left behind after the drive was unplugged"
+            % os.path.join(media, "SHOOT 2026"))
+
+    # --- 11. a locked (FileVault) drive -------------------------------------
+    bus = apfs_bus(agent, GLib, label="Archive")
+    mounter = agent.AutoMounter(bus)
+    rec = Recorder(apfsutil_output=fixture("apfsutil-encrypted.fixture"))
+    mounter.run, mounter.spawn = rec.run, rec.spawn
+    del lines[:]
+    mounter.consider(OBJECT)
+
+    if not rec.named("apfs-fuse"):
+        ok("a FileVault drive is not mounted (it cannot be, without the password)")
+    else:
+        bad("a locked drive was handed to apfs-fuse, which would sit waiting for"
+            " a password on a terminal that is not there")
+    if len(rec.spawned) == 1 and rec.spawned[0][1] == "--notify" \
+            and rec.spawned[0][-1] == "Archive":
+        ok("and it is NOT silent: %s --notify is started, naming the drive"
+           % os.path.basename(rec.spawned[0][0]))
+    else:
+        bad("a locked drive started %r — a drive that does not appear and says"
+            " nothing is the worst outcome this feature can produce"
+            % (rec.spawned,))
+    joined = "\n".join(lines)
+    if "FileVault" in joined:
+        ok("and the journal says the word FileVault, so the reason is findable")
+    else:
+        bad("the journal does not mention FileVault. It said:\n%s" % joined)
+
+    # --- 12. a Mac's own internal disk --------------------------------------
+    bus = apfs_bus(agent, GLib, label="Macintosh HD")
+    mounter = agent.AutoMounter(bus)
+    rec = Recorder(apfsutil_output=fixture("apfsutil-mac-boot.fixture"))
+    mounter.run, mounter.spawn = rec.run, rec.spawn
+    del lines[:]
+    mounter.consider(OBJECT)
+
+    mounted = [call[-1] for call in rec.named("apfs-fuse")]
+    expected = [os.path.join(media, "Macintosh HD"),
+                os.path.join(media, "Macintosh HD - Data")]
+    if mounted == expected:
+        ok("a Mac's internal disk opens its two real volumes and leaves Preboot,"
+           " Recovery and VM alone")
+    else:
+        bad("a Mac's internal disk mounted %r, expected %r" % (mounted, expected))
+
+    # --- 13. a drive that is already open -----------------------------------
+    with open(mountinfo, "a") as handle:
+        handle.write("60 25 0:52 / %s ro,nosuid,nodev,relatime - fuse.apfs"
+                     " /dev/sdz1 ro,user_id=%d,group_id=%d\n"
+                     % (os.path.join(media, "SHOOT 2026").replace(" ", "\\040"),
+                        os.getuid(), os.getgid()))
+    bus = apfs_bus(agent, GLib)
+    mounter = agent.AutoMounter(bus)
+    rec = Recorder(apfsutil_output=fixture("apfsutil-external-drive.fixture"))
+    mounter.run, mounter.spawn = rec.run, rec.spawn
+    del lines[:]
+    mounter.consider(OBJECT)
+    if not rec.calls:
+        ok("a drive that is already open is left alone — it is not mounted twice")
+    else:
+        bad("a drive already open was opened again: %r" % (rec.calls,))
+    joined = "\n".join(lines)
+    if "already open" in joined:
+        ok("and it says so, rather than saying nothing")
+    else:
+        bad("nothing was logged about the drive already being open: %s" % joined)
+
+    # --- the seatbelt still applies to Mac drives ---------------------------
+    bus = apfs_bus(agent, GLib, hint_system=True)
+    mounter = agent.AutoMounter(bus)
+    rec = Recorder(apfsutil_output=fixture("apfsutil-external-drive.fixture"))
+    mounter.run, mounter.spawn = rec.run, rec.spawn
+    del lines[:]
+    mounter.consider(OBJECT)
+    if not rec.calls:
+        ok("⚠️ a device udisks2 calls SYSTEM-INTERNAL is refused on the Mac path"
+           " too, exactly as on the udisks2 path")
+    else:
+        bad("a system-internal device was opened as a Mac drive: %r" % (rec.calls,))
 
 
 if __name__ == "__main__":
