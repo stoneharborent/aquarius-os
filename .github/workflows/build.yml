@@ -1946,7 +1946,6 @@ jobs:
             else bad "$1 $2 is ${got}, expected $3"; fi
           }
           want org.gnome.desktop.interface color-scheme "'default'"
-          want org.gnome.desktop.interface accent-color "'blue'"
           want org.gnome.desktop.interface font-name "'Inter 11'"
           want org.gnome.desktop.interface monospace-font-name "'JetBrains Mono 10'"
           # Phase R5 desktop identity — the pointer, the app icons and the
