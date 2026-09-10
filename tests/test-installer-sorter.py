@@ -826,22 +826,33 @@ def test_entry_repair_rules(core, work):
 
 
 def test_root_refusal(core, work):
-    heading("it refuses to install as an administrator")
+    heading("it refuses home-folder changes as an administrator")
+    from unittest.mock import patch
+
     was = core.REHEARSAL
-    core.REHEARSAL = False
+    tarball = make_tarball(os.path.join(work, "asroot.tar.gz"))
+    verdict = core.sort_path(tarball)
     try:
-        if core.running_as_root():
-            tarball = make_tarball(os.path.join(work, "asroot.tar.gz"))
-            with FakeHome():
-                result = core.install(core.sort_path(tarball))
-            check(not result.ok and "sudo" in result.message,
-                  "run as an administrator, it refuses and says why",
-                  result.message)
-        else:
-            check(not core.refuse_root(),
-                  "run as an ordinary person, it does not refuse")
-            check("sudo" in core.ROOT_REFUSAL,
-                  "and the refusal it would print names the thing not to do")
+        for is_root in (False, True):
+            with patch.object(core.os, "geteuid", return_value=0 if is_root else 1000, create=True):
+                for rehearsal in (False, True):
+                    core.REHEARSAL = rehearsal
+                    check(core.refuse_root() == (is_root and not rehearsal),
+                          "root=%s, rehearsal=%s gives the intended refusal" %
+                          (is_root, rehearsal))
+
+        core.REHEARSAL = False
+        with patch.object(core.os, "geteuid", return_value=0, create=True), FakeHome():
+            # Refusal must happen before lock creation, extraction, registry
+            # reads or deletion. Tripwires prevent a regression doing real work.
+            with patch.object(core.os, "makedirs", side_effect=AssertionError("created a folder")), \
+                 patch.object(core.tempfile, "mkdtemp", side_effect=AssertionError("started extraction")), \
+                 patch.object(core.Record, "load", side_effect=AssertionError("read an app record")):
+                for name, result in (("install", core.install(verdict)),
+                                     ("remove", core.remove("root-test"))):
+                    check(not result.ok and result.message == core.ROOT_REFUSAL,
+                          name + " refuses root before changing the home folder",
+                          result.message)
     finally:
         core.REHEARSAL = was
 
