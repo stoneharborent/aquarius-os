@@ -17,7 +17,7 @@ def check(root):
     spec.loader.exec_module(ui)
     config = Path(os.environ['XDG_CONFIG_HOME'])/'aquarius/resolve.conf'
     config.parent.mkdir(parents=True, exist_ok=True)
-    config.write_text('# keep this note\nfuture_option=yes\nscale=1.5\nscale=\n')
+    config.write_text('# keep this note\nfuture_option=yes\nfile_dialogs=own\nqt_variable=QT_SCALE_FACTOR\nscale=1.5\nscale=\n')
     m = runpy.run_path(str(root/'usr/libexec/aquarius-resolve-settings'), run_name='resolve_settings_test')
     from gi.repository import Adw, Gio, GLib, Gtk
     Gtk.Settings.get_default().set_property("gtk-decoration-layout", "close,minimize,maximize:")
@@ -56,7 +56,7 @@ def check(root):
         assert w.size.get_selected() == 2
     for value in ('1.25', 'auto'):
         subprocess.run(['bash', str(root/'usr/bin/aq'), 'resolve', 'scale', value], check=True, capture_output=True)
-        assert '# keep this note' in config.read_text() and 'future_option=yes' in config.read_text()
+        assert config.read_text().startswith('# keep this note\nfuture_option=yes\nfile_dialogs=own\nqt_variable=QT_SCALE_FACTOR\n')
     assert 'scale=' not in config.read_text()
     # A writable parent does not grant permission to discard an unreadable
     # settings file. Under root, DAC overrides make this fixture inapplicable.

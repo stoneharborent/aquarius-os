@@ -350,10 +350,16 @@ for AQ_GUI in /usr/libexec/aquarius-resolve-installer \
     # it is a page a person can be left looking at, and it gets the mark too.
     aq_file_has "${AQ_GUI}" 'mark, self\.working_title, self\.working_blurb = aquarius_ui\.hero\(' \
         "and so does the page a failed or cancelled run is left on"
-    # The glyph says how it went. On the last page it starts as a tick; on the
-    # working page it is hidden until there is an outcome to report.
-    aq_file_has "${AQ_GUI}" 'aquarius_ui\.set_status_glyph\(self\.done_status, ok=True\)' \
-        "${AQ_NAME} puts a tick beside the heading when it worked"
+    # Installation finishes with Resolve's exported logo. The other two
+    # windows still use a tick; all three keep their working-page warning.
+    # The real GTK completion test also checks icon loading and launch failure.
+    if [ "${AQ_NAME}" = aquarius-resolve-installer ]; then
+        aq_file_has "${AQ_GUI}" 'self\._refresh_done_logo\(\)' \
+            "the installer refreshes Resolve's logo after installation"
+    else
+        aq_file_has "${AQ_GUI}" 'aquarius_ui\.set_status_glyph\(self\.done_status, ok=True\)' \
+            "${AQ_NAME} puts a tick beside the heading when it worked"
+    fi
     aq_file_has "${AQ_GUI}" 'aquarius_ui\.set_status_glyph\(self\.working_status, ok=False\)' \
         "and a warning beside it when it did not"
     aq_file_has "${AQ_GUI}" 'aquarius_ui\.heading_row\(' \
@@ -1184,11 +1190,32 @@ aq_file_has "${AQ_LAUNCH}" 'conf_value file_dialogs' \
     "and ~/.config/aquarius/resolve.conf can override the answer either way, for the bench"
 aq_file_has /usr/bin/aq 'file dialogs: ' \
     "'aq resolve status' reads the same answer off the same launcher"
-# The one that would silently undo all of it: 'aq resolve scale' rewrites
-# resolve.conf, and a key missing from the list it carries across is a key
-# deleted the next time somebody changes the size.
-aq_file_has /usr/bin/aq 'qt_variable\|file_dialogs' \
-    "'aq resolve scale' carries the file-picker setting across when it rewrites resolve.conf"
+# Exercise the writer itself: changing size must preserve every other option,
+# including settings introduced by a newer version. Use an isolated config.
+if python3 - <<'AQ_CONFIG_CHECK'
+import os
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+with tempfile.TemporaryDirectory(prefix="aq-resolve-config-") as temporary:
+    config = Path(temporary) / "aquarius" / "resolve.conf"
+    config.parent.mkdir()
+    kept = "# keep this note\nqt_variable=QT_SCALE_FACTOR\nfile_dialogs=own\nfuture_option=yes\n"
+    config.write_text(kept + "scale=1.5\n scale = 2\n")
+    env = dict(os.environ, XDG_CONFIG_HOME=temporary)
+    for value, expected in (("1.25", ["1.25"]), ("auto", [])):
+        subprocess.run(["/usr/bin/aq", "resolve", "scale", value], env=env,
+                       check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        result = config.read_text()
+        assert result.startswith(kept), "changing scale discarded unrelated settings"
+        assert re.findall(r"^\s*scale\s*=\s*(.*)$", result, re.M) == expected
+AQ_CONFIG_CHECK
+then
+    ok "'aq resolve scale' preserves comments, file-picker and unknown settings"
+else
+    bad "'aq resolve scale' lost settings or failed to replace the scale"
+fi
 
 # And the front door for changing it by hand.
 if /usr/bin/aq resolve scale > /tmp/aq-resolve-scale.txt 2>&1; then

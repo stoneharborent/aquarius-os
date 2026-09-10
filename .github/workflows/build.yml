@@ -6793,11 +6793,32 @@ jobs:
           grep -q 'file dialogs: ' /usr/bin/aq \
             && ok "'aq resolve status' reads the same answer off the same launcher" \
             || bad "'aq resolve status' no longer says which file picker Resolve opens"
-          # 'aq resolve scale' rewrites resolve.conf, so a key missing from the
-          # list it carries across is a key deleted behind somebody's back.
-          grep -qE 'qt_variable\|file_dialogs' /usr/bin/aq \
-            && ok "'aq resolve scale' carries the file-picker setting across when it rewrites resolve.conf" \
-            || bad "'aq resolve scale' would delete a file_dialogs= line from resolve.conf"
+          # Exercise the writer itself: changing size must preserve every other option,
+          # including settings introduced by a newer version. Use an isolated config.
+          if python3 - <<'AQ_CONFIG_CHECK'
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+          import tempfile
+          with tempfile.TemporaryDirectory(prefix="aq-resolve-config-") as temporary:
+              config = Path(temporary) / "aquarius" / "resolve.conf"
+              config.parent.mkdir()
+              kept = "# keep this note\nqt_variable=QT_SCALE_FACTOR\nfile_dialogs=own\nfuture_option=yes\n"
+              config.write_text(kept + "scale=1.5\n scale = 2\n")
+              env = dict(os.environ, XDG_CONFIG_HOME=temporary)
+              for value, expected in (("1.25", ["1.25"]), ("auto", [])):
+                  subprocess.run(["/usr/bin/aq", "resolve", "scale", value], env=env,
+                                 check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                  result = config.read_text()
+                  assert result.startswith(kept), "changing scale discarded unrelated settings"
+                  assert re.findall(r"^\s*scale\s*=\s*(.*)$", result, re.M) == expected
+          AQ_CONFIG_CHECK
+          then
+              ok "'aq resolve scale' preserves comments, file-picker and unknown settings"
+          else
+              bad "'aq resolve scale' lost settings or failed to replace the scale"
+          fi
           # ⚠️ THE OTHER HALF OF THIS IS IN THE OTHER IMAGE, and it is not
           # checkable from here: aquarius-resolve-run, inside the runtime
           # container, must KEEP an inherited QT_QPA_PLATFORMTHEME instead of
