@@ -1,0 +1,613 @@
+#!/usr/bin/python3
+# =============================================================================
+# aquarius-drive-unlock — open a Mac drive that is locked with FileVault
+# =============================================================================
+# PLAIN ENGLISH
+#
+# You plug in a Mac drive. If it is NOT locked, it appears by itself and this
+# program is never involved. If it IS locked — if you switched FileVault on for
+# it on the Mac — nothing can read a single byte of it without the password, so
+# AquariusOS does the only honest thing: it says so, and offers to ask you.
+#
+# This is the program that asks. It has three faces, and they all do the same
+# work underneath:
+#
+#   the notification  "This Mac drive is locked." with an Unlock button. This is
+#                     what /usr/libexec/aquarius-automount puts on screen the
+#                     moment it finds a locked drive.
+#   the window        a small box with the drive's name and one password field.
+#                     The Unlock button on the notification opens it.
+#   the terminal      `aq drive unlock "Archive"`, for anybody who prefers to
+#                     type. Same question, no window.
+#
+# -----------------------------------------------------------------------------
+# ⚠️ THE PASSWORD IS NEVER STORED, AND NEVER PUT ON A COMMAND LINE
+# -----------------------------------------------------------------------------
+# It is not written to a file, not put in a keyring, not remembered between
+# drives and not remembered between plug-ins. Unlock the drive again next time.
+# That is a deliberate choice and not an unfinished feature: a Mac drive is a
+# rescue path, not a drive you live on, and a password remembered on a computer
+# that is not the one it protects is a password that has escaped.
+#
+# It is also not passed to apfs-fuse as an argument, even though apfs-fuse has a
+# `-r <password>` option for exactly that. Anything on a command line is visible
+# in the machine's process list for as long as the program runs — and apfs-fuse
+# runs for as long as the drive is mounted, which could be all day. So instead
+# this program opens a pretend terminal ("pty"), lets apfs-fuse ask its own
+# question the way it would if you had typed the command yourself, and types the
+# answer into it. Nothing is ever visible outside this program's own memory.
+#
+# (Why a pretend terminal and not simply piping the password in: apfs-fuse turns
+# the screen's echo off before it reads, using a call that only works on a real
+# terminal. Handed a plain pipe, it gives up before reading anything and then
+# reports the wrong password. The pty is what makes it behave.)
+#
+# -----------------------------------------------------------------------------
+# WHAT IT CANNOT DO
+# -----------------------------------------------------------------------------
+# The internal disk of a Mac with a T2 chip, or any Apple-silicon Mac, is
+# encrypted by a key that lives inside Apple's own hardware and never leaves it.
+# There is no password on earth that unlocks one of those on a PC — not this
+# program's fault, not a missing feature, simply not possible. Those disks have
+# to be read on the Mac they came out of. docs/restart/mac-drives.md says so in
+# the same words.
+#
+# -----------------------------------------------------------------------------
+# HOW IT IS RUN
+# -----------------------------------------------------------------------------
+#   aquarius-drive-unlock --notify <device> <volume-number> <name>
+#                                   put the notification on screen and, if the
+#                                   button is pressed, open the window. This is
+#                                   what the automount agent starts.
+#   aquarius-drive-unlock --dialog <device> <volume-number> <name>
+#                                   the window, straight away.
+#   aquarius-drive-unlock --terminal <name>
+#                                   find the drive called <name>, ask on the
+#                                   terminal, unlock it. `aq drive unlock`.
+#   aquarius-drive-unlock --list    every Mac volume on every drive plugged in
+#                                   right now, one per line, and whether it is
+#                                   locked. Used by `aq drive list`.
+#   aquarius-drive-unlock --dry-run say what it would do and change nothing.
+#                                   Works in a build container with no drives,
+#                                   no FUSE and no screen. This is what CI runs.
+#   aquarius-drive-unlock --help    this header.
+#
+# Plain-English guide: docs/restart/mac-drives.md
+# =============================================================================
+
+import os
+import select
+import subprocess
+import sys
+import time
+
+# The shared Mac-drive reader — the same one the automount agent uses, so that
+# the two can never disagree about which volume is locked. The path is worked
+# out relative to this file so that it is the same expression in the finished
+# image (/usr/libexec -> /usr/lib/aquarius/python) and in the repository.
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "lib", "aquarius", "python"))
+sys.path.insert(1, "/usr/lib/aquarius/python")
+import aquarius_apfs  # noqa: E402
+
+APP_ID = "org.aquariusos.DriveUnlock"
+SELF = os.path.abspath(__file__)
+
+# How long we are prepared to wait for apfs-fuse to make up its mind. A big,
+# slow, USB-2 drive really can take a minute to open.
+MOUNT_TIMEOUT = 180
+
+
+def say(message):
+    print(message, flush=True)
+
+
+def warn(message):
+    print(message, file=sys.stderr, flush=True)
+
+
+# =============================================================================
+# Finding the drives
+# =============================================================================
+def apfs_devices(run=None):
+    """Every partition plugged in right now that holds a Mac filesystem.
+
+    `lsblk` is Linux's own list of drives and it is always installed (it comes
+    with the same package as `mount`). Asking it is far better than guessing at
+    /dev names: it already knows what is inside each partition, because the same
+    machinery that told udev told it.
+    """
+    run = run or _run
+    code, out, _err = run(
+        ["lsblk", "--noheadings", "--list", "--paths", "--output", "PATH,FSTYPE"], 20)
+    if code != 0:
+        return []
+    devices = []
+    for line in (out or "").splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] == "apfs":
+            devices.append(parts[0])
+    return devices
+
+
+def all_volumes(run=None):
+    """[(device, Volume), …] for every Mac volume on every drive plugged in."""
+    run = run or _run
+    found = []
+    for device in apfs_devices(run=run):
+        for volume in aquarius_apfs.read_volumes(device, run=run):
+            if volume.should_mount:
+                found.append((device, volume))
+    return found
+
+
+def find_by_name(name, run=None):
+    """The volumes called <name>. Case is ignored, because people type."""
+    wanted = (name or "").strip().casefold()
+    return [(device, volume) for device, volume in all_volumes(run=run)
+            if volume.display_name.casefold() == wanted]
+
+
+def mount_point_of(device, index, run=None):
+    """Where this volume is already open, or "" if it is not.
+
+    apfs-fuse names its mount after the device, so the machine's own mount table
+    answers "is this drive already open?". It cannot tell two volumes of the SAME
+    drive apart, which is why the caller also passes the volume number — with one
+    device and several volumes the answer here is "one of them is open", and the
+    caller treats that as "leave it alone", which is the safe reading.
+    """
+    del index  # see the docstring: the mount table does not record it
+    for mount in aquarius_apfs.read_mounts():
+        if mount["source"] == device and mount["fstype"].startswith("fuse"):
+            return mount["mount_point"]
+    return ""
+
+
+def _run(argv, timeout=60):
+    try:
+        proc = subprocess.run(
+            argv,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            errors="replace",
+        )
+    except FileNotFoundError:
+        return 127, "", "%s is not installed on this computer" % argv[0]
+    except subprocess.SubprocessError as error:
+        return 1, "", str(error)
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+# =============================================================================
+# Doing the unlocking
+# =============================================================================
+def unlock(device, index, name, password):
+    """Open one locked volume. Returns (ok, message, mount point).
+
+    Every message it returns is a sentence meant to be shown to a person as-is,
+    in the window or in the terminal. There is one implementation of this and
+    three faces on it, so the three can never say different things.
+    """
+    root = aquarius_apfs.media_root()
+    if not root:
+        return False, "This computer has nowhere to put drives (no /run/media folder).", ""
+    if not os.path.isdir(root):
+        try:
+            os.makedirs(root, 0o700)
+        except OSError as error:
+            return False, ("The folder drives appear in (%s) is not there and could"
+                           " not be made: %s" % (root, error)), ""
+
+    if not password:
+        return False, "No password was typed, so nothing was tried.", ""
+
+    target = aquarius_apfs.unique_mount_point(root, name)
+    if target is None:
+        return False, "Could not find a free folder name for this drive.", ""
+    try:
+        os.mkdir(target, 0o700)
+    except OSError as error:
+        return False, "Could not make the folder for this drive: %s" % error, ""
+
+    # The same command line the automount agent uses for an unlocked drive —
+    # read-only, owned by you, and calling itself a Mac drive in the mount table.
+    # The password is NOT on it; see this file's header.
+    options = "ro,uid=%d,gid=%d,subtype=apfs" % (os.getuid(), os.getgid())
+    argv = [aquarius_apfs.APFS_FUSE, "-v", str(index), "-o", options, device, target]
+
+    code, output = _run_with_password(argv, password)
+
+    if code == 0 and _is_mounted(target):
+        return True, "%s is open. It is read-only — you can copy files off it." % name, target
+
+    try:
+        os.rmdir(target)
+    except OSError:
+        pass
+
+    lowered = (output or "").lower()
+    if "wrong password" in lowered:
+        return False, "That password did not open %s. Try again." % name, ""
+    if "unable to get volume" in lowered:
+        return False, ("%s could not be opened. If this is the built-in disk of a"
+                       " Mac with a T2 chip or Apple silicon, no PC can read it —"
+                       " its key is inside the Mac's own hardware." % name), ""
+    last = [line for line in (output or "").strip().splitlines() if line.strip()]
+    return False, ("%s could not be opened. %s"
+                   % (name, last[-1] if last else "apfs-fuse stopped with code %d" % code)), ""
+
+
+def _is_mounted(path):
+    for mount in aquarius_apfs.read_mounts():
+        if mount["mount_point"] == path:
+            return True
+    return False
+
+
+def _run_with_password(argv, password, timeout=MOUNT_TIMEOUT):
+    """Run apfs-fuse behind a pretend terminal and type the password into it.
+
+    Returns (exit code, everything it said). See this file's header for why this
+    is not simply `apfs-fuse -r <password>`.
+    """
+    import pty
+
+    try:
+        master, slave = pty.openpty()
+    except OSError as error:
+        return 1, "Could not open a terminal to ask with: %s" % error
+
+    try:
+        proc = subprocess.Popen(
+            argv,
+            stdin=slave,
+            stdout=slave,
+            stderr=slave,
+            close_fds=True,
+            start_new_session=True,
+        )
+    except OSError as error:
+        os.close(master)
+        os.close(slave)
+        return 127, "Could not start %s: %s" % (argv[0], error)
+    finally:
+        try:
+            os.close(slave)
+        except OSError:
+            pass
+
+    seen = ""
+    typed = False
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            ready, _w, _x = select.select([master], [], [], 0.2)
+        except (OSError, ValueError):
+            break
+        if ready:
+            try:
+                chunk = os.read(master, 4096)
+            except OSError:
+                # Every copy of the other end is closed — apfs-fuse has either
+                # finished or gone into the background, which is what success
+                # looks like.
+                break
+            if not chunk:
+                break
+            seen += chunk.decode("utf-8", "replace")
+            if not typed and "assword" in seen:
+                try:
+                    os.write(master, password.encode("utf-8") + b"\n")
+                except OSError:
+                    pass
+                typed = True
+        elif proc.poll() is not None:
+            break
+
+    try:
+        os.close(master)
+    except OSError:
+        pass
+    try:
+        code = proc.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        code = 1
+        seen += "\napfs-fuse did not answer in time and was stopped."
+    return code, seen
+
+
+# =============================================================================
+# Face 1 — the notification
+# =============================================================================
+def notify(device, index, name):
+    """"This Mac drive is locked", with an Unlock button that opens the window."""
+    if not _have("notify-send"):
+        # No notification machinery: say it in the journal instead of nowhere.
+        warn("aquarius-drive-unlock: %s on %s is locked, and notify-send is not"
+             " installed, so nobody could be told. Run: aq drive unlock \"%s\""
+             % (name, device, name))
+        return 0
+
+    title = "This Mac drive is locked"
+    body = ("%s is protected with FileVault. Open Aquarius Drive Unlock to type"
+            " its password and read it." % name)
+
+    # ⚠️ THE BUTTON. `notify-send --action` needs libnotify 0.8 or newer AND
+    # `--wait`: notify-send stays alive until the notification is closed and then
+    # prints which button was pressed. The same trick, and the same caution, as
+    # /usr/libexec/aquarius-resolve-update-notify.
+    code, out, _err = _run(["notify-send", "--help"], 10)
+    if code == 0 and "--action" in (out or ""):
+        clicked, pressed, _e = _run([
+            "notify-send",
+            "--app-name=AquariusOS",
+            "--icon=drive-harddisk-usb",
+            "--wait",
+            "--action=unlock=Unlock…",
+            title, body,
+        ], timeout=3600)
+        if clicked == 0 and (pressed or "").strip() == "unlock":
+            return dialog(device, index, name)
+        return 0
+
+    _run(["notify-send", "--app-name=AquariusOS", "--icon=drive-harddisk-usb",
+          title, body + "  Run: aq drive unlock \"%s\"" % name], 20)
+    return 0
+
+
+def _have(program):
+    for folder in os.environ.get("PATH", "/usr/bin:/bin").split(os.pathsep):
+        if os.access(os.path.join(folder, program), os.X_OK):
+            return True
+    return False
+
+
+# =============================================================================
+# Face 2 — the window
+# =============================================================================
+# Imported late, and only when a window is really wanted, so that --dry-run,
+# --list and --terminal all work in a build container with no GTK and no screen.
+# Same rule as the other four AquariusOS windows.
+def dialog(device, index, name):
+    import threading
+
+    import gi
+
+    gi.require_version("Gtk", "4.0")
+    gi.require_version("Adw", "1")
+    from gi.repository import Adw, GLib, Gtk  # noqa: E402
+
+    sys.path.insert(0, "/usr/lib/aquarius/python")
+    import aquarius_ui  # noqa: E402
+
+    class UnlockWindow(Adw.ApplicationWindow):
+        def __init__(self, app):
+            super().__init__(application=app)
+            self.busy = False
+
+            self.set_title("Unlock Mac Drive")
+            self.set_default_size(520, 460)
+
+            mark, title, blurb = aquarius_ui.hero(
+                "Unlock “%s”" % name,
+                "This Mac drive is protected with FileVault. Type the password "
+                "you use for it on the Mac. AquariusOS opens it read-only — you "
+                "can copy files off it, and nothing on it can be changed.",
+                style="title-2",
+            )
+
+            self.entry = Gtk.PasswordEntry(show_peek_icon=True)
+            self.entry.set_property("placeholder-text", "Password")
+            self.entry.set_margin_top(8)
+            self.entry.connect("activate", self._on_unlock)
+
+            self.message = aquarius_ui.body_label("")
+            self.message.set_visible(False)
+
+            self.spinner = Gtk.ProgressBar()
+            self.spinner.set_margin_top(8)
+            self.spinner.set_visible(False)
+            self._pulse = None
+
+            self.unlock_button = aquarius_ui.pill_button("Unlock", suggested=True)
+            self.unlock_button.connect("clicked", self._on_unlock)
+            self.cancel_button = aquarius_ui.pill_button("Cancel")
+            self.cancel_button.connect("clicked", lambda _b: self.close())
+
+            buttons = aquarius_ui.button_row([self.cancel_button, self.unlock_button])
+
+            header = Adw.HeaderBar()
+            header.set_title_widget(Adw.WindowTitle(title="Unlock Mac Drive",
+                                                    subtitle=device))
+            toolbar = Adw.ToolbarView()
+            toolbar.add_top_bar(header)
+            toolbar.set_content(aquarius_ui.page(
+                [mark, title, blurb, self.entry, self.message, self.spinner, buttons]))
+            self.set_content(toolbar)
+            self.entry.grab_focus()
+
+        def _on_unlock(self, _widget):
+            if self.busy:
+                return
+            password = self.entry.get_text()
+            self.busy = True
+            self.unlock_button.set_sensitive(False)
+            self.entry.set_sensitive(False)
+            self.message.set_visible(False)
+            self.spinner.set_visible(True)
+            self._pulse = GLib.timeout_add(90, self._tick)
+            threading.Thread(target=self._worker, args=(password,), daemon=True).start()
+
+        def _tick(self):
+            self.spinner.pulse()
+            return GLib.SOURCE_CONTINUE
+
+        def _worker(self, password):
+            ok, message, _where = unlock(device, index, name, password)
+            GLib.idle_add(self._finished, ok, message)
+
+        def _finished(self, ok, message):
+            if self._pulse is not None:
+                GLib.source_remove(self._pulse)
+                self._pulse = None
+            self.spinner.set_visible(False)
+            self.busy = False
+            if ok:
+                self.close()
+                return GLib.SOURCE_REMOVE
+            self.message.set_label(message)
+            self.message.set_visible(True)
+            self.entry.set_sensitive(True)
+            self.unlock_button.set_sensitive(True)
+            self.entry.select_region(0, -1)
+            self.entry.grab_focus()
+            return GLib.SOURCE_REMOVE
+
+    class UnlockApp(Adw.Application):
+        def __init__(self):
+            super().__init__(application_id=APP_ID)
+
+        def do_activate(self):
+            window = self.props.active_window
+            if window is None:
+                window = UnlockWindow(self)
+            window.present()
+
+    return UnlockApp().run([])
+
+
+# =============================================================================
+# Face 3 — the terminal
+# =============================================================================
+def terminal(name):
+    import getpass
+
+    matches = find_by_name(name)
+    if not matches:
+        warn("aq: I cannot find a Mac drive called \"%s\" plugged into this computer."
+             % name)
+        warn("    'aq drive list' shows what is here.")
+        return 1
+    if len(matches) > 1:
+        warn("aq: there is more than one Mac volume called \"%s\" plugged in."
+             " Unplug one of them and try again." % name)
+        return 1
+
+    device, volume = matches[0]
+    where = mount_point_of(device, volume.index)
+    if where:
+        say("\"%s\" is already open at %s." % (name, where))
+        return 0
+    if not volume.encrypted:
+        say("\"%s\" is not locked — it should have opened by itself. If it did"
+            " not, unplug it and plug it in again." % name)
+        return 0
+
+    say("\"%s\" is a Mac drive protected with FileVault." % name)
+    say("Type the password you use for it on the Mac. Nothing is shown as you type,")
+    say("and the password is not saved anywhere.")
+    try:
+        password = getpass.getpass("Password: ")
+    except (EOFError, KeyboardInterrupt):
+        say("")
+        say("Nothing was changed.")
+        return 1
+
+    ok, message, where = unlock(device, volume.index, volume.display_name, password)
+    say(message)
+    if ok:
+        say("It is in your dock, and in Files under \"%s\"." % os.path.basename(where))
+    return 0 if ok else 1
+
+
+# =============================================================================
+# --list, for `aq drive list`
+# =============================================================================
+def listing():
+    volumes = all_volumes()
+    if not volumes:
+        say("No Mac (APFS) drives are plugged into this computer.")
+        return 0
+    for device, volume in volumes:
+        where = mount_point_of(device, volume.index)
+        if volume.encrypted and not where:
+            state = "locked (FileVault) — run: aq drive unlock \"%s\"" % volume.display_name
+        elif where:
+            state = "open, read-only, at %s" % where
+        else:
+            state = "not open"
+        say("  %-24s %-12s %s" % (volume.display_name, device, state))
+    return 0
+
+
+# =============================================================================
+# --dry-run, for the build
+# =============================================================================
+def dry_run():
+    say("aquarius-drive-unlock --dry-run")
+    say("Nothing is unlocked, mounted or changed. This is the rehearsal the build runs.")
+    say("")
+    say("What it does when it runs for real:")
+    say("  * is told about ONE locked volume: a device, a volume number, a name")
+    say("  * puts a notification on screen — \"This Mac drive is locked\" — with")
+    say("    an Unlock button, or opens the window straight away")
+    say("  * asks for the password, and NEVER stores it: not in a file, not in a")
+    say("    keyring, not between plug-ins")
+    say("  * NEVER puts the password on a command line either — apfs-fuse is run")
+    say("    behind a pretend terminal (pty) and the answer is typed into it, so")
+    say("    it cannot appear in this machine's process list")
+    say("  * mounts read-only, as this person, with")
+    say("    apfs-fuse -o ro,uid=,gid=,subtype=apfs — never allow_other")
+    say("  * puts it at /run/media/<user>/<volume name>, where every other drive goes")
+    say("  * says plainly when a Mac's built-in T2 or Apple-silicon disk cannot be")
+    say("    read at all, because its key never leaves the Mac's own hardware")
+    return 0
+
+
+def usage():
+    with open(SELF, "r") as handle:
+        for line in handle.readlines()[1:80]:
+            if line.startswith("#"):
+                say(line[2:].rstrip() if line.startswith("# ") else line[1:].rstrip())
+    return 0
+
+
+def main(argv):
+    args = argv[1:]
+    if not args or args[0] in ("-h", "--help", "help"):
+        return usage()
+
+    mode = args[0]
+    rest = args[1:]
+
+    if mode == "--dry-run":
+        return dry_run()
+    if mode == "--list":
+        return listing()
+    if mode == "--terminal":
+        if len(rest) != 1:
+            warn("aquarius-drive-unlock --terminal needs the drive's name.")
+            return 1
+        return terminal(rest[0])
+    if mode in ("--notify", "--dialog"):
+        if len(rest) != 3:
+            warn("aquarius-drive-unlock %s needs <device> <volume-number> <name>." % mode)
+            return 1
+        device, index, name = rest[0], rest[1], rest[2]
+        if not index.isdigit():
+            warn("aquarius-drive-unlock: '%s' is not a volume number." % index)
+            return 1
+        if mode == "--notify":
+            return notify(device, int(index), name)
+        return dialog(device, int(index), name)
+
+    warn("aquarius-drive-unlock: I do not understand '%s'." % mode)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
