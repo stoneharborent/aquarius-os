@@ -1,0 +1,63 @@
+# =============================================================================
+# What opens what — AquariusOS's own answers
+# =============================================================================
+# PLAIN ENGLISH
+#
+# This file is how AquariusOS says "when somebody double-clicks one of these,
+# open Aquarius Installer". Without it, double-clicking a downloaded .rpm or
+# .deb does nothing at all on a fresh machine — which is exactly the Linux
+# experience Aquarius Installer exists to replace.
+#
+# It only names the file types that ARE downloads-to-install. Everything else
+# on the computer keeps whatever opens it today: this file lists a handful of
+# types, and any type not listed here falls straight through to the desktop's
+# own answer.
+#
+# ⚠️ WHY /etc/xdg AND NOT /usr/share/applications. The desktop reads a chain of
+# these files in a fixed order, and /etc/xdg/mimeapps.list is the one meant for
+# "what this computer has been set up to do" — it is read BEFORE the desktop's
+# own /usr/share/applications/gnome-mimeapps.list, so our answer wins. It is
+# also in /etc, which means somebody who wants a different answer can simply
+# change it and keep their change through every update. That is the right trade
+# for a preference: it is a preference.
+#
+# ⚠️ ARCHIVES AND SHELL SCRIPTS ARE DELIBERATELY NOT LISTED (2026-09-09).
+# A .zip or a .tar.gz is far more often a folder of footage than an app, and a
+# .sh is a text file people write and edit. Making the installer the default
+# for those would break a normal day's work to fix a rare one. Both are still
+# in the installer's MimeType= line, so "Open With → Aquarius Installer" is one
+# right-click away, and dropping either ON the window works exactly as if it
+# had been double-clicked. The three-second story is intact; the nuisance is
+# not.
+#
+# The types themselves are the ordinary shared names, plus the three
+# AquariusOS adds in /usr/share/mime/packages/aquarius-installer.xml.
+# build_files/65-installer.sh reads every line of this back out of the finished
+# image and asks the desktop's own tool which app it resolves to.
+# =============================================================================
+
+[Default Applications]
+
+# The best case: an app from Flathub, which the app helper installs for the
+# whole computer behind one password prompt.
+application/vnd.flatpak.ref=aquarius-installer.desktop
+application/vnd.flatpak=aquarius-installer.desktop
+
+# One file that is the whole app. Unpacked into your own apps, no password.
+application/vnd.appimage=aquarius-installer.desktop
+application/x-iso9660-appimage=aquarius-installer.desktop
+
+# The two ordinary Linux package files. Unpacked — never installed into the
+# operating system, and their own scripts are never run.
+application/x-rpm=aquarius-installer.desktop
+application/vnd.debian.binary-package=aquarius-installer.desktop
+
+# The ones the installer refuses, on purpose, so that double-clicking gets an
+# honest sentence instead of silence.
+application/x-aquarius-run-installer=aquarius-installer.desktop
+application/vnd.snap=aquarius-installer.desktop
+application/x-ms-dos-executable=aquarius-installer.desktop
+application/vnd.microsoft.portable-executable=aquarius-installer.desktop
+application/x-msi=aquarius-installer.desktop
+application/x-apple-diskimage=aquarius-installer.desktop
+application/x-apple-installer-package=aquarius-installer.desktop

@@ -1,0 +1,1045 @@
+#!/usr/bin/python3
+# =============================================================================
+# aquarius-installer — "Aquarius Installer", the one window that installs anything
+# =============================================================================
+# PLAIN ENGLISH
+#
+# Download something. Double-click it. This window opens, tells you what it is
+# and where it is going to go, and you press Install. Then the icon is in your
+# apps. That is the whole idea, and it is the same three seconds whatever the
+# file was — an .rpm, a .deb, an AppImage, a .flatpakref, a tarball with a
+# program inside it.
+#
+# It is also where you go to see what you have, take something away again, and
+# update everything at once. And it has a search bar, so "I want OBS" does not
+# need a website first.
+#
+# ⚠️ THE PERSON NEVER CHOOSES THE ROUTE. A sorter looks at the file and picks
+#    the right one of a handful of ways to land it. All the deciding lives in
+#    /usr/lib/aquarius/python/aquarius_installer.py, which has no window in it
+#    and which `aq apps` calls too — so the terminal and this window can never
+#    disagree about what a file is or where an app went.
+#
+# -----------------------------------------------------------------------------
+# WHAT IT WILL NOT DO, AND SAYS SO
+# -----------------------------------------------------------------------------
+#   * It never changes the operating system. /usr is read-only here and updates
+#     replace the whole image, which is exactly why updates always work. A
+#     package that wants to be part of the system is refused, with the reason.
+#   * It never runs a package's own install scripts. On any other Linux those
+#     run as an administrator on your computer. Here they are not even read.
+#   * It never runs `sudo`. The only password it can ever ask for is the
+#     desktop's own prompt, once, for a Flatpak that goes to the whole computer.
+#   * It never converts one kind of package into another. A `.deb` and an `.rpm`
+#     are the same act here: open it, check it runs, put it in your apps.
+#
+# -----------------------------------------------------------------------------
+# HOW TO RUN IT WITHOUT A SCREEN — which is how the build checks it
+# -----------------------------------------------------------------------------
+#     aquarius-installer --sort FILE       say what it is; change nothing
+#     aquarius-installer --install FILE    install it, printing progress
+#     aquarius-installer --list            what is on this computer
+#     aquarius-installer --remove ID       take one away
+#     aquarius-installer --updates         what has something newer
+#     aquarius-installer --update-all      update everything that can be
+#     aquarius-installer --search TERM     the three groups, as text
+#     aquarius-installer --dry-run         a full rehearsal in a throwaway home
+#
+# ⚠️ aquarius_ui IS IMPORTED LATE, INSIDE run_window(), AND THAT IS LOAD-BEARING.
+#    Importing it pulls GTK in, and every mode above has to work in a build
+#    container with no screen. The chooser next door does the same thing for the
+#    same reason and the build depends on it staying true.
+# =============================================================================
+
+import os
+import sys
+import tarfile
+import tempfile
+import threading
+
+sys.path.insert(0, "/usr/lib/aquarius/python")
+import aquarius_installer as core  # noqa: E402
+
+APP_ID = "org.aquariusos.Installer"
+TITLE = "Aquarius Installer"
+
+# The chooser next door, which is the first-login face of the same catalogue.
+CHOOSER = "/usr/libexec/aquarius-creator-apps"
+
+DRY_RUN = False
+
+
+# =============================================================================
+# THE WINDOW
+# =============================================================================
+def run_window(open_files):
+    import gi
+
+    gi.require_version("Gtk", "4.0")
+    gi.require_version("Adw", "1")
+    from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
+
+    sys.path.insert(0, "/usr/lib/aquarius/python")
+    import aquarius_ui
+
+    hero = aquarius_ui.hero
+    ACTIVE, DONE, FAILED, PENDING = (aquarius_ui.ACTIVE, aquarius_ui.DONE,
+                                     aquarius_ui.FAILED, aquarius_ui.PENDING)
+
+    class InstallerWindow(Adw.ApplicationWindow):
+        def __init__(self, app, files):
+            super().__init__(application=app)
+            self.verdict = None
+            self.step_rows = {}
+            self.pending = list(files)
+            self.updating_row = None
+
+            self.set_title(TITLE)
+            self.set_default_size(900, 760)
+
+            self.stack = Gtk.Stack(
+                transition_type=Gtk.StackTransitionType.CROSSFADE,
+                transition_duration=180,
+                vexpand=True,
+            )
+            self.stack.add_named(self._build_browse_page(), "browse")
+            self.stack.add_named(self._build_file_page(), "file")
+            self.stack.add_named(self._build_working_page(), "working")
+            self.stack.add_named(self._build_done_page(), "done")
+
+            header = Adw.HeaderBar()
+            self.header_title = Adw.WindowTitle(title=TITLE, subtitle="")
+            header.set_title_widget(self.header_title)
+            self.toolbar = Adw.ToolbarView()
+            self.toolbar.add_top_bar(header)
+            self.toolbar.set_content(self.stack)
+            self.set_content(self.toolbar)
+
+            # ⚠️ DRAG-AND-DROP IS THE SAME ACT AS DOUBLE-CLICK, and it has to
+            # be, because half the people who try this will drag the file onto
+            # the window rather than go back to the folder.
+            drop = Gtk.DropTarget.new(Gdk.FileList, Gdk.DragAction.COPY)
+            drop.connect("drop", self._on_drop)
+            self.add_controller(drop)
+
+            keys = Gtk.EventControllerKey()
+            keys.connect("key-pressed", self._on_key)
+            self.add_controller(keys)
+
+            self.refresh()
+            if self.pending:
+                self.take_file(self.pending.pop(0))
+
+        # -- page 1: search and what is here --------------------------------
+        def _build_browse_page(self):
+            mark, title, blurb = hero(
+                TITLE,
+                "Drop anything you have downloaded onto this window and it "
+                "will be installed. Or search for something new.")
+
+            self.search = Gtk.SearchEntry()
+            self.search.set_placeholder_text(
+                "Search for an app, or paste a link")
+            self.search.set_hexpand(True)
+            self.search.connect("search-changed", lambda _e: self.refresh())
+            self.search.connect("activate", self._on_search_activate)
+
+            self.update_all_button = aquarius_ui.pill_button("Update All")
+            self.update_all_button.connect("clicked", self._on_update_all)
+            self.update_all_button.set_visible(False)
+
+            bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            bar.append(self.search)
+            bar.append(self.update_all_button)
+
+            self.here_group = Adw.PreferencesGroup(title="On this computer")
+            self.suggest_group = Adw.PreferencesGroup(
+                title="%s suggests" % core.OS_NAME)
+            self.flathub_group = Adw.PreferencesGroup(title="On Flathub")
+            self.nothing = aquarius_ui.body_label(core.NOTHING_FOUND)
+            self.nothing.set_visible(False)
+
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+            for widget in (mark, title, blurb, bar, self.here_group,
+                           self.suggest_group, self.flathub_group, self.nothing):
+                box.append(widget)
+            clamp = Adw.Clamp(maximum_size=720)
+            clamp.set_child(box)
+            box.set_margin_top(24)
+            box.set_margin_bottom(24)
+            box.set_margin_start(18)
+            box.set_margin_end(18)
+            scroller = Gtk.ScrolledWindow(vexpand=True)
+            scroller.set_child(clamp)
+            return scroller
+
+        # -- page 2: one file, about to be installed ------------------------
+        def _build_file_page(self):
+            self.file_mark, self.file_title, self.file_blurb = hero("", "")
+            self.file_group = Adw.PreferencesGroup()
+            self.file_note = aquarius_ui.body_label("", centre=False)
+            self.file_note.set_xalign(0.0)
+
+            self.install_button = aquarius_ui.pill_button("Install",
+                                                          suggested=True)
+            self.install_button.connect("clicked", self._on_install)
+            back = aquarius_ui.pill_button("Not now")
+            back.connect("clicked", lambda _b: self.show_browse())
+
+            self.file_buttons = aquarius_ui.button_row(
+                [back, self.install_button])
+            return aquarius_ui.page([self.file_mark, self.file_title,
+                                     self.file_blurb, self.file_group,
+                                     self.file_note, self.file_buttons])
+
+        # -- page 3: it is happening ----------------------------------------
+        def _build_working_page(self):
+            mark, self.working_title, self.working_blurb = hero(
+                "Installing", "This takes a moment.")
+            self.working_status = aquarius_ui.status_glyph()
+            self.working_status.set_visible(False)
+            heading = aquarius_ui.heading_row(self.working_status,
+                                              self.working_title)
+
+            self.bar = Gtk.ProgressBar()
+            self.bar.set_show_text(False)
+            self.steps = Adw.PreferencesGroup()
+            self.details = aquarius_ui.LogPane()
+            copy = aquarius_ui.copy_button("Copy", lambda: self.details.text())
+            self.cancel_button = aquarius_ui.pill_button("Cancel")
+            self.cancel_button.connect("clicked", lambda _b: self.show_browse())
+
+            return aquarius_ui.page([mark, heading, self.working_blurb,
+                                     self.bar, self.steps, self.details,
+                                     aquarius_ui.button_row([copy,
+                                                             self.cancel_button])])
+
+        # -- page 4: how it went --------------------------------------------
+        def _build_done_page(self):
+            mark, self.done_title, self.done_blurb = hero("", "")
+            self.done_status = aquarius_ui.status_glyph()
+            heading = aquarius_ui.heading_row(self.done_status, self.done_title)
+            self.open_button = aquarius_ui.pill_button("Open", suggested=True)
+            self.open_button.connect("clicked", self._on_open)
+            close = aquarius_ui.pill_button("Done")
+            close.connect("clicked", lambda _b: self.show_browse())
+            self.done_details = aquarius_ui.LogPane()
+            return aquarius_ui.page([mark, heading, self.done_blurb,
+                                     self.done_details,
+                                     aquarius_ui.button_row([close,
+                                                             self.open_button])])
+
+        # -- moving between them --------------------------------------------
+        def show_browse(self):
+            self.header_title.set_subtitle("")
+            self.stack.set_visible_child_name("browse")
+            self.refresh()
+            if self.pending:
+                self.take_file(self.pending.pop(0))
+
+        # -- the list, and the three groups ---------------------------------
+        def refresh(self):
+            term = self.search.get_text().strip()
+            found = core.search(term)
+            # Asked once, and used twice: for the count on Update All and for
+            # the Update button on each row that has one. Asking twice would be
+            # two trips to the app store per keystroke.
+            updates = set(core.flatpak_updates())
+
+            clear_group(self.here_group)
+            for row in found["here"]:
+                group_add(self.here_group,
+                          self._installed_row(row, row.id in updates))
+            self.here_group.set_visible(bool(found["here"]))
+
+            clear_group(self.suggest_group)
+            for entry in found["suggested"][:12 if term else 0]:
+                group_add(self.suggest_group, self._catalog_row(entry))
+            self.suggest_group.set_visible(bool(term)
+                                           and bool(found["suggested"]))
+
+            clear_group(self.flathub_group)
+            for hit in found["flathub"][:12]:
+                group_add(self.flathub_group, self._flathub_row(hit))
+            self.flathub_group.set_visible(bool(found["flathub"]))
+
+            self.nothing.set_visible(
+                bool(term) and not (found["here"] or found["suggested"]
+                                    or found["flathub"]))
+
+            self.update_all_button.set_visible(bool(updates))
+            if updates:
+                self.update_all_button.set_label("Update All (%d)" % len(updates))
+
+        def _installed_row(self, row, has_update=False):
+            subtitle = row.version or ""
+            if row.note:
+                subtitle = (subtitle + " · " + row.note).strip(" ·")
+            elif row.route != core.ROUTE_FLATPAK:
+                # No feed to check, so the honest thing is to say what to do
+                # instead. Dropping a newer file on this window IS the update:
+                # the app lands in the same place under a new version, and the
+                # settings are never touched.
+                subtitle = (subtitle + " · drop the new file on this window "
+                            "to update").strip(" ·")
+            widget = Adw.ActionRow(title=row.name or row.id)
+            widget.set_subtitle(subtitle)
+            widget.set_subtitle_lines(0)
+            # Aquarius Writer and Firefox are part of the operating system, so
+            # this window has nothing to offer about them — and says so in the
+            # row rather than leaving them out, because "why is it not in the
+            # list?" is a worse question than a row that explains itself.
+            if row.note:
+                return widget
+            if has_update:
+                update = Gtk.Button(label="Update")
+                update.set_valign(Gtk.Align.CENTER)
+                update.add_css_class("suggested-action")
+                update.connect("clicked", lambda _b, r=row: self._on_update(r))
+                widget.add_suffix(update)
+            remove = Gtk.Button(label="Remove")
+            remove.set_valign(Gtk.Align.CENTER)
+            remove.add_css_class("destructive-action")
+            remove.connect("clicked", lambda _b, r=row: self._on_remove(r))
+            widget.add_suffix(remove)
+            return widget
+
+        def _catalog_row(self, entry):
+            widget = Adw.ActionRow(title=entry["name"])
+            widget.set_subtitle(entry["description"])
+            widget.set_subtitle_lines(0)
+            button = Gtk.Button(label="Install")
+            button.set_valign(Gtk.Align.CENTER)
+            button.add_css_class("suggested-action")
+            button.connect("clicked",
+                           lambda _b, e=entry: self._install_flatpak(
+                               ["%s//%s" % (e["id"], e["branch"])], e["name"]))
+            widget.add_suffix(button)
+            return widget
+
+        def _flathub_row(self, hit):
+            widget = Adw.ActionRow(title=hit["name"])
+            widget.set_subtitle(hit["description"])
+            widget.set_subtitle_lines(0)
+            button = Gtk.Button(label="Install")
+            button.set_valign(Gtk.Align.CENTER)
+            button.add_css_class("suggested-action")
+            button.connect("clicked",
+                           lambda _b, h=hit: self._install_flatpak([h["id"]],
+                                                                   h["name"]))
+            widget.add_suffix(button)
+            return widget
+
+        # -- a file arrives --------------------------------------------------
+        def _on_drop(self, _target, value, _x, _y):
+            files = [f.get_path() for f in value.get_files() if f.get_path()]
+            if not files:
+                return False
+            self.pending = files[1:]
+            self.take_file(files[0])
+            return True
+
+        def take_file(self, path):
+            self.verdict = core.sort_path(path)
+            verdict = self.verdict
+            self.file_title.set_label(verdict.name)
+
+            if not verdict.can_install:
+                self.file_blurb.set_label(verdict.message)
+                clear_group(self.file_group)
+                self.install_button.set_visible(False)
+                if verdict.flathub_hint:
+                    self.file_note.set_label(
+                        "Looking for \"%s\" on Flathub…" % verdict.flathub_hint)
+                    self.search.set_text(verdict.flathub_hint)
+                else:
+                    self.file_note.set_label("")
+            else:
+                self.file_blurb.set_label(verdict.where)
+                self.install_button.set_visible(True)
+                clear_group(self.file_group)
+                group_add(self.file_group,
+                          fact("Version", verdict.version or "not stated"))
+                group_add(self.file_group,
+                          fact("Publisher", verdict.publisher or "not stated"))
+                group_add(self.file_group,
+                          fact("Signature", signature_words(verdict.signature)))
+                group_add(self.file_group,
+                          fact("File", os.path.basename(verdict.path)))
+                self.file_note.set_label(signature_note(verdict.signature))
+            self.stack.set_visible_child_name("file")
+
+        # -- installing ------------------------------------------------------
+        def _on_install(self, _button):
+            verdict = self.verdict
+            if verdict is None:
+                return
+            if verdict.route == core.ROUTE_FLATPAK:
+                self._install_flatpak([verdict.path], verdict.name)
+                return
+            self._start_working(verdict.name, ["Opening it",
+                                               "Checking what it would change",
+                                               "Checking it runs here",
+                                               "Working out what it is called",
+                                               "Putting it into your apps",
+                                               "Checking it is really there"])
+            threading.Thread(target=self._install_thread, daemon=True).start()
+
+        def _install_thread(self):
+            progress = core.Progress(
+                on_line=lambda line: GLib.idle_add(self._progress, line),
+                on_log=lambda text: GLib.idle_add(self.details.append, text))
+            result = core.install(self.verdict, progress)
+            GLib.idle_add(self._finished, result.ok, result.message)
+
+        def _install_flatpak(self, refs, name):
+            """The one route with a password, and it is asked once, by the desktop."""
+            self._start_working(name, [name])
+            argv = core.flatpak_argv("install-file" if refs and
+                                     os.path.exists(refs[0]) else "install",
+                                     refs, progress_fd=2, dry_run=DRY_RUN)
+            threading.Thread(target=self._helper_thread, args=(argv, name),
+                             daemon=True).start()
+
+        def _helper_thread(self, argv, name):
+            import subprocess
+
+            self.details.append("$ %s\n" % " ".join(argv))
+            try:
+                proc = subprocess.Popen(argv, stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE, text=True,
+                                        errors="replace", bufsize=1,
+                                        start_new_session=True)
+            except OSError as exc:
+                GLib.idle_add(self._finished, False,
+                              "The app helper could not be started: %s" % exc)
+                return
+            for line in proc.stdout:
+                GLib.idle_add(self.details.append, line)
+            for line in proc.stderr:
+                GLib.idle_add(self._progress, line.rstrip("\n"))
+            code = proc.wait()
+            # ⚠️ 126 AND 127 FROM pkexec ARE NOT THE INSTALLER'S CODES. They mean
+            # "you said no" and "nothing was able to ask you", and the second one
+            # is not something a person can fix by pressing Try again.
+            if code in (126, 127):
+                GLib.idle_add(self._finished, False,
+                              "%s was not given permission to install that."
+                              % core.OS_NAME)
+                return
+            GLib.idle_add(self._finished, code == 0,
+                          "%s is installed." % name if code == 0
+                          else "%s did not install." % name)
+
+        def _start_working(self, name, steps):
+            self.header_title.set_subtitle(name)
+            self.working_title.set_label("Installing %s" % name)
+            self.working_status.set_visible(False)
+            self.bar.set_fraction(0.0)
+            self.details.clear()
+            clear_group(self.steps)
+            self.step_rows = {}
+            for index, text in enumerate(steps, start=1):
+                row = aquarius_ui.StepRow(text)
+                self.step_rows[index] = row
+                group_add(self.steps, row)
+            self.stack.set_visible_child_name("working")
+
+        def _progress(self, line):
+            head, _, rest = line.partition(" ")
+            if head == "STEP":
+                index, _, _text = rest.partition(" ")
+                position, _, _total = index.partition("/")
+                try:
+                    number = int(position)
+                except ValueError:
+                    return GLib.SOURCE_REMOVE
+                for key, row in self.step_rows.items():
+                    if key < number:
+                        row.set_state(DONE)
+                    elif key == number:
+                        row.set_state(ACTIVE)
+                    else:
+                        row.set_state(PENDING)
+            elif head == "PERCENT":
+                try:
+                    self.bar.set_fraction(int(rest) / 100.0)
+                except ValueError:
+                    pass
+            elif head == "OK":
+                for row in self.step_rows.values():
+                    if row.state == ACTIVE:
+                        row.set_state(DONE)
+            elif head in ("FAILED", "FAIL"):
+                for row in self.step_rows.values():
+                    if row.state == ACTIVE:
+                        row.set_state(FAILED)
+                aquarius_ui.set_status_glyph(self.working_status, ok=False)
+                self.working_status.set_visible(True)
+                self.details.set_expanded(True)
+            elif head == "DONE":
+                pass
+            else:
+                self.details.append(line + "\n")
+            return GLib.SOURCE_REMOVE
+
+        def _finished(self, ok, message):
+            self.done_title.set_label("All set." if ok else "That did not work.")
+            self.done_blurb.set_label(message)
+            aquarius_ui.set_status_glyph(self.done_status, ok=ok)
+            self.open_button.set_visible(ok)
+            self.done_details.clear()
+            for line in self.details.lines:
+                self.done_details.append(line)
+            self.done_details.set_expanded(not ok)
+            self.stack.set_visible_child_name("done")
+            self.refresh()
+            return GLib.SOURCE_REMOVE
+
+        def _on_open(self, _button):
+            import subprocess
+
+            entry = ""
+            for row in core.home_rows():
+                if self.verdict and row.name == self.verdict.name:
+                    entry = row.record.entry_path if row.record else ""
+            if entry and os.path.isfile(entry):
+                subprocess.Popen(["gio", "launch", entry],
+                                 start_new_session=True)
+            self.show_browse()
+
+        # -- removing --------------------------------------------------------
+        def _on_remove(self, row):
+            if row.route == core.ROUTE_FLATPAK:
+                self._confirm_remove(row, None)
+                return
+            self._confirm_remove(row, core.removal_plan(row.id))
+
+        def _confirm_remove(self, row, plan):
+            dialog = Adw.MessageDialog(transient_for=self, modal=True)
+            dialog.set_heading("Remove %s?" % (row.name or row.id))
+            freed = core.human_size(plan["app_bytes"]) if plan else ""
+            dialog.set_body(
+                "This frees %s. The things you made with it are not touched."
+                % freed if freed else
+                "The things you made with it are not touched.")
+
+            tick = Gtk.CheckButton(label="Also delete its settings and data")
+            if plan and plan["data_bytes"]:
+                tick.set_label("Also delete its settings and data (%s)"
+                               % core.human_size(plan["data_bytes"]))
+            tick.set_active(False)
+            dialog.set_extra_child(tick)
+
+            dialog.add_response("no", "Keep it")
+            dialog.add_response("yes", "Remove")
+            dialog.set_response_appearance("yes",
+                                           Adw.ResponseAppearance.DESTRUCTIVE)
+            dialog.connect("response", self._removed, row, tick)
+            dialog.present()
+
+        def _removed(self, _dialog, response, row, tick):
+            if response != "yes":
+                return
+            with_data = tick.get_active()
+            self._start_working(row.name or row.id, ["Removing %s"
+                                                     % (row.name or row.id)])
+            threading.Thread(target=self._remove_thread,
+                             args=(row, with_data), daemon=True).start()
+
+        def _remove_thread(self, row, with_data):
+            if row.route == core.ROUTE_FLATPAK:
+                argv = core.flatpak_argv("uninstall", [row.id], progress_fd=2,
+                                         dry_run=DRY_RUN)
+                self._helper_thread(argv, row.name or row.id)
+                return
+            progress = core.Progress(
+                on_line=lambda line: GLib.idle_add(self._progress, line),
+                on_log=lambda text: GLib.idle_add(self.details.append, text))
+            result = core.remove(row.id, with_data, progress)
+            GLib.idle_add(self._finished, result.ok, result.message)
+
+        # -- updating --------------------------------------------------------
+        def _on_update(self, row):
+            """One row's Update. The same helper, the same one prompt."""
+            if row.route != core.ROUTE_FLATPAK:
+                return
+            self._start_working(row.name or row.id, [row.id])
+            argv = core.flatpak_argv("update", [row.id], progress_fd=2,
+                                     dry_run=DRY_RUN)
+            threading.Thread(target=self._helper_thread,
+                             args=(argv, row.name or row.id),
+                             daemon=True).start()
+
+        def _on_update_all(self, _button):
+            ids = core.flatpak_updates()
+            if not ids:
+                return
+            self._start_working("Updates", ids)
+            argv = core.flatpak_argv("update", ids, progress_fd=2,
+                                     dry_run=DRY_RUN)
+            threading.Thread(target=self._helper_thread,
+                             args=(argv, "%d apps" % len(ids)),
+                             daemon=True).start()
+
+        # -- odds and ends ---------------------------------------------------
+        def _on_search_activate(self, entry):
+            text = entry.get_text().strip()
+            if not core.looks_like_link(text):
+                return
+            app_id = core.flathub_page_id(text)
+            if app_id:
+                self._install_flatpak([app_id], app_id)
+                return
+            self._start_working("Downloading", ["Downloading"])
+            threading.Thread(target=self._download_thread, args=(text,),
+                             daemon=True).start()
+
+        def _download_thread(self, url):
+            progress = core.Progress(
+                on_line=lambda line: GLib.idle_add(self._progress, line),
+                on_log=lambda text: GLib.idle_add(self.details.append, text))
+            path = core.download(url, progress)
+            if not path:
+                GLib.idle_add(self._finished, False,
+                              "That link could not be downloaded.")
+                return
+            GLib.idle_add(self.take_file, path)
+
+        def _on_key(self, _controller, keyval, _keycode, _state):
+            if keyval == Gdk.KEY_Escape:
+                if self.stack.get_visible_child_name() == "browse":
+                    self.close()
+                else:
+                    self.show_browse()
+                return True
+            return False
+
+    class InstallerApp(Adw.Application):
+        def __init__(self, files):
+            super().__init__(application_id=APP_ID,
+                             flags=Gio.ApplicationFlags.NON_UNIQUE)
+            self.files = files
+
+        def do_activate(self):
+            window = InstallerWindow(self, self.files)
+            window.present()
+
+    def clear_group(group):
+        """Take every row back out of a group.
+
+        ⚠️ Adw.PreferencesGroup HAS NO "EMPTY YOURSELF", and it must be emptied
+        on every keystroke in the search bar. So each group remembers the rows
+        it was given and hands them back one at a time. Reaching into its
+        internal children instead is how a list ends up with a stale row nobody
+        can explain.
+        """
+        for row in list(getattr(group, "aquarius_rows", [])):
+            group.remove(row)
+        group.aquarius_rows = []
+
+    def group_add(group, row):
+        group.add(row)
+        rows = list(getattr(group, "aquarius_rows", []))
+        rows.append(row)
+        group.aquarius_rows = rows
+
+    def fact(title, value):
+        row = Adw.ActionRow(title=title)
+        row.set_subtitle(value)
+        row.set_subtitle_lines(0)
+        return row
+
+    GLib.set_prgname(APP_ID)
+    GLib.set_application_name(TITLE)
+    return InstallerApp(open_files).run([sys.argv[0]])
+
+
+# -----------------------------------------------------------------------------
+# The signature, in words — shown, never a nag
+# -----------------------------------------------------------------------------
+# ⚠️ AN UNSIGNED FILE IS NEVER BLOCKED (Royce, 2026-09-08). Most good software on
+#    the internet is unsigned, so blocking it would be a promise we cannot keep
+#    dressed up as safety. The window says what it knows, once, in plain words.
+def signature_words(state):
+    return {"signed": "Signed by its publisher",
+            "unsigned": "Not signed",
+            "unknown": "Not stated"}.get(state, "Not stated")
+
+
+def signature_note(state):
+    if state == "signed":
+        return ""
+    return ("This file is not signed, which is normal for software downloaded "
+            "straight from its maker. Install it if you trust where it came "
+            "from.")
+
+
+# =============================================================================
+# THE SAME JOBS WITH NO SCREEN
+# =============================================================================
+def printer(prefix=""):
+    return core.Progress(on_line=lambda line: print(prefix + line),
+                         on_log=lambda text: print(text.rstrip("\n")))
+
+
+def do_sort(path):
+    verdict = core.sort_path(path)
+    print("kind: %s" % verdict.kind)
+    print("route: %s" % verdict.route)
+    print("name: %s" % verdict.name)
+    print("version: %s" % verdict.version)
+    print("publisher: %s" % verdict.publisher)
+    print("signature: %s" % verdict.signature)
+    print("can install: %s" % ("yes" if verdict.can_install else "no"))
+    if verdict.where:
+        print("where: %s" % verdict.where)
+    if verdict.message:
+        print("why not: %s" % verdict.message)
+    if verdict.flathub_hint:
+        print("look for: %s" % verdict.flathub_hint)
+    return 0 if verdict.can_install else 1
+
+
+def do_install(path):
+    verdict = core.sort_path(path)
+    if verdict.route == core.ROUTE_FLATPAK:
+        import subprocess
+
+        argv = core.flatpak_argv(
+            "install-file" if os.path.exists(verdict.path) else "install",
+            [verdict.path], progress_fd=2)
+        return subprocess.call(argv)
+    if not verdict.can_install:
+        print(verdict.message)
+        return 1
+    result = core.install(verdict, printer())
+    print(result.message)
+    return 0 if result.ok else 1
+
+
+def do_list():
+    rows = core.installed_rows()
+    if not rows:
+        print("Nothing has been installed with %s yet." % TITLE)
+        return 0
+    for row in rows:
+        print("  %-11s %-34s %s%s" % (row.route, row.id, row.version,
+                                      "  (%s)" % row.note if row.note else ""))
+    print()
+    print("  To take one away:  aq apps remove <the middle column>")
+    return 0
+
+
+def do_remove(app_id, with_data):
+    row = next((r for r in core.installed_rows() if r.id == app_id), None)
+    if row is not None and row.route == core.ROUTE_FLATPAK:
+        import subprocess
+
+        return subprocess.call(core.flatpak_argv("uninstall", [app_id],
+                                                 progress_fd=2))
+    result = core.remove(app_id, with_data, printer())
+    print(result.message)
+    return 0 if result.ok else 1
+
+
+def do_updates():
+    plan = core.update_plan()
+    count = len(plan["flatpak"])
+    print("%d app%s from Flathub %s an update."
+          % (count, "" if count == 1 else "s", "has" if count == 1 else "have"))
+    for app_id in plan["flatpak"]:
+        print("  %s" % app_id)
+    for row in plan["home"]:
+        print("  %s — drop the new file on the %s window to update it."
+              % (row.name or row.id, TITLE))
+    for row in plan["os"]:
+        print("  %s — %s." % (row.name or row.id, row.note))
+    return 0
+
+
+def do_update_all():
+    import subprocess
+
+    ids = core.flatpak_updates()
+    if not ids:
+        print("Everything is up to date.")
+        return 0
+    print("Updating %d app(s). You will be asked for your password once."
+          % len(ids))
+    return subprocess.call(core.flatpak_argv("update", ids, progress_fd=2))
+
+
+def do_search(term):
+    found = core.search(term)
+    print("On this computer: %d" % len(found["here"]))
+    for row in found["here"]:
+        print("  %-34s %s" % (row.id, row.name))
+    print("%s suggests: %d" % (core.OS_NAME, len(found["suggested"])))
+    for entry in found["suggested"]:
+        print("  %-34s %s" % (entry["id"], entry["name"]))
+    print("On Flathub: %d" % len(found["flathub"]))
+    for hit in found["flathub"]:
+        print("  %-34s %s" % (hit["id"], hit["name"]))
+    if not (found["here"] or found["suggested"] or found["flathub"]):
+        print(core.NOTHING_FOUND)
+    return 0
+
+
+# =============================================================================
+# THE REHEARSAL — every step, really run, inside a throwaway home folder
+# =============================================================================
+# ⚠️ IT IS NOT A SERIES OF `print`s, AND THAT IS THE POINT. A rehearsal that only
+#    says what it WOULD do proves nothing about the code that does it — that is
+#    the exact fault this repository has been bitten by twice (a build that never
+#    ran its own reader against its own file). So this one really unpacks a real
+#    archive, really refuses a package that wants the operating system, really
+#    writes a menu entry, really reads it back, and really removes it — into a
+#    temporary folder that is deleted on the way out.
+def make_payload(root, name="testapp", with_os_bits=False, want_library=""):
+    """A tiny app-shaped tree: a program, a menu entry and an icon."""
+    binary = os.path.join(root, "opt", name, name)
+    os.makedirs(os.path.dirname(binary), exist_ok=True)
+    with open(binary, "w") as handle:
+        handle.write("#!/bin/sh\necho %s\n" % name)
+    os.chmod(binary, 0o755)
+
+    entry = os.path.join(root, "usr", "share", "applications",
+                         "%s.desktop" % name)
+    os.makedirs(os.path.dirname(entry), exist_ok=True)
+    with open(entry, "w") as handle:
+        handle.write("[Desktop Entry]\nType=Application\nName=Test App\n"
+                     "Exec=/opt/%s/%s %%U\nIcon=%s\nTerminal=false\n"
+                     "StartupWMClass=TestApp\nCategories=Utility;\n"
+                     "Path=/opt/%s/\n" % (name, name, name, name))
+
+    icon = os.path.join(root, "usr", "share", "icons", "hicolor", "64x64",
+                        "apps", "%s.png" % name)
+    os.makedirs(os.path.dirname(icon), exist_ok=True)
+    with open(icon, "wb") as handle:
+        handle.write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 8 +
+                     (64).to_bytes(4, "big") + (64).to_bytes(4, "big"))
+
+    if with_os_bits:
+        unit = os.path.join(root, "usr", "lib", "systemd", "system",
+                            "%s.service" % name)
+        os.makedirs(os.path.dirname(unit), exist_ok=True)
+        with open(unit, "w") as handle:
+            handle.write("[Unit]\nDescription=nope\n")
+    if want_library:
+        # An ELF header and nothing else: enough for the ldd pass to find it.
+        broken = os.path.join(root, "opt", name, "lib%s.so" % want_library)
+        with open(broken, "wb") as handle:
+            handle.write(b"\x7fELF" + b"\x00" * 60)
+    return root
+
+
+def make_tarball(path, builder):
+    work = tempfile.mkdtemp(prefix="aquarius-rehearsal-src-")
+    try:
+        builder(work)
+        with tarfile.open(path, "w:gz") as archive:
+            for name in sorted(os.listdir(work)):
+                archive.add(os.path.join(work, name), arcname=name)
+    finally:
+        import shutil
+
+        shutil.rmtree(work, ignore_errors=True)
+    return path
+
+
+def rehearse():
+    import shutil
+
+    passed = 0
+    failed = 0
+
+    def check(condition, what):
+        nonlocal passed, failed
+        if condition:
+            passed += 1
+            print("  OK   %s" % what)
+        else:
+            failed += 1
+            print("  FAIL %s" % what)
+
+    fake_home = tempfile.mkdtemp(prefix="aquarius-rehearsal-home-")
+    real_home = os.environ.get("HOME")
+    os.environ["HOME"] = fake_home
+    # ⚠️ THE ONE PLACE THE "NEVER AS AN ADMINISTRATOR" RULE IS LIFTED, and the
+    # reason is written out beside the flag itself: the image build runs as root
+    # in a container, so refusing root here would mean this code is never
+    # checked anywhere. The home folder above is one this function made and
+    # deletes; nothing outside it is reachable.
+    core.REHEARSAL = True
+    print("REHEARSAL — nothing on this computer is changed.")
+    print("Everything below really happens, inside %s, which is deleted at the"
+          % fake_home)
+    print("end. Only the downloading is stood in for.")
+    print()
+
+    try:
+        work = tempfile.mkdtemp(prefix="aquarius-rehearsal-", dir=fake_home)
+
+        # --- the sorter, on every ending it knows -------------------------
+        print("=== the sorter ===")
+        for ending, want_route in ((".AppImage", core.ROUTE_APPIMAGE),
+                                   (".rpm", core.ROUTE_PACKAGE),
+                                   (".deb", core.ROUTE_PACKAGE),
+                                   (".tar.gz", core.ROUTE_ARCHIVE),
+                                   (".zip", core.ROUTE_ARCHIVE),
+                                   (".flatpakref", core.ROUTE_FLATPAK),
+                                   (".run", core.ROUTE_REFUSE),
+                                   (".snap", core.ROUTE_REFUSE),
+                                   (".exe", core.ROUTE_REFUSE),
+                                   (".dmg", core.ROUTE_REFUSE)):
+            sample = os.path.join(work, "thing" + ending)
+            with open(sample, "w") as handle:
+                handle.write("x")
+            verdict = core.sort_path(sample)
+            check(verdict.route == want_route,
+                  "%-12s goes to the %s route" % (ending, want_route))
+            print("       sorted: %s" % verdict.route)
+
+        for ending, word in ((".snap", "Flathub"), (".exe", "Windows"),
+                             (".dmg", "Mac"), (".run", "installer program")):
+            sample = os.path.join(work, "thing" + ending)
+            verdict = core.sort_path(sample)
+            check(word.lower() in verdict.message.lower(),
+                  "%-12s is refused in words a person can act on" % ending)
+
+        # --- Route A, all the way through ----------------------------------
+        print()
+        print("=== a self-contained app, installed for real ===")
+        tarball = make_tarball(os.path.join(work, "testapp-1.2.3.tar.gz"),
+                               lambda root: make_payload(root))
+        verdict = core.sort_path(tarball)
+        result = core.install(verdict, printer("       "))
+        check(result.ok, "it installed")
+        record = result.record
+        check(record is not None and os.path.isfile(record.entry_path),
+              "it wrote a menu entry")
+        if record:
+            values = core.read_entry(record.entry_path)
+            check(values.get("Name") == "Test App",
+                  "the entry carries the app's own name")
+            check(values.get("StartupWMClass") == "TestApp",
+                  "and its window class, read out of the app itself")
+            check("Path" not in values,
+                  "and the Path= naming a folder this computer lacks was dropped")
+            check(values.get("Exec", "").startswith(record.install_path),
+                  "and Exec points at where the app really landed")
+            check(bool(values.get("Icon")), "and it has an icon")
+            check(os.path.isfile(core.Record.load(record.id).path()),
+                  "the registry wrote its note")
+
+        # --- and away again -------------------------------------------------
+        print()
+        print("=== and away again ===")
+        if record:
+            plan = core.removal_plan(record.id)
+            check(plan is not None and plan["app_bytes"] > 0,
+                  "Remove can say how much space it frees")
+            gone = core.remove(record.id, with_data=False)
+            check(gone.ok, "it removed")
+            check(not os.path.exists(record.entry_path),
+                  "the menu entry is gone")
+            check(not os.path.isdir(record.install_path),
+                  "and so is the app")
+
+        # --- the two honest stops -------------------------------------------
+        print()
+        print("=== the two honest stops ===")
+        os_ball = make_tarball(os.path.join(work, "systemthing-1.0.tar.gz"),
+                               lambda root: make_payload(root, "systemthing",
+                                                         with_os_bits=True))
+        stopped = core.install(core.sort_path(os_ball), printer("       "))
+        check(not stopped.ok, "a package that wants the operating system is refused")
+        check("operating system" in stopped.message,
+              "and the reason says so in plain words")
+
+        print()
+        print("checks passed: %d" % passed)
+        print("checks failed: %d" % failed)
+        return 0 if failed == 0 else 1
+    finally:
+        core.REHEARSAL = False
+        if real_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = real_home
+        shutil.rmtree(fake_home, ignore_errors=True)
+
+
+# =============================================================================
+# What was asked for
+# =============================================================================
+USAGE = """aquarius-installer — the window that installs anything
+
+    aquarius-installer [FILE...]      open the window, with FILE ready to install
+    aquarius-installer --sort FILE    say what FILE is; change nothing
+    aquarius-installer --install FILE install it, with no window
+    aquarius-installer --list         what is on this computer
+    aquarius-installer --remove ID [--with-data]
+    aquarius-installer --updates      what has something newer
+    aquarius-installer --update-all   update everything that can be
+    aquarius-installer --search TERM  search, as text
+    aquarius-installer --dry-run      rehearse everything in a throwaway folder
+"""
+
+
+def main(argv):
+    global DRY_RUN
+    args = list(argv[1:])
+    files = []
+    with_data = False
+    action = None
+    value = None
+
+    while args:
+        arg = args.pop(0)
+        if arg in ("--sort", "--install", "--remove", "--search"):
+            action = arg.lstrip("-")
+            value = args.pop(0) if args else None
+            if value is None:
+                print("aquarius-installer: %s needs something after it." % arg,
+                      file=sys.stderr)
+                return 2
+        elif arg in ("--list", "--updates", "--update-all", "--dry-run"):
+            action = arg.lstrip("-")
+            if arg == "--dry-run":
+                DRY_RUN = True
+        elif arg == "--with-data":
+            with_data = True
+        elif arg in ("-h", "--help"):
+            print(USAGE)
+            return 0
+        elif arg.startswith("-"):
+            print("aquarius-installer: I do not understand '%s'." % arg,
+                  file=sys.stderr)
+            return 2
+        else:
+            files.append(arg)
+
+    if action == "sort":
+        return do_sort(value)
+    if action == "install":
+        return do_install(value)
+    if action == "list":
+        return do_list()
+    if action == "remove":
+        return do_remove(value, with_data)
+    if action == "updates":
+        return do_updates()
+    if action == "update-all":
+        return do_update_all()
+    if action == "search":
+        return do_search(value)
+    if action == "dry-run":
+        return rehearse()
+
+    return run_window([os.path.abspath(f) for f in files])
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

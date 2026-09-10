@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ============================================================================
+  THE FILE TYPES AQUARIUS INSTALLER OPENS THAT LINUX HAS NO NAME FOR
+  ============================================================================
+  PLAIN ENGLISH
+
+  Linux works out what a file is from a shared list of file types that ships
+  with the system. Double-clicking a file only does something if that list has
+  a name for it, so anything the list has never heard of is "unknown", and an
+  unknown file cannot be offered an app to open it with.
+
+  The shared list already knows most of what a person downloads: .rpm, .deb,
+  .zip, .tar.gz, .AppImage, .flatpakref, .exe, .msi, .dmg. This file covers the
+  four endings where it does not, or where the name it gives is no use for
+  deciding what opens the file:
+
+    *.run     a vendor's own installer program. The shared list has no name
+              for it at all, so it is "unknown" without this.
+    *.snap    an app in the Snap format, which AquariusOS does not use. Newer
+              copies of the shared list do know this one; the entry here means
+              the type exists whether they do or not.
+    *.pkg     a Mac installer. The shared list calls it an "xar archive",
+              which is true and useless: it says what the container is, not
+              that double-clicking it should explain why it cannot run here.
+    *.AppImage  known, but see the note further down about capitalisation.
+
+  ⚠️ WHY REGISTER TYPES WE REFUSE TO INSTALL. Because the alternative is worse.
+  Double-clicking a .snap or a .pkg on a computer that has never heard of them
+  does NOTHING AT ALL — no window, no message, no clue. With this file, the
+  same double-click opens one window that says, in one sentence, why that file
+  cannot run here and what to look for instead. An honest answer beats silence.
+
+  WHERE THE NAMES COME FROM. There are no official ones, so these follow the
+  ordinary convention for a type nobody has registered: `application/x-` and
+  then a word. If the freedesktop project ever publishes real ones, this file
+  is where they change, and they change in exactly one place.
+
+  WHY THE GLOBS HAVE A WEIGHT. A `.run` file is also, technically, a shell
+  script, and the shared list may well already say so. Weight 60 beats the
+  default 50, so a file called `installer.run` is an installer program here
+  rather than a text file to edit.
+
+  ⚠️ `.sh` IS DELIBERATELY NOT CLAIMED. A shell script is a text file people
+  write and edit, and making the installer the thing that opens every one of
+  them would be a much bigger nuisance than the one it fixes. A `.sh` dropped
+  ON the window is still sorted properly; it just is not what double-clicking
+  one does.
+
+  HOW IT REACHES THE SYSTEM. The image build copies this into
+  /usr/share/mime/packages/ and then runs `update-mime-database /usr/share/mime`,
+  which folds every file in that folder into the one list the whole desktop
+  reads. build_files/65-installer.sh reads the result back out.
+  ============================================================================
+-->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+
+  <mime-type type="application/x-aquarius-run-installer">
+    <comment>Installer program</comment>
+    <glob pattern="*.run" weight="60"/>
+    <generic-icon name="application-x-executable"/>
+  </mime-type>
+
+  <mime-type type="application/vnd.snap">
+    <comment>Snap package</comment>
+    <glob pattern="*.snap" weight="60"/>
+    <generic-icon name="package-x-generic"/>
+  </mime-type>
+
+  <mime-type type="application/x-apple-installer-package">
+    <comment>Mac installer package</comment>
+    <glob pattern="*.pkg" weight="60"/>
+    <generic-icon name="package-x-generic"/>
+  </mime-type>
+
+  <!--
+    And one belt-and-braces glob for AppImages. The shared list does know this
+    type, and it recognises the file by its contents as well as its name — but
+    an AppImage arrives from a web browser under every capitalisation there is,
+    and a file whose type is decided by its name alone must not depend on which.
+  -->
+  <mime-type type="application/vnd.appimage">
+    <comment>AppImage application</comment>
+    <glob pattern="*.AppImage" weight="60"/>
+    <glob pattern="*.appimage" weight="60"/>
+    <generic-icon name="application-x-executable"/>
+  </mime-type>
+
+</mime-info>

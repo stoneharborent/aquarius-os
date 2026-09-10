@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Aquarius Installer
+GenericName=App Installer
+Comment=Install anything you have downloaded, and remove or update what you have
+Exec=/usr/libexec/aquarius-installer %F
+TryExec=/usr/libexec/aquarius-installer
+Icon=aquarius-installer
+Terminal=false
+StartupNotify=true
+StartupWMClass=org.aquariusos.Installer
+Categories=System;PackageManager;
+Keywords=install;installer;app;apps;software;add;remove;uninstall;update;rpm;deb;appimage;flatpak;flathub;package;store;
+MimeType=application/vnd.flatpak.ref;application/vnd.flatpak;application/vnd.appimage;application/x-iso9660-appimage;application/x-rpm;application/vnd.debian.binary-package;application/x-compressed-tar;application/x-xz-compressed-tar;application/x-bzip-compressed-tar;application/x-tar;application/zip;application/x-aquarius-run-installer;application/vnd.snap;application/x-ms-dos-executable;application/vnd.microsoft.portable-executable;application/x-msi;application/x-apple-diskimage;application/x-apple-installer-package;application/x-xar;
