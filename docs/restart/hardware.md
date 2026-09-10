@@ -459,6 +459,22 @@ is not doing its job. That is exactly the shape of the 8 September fault.
 > being fixed in the shell repository. Test both together: log in, *then* plug a
 > drive in, and watch both the journal line above and the dock.
 
+### A drive that came off a Mac
+
+Since 2026-09-09 AquariusOS also reads **Mac-formatted (APFS) drives** — plug
+one in and it appears in the dock and in Files, exactly like any other drive.
+It is **read-only, permanently**, which is the honest ceiling rather than an
+unfinished feature, and a drive with FileVault on it puts a notification on
+screen offering to unlock it.
+
+It is the one drive on this computer that udisks2 does *not* mount: Linux has no
+APFS, so the agent above runs `apfs-fuse` itself, as you, with no privilege
+anywhere in the path.
+
+**The whole story, including the bench checklist, the storage rule (APFS =
+rescue, exFAT = shuttle, ext4 = resident) and the Mac disks that no PC can ever
+read:** [`mac-drives.md`](mac-drives.md).
+
 ---
 
 ## For whoever changes this next
