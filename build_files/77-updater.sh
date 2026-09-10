@@ -20,11 +20,10 @@
 # This step CHECKS them, because a "Check for Update" that does nothing when
 # clicked is the kind of fault nobody notices until an update is waiting.
 #
-# WHY THERE IS NO SEPARATE "aquarius-update" SCRIPT LIKE RESOLVE HAS
-# The Resolve installer is a Python window driving a big bash installer, so it
-# is two files. Updating is one short command (`bootc upgrade`), so the window
-# and the terminal logic live in the one Python file, and `aq update` just calls
-# it. That keeps the "one updater, two faces" rule with less machinery.
+# THE WINDOW AND ITS FIXED SYSTEM HELPER
+# Both checking and updating need administrator permission. The window and
+# `aq update` call /usr/libexec/aquarius-update-system through pkexec. That helper
+# accepts only check/apply and reads bootc status; the GUI stays the normal user.
 #
 # Plain-English guide: docs/restart/updater.md
 # ==============================================================================

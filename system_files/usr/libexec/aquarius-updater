@@ -350,9 +350,7 @@ def gui():
         def _build_done_page(self):
             mark, self.done_title, self.done_blurb = aquarius_ui.hero(
                 "Update ready",
-                "The new version is downloaded and prepared. Restart to finish — "
-                "your work and your files are untouched, and if anything is ever "
-                "wrong you can pick the previous version from the boot menu.",
+                "The update is ready. Save your work and restart when you are ready.",
             )
             done_glyph = aquarius_ui.status_glyph()
             aquarius_ui.set_status_glyph(done_glyph, ok=True)

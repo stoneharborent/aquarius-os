@@ -108,7 +108,7 @@ class StepRow(Adw.ActionRow):
             self._spinner.stop()
         self._icon.set_visible(state in (DONE, FAILED))
         if state == DONE:
-            self._icon.set_from_icon_name("emblem-ok-symbolic")
+            self._icon.set_from_icon_name("object-select-symbolic")
             self._icon.remove_css_class("error")
             self._icon.add_css_class("success")
         elif state == FAILED:
@@ -282,7 +282,7 @@ def set_status_glyph(image, ok):
     """A tick, or a warning triangle. Two states, because a page that has
     finished has to answer the question rather than ask a new one."""
     if ok:
-        image.set_from_icon_name("emblem-ok-symbolic")
+        image.set_from_icon_name("object-select-symbolic")
         image.remove_css_class("warning")
         image.add_css_class("success")
     else:
