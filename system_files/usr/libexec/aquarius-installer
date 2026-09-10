@@ -65,6 +65,7 @@ TITLE = "Aquarius Installer"
 
 # The chooser next door, which is the first-login face of the same catalogue.
 CHOOSER = "/usr/libexec/aquarius-creator-apps"
+RESOLVE_SETUP = "/usr/libexec/aquarius-resolve-installer"
 
 DRY_RUN = False
 
@@ -152,6 +153,10 @@ def run_window(open_files):
             bar.append(self.search)
             bar.append(self.update_all_button)
 
+            self.resolve_button = aquarius_ui.pill_button("Install DaVinci Resolve")
+            self.resolve_button.connect("clicked", self._on_resolve_setup)
+            resolve_actions = aquarius_ui.button_row([self.resolve_button])
+
             self.here_group = Adw.PreferencesGroup(title="On this computer")
             self.suggest_group = Adw.PreferencesGroup(
                 title="%s suggests" % core.OS_NAME)
@@ -160,7 +165,7 @@ def run_window(open_files):
             self.nothing.set_visible(False)
 
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
-            for widget in (mark, title, blurb, bar, self.here_group,
+            for widget in (mark, title, blurb, bar, resolve_actions, self.here_group,
                            self.suggest_group, self.flathub_group, self.nothing):
                 box.append(widget)
             clamp = Adw.Clamp(maximum_size=720)
@@ -172,6 +177,21 @@ def run_window(open_files):
             scroller = Gtk.ScrolledWindow(vexpand=True)
             scroller.set_child(clamp)
             return scroller
+
+        def _on_resolve_setup(self, _button):
+            # Resolve has its own guided container setup. Opening that window
+            # leaves its download choice and final Install click to the person.
+            import subprocess
+
+            try:
+                subprocess.Popen([RESOLVE_SETUP], start_new_session=True)
+            except OSError:
+                dialog = Adw.AlertDialog(
+                    heading="DaVinci Resolve setup could not open",
+                    body="Try again after restarting. If this keeps happening, "
+                         "the Resolve setup tool needs repair.")
+                dialog.add_response("close", "Close")
+                dialog.present(self)
 
         # -- page 2: one file, about to be installed ------------------------
         def _build_file_page(self):

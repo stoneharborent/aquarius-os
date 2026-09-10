@@ -59,6 +59,10 @@ def check_window(root):
                 draw(page)
             assert window.details.widget.get_parent() is not None
             assert window.done_details.widget.get_parent() is not None
+            with patch.object(subprocess, "Popen") as launch:
+                window.resolve_button.emit("clicked")
+                launch.assert_called_once_with(
+                    ["/usr/libexec/aquarius-resolve-installer"], start_new_session=True)
             # Exercise the actual progress handlers; do not start any helper.
             window._start_working("Smoke test", ["Checking", "Finishing"])
             window._progress("STEP 1/2 Checking")

@@ -19,6 +19,11 @@ it.
 
 That is the whole thing, and it is the same three seconds whatever you downloaded.
 
+For **DaVinci Resolve**, open Aquarius Installer and click **Install DaVinci
+Resolve**. Its guided setup opens, where you choose your Blackmagic Linux
+download and then press Install. Opening the guide does not remove or reinstall
+anything by itself. See [the Resolve guide](resolve.md) for the steps.
+
 ---
 
 ## Why this is worth an app at all
