@@ -62,10 +62,12 @@ method is not a thing anybody should be asked to do.
 
 ### Two file types it deliberately does *not* take over
 
-A **`.zip`** and a **`.sh`** are not usually apps. A zip is far more often a folder of
-footage, and a `.sh` is a text file people write and edit. So double-clicking one of
-those still does whatever it did before. Aquarius Installer is still one right-click
-away under **Open With**, and **dropping one onto the window works normally**.
+A **`.zip`** (or a `.tar.gz`) and a **`.sh`** are not usually apps. A zip is far more
+often a folder of footage, and a `.sh` is a text file people write and edit. So
+double-clicking one of those still does whatever it did before, and Aquarius Installer
+does not even appear in the list of apps for them — on purpose, because the desktop
+would otherwise quietly make it the default. **Dropping one onto the window works
+normally**, and so does `aq apps install <the file>`.
 
 ---
 

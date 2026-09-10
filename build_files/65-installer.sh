@@ -399,8 +399,14 @@ done
 
 # And the two we deliberately do NOT take over. A .zip is far more often a
 # folder of footage than an app, and a .sh is a text file people edit; taking
-# either would break a normal day's work to fix a rare one. Both are still one
-# right-click away under "Open With", and dropping either ON the window works.
+# either would break a normal day's work to fix a rare one. Dropping either ON
+# the window still works, because the window looks inside the file itself.
+#
+# ⚠️ THE ENTRY MUST NOT EVEN LIST THEM. Until 2026-09-10 it listed zip and the
+# tar types as "things I can open", meaning to appear under Open With. But the
+# desktop makes the ONLY app that lists a type its default for that type, and
+# on this image nothing else lists application/zip — so a double-click on a zip
+# of footage opened the installer. Not listing them is the only reliable "no".
 for type in application/zip application/x-shellscript; do
     answer="$(default_app "${type}")"
     if [ "${answer}" = "aquarius-installer.desktop" ]; then
@@ -409,8 +415,11 @@ for type in application/zip application/x-shellscript; do
         ok "${type} still opens with '${answer:-whatever it did before}', as intended"
     fi
 done
-aq_file_has "${ENTRY}" 'application/zip' \
-    "a zip is still offered Aquarius Installer under Open With"
+if grep -q 'application/zip\|application/x-tar\|compressed-tar\|x-shellscript' "${ENTRY}"; then
+    bad "the entry lists zip, tar or shell-script types — the desktop would make the installer their default opener"
+else
+    ok "the entry lists no zip, tar or shell-script type, so it can never become their default"
+fi
 rm -rf "${AQ_XDG_HOME}" "${AQ_XDG_DATA}"
 
 # ==============================================================================
