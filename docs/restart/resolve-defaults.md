@@ -14,6 +14,7 @@ launcher; application updates continue to route through it.
 | Frame | Charcoal active/inactive Resolve palette; window-control placement follows the OS preference |
 | Browser handoff | Repair Resolve's browser opener on launch and forward web links to the host browser |
 | Installer completion | Installed Resolve logo and launch action |
+| Dock icon | Visible artwork fills the standard OS icon slot, including vendor icons with transparent margins; shared by all apps and accounts |
 | App shortcuts | Repaired desktop metadata and host launcher routing, including after updates; file arguments preserved |
 | Settings | Display Settings app provides scale choices and window reset; explicit user overrides remain respected |
 
