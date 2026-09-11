@@ -57,3 +57,19 @@ only when the paint device is a QMenu widget. Other widget and image painters
 are unchanged. Actual File and Clip dropdown captures verify larger text with
 shortcuts, checkmarks and disabled entries retained. The offscreen test simulates
 a style resetting text to 10px, checks the 14px result, and preserves larger fonts.
+
+## Cursor consistency
+
+The launcher scales cursor pixels with the actual desktop output scale, using
+`aquarius-display-scale --cursor-scale`. Resolve's independent UI zoom is not
+included. On the bench this means Adwaita at 24px on a 1x desktop, even though Resolve
+uses 125% UI scaling. User cursor-size preferences remain respected.
+
+Cursor lookup prefers personal theme directories, then host local/system icons,
+then the runtime container as fallback. The container's older Adwaita cursor
+artwork differs from the host's despite having the same theme name. Pixel data,
+dimensions and hotspots for arrow, text, hand and crosshair cursors were verified
+identical between host loading and container loading through the new host path.
+Application-specific editing cursors remain available; no global arrow override
+is installed. Launch-scale regression covers app zoom independently of display
+scale and explicit cursor size.
