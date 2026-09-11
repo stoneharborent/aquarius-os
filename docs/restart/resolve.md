@@ -664,7 +664,7 @@ Qt variables cannot be compared once you have started changing things by hand.
    means the pointer half has not worked.
 3. **Start it from a terminal once** — `aq resolve run` — and read the line it
    prints. It says the scale, which variable it used, and the pointer size:
-   `interface at 1.25x (scale-factor), pointer Adwaita at 30px`.
+   `interface at 1.25x (scale-factor), pointer Adwaita at 24px`.
 4. **If the size is wrong, try the other variable** and say which looked better:
 
    ```
@@ -974,7 +974,7 @@ The launcher says which it used, so if you started Resolve from a terminal the
 answer is on screen:
 
 ```
-aquarius-resolve-launch: interface at 1.25x (scale-factor), pointer Adwaita at 30px
+aquarius-resolve-launch: interface at 1.25x (scale-factor), pointer Adwaita at 24px
 ```
 
 ### The window is bigger than the screen
@@ -1079,12 +1079,11 @@ and delete.
 
 ### The mouse pointer inside Resolve looks wrong
 
-It should not any more. The launcher carries your desktop's cursor theme into
-the environment on purpose, **and its size multiplied by your screen scale** —
-a 24-pixel pointer becomes 30 at 125% and 36 at 150%, so it matches the one
-outside Resolve instead of shrinking as you scale up. The theme is also
-installed inside the environment, so the common case works even if the shared
-folder is not where the launcher expects.
+The launcher carries the desktop cursor theme and size into Resolve, using the
+actual display scale independently of Resolve's interface zoom. On a 1x desktop,
+a 24-pixel cursor stays 24 pixels even when Resolve uses 125% or 150% UI scaling.
+Personal and host cursor artwork takes priority over the container's older theme;
+the container is only a fallback.
 
 If it still happens, it means the app-menu entry is not going through our
 launcher. (If the problem is the *icon* rather than the pointer, that is a
@@ -1494,3 +1493,10 @@ The image tests map the actual GTK controls and run a synthetic Resolve window
 inside a private labwc/XWayland desktop. They check restoration, manual maximize,
 Reset, and shrinking the output while the window remains open. A real project
 still needs the next-boot bench check, especially across different monitor scales.
+
+
+### Defaults for a fresh installation or new account
+
+The [saved Resolve defaults](resolve-defaults.md) are shipped in the OS and
+applied by the Aquarius installer and launcher. No settings from another
+account or temporary bench launcher are required.

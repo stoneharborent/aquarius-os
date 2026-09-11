@@ -2833,6 +2833,14 @@ jobs:
             --entrypoint /usr/bin/python3 \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" /tmp/test-resolve-scale.py /
 
+      - name: Check Resolve defaults for fresh accounts in the finished image
+        run: |
+          set -euo pipefail
+          podman run --rm --pull=never \
+            -v "${GITHUB_WORKSPACE}/tests/test-resolve-fresh-defaults.py:/tmp/test-resolve-fresh-defaults.py:ro" \
+            --entrypoint /usr/bin/python3 \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" /tmp/test-resolve-fresh-defaults.py /
+
       - name: Check Resolve menu launch isolation in the finished image
         run: |
           set -euo pipefail
