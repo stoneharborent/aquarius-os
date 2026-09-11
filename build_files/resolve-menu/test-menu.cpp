@@ -54,9 +54,9 @@ int main(int argc, char **argv) {
     const QFont originalLargeFont = large.font();
     const QFont originalLargeActionFont = large.actions().first()->font();
     QTimer::singleShot(0, [&] {
-        check(QFontInfo(bar->font()).pixelSize() >= 16, "menu font is readable");
+        check(QFontInfo(bar->font()).pixelSize() >= 14, "menu font is readable");
         check(bar->minimumHeight() >= 32 && bar->height() >= 32, "menu row has readable height");
-        check(QFontInfo(bar->actions().first()->font()).pixelSize() >= 16, "top menu action font is readable");
+        check(QFontInfo(bar->actions().first()->font()).pixelSize() >= 14, "top menu action font is readable");
         check(body->font() == bodyFont, "body label font unchanged");
         check(button->font() == buttonFont, "body button font unchanged");
         check(file->font() == dropdownFont, "dropdown font unchanged");
@@ -71,9 +71,9 @@ int main(int argc, char **argv) {
         late->addMenu("Created after startup");
         late->show();
         QTimer::singleShot(0, [&, late] {
-            check(QFontInfo(late->font()).pixelSize() >= 16 && late->minimumHeight() >= 32,
+            check(QFontInfo(late->font()).pixelSize() >= 14 && late->minimumHeight() >= 32,
                   "menu created after event loop receives adjustment");
-            check(QFontInfo(late->actions().first()->font()).pixelSize() >= 16,
+            check(QFontInfo(late->actions().first()->font()).pixelSize() >= 14,
                   "late menu action receives adjustment");
             QProcess child;
             child.start("/usr/bin/env", QStringList());

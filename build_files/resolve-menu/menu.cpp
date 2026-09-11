@@ -38,7 +38,7 @@ __attribute__((constructor)) void stopPreloadInheritance() {
 
 QFont readableFont(QFont font) {
     // Respect an already larger user/app font, including a point-sized font.
-    if (QFontInfo(font).pixelSize() < 16) font.setPixelSize(16);
+    if (QFontInfo(font).pixelSize() < 14) font.setPixelSize(14);
     return font;
 }
 

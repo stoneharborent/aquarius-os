@@ -1,9 +1,9 @@
 # Resolve menu and frame readability
 
-The main menu uses a 16px font floor and 32px minimum row height. Overall
+The main menu uses a 14px font floor and 32px minimum row height. Overall
 Resolve scale remains governed by the existing Auto/explicit preference; it is
 not increased for menu readability. Editing controls, preview scaling and
-native dropdown styling are unchanged. Fonts already larger than 16px remain
+native dropdown styling are unchanged. Fonts already larger than 14px remain
 larger.
 
 Resolve 21.1's main menu is a Qt5 QMenuBar. Its custom UI renderer does not
@@ -34,7 +34,7 @@ and no duplicate or simulated menu is added to the title bar.
 ## Validation
 
 - Real Resolve 21.1.0.0014 on the bench: final Rocky-built adapter opens the
-  existing project; main-menu labels render at 16px in a 32px row. Native menu
+  existing project; the initial 16px main-menu test rendered in a 32px row. Native menu
   opens normally. Overall automatic 125% scale is retained.
 - Qt5 offscreen behavior test: body/button/dropdown fonts and stylesheets,
   larger fonts, late-created menus, action callbacks and child preload cleanup.
@@ -49,3 +49,6 @@ and no duplicate or simulated menu is added to the title bar.
 
 The live bench currently uses the temporary menu test launcher. Persistent
 packaging and the charcoal frame take effect with the resulting OS update.
+
+The follow-up preference reduces the menu font floor to 14px to match the toolbar
+labels more closely, retaining the 32px row. Live visual acceptance is pending.
