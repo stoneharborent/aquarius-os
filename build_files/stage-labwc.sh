@@ -59,6 +59,7 @@ source "$(dirname "$0")/aq-lib.sh"
 AQ_LABWC_VERSION="${LABWC_VERSION:?LABWC_VERSION was not passed to this stage}"
 AQ_LABWC_COMMIT="${LABWC_COMMIT:?LABWC_COMMIT was not passed to this stage}"
 AQ_LABWC_REPO="https://github.com/labwc/labwc.git"
+AQ_LABWC_BUILD_FILES="$(cd -- "$(dirname "$0")" && pwd)"
 
 # Where the finished files are gathered. This directory is laid out exactly like
 # the root of a Linux system — /aq-stage/usr/bin/labwc becomes /usr/bin/labwc —
@@ -126,7 +127,13 @@ aq_dnf install \
     libxcb-devel \
     xcb-util-wm-devel \
     xorg-x11-server-Xwayland-devel \
-    systemd-devel
+    systemd-devel \
+    python3 \
+    python3-pillow \
+    python3-xlib \
+    dejavu-sans-fonts \
+    grim \
+    xorg-x11-server-Xwayland
 
 # Write down what we built against. When something breaks in six months, this
 # line in the build log is the difference between an afternoon and a week.
@@ -148,6 +155,14 @@ if [ "${AQ_GOT}" != "${AQ_LABWC_COMMIT}" ]; then
     exit 1
 fi
 ok "the source is commit ${AQ_GOT}, exactly as pinned"
+
+# A narrow Aquarius extension gives selected app windows their own frame colors.
+# It keeps upstream geometry, controls and shadow rendering. Check the patch
+# against the exact source first so a future version cannot silently skip it.
+AQ_DECORATION_PATCH="${AQ_LABWC_BUILD_FILES}/patches/labwc-decoration-colors.patch"
+git apply --check "${AQ_DECORATION_PATCH}"
+git apply "${AQ_DECORATION_PATCH}"
+
 
 # ------------------------------------------------------------------------------
 # Compiling
@@ -206,6 +221,11 @@ echo "--- end ---"
 
 say "Compiling"
 ninja -C build
+
+# Render real XWayland windows on a private headless desktop and inspect the
+# frame pixels. The test also checks ordinary windows and reconfiguration.
+# These tools stay in this build container and never enter the OS image.
+python3 "${AQ_LABWC_BUILD_FILES}/test-labwc-decoration-colors.py" /src/build/labwc
 
 # ------------------------------------------------------------------------------
 # Installing into the staging tree

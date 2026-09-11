@@ -262,6 +262,13 @@ ENV_FLAGS=(
 QT_VARIABLE="$(conf_value qt_variable)"
 [ -n "${QT_VARIABLE}" ] || QT_VARIABLE="${AQUARIUS_RESOLVE_QT_VAR:-scale-factor}"
 
+# Menu readability is independent of overall scale. The config switch permits
+# reverting to Resolve's own menus if a future app version changes its Qt ABI.
+case "$(conf_value readable_menus)" in
+    0|false|off) ENV_FLAGS+=(--env "AQUARIUS_RESOLVE_READABLE_MENUS=0") ;;
+    *) ENV_FLAGS+=(--env "AQUARIUS_RESOLVE_READABLE_MENUS=1") ;;
+esac
+
 ENV_FLAGS+=(--env "QT_AUTO_SCREEN_SCALE_FACTOR=0")
 case "${QT_VARIABLE}" in
     device-pixel-ratio)
@@ -514,6 +521,9 @@ exec distrobox enter --name "${CONTAINER}" --additional-flags "${EXTRA}" \
                 -- "Browser integration needs attention" \
                 "Resolve can still open. Restart it after the OS update to retry browser setup." \
                 >/dev/null 2>&1 || :
+        fi
+        if [ -x /run/host/usr/libexec/aquarius-resolve-menu-run ]; then
+            exec /usr/bin/aquarius-resolve-run /run/host/usr/libexec/aquarius-resolve-menu-run "$@"
         fi
         exec /usr/bin/aquarius-resolve-run "$@"
     ' sh "${WORK_FOLDER}" "${RUN_ARGS[@]}"
