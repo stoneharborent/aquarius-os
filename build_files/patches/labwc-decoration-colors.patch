@@ -1,0 +1,329 @@
+diff --git a/docs/labwc-config.5.scd b/docs/labwc-config.5.scd
+index cf142cf..2c052ad 100644
+--- a/docs/labwc-config.5.scd
++++ b/docs/labwc-config.5.scd
+@@ -1581,3 +1581,15 @@ See xkeyboard-config(7) for details.
+ # SEE ALSO
+ 
+ labwc(1), labwc-actions(5), labwc-theme(5)
++
++# AQUARIUS DECORATION COLORS
++
++*<windowRules><windowRule decorationColors="">*
++	Aquarius extension: six whitespace-separated opaque #RRGGBB colors, in
++	this order: active title background, inactive title background, active
++	border, inactive border, active title text, inactive title text.
++	The whole palette is selected by the last matching rule that specifies
++	this property. "default" restores the desktop theme. Invalid palettes
++	are ignored. Backgrounds are solid; dimensions, button images and shadows
++	continue to follow the desktop theme. Colors apply when decorations are
++	created, including after Reconfigure; title changes alone do not rematch.
+diff --git a/include/ssd-internal.h b/include/ssd-internal.h
+index 600b907..fdfd008 100644
+--- a/include/ssd-internal.h
++++ b/include/ssd-internal.h
+@@ -53,6 +53,9 @@ struct ssd_state_title_width {
+  */
+ struct ssd {
+ 	struct view *view;
++	/* Global theme unless this SSD owns a color-only clone. */
++	struct theme *decoration_theme;
++	bool owns_decoration_theme;
+ 	struct wlr_scene_tree *tree;
+ 
+ 	/*
+diff --git a/include/theme.h b/include/theme.h
+index 2fb499a..787339e 100644
+--- a/include/theme.h
++++ b/include/theme.h
+@@ -227,4 +227,9 @@ void theme_init(struct theme *theme, const char *theme_name);
+  */
+ void theme_finish(struct theme *theme);
+ 
++/* Color-only clone: geometry, buttons and shadows remain borrowed from base. */
++struct theme *theme_clone_decoration_colors(const struct theme *base,
++	const float colors[6][4]);
++void theme_free_decoration_colors(struct theme *theme);
++
+ #endif /* LABWC_THEME_H */
+diff --git a/include/window-rules.h b/include/window-rules.h
+index 624f3b8..94fcdb4 100644
+--- a/include/window-rules.h
++++ b/include/window-rules.h
+@@ -33,6 +33,11 @@ struct window_rule {
+ 	enum window_rule_event event;
+ 	struct wl_list actions;
+ 
++	/* Atomic palette: backgrounds, borders, then text; active before inactive. */
++	bool decoration_colors_set;
++	bool decoration_colors_default;
++	float decoration_colors[6][4];
++
+ 	enum property server_decoration;
+ 	enum property skip_taskbar;
+ 	enum property skip_window_switcher;
+@@ -46,6 +51,8 @@ struct window_rule {
+ };
+ 
+ struct view;
++bool window_rule_parse_decoration_colors(struct window_rule *rule, const char *value);
++const float (*window_rules_get_decoration_colors(struct view *view))[4];
+ 
+ void window_rules_apply(struct view *view, enum window_rule_event event);
+ enum property window_rules_get_property(struct view *view, const char *property);
+diff --git a/src/config/rcxml.c b/src/config/rcxml.c
+index b341e8e..afb070b 100644
+--- a/src/config/rcxml.c
++++ b/src/config/rcxml.c
+@@ -317,6 +317,10 @@ fill_window_rule(xmlNode *node)
+ 			}
+ 
+ 		/* Properties */
++		} else if (!strcasecmp(key, "decorationColors")) {
++			if (!window_rule_parse_decoration_colors(window_rule, content)) {
++				wlr_log(WLR_ERROR, "Invalid decorationColors: expected six #RRGGBB colors or default");
++			}
+ 		} else if (!strcasecmp(key, "serverDecoration")) {
+ 			set_property(content, &window_rule->server_decoration);
+ 		} else if (!strcasecmp(key, "iconPriority")) {
+diff --git a/src/ssd/ssd-border.c b/src/ssd/ssd-border.c
+index c2c99f8..e236dda 100644
+--- a/src/ssd/ssd-border.c
++++ b/src/ssd/ssd-border.c
+@@ -17,7 +17,7 @@ ssd_border_create(struct ssd *ssd)
+ 	assert(!ssd->border.tree);
+ 
+ 	struct view *view = ssd->view;
+-	struct theme *theme = rc.theme;
++	struct theme *theme = ssd->decoration_theme;
+ 	int width = view->current.width;
+ 	int height = view_effective_height(view, /* use_pending */ false);
+ 	int full_width = width + 2 * theme->border_width;
+@@ -90,7 +90,7 @@ ssd_border_update(struct ssd *ssd)
+ 		ssd->margin = ssd_thickness(ssd->view);
+ 	}
+ 
+-	struct theme *theme = rc.theme;
++	struct theme *theme = ssd->decoration_theme;
+ 
+ 	int width = view->current.width;
+ 	int height = view_effective_height(view, /* use_pending */ false);
+diff --git a/src/ssd/ssd-titlebar.c b/src/ssd/ssd-titlebar.c
+index d1a0881..aa398a3 100644
+--- a/src/ssd/ssd-titlebar.c
++++ b/src/ssd/ssd-titlebar.c
+@@ -27,7 +27,7 @@ void
+ ssd_titlebar_create(struct ssd *ssd)
+ {
+ 	struct view *view = ssd->view;
+-	struct theme *theme = rc.theme;
++	struct theme *theme = ssd->decoration_theme;
+ 	int width = view->current.width;
+ 	int corner_width = ssd_get_corner_width();
+ 
+@@ -160,7 +160,7 @@ set_squared_corners(struct ssd *ssd, bool enable)
+ 	struct view *view = ssd->view;
+ 	int width = view->current.width;
+ 	int corner_width = ssd_get_corner_width();
+-	struct theme *theme = rc.theme;
++	struct theme *theme = ssd->decoration_theme;
+ 
+ 	int x = enable ? 0 : corner_width;
+ 
+@@ -220,7 +220,7 @@ static void
+ update_visible_buttons(struct ssd *ssd)
+ {
+ 	struct view *view = ssd->view;
+-	struct theme *theme = rc.theme;
++	struct theme *theme = ssd->decoration_theme;
+ 	int width = MAX(view->current.width - 2 * theme->window_titlebar_padding_width, 0);
+ 	int button_width = theme->window_button_width;
+ 	int button_spacing = theme->window_button_spacing;
+@@ -273,7 +273,7 @@ ssd_titlebar_update(struct ssd *ssd)
+ 	struct view *view = ssd->view;
+ 	int width = view->current.width;
+ 	int corner_width = ssd_get_corner_width();
+-	struct theme *theme = rc.theme;
++	struct theme *theme = ssd->decoration_theme;
+ 
+ 	bool maximized = view->maximized == VIEW_AXIS_BOTH;
+ 	bool squared = ssd_should_be_squared(ssd);
+@@ -365,7 +365,7 @@ static void
+ ssd_update_title_positions(struct ssd *ssd, int offset_left, int offset_right)
+ {
+ 	struct view *view = ssd->view;
+-	struct theme *theme = rc.theme;
++	struct theme *theme = ssd->decoration_theme;
+ 	int width = view->current.width;
+ 	int title_bg_width = width - offset_left - offset_right;
+ 
+@@ -443,7 +443,7 @@ ssd_update_title(struct ssd *ssd)
+ 	/* view->title is never NULL (instead it can be an empty string) */
+ 	assert(view->title);
+ 
+-	struct theme *theme = rc.theme;
++	struct theme *theme = ssd->decoration_theme;
+ 	struct ssd_state_title *state = &ssd->state.title;
+ 	bool title_unchanged = state->text && !strcmp(view->title, state->text);
+ 
+diff --git a/src/ssd/ssd.c b/src/ssd/ssd.c
+index e2ab637..c55bcb8 100644
+--- a/src/ssd/ssd.c
++++ b/src/ssd/ssd.c
+@@ -19,6 +19,7 @@
+ #include "ssd-internal.h"
+ #include "theme.h"
+ #include "view.h"
++#include "window-rules.h"
+ 
+ struct border
+ ssd_thickness(struct view *view)
+@@ -146,6 +147,10 @@ ssd_create(struct view *view, bool active)
+ 	struct ssd *ssd = znew(*ssd);
+ 
+ 	ssd->view = view;
++	const float (*colors)[4] = window_rules_get_decoration_colors(view);
++	ssd->owns_decoration_theme = colors != NULL;
++	ssd->decoration_theme = colors
++		? theme_clone_decoration_colors(rc.theme, colors) : rc.theme;
+ 	ssd->tree = lab_wlr_scene_tree_create(view->scene_tree);
+ 
+ 	/*
+@@ -285,6 +290,9 @@ ssd_destroy(struct ssd *ssd)
+ 	ssd_shadow_destroy(ssd);
+ 	wlr_scene_node_destroy(&ssd->tree->node);
+ 
++	if (ssd->owns_decoration_theme) {
++		theme_free_decoration_colors(ssd->decoration_theme);
++	}
+ 	free(ssd);
+ }
+ 
+@@ -348,7 +356,7 @@ ssd_enable_keybind_inhibit_indicator(struct ssd *ssd, bool enable)
+ 
+ 	float *color = enable
+ 		? rc.theme->window_toggled_keybinds_color
+-		: rc.theme->window[SSD_ACTIVE].border_color;
++		: ssd->decoration_theme->window[SSD_ACTIVE].border_color;
+ 	wlr_scene_rect_set_color(ssd->border.subtrees[SSD_ACTIVE].top, color);
+ }
+ 
+diff --git a/src/theme.c b/src/theme.c
+index 71e577c..9fa2080 100644
+--- a/src/theme.c
++++ b/src/theme.c
+@@ -1879,3 +1879,36 @@ theme_finish(struct theme *theme)
+ 		zdrop(&theme->window[active].shadow_edge);
+ 	}
+ }
++
++struct theme *
++theme_clone_decoration_colors(const struct theme *base, const float colors[6][4])
++{
++	struct theme *theme = znew(*theme);
++	*theme = *base;
++	enum ssd_active_state active;
++	FOR_EACH_ACTIVE_STATE(active) {
++		int i = active == SSD_ACTIVE ? 0 : 1;
++		theme->window[active].title_bg.gradient = LAB_GRADIENT_NONE;
++		memcpy(theme->window[active].title_bg.color, colors[i], sizeof(colors[i]));
++		memcpy(theme->window[active].border_color, colors[i + 2], sizeof(colors[i]));
++		memcpy(theme->window[active].label_text_color, colors[i + 4], sizeof(colors[i]));
++	}
++	/* Replace only these borrowed resources; the global theme keeps ownership. */
++	create_backgrounds(theme);
++	create_corners(theme);
++	return theme;
++}
++
++void
++theme_free_decoration_colors(struct theme *theme)
++{
++	enum ssd_active_state active;
++	FOR_EACH_ACTIVE_STATE(active) {
++		zfree_pattern(theme->window[active].titlebar_pattern);
++		zdrop(&theme->window[active].titlebar_fill);
++		zdrop(&theme->window[active].corner_top_left_normal);
++		zdrop(&theme->window[active].corner_top_right_normal);
++	}
++	/* Never theme_finish(): buttons and shadows still belong to the base. */
++	free(theme);
++}
+diff --git a/src/window-rules.c b/src/window-rules.c
+index 4118ae3..07bb404 100644
+--- a/src/window-rules.c
++++ b/src/window-rules.c
+@@ -2,6 +2,9 @@
+ #define _POSIX_C_SOURCE 200809L
+ #include "window-rules.h"
+ #include <assert.h>
++#include <ctype.h>
++#include <stdlib.h>
++#include <string.h>
+ #include <stdbool.h>
+ #include <strings.h>
+ #include "action.h"
+@@ -118,3 +121,63 @@ window_rules_get_property(struct view *view, const char *property)
+ 	}
+ 	return LAB_PROP_UNSPECIFIED;
+ }
++
++/*
++ * Keep this deliberately narrow: six opaque RGB colors or "default".
++ * Reject the entire palette on malformed input, never partially change it.
++ */
++bool
++window_rule_parse_decoration_colors(struct window_rule *rule, const char *value)
++{
++	if (!strcasecmp(value, "default")) {
++		rule->decoration_colors_set = true;
++		rule->decoration_colors_default = true;
++		return true;
++	}
++	float colors[6][4];
++	const char *s = value;
++	for (int i = 0; i < 6; i++) {
++		while (isspace((unsigned char)*s)) {
++			s++;
++		}
++		if (strlen(s) < 7 || *s++ != '#') {
++			return false;
++		}
++		for (int j = 0; j < 6; j++) {
++			if (!isxdigit((unsigned char)s[j])) {
++				return false;
++			}
++		}
++		for (int j = 0; j < 3; j++) {
++			char byte[3] = { s[j * 2], s[j * 2 + 1], 0 };
++			colors[i][j] = strtol(byte, NULL, 16) / 255.0f;
++		}
++		colors[i][3] = 1.0f;
++		s += 6;
++		if (*s && !isspace((unsigned char)*s)) {
++			return false;
++		}
++	}
++	while (isspace((unsigned char)*s)) {
++		s++;
++	}
++	if (*s) {
++		return false;
++	}
++	memcpy(rule->decoration_colors, colors, sizeof(colors));
++	rule->decoration_colors_set = true;
++	rule->decoration_colors_default = false;
++	return true;
++}
++
++const float (*
++window_rules_get_decoration_colors(struct view *view))[4]
++{
++	struct window_rule *rule;
++	wl_list_for_each_reverse(rule, &rc.window_rules, link) {
++		if (rule->decoration_colors_set && view_matches_rule(rule, view)) {
++			return rule->decoration_colors_default ? NULL : rule->decoration_colors;
++		}
++	}
++	return NULL;
++}

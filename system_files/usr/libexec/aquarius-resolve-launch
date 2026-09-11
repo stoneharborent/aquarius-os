@@ -35,7 +35,7 @@
 #   XCURSOR_THEME   read out of YOUR desktop settings, right now, at launch —
 #                   not baked in when Resolve was installed, so changing your
 #                   cursor theme just works with nothing to re-run.
-#   XCURSOR_SIZE    the same — MULTIPLIED BY YOUR SCREEN SCALE. See below.
+#   XCURSOR_SIZE    the desktop size and display scale, independent of app scale.
 #   XCURSOR_PATH    where to FIND that theme from inside the container.
 #                   distrobox mounts the whole host at /run/host, so the themes
 #                   on your real disk are visible there.
@@ -230,18 +230,23 @@ case "${SCALE}" in
     '' | *[!0-9.]* | *.*.*) SCALE="1" ;;
 esac
 
-# The pointer is measured in real pixels, so it needs the same multiplication
-# the rest of the interface is getting. 24 at 125% is 30; 24 at 150% is 36. An
-# unscaled pointer on a scaled screen is exactly the "much smaller than the
-# desktop cursor" the bench reported in August.
-CURSOR_SIZE="$(awk -v b="${CURSOR_SIZE}" -v s="${SCALE}" \
+# XWayland cursor pixels follow the DESKTOP display scale, not Resolve's
+# independent interface zoom. On a 1x desktop, 125% Resolve still needs the
+# same 24px pointer as other apps (the former calculation incorrectly used 30).
+CURSOR_DISPLAY_SCALE=1
+if [ -x /usr/libexec/aquarius-display-scale ]; then
+    CURSOR_DISPLAY_SCALE="$(/usr/libexec/aquarius-display-scale --cursor-scale 2>/dev/null)"
+fi
+case "${CURSOR_DISPLAY_SCALE}" in
+    ''|*[!0-9.]*|*.*.*) CURSOR_DISPLAY_SCALE=1 ;;
+esac
+CURSOR_SIZE="$(awk -v b="${CURSOR_SIZE}" -v s="${CURSOR_DISPLAY_SCALE}" \
     'BEGIN { v = int(b * s + 0.5); if (v < 1) v = 24; print v }')"
 
-# Where a theme may be found, from inside the container. Its own folder first
-# (fastest, if it happens to have it), then yours through /run/host, then your
-# personal ones. Your home folder is the same path in both places — distrobox
-# shares it — so those two entries need no translation.
-CURSOR_PATH="/usr/share/icons:/run/host/usr/share/icons:/run/host/usr/local/share/icons:${HOME}/.local/share/icons:${HOME}/.icons"
+# Prefer the user's and host's actual artwork. Rocky's older Adwaita theme has
+# different cursor images even though its theme name is identical. Keep the
+# container's own themes only as a fallback when the host lacks an asset.
+CURSOR_PATH="${HOME}/.local/share/icons:${HOME}/.icons:/run/host/usr/local/share/icons:/run/host/usr/share/icons:/usr/share/icons"
 
 ENV_FLAGS=(
     --env "XCURSOR_THEME=${CURSOR_THEME}"
@@ -261,6 +266,13 @@ ENV_FLAGS=(
 # quietly overrides the line below with 1.
 QT_VARIABLE="$(conf_value qt_variable)"
 [ -n "${QT_VARIABLE}" ] || QT_VARIABLE="${AQUARIUS_RESOLVE_QT_VAR:-scale-factor}"
+
+# Menu readability is independent of overall scale. The config switch permits
+# reverting to Resolve's own menus if a future app version changes its Qt ABI.
+case "$(conf_value readable_menus)" in
+    0|false|off) ENV_FLAGS+=(--env "AQUARIUS_RESOLVE_READABLE_MENUS=0") ;;
+    *) ENV_FLAGS+=(--env "AQUARIUS_RESOLVE_READABLE_MENUS=1") ;;
+esac
 
 ENV_FLAGS+=(--env "QT_AUTO_SCREEN_SCALE_FACTOR=0")
 case "${QT_VARIABLE}" in
@@ -514,6 +526,9 @@ exec distrobox enter --name "${CONTAINER}" --additional-flags "${EXTRA}" \
                 -- "Browser integration needs attention" \
                 "Resolve can still open. Restart it after the OS update to retry browser setup." \
                 >/dev/null 2>&1 || :
+        fi
+        if [ -x /run/host/usr/libexec/aquarius-resolve-menu-run ]; then
+            exec /usr/bin/aquarius-resolve-run /run/host/usr/libexec/aquarius-resolve-menu-run "$@"
         fi
         exec /usr/bin/aquarius-resolve-run "$@"
     ' sh "${WORK_FOLDER}" "${RUN_ARGS[@]}"

@@ -1,0 +1,13 @@
+#!/bin/sh
+# Runs INSIDE Resolve's container, after aquarius-resolve-run has set its Qt
+# library path. Preload only the editor, never the shell, RAW tools or utilities.
+# The adapter removes its own LD_PRELOAD entry before Resolve starts children.
+set -eu
+AQ_MENU_LIBRARY=/run/host/usr/lib64/aquarius/libaquarius-resolve-menu.so
+if [ "${1:-}" = /opt/resolve/bin/resolve ] &&
+        [ "${AQUARIUS_RESOLVE_READABLE_MENUS:-1}" != 0 ] &&
+        [ -r "$AQ_MENU_LIBRARY" ] && [ -r /opt/resolve/libs/libQt5Widgets.so.5 ]; then
+    LD_PRELOAD="$AQ_MENU_LIBRARY${LD_PRELOAD:+ $LD_PRELOAD}"
+    export LD_PRELOAD
+fi
+exec "$@"

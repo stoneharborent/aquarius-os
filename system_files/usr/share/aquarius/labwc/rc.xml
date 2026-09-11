@@ -599,6 +599,11 @@
     <windowRule identifier="resolve">
       <action name="FitToOutput" />
     </windowRule>
+    <!-- Aquarius labwc extension: Resolve's charcoal frame, preserving the
+         desktop's button placement and dimensions. Match class/type so colors
+         also apply when the project title arrives after decoration creation. -->
+    <windowRule identifier="resolve" type="normal"
+                decorationColors="#222226 #202024 #101012 #101012 #dedee2 #a0a0a8" />
     <windowRule identifier="resolve" title="DaVinci Resolve* - *" type="normal" serverDecoration="yes">
       <action name="UnMaximize" direction="both" />
       <action name="FitToOutput" />

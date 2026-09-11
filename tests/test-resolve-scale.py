@@ -67,10 +67,19 @@ class ResolveScale(unittest.TestCase):
                                                env=env, text=True, stderr=subprocess.STDOUT)
 
             self.assertIn("interface at 1.25x", report())
+            self.assertIn("pointer Adwaita at 24px", report())
             (config / "aquarius/resolve.conf").write_text("scale=1\n")
             self.assertIn("interface at 1x", report())
             env["AQUARIUS_RESOLVE_SCALE"] = "1.5"
             self.assertIn("interface at 1.5x", report())
+            self.assertIn("pointer Adwaita at 24px", report())
+            # Cursor follows the desktop scale even when app zoom differs.
+            outputs.write_text(json.dumps([output(scale=1.5)]))
+            env["AQUARIUS_RESOLVE_SCALE"] = "1"
+            self.assertIn("interface at 1x", report())
+            self.assertIn("pointer Adwaita at 36px", report())
+            env["XCURSOR_SIZE"] = "32"
+            self.assertIn("pointer Adwaita at 48px", report())
 
 
 if __name__ == "__main__":

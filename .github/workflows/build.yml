@@ -2838,6 +2838,22 @@ jobs:
             --entrypoint /usr/bin/python3 \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" /tmp/test-resolve-scale.py /
 
+      - name: Check Resolve defaults for fresh accounts in the finished image
+        run: |
+          set -euo pipefail
+          podman run --rm --pull=never \
+            -v "${GITHUB_WORKSPACE}/tests/test-resolve-fresh-defaults.py:/tmp/test-resolve-fresh-defaults.py:ro" \
+            --entrypoint /usr/bin/python3 \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" /tmp/test-resolve-fresh-defaults.py /
+
+      - name: Check Resolve menu launch isolation in the finished image
+        run: |
+          set -euo pipefail
+          podman run --rm --pull=never \
+            -v "${GITHUB_WORKSPACE}/tests/test-resolve-menu-launch.py:/tmp/test-resolve-menu-launch.py:ro" \
+            --entrypoint /usr/bin/python3 \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" /tmp/test-resolve-menu-launch.py /
+
       # And the window's own rehearsal, inside the image: it really unpacks a
       # real archive into a throwaway home folder, really refuses a payload that
       # wants the operating system, really writes a menu entry, really reads it
