@@ -13,11 +13,10 @@ Nothing here assumes you know what a package or a container is.*
 
 You downloaded something. You double-click it.
 
-One window opens. It says what the thing is, and one sentence about where it is going
-to go. You press **Install**. A moment later the icon is in your apps and you can open
-it.
-
-That is the whole thing, and it is the same three seconds whatever you downloaded.
+One window opens. It says what the thing is and where it will go. For supported
+Linux apps, press **Install** and the app appears in your apps. For a Windows
+`.exe` or `.msi`, press **Continue in Bottles** and finish its Windows setup there.
+Bottles is the app that provides a separate Windows environment in your account.
 
 For **DaVinci Resolve**, open Aquarius Installer and click **Install DaVinci
 Resolve**. Its guided setup opens, where you choose your Blackmagic Linux
@@ -37,7 +36,7 @@ same act has always been a research project. What you downloaded might be:
 - a **`.flatpakref`** — a note saying "fetch this app from the app store"
 - a **`.tar.gz`** or a **`.zip`** — a folder with a program in it
 - a **`.run`** — a program whose job is to install another program
-- an **`.exe`** — not Linux at all
+- an **`.exe`** or **`.msi`** — a Windows program or installer
 
 ...and until now, double-clicking most of those on AquariusOS did **nothing at all**.
 No window, no message, no clue. That is the thing this app fixes.
@@ -60,10 +59,47 @@ method is not a thing anybody should be asked to do.
 | **`.rpm`** or **`.deb`** that wants to change the operating system | Refused, with the reason. See *What it refuses*, below. | — |
 | **`.run`** or **`.sh`** | Refused politely. DaVinci Resolve is the exception and has its own guided flow — open **Install DaVinci Resolve** from your apps. | — |
 | **`.snap`** | *"AquariusOS uses Flathub instead"*, with a search for the same app there. | — |
-| **`.exe` / `.msi`** | *"This is a Windows program. AquariusOS cannot run it."* | — |
+| **`.exe` / `.msi`** | Opens Windows setup in Bottles. Bottles is downloaded from Flathub if needed. | Once if Bottles needs installing |
 | **`.dmg` / `.pkg`** | *"This is a Mac download. Look for the Linux download on the same page."* | — |
 
 **Dragging a file onto the window does exactly the same thing as double-clicking it.**
+
+### Installing a Windows app
+
+1. Download the Windows **`.exe`** or **`.msi`** from its maker. Double-click it,
+   or drop it onto Aquarius Installer.
+2. Read the file page and press **Continue in Bottles**. If Bottles is missing,
+   the desktop asks for your password and downloads it from Flathub. This can
+   take several minutes. An existing Bottles install in your account or for
+   the whole computer is reused.
+3. Bottles asks which **bottle** to use. A bottle is a separate Windows
+   environment. Choose one, then follow the Windows program's setup screens.
+4. **First time using Bottles?** If the list is empty, choose **Open Bottles**.
+   Finish its first-run downloads, create a bottle with the **Application**
+   environment, then double-click your original download again and press
+   **Continue in Bottles**. The initial file is not kept in the empty picker.
+5. Open the installed Windows app from that bottle's **Programs** list.
+   Manage its updates and removal in Bottles too.
+
+Some Windows programs will not work, or need additional settings inside
+Bottles. Aquarius Installer opens the setup; it cannot verify whether the
+Windows wizard completed, failed, or was cancelled. **Continue in Bottles**
+is a handoff, not an “installed” receipt, and no Windows app is added to
+Aquarius Installer's own install records. Its **Open** button is hidden for
+this handoff. Bottles itself is a normal Flatpak in the app list; removing its
+settings and data can also remove its bottles and their contents.
+
+The file is shared with Bottles through the desktop's file-sharing service.
+Aquarius Installer does not grant access to the whole home folder. If a
+multi-file installer needs neighbouring files, use **Run executable** inside
+Bottles and follow its file-access instructions. Only run downloads you trust;
+Aquarius Installer does not verify Windows publisher signatures.
+
+**No Bottles window appeared?** Open **Details** for its startup log path.
+The first few seconds of startup are checked; errors after the handoff are
+in that log. Open Bottles from your apps to finish any first-run downloads,
+then try the original file again. Cancelling the password prompt leaves the
+Windows download unopened. Cancelling later inside Bottles is managed there.
 
 ### Two file types it deliberately does *not* take over
 
@@ -196,7 +232,7 @@ If nothing matches anywhere, it says the one useful thing:
 
 ## Where your apps actually live
 
-Everything installed from a downloaded file goes **inside your own home folder**. Nothing
+Linux apps installed from a downloaded file go **inside your own home folder**. Nothing
 outside your account is touched, which is why it never asks for a password.
 
 ```
@@ -213,7 +249,10 @@ version *beside* the old one and only then moves the shortcut, which takes no ti
 If a download dies half way through, the shortcut never moves and the app you already had
 keeps working. There is no moment where you have half an app.
 
-Apps from Flathub are not in there — Flathub keeps its own, for the whole computer.
+Apps from Flathub are not in there — Flatpak keeps its own storage. Bottles
+keeps Windows environments in your account, normally below
+`~/.var/app/com.usebottles.bottles/data/bottles/`. It manages those files itself;
+the Aquarius version folders and removal receipts above apply to Linux apps.
 
 ---
 
@@ -227,7 +266,7 @@ moment you need it. There is a **Copy** button beside it.
 
 ### The note kept for every app
 
-For each app installed from a file, AquariusOS keeps one small text file:
+For each Linux app installed from a file, AquariusOS keeps one small text file:
 
 ```
 ~/.local/share/aquarius/apps/<app>.ini
@@ -248,6 +287,7 @@ never disagree:
 aq apps list                         everything on this computer
 aq apps what ~/Downloads/thing.deb   what is this file, and what would happen?
 aq apps install ~/Downloads/thing.deb
+aq apps install ~/Downloads/setup.exe  # opens Bottles; finish setup in its window
 aq apps search obs
 aq apps update                       what has something newer waiting
 aq apps update --all                 update it all
@@ -259,10 +299,15 @@ aq apps remove <name> --with-data    ...and its settings too
 
 ## The rules this app follows, all of them
 
+For a Windows download, the terminal command needs an active desktop session.
+Exit code zero means the Bottles handoff was requested, not that the Windows
+app installed. Its output says `HANDOFF`; Linux installs keep their existing
+completion messages.
+
 1. **It never changes the operating system.** Not with your permission, not with anybody's.
-2. **It never runs a package's own install scripts.** On any other Linux those run as an
+2. **It never runs a Linux package's own install scripts.** On any other Linux those run as an
    administrator on your computer, at install time, and can do anything at all. Here they
-   are not even read.
+   are not even read. Windows setup programs run inside Bottles after you choose a bottle.
 3. **It never runs `sudo`.** The only password it can ever ask for is the desktop's own
    prompt, once, for an app from Flathub that goes to the whole computer.
 4. **It refuses to install or remove as an administrator**, and says why: under `sudo`
@@ -286,8 +331,8 @@ aq apps remove <name> --with-data    ...and its settings too
   find a newer one" note; AquariusOS writes it down at install time and does not act on it
   yet. Dropping a newer file on the app's row is the update, today.
 - **`.run` installers, and "add this repository" instructions.** Later.
-- **Windows apps.** Running Windows software on Linux is a hobby, not a promise, and
-  AquariusOS is not going to make one.
+- **Automatic verification and management of individual Windows apps.** Bottles owns
+  their setup, launch and removal; support for every Windows app is not promised.
 
 ---
 
@@ -323,6 +368,15 @@ survive every update — which is better than installing it yourself would ever 
 | `system_files/etc/xdg/mimeapps.list` | What makes it the app a double-click actually opens. |
 | `system_files/usr/share/mime/packages/aquarius-installer.xml` | Names for the file types Linux has no useful name for. |
 | `build_files/65-installer.sh` | The build step, which reads every one of the above back out of the finished image. |
+| `tests/test-installer-windows.py` | Checks Windows routing, on-demand support, file forwarding, failures and honest handoff without running Windows software. |
 | `tests/test-installer-sorter.py` | Builds real packages, really installs them into a throwaway home folder, and reads back what happened. |
 
 The design of record is **FEATURES 010** in the folder above this repository.
+
+Windows integration references: [Bottles file opening](https://docs.usebottles.com/bottles/run-.exe-.msi-.bat-.lnk-files),
+[Bottles CLI](https://docs.usebottles.com/advanced/cli), and
+[Flatpak command reference](https://docs.flatpak.org/en/latest/flatpak-command-reference.html).
+
+The Windows route was added on 2026-09-11. Its process and GTK checks use simulated
+Bottles processes. A real Windows installer, including Bottles' first-run downloads,
+still needs a bench check on AquariusOS before calling compatibility verified.

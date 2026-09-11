@@ -665,7 +665,9 @@ jobs:
       # INSIDE the finished image, against the copy that will actually run on
       # Royce's machine, and that run is the one that counts.
       - name: Check Aquarius Installer sorts, installs and removes correctly
-        run: ./tests/test-installer-sorter.py
+        run: |
+          ./tests/test-installer-sorter.py
+          python3 tests/test-installer-windows.py
 
       # ------------------------------------------------------------------------
       # The file types Aquarius Installer adds are well formed
@@ -791,6 +793,7 @@ jobs:
             application/x-apple-diskimage \
             application/x-apple-installer-package \
             application/x-msi \
+            application/x-msdownload \
             application/vnd.microsoft.portable-executable; do
             answer="$(default_app "${type}")"
             if [ "${answer}" = "aquarius-installer.desktop" ]; then
@@ -2786,11 +2789,13 @@ jobs:
           set -euo pipefail
           podman run --rm --pull=never \
             -v "${GITHUB_WORKSPACE}/tests/test-installer-sorter.py:/tmp/t/tests/test-installer-sorter.py:ro" \
+            -v "${GITHUB_WORKSPACE}/tests/test-installer-windows.py:/tmp/t/tests/test-installer-windows.py:ro" \
             --entrypoint /usr/bin/bash \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" -c '
               set -e
               python3 /tmp/t/tests/test-installer-sorter.py \
                 /usr/lib/aquarius/python/aquarius_installer.py
+              python3 /tmp/t/tests/test-installer-windows.py /
             '
 
       # CLI checks never construct GTK widgets. Open the actual shipped window

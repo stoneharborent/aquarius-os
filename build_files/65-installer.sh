@@ -352,7 +352,7 @@ for line in done.stdout.splitlines():
         break
 PY
 )"
-    if [ "${got}" = "${want}" ]; then
+    if [ -n "${got}" ] && [[ " ${want} " == *" ${got} "* ]]; then
         ok "${name} is a ${want}"
     else
         bad "${name} came out as '${got}', expected '${want}'"
@@ -364,6 +364,8 @@ if aq_have gio; then
     check_type "thing.pkg" "application/x-apple-installer-package"
     check_type "thing.rpm" "application/x-rpm"
     check_type "thing.deb" "application/vnd.debian.binary-package"
+    check_type "thing.exe" "application/x-msdownload application/vnd.microsoft.portable-executable"
+    check_type "thing.msi" "application/x-msi"
 else
     bad "gio is missing, so nothing could ask the system what a file is"
 fi
@@ -406,6 +408,7 @@ for type in application/x-rpm \
     application/x-apple-diskimage \
     application/x-apple-installer-package \
     application/x-msi \
+    application/x-msdownload \
     application/vnd.microsoft.portable-executable; do
     answer="$(default_app "${type}")"
     if [ "${answer}" = "aquarius-installer.desktop" ]; then
@@ -583,6 +586,15 @@ else
     bad "${TESTS}/test-installer-sorter.py is missing from the build context"
 fi
 
+# Check the Windows route against installed files without downloading Bottles
+# or executing a Windows program in the image build.
+say "Windows setup hands off honestly, and handles missing support and failures"
+if python3 "${TESTS}/test-installer-windows.py" /; then
+    ok "Windows setup tests passed against the installed files"
+else
+    bad "Windows setup tests FAILED against the installed files"
+fi
+
 # ==============================================================================
 # 10. Write down how this image turned out
 # ==============================================================================
@@ -595,6 +607,7 @@ install -d -m 0755 /usr/share/aquarius
     echo "window=${WINDOW}"
     echo "rehearsal_checks=${AQ_PASSED:-unknown}"
     echo "route_c=off"
+    echo "windows=bottles-handoff"
     echo "conversion=never"
     echo "chooser_visible=no"
 } > /usr/share/aquarius/installer.env

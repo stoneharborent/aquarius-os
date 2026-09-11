@@ -82,6 +82,41 @@ def check_window(root):
             draw("done")
             assert window.open_button.get_visible()
             assert not window.done_details.widget.get_expanded()
+            # A Windows download has a genuine handoff page, without an Open
+            # button pretending a Windows app has already been installed.
+            with tempfile.TemporaryDirectory() as downloads:
+                exe = Path(downloads) / "Windows setup.EXE"
+                exe.write_bytes(b"MZ" + b"\0" * 64)
+                window.take_file(str(exe))
+                draw("file")
+                assert window.install_button.get_label() == "Continue in Bottles"
+                assert window.install_button.get_visible()
+                assert "first-run" in window.file_note.get_label()
+                page = window.stack.get_child_by_name("file")
+                adjustment = page.get_vadjustment()
+                adjustment.set_value(adjustment.get_upper() - adjustment.get_page_size())
+                draw("file")
+                assert window.install_button.get_mapped()
+                with patch.object(window_module["threading"], "Thread") as worker:
+                    window._on_install(None)
+                    worker.return_value.start.assert_called_once()
+                assert window.working_title.get_label() == "Preparing Windows setup"
+                assert len(window.step_rows) == 3
+                window._progress("STEP 3/3 Opening Windows setup")
+                window._progress("HANDOFF " + core.BOTTLES_ID)
+                assert window.step_rows[3].state == ui.DONE
+                window._finished(True, core.WINDOWS_NEXT, "handoff")
+                draw("done")
+                assert window.done_title.get_label() == "Continue in Bottles"
+                assert not window.open_button.get_visible()
+                window._finished(False, "Bottles setup was cancelled.", "failed")
+                assert "cancelled" in window.done_blurb.get_label()
+                assert not window.open_button.get_visible()
+                linux = Path(downloads) / "Linux.AppImage"
+                linux.write_bytes(b"dummy fixture")
+                window.take_file(str(linux))
+                draw("file")
+                assert window.install_button.get_label() == "Install"
             window.show_browse()
             draw("browse")
             assert not errors, errors
@@ -96,7 +131,7 @@ def check_window(root):
             patch.object(Adw.Application, "run", run), \
             patch.object(sys, "excepthook", lambda *exc: errors.append(str(exc[1]))):
         assert window_module["run_window"]([]) == 0
-    print("PASS: real Installer window mapped all four pages; progress, failure and success work")
+    print("PASS: real Installer window mapped all four pages; progress, failure, success and Windows handoff work")
 
 
 def main(check=check_window):

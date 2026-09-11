@@ -363,6 +363,7 @@ def run_window(open_files):
             self.verdict = core.sort_path(path)
             verdict = self.verdict
             self.file_title.set_label(verdict.name)
+            self.install_button.set_label("Continue in Bottles" if verdict.route == core.ROUTE_WINDOWS else "Install")
 
             if not verdict.can_install:
                 self.file_blurb.set_label(verdict.message)
@@ -386,7 +387,10 @@ def run_window(open_files):
                           fact("Signature", signature_words(verdict.signature)))
                 group_add(self.file_group,
                           fact("File", os.path.basename(verdict.path)))
-                self.file_note.set_label(signature_note(verdict.signature))
+                self.file_note.set_label(
+                    "AquariusOS has not checked this Windows file's signature. "
+                    "Continue only if you trust its source. " + core.WINDOWS_NEXT
+                    if verdict.route == core.ROUTE_WINDOWS else signature_note(verdict.signature))
             self.stack.set_visible_child_name("file")
 
         # -- installing ------------------------------------------------------
@@ -396,6 +400,11 @@ def run_window(open_files):
                 return
             if verdict.route == core.ROUTE_FLATPAK:
                 self._install_flatpak([verdict.path], verdict.name)
+                return
+            if verdict.route == core.ROUTE_WINDOWS:
+                self._start_working(verdict.name, core.WINDOWS_STEPS)
+                self.working_title.set_label("Preparing Windows setup")
+                threading.Thread(target=self._install_thread, daemon=True).start()
                 return
             self._start_working(verdict.name, ["Opening it",
                                                "Checking what it would change",
@@ -410,7 +419,7 @@ def run_window(open_files):
                 on_line=lambda line: GLib.idle_add(self._progress, line),
                 on_log=lambda text: GLib.idle_add(self.details.append, text))
             result = core.install(self.verdict, progress)
-            GLib.idle_add(self._finished, result.ok, result.message)
+            GLib.idle_add(self._finished, result.ok, result.message, result.outcome)
 
         def _install_flatpak(self, refs, name):
             """The one route with a password, and it is asked once, by the desktop."""
@@ -486,7 +495,7 @@ def run_window(open_files):
                     self.bar.set_fraction(int(rest) / 100.0)
                 except ValueError:
                     pass
-            elif head == "OK":
+            elif head in ("OK", "HANDOFF"):
                 for row in self.step_rows.values():
                     if row.state == ACTIVE:
                         row.set_state(DONE)
@@ -503,11 +512,13 @@ def run_window(open_files):
                 self.details.append(line + "\n")
             return GLib.SOURCE_REMOVE
 
-        def _finished(self, ok, message):
-            self.done_title.set_label("All set." if ok else "That did not work.")
+        def _finished(self, ok, message, outcome="installed"):
+            handoff = ok and outcome == "handoff"
+            self.done_title.set_label("Continue in Bottles" if handoff else
+                                      "All set." if ok else "That did not work.")
             self.done_blurb.set_label(message)
             aquarius_ui.set_status_glyph(self.done_status, ok=ok)
-            self.open_button.set_visible(ok)
+            self.open_button.set_visible(ok and not handoff)
             self.done_details.clear()
             for line in self.details.lines:
                 self.done_details.append(line)
@@ -577,7 +588,7 @@ def run_window(open_files):
                 on_line=lambda line: GLib.idle_add(self._progress, line),
                 on_log=lambda text: GLib.idle_add(self.details.append, text))
             result = core.remove(row.id, with_data, progress)
-            GLib.idle_add(self._finished, result.ok, result.message)
+            GLib.idle_add(self._finished, result.ok, result.message, result.outcome)
 
         # -- updating --------------------------------------------------------
         def _on_update(self, row):
@@ -911,7 +922,8 @@ def rehearse():
                                    (".flatpakref", core.ROUTE_FLATPAK),
                                    (".run", core.ROUTE_REFUSE),
                                    (".snap", core.ROUTE_REFUSE),
-                                   (".exe", core.ROUTE_REFUSE),
+                                   (".exe", core.ROUTE_WINDOWS),
+                                   (".msi", core.ROUTE_WINDOWS),
                                    (".dmg", core.ROUTE_REFUSE)):
             sample = os.path.join(work, "thing" + ending)
             with open(sample, "w") as handle:
@@ -921,7 +933,7 @@ def rehearse():
                   "%-12s goes to the %s route" % (ending, want_route))
             print("       sorted: %s" % verdict.route)
 
-        for ending, word in ((".snap", "Flathub"), (".exe", "Windows"),
+        for ending, word in ((".snap", "Flathub"),
                              (".dmg", "Mac"), (".run", "installer program")):
             sample = os.path.join(work, "thing" + ending)
             verdict = core.sort_path(sample)

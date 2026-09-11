@@ -11,5 +11,5 @@ Terminal=false
 StartupNotify=true
 StartupWMClass=org.aquariusos.Installer
 Categories=System;PackageManager;
-Keywords=install;installer;app;apps;software;add;remove;uninstall;update;rpm;deb;appimage;flatpak;flathub;package;store;
-MimeType=application/vnd.flatpak.ref;application/vnd.flatpak;application/vnd.appimage;application/x-iso9660-appimage;application/x-rpm;application/vnd.debian.binary-package;application/x-aquarius-run-installer;application/vnd.snap;application/x-ms-dos-executable;application/vnd.microsoft.portable-executable;application/x-msi;application/x-apple-diskimage;application/x-apple-installer-package;application/x-xar;
+Keywords=install;installer;app;apps;software;add;remove;uninstall;update;rpm;deb;appimage;flatpak;flathub;package;store;windows;exe;msi;bottles;
+MimeType=application/vnd.flatpak.ref;application/vnd.flatpak;application/vnd.appimage;application/x-iso9660-appimage;application/x-rpm;application/vnd.debian.binary-package;application/x-aquarius-run-installer;application/vnd.snap;application/x-ms-dos-executable;application/x-msdownload;application/vnd.microsoft.portable-executable;application/x-msi;application/x-apple-diskimage;application/x-apple-installer-package;application/x-xar;

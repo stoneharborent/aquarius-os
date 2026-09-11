@@ -52,12 +52,15 @@ application/x-iso9660-appimage=aquarius-installer.desktop
 application/x-rpm=aquarius-installer.desktop
 application/vnd.debian.binary-package=aquarius-installer.desktop
 
+# Windows setup is guided through Bottles, installed on demand from Flathub.
+application/x-msdownload=aquarius-installer.desktop
+application/x-ms-dos-executable=aquarius-installer.desktop
+application/vnd.microsoft.portable-executable=aquarius-installer.desktop
+application/x-msi=aquarius-installer.desktop
+
 # The ones the installer refuses, on purpose, so that double-clicking gets an
 # honest sentence instead of silence.
 application/x-aquarius-run-installer=aquarius-installer.desktop
 application/vnd.snap=aquarius-installer.desktop
-application/x-ms-dos-executable=aquarius-installer.desktop
-application/vnd.microsoft.portable-executable=aquarius-installer.desktop
-application/x-msi=aquarius-installer.desktop
 application/x-apple-diskimage=aquarius-installer.desktop
 application/x-apple-installer-package=aquarius-installer.desktop

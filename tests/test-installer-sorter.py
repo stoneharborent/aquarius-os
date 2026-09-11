@@ -408,8 +408,8 @@ def test_sorter_by_name(core, work):
         ("thing.run", core.ROUTE_REFUSE),
         ("thing.sh", core.ROUTE_REFUSE),
         ("thing.snap", core.ROUTE_REFUSE),
-        ("thing.exe", core.ROUTE_REFUSE),
-        ("thing.msi", core.ROUTE_REFUSE),
+        ("thing.exe", core.ROUTE_WINDOWS),
+        ("thing.msi", core.ROUTE_WINDOWS),
         ("thing.dmg", core.ROUTE_REFUSE),
         ("thing.pkg", core.ROUTE_REFUSE),
         ("thing.whatever", core.ROUTE_REFUSE),
@@ -481,8 +481,6 @@ def test_sorter_by_content(core, work):
 def test_refusals_say_something_useful(core, work):
     heading("what a refusal says")
     for name, must_contain in (("thing.snap", "flathub"),
-                               ("thing.exe", "windows"),
-                               ("thing.msi", "windows"),
                                ("thing.dmg", "mac"),
                                ("thing.pkg", "mac"),
                                ("thing.run", "installer program")):

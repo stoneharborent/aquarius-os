@@ -74,6 +74,7 @@ import stat
 import subprocess
 import tarfile
 import tempfile
+import threading
 import zipfile
 
 # -----------------------------------------------------------------------------
@@ -90,6 +91,7 @@ ROUTE_FLATPAK = "flatpak"        # through the pkexec helper, for the whole comp
 ROUTE_APPIMAGE = "appimage"      # unpacked into the home folder
 ROUTE_ARCHIVE = "archive"        # a tarball or zip with a program inside it
 ROUTE_PACKAGE = "package"        # an .rpm or a .deb, unpacked, no scripts run
+ROUTE_WINDOWS = "windows"      # guided setup in Bottles; never a local install receipt
 ROUTE_REFUSE = "refuse"          # we will not, and we say why
 
 # What the OS calls itself in anything a person reads.
@@ -248,7 +250,10 @@ SAY = {
            "guided flow of its own: open \"Install DaVinci Resolve\" from your "
            "apps." % OS_NAME,
     "snap": "This is a Snap. %s uses Flathub instead." % OS_NAME,
-    "windows": "This is a Windows program. %s cannot run it." % OS_NAME,
+    "windows": "This is a Windows program. Continue in Bottles to run its setup. "
+               "If needed, Bottles is downloaded from Flathub for the whole "
+               "computer, with one password prompt. Windows apps stay in your "
+               "account. Some Windows apps do not work on Linux.",
     "mac": "This is a Mac download. It cannot run here — look for the Linux "
            "download on the same page.",
     "unknown": "%s does not recognise this file, so it does not know what "
@@ -382,9 +387,8 @@ def sort_path(path):
                        message=SAY["snap"],
                        flathub_hint=flathub_term(display))
     if kind == "windows":
-        return Verdict(ROUTE_REFUSE, kind, display, path=path,
-                       message=SAY["windows"],
-                       flathub_hint=flathub_term(display))
+        return Verdict(ROUTE_WINDOWS, kind, display, path=path,
+                       where=SAY["windows"], signature="unknown")
     if kind == "mac":
         return Verdict(ROUTE_REFUSE, kind, display, path=path,
                        message=SAY["mac"],
@@ -1193,11 +1197,128 @@ def registry_records():
 # INSTALLING — Route A and the home-folder routes, which are the same act
 # =============================================================================
 class Result:
-    def __init__(self, ok, message="", record=None, detail=""):
+    def __init__(self, ok, message="", record=None, detail="", outcome="installed"):
         self.ok = ok
         self.message = message
         self.record = record
         self.detail = detail
+        self.outcome = outcome if ok else "failed"
+
+
+BOTTLES_ID = "com.usebottles.bottles"
+WINDOWS_STEPS = ["Checking Windows support", "Preparing Bottles", "Opening Windows setup"]
+WINDOWS_NEXT = (
+    "Continue in Bottles: choose a bottle (a separate Windows environment) and "
+    "follow the program's setup. First time here? Choose Open Bottles, finish "
+    "its first-run downloads, create an Application bottle, then open this "
+    "download in Aquarius Installer again. Launch and remove Windows apps in "
+    "Bottles. Aquarius Installer cannot tell whether their setup finished."
+)
+
+
+def bottles_scope():
+    """Read both installed locations; do not download a second copy."""
+    for scope in ("--user", "--system"):
+        result = subprocess.run(["flatpak", "info", scope, BOTTLES_ID],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                timeout=30)
+        if result.returncode == 0:
+            return scope
+    return None
+
+
+def windows_argv(path, scope):
+    # The document portal forwards just this selected file, including files on
+    # removable drives. No persistent override or access to the whole home.
+    # Absolute paths cannot be mistaken for options or @@ forwarding markers.
+    return ["flatpak", "run", scope, "--file-forwarding", BOTTLES_ID,
+            "@@", os.path.abspath(path), "@@"]
+
+
+def open_windows_setup(verdict, progress):
+    """Prepare Bottles and request its picker, without claiming an app installed.
+
+    Bottles owns the Windows wizard, first-run downloads and bottle lifecycle.
+    Its GUI does not return a Windows install receipt (or a reliable cancel
+    result), so no Aquarius app record is written by this route.
+    """
+    def failed(message):
+        progress.fail(message)
+        return Result(False, message)
+
+    if refuse_root():
+        return failed(ROOT_REFUSAL)
+    if not (os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY")):
+        return failed("Windows setup needs a desktop. Sign into AquariusOS and "
+                      "open the download with Aquarius Installer there.")
+    if not shutil.which("flatpak"):
+        return failed("Flatpak is missing, so Windows support cannot be prepared.")
+    # Recheck the selected download: it may have been moved since sorting.
+    try:
+        with open(verdict.path, "rb") as selected:
+            if not selected.read(1):
+                return failed("That Windows download is empty.")
+    except OSError as exc:
+        progress.log(str(exc))
+        return failed("That Windows download can no longer be read. Choose it again.")
+
+    log_path = ""
+    try:
+        progress.step(1, 3, WINDOWS_STEPS[0])
+        scope = bottles_scope()
+        progress.percent(10)
+        progress.step(2, 3, WINDOWS_STEPS[1])
+        if scope is None:
+            progress.log("Downloading Bottles from Flathub. The desktop may ask for your password.")
+            # Use the same permission helper as the Linux app routes. Merge
+            # its pipes so a busy download cannot deadlock on unread stderr.
+            with subprocess.Popen(flatpak_argv("install", [BOTTLES_ID]),
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                  text=True, errors="replace") as helper:
+                for line in helper.stdout:
+                    progress.log(line.rstrip("\n"))
+                code = helper.wait()
+            if code == 126:
+                progress.cancelled()
+                return Result(False, "Bottles setup was cancelled. The Windows download was not opened.")
+            if code == 127:
+                return failed("The desktop could not ask for permission to install Bottles. "
+                              "Sign into AquariusOS and try again.")
+            if code:
+                return failed("Bottles could not be installed. Check the connection and Details, then try again.")
+            scope = bottles_scope()
+            if scope is None:
+                return failed("Bottles was not found after its download. The Windows download was not opened.")
+        progress.percent(80)
+        progress.step(3, 3, WINDOWS_STEPS[2])
+        os.makedirs(cache_dir(), exist_ok=True)
+        # Keep late startup errors available after this window hands off; a
+        # pipe would stop draining when we return and could block Bottles.
+        with tempfile.NamedTemporaryFile(mode="w", prefix="bottles-", suffix=".log",
+                                         dir=cache_dir(), delete=False) as log:
+            log_path = log.name
+            launch = subprocess.Popen(windows_argv(verdict.path, scope),
+                                      stdout=log, stderr=subprocess.STDOUT,
+                                      start_new_session=True)
+        progress.log("Bottles startup log: " + log_path)
+        try:
+            code = launch.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            # A new GUI stays running. Reap it later without keeping this
+            # installer waiting for a wizard whose completion we cannot know.
+            threading.Thread(target=launch.wait, daemon=True).start()
+        else:
+            if code:
+                with open(log_path, errors="replace") as log:
+                    progress.log(log.read()[-8192:])
+                return failed("Bottles could not open Windows setup. See Details and try again.")
+        progress.percent(100)
+        progress.line("HANDOFF " + BOTTLES_ID)
+        return Result(True, "Windows setup was requested in Bottles. " + WINDOWS_NEXT,
+                      detail=log_path, outcome="handoff")
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        progress.log(str(exc))
+        return failed("Windows setup could not be opened. See Details and try again.")
 
 
 def sha256(path):
@@ -1228,6 +1349,9 @@ def install(verdict, progress=None, update_of=None):
         message = "A Flatpak is installed by the app helper, not from here."
         progress.fail(message)
         return Result(False, message)
+
+    if verdict.route == ROUTE_WINDOWS:
+        return open_windows_setup(verdict, progress)
 
     total = 6
     work = tempfile.mkdtemp(prefix="aquarius-installer-")
