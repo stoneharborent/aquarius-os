@@ -1061,6 +1061,46 @@ aq_file_has /usr/bin/aq 'AQ_RESOLVE_INSTALLER\}" --sound' \
     "'aq resolve status' asks the same script about sound too"
 
 # ------------------------------------------------------------------------------
+# The always-present virtual microphone (so the meters actually move)
+# ------------------------------------------------------------------------------
+# ⚠️ FEATURE 013. The check above proves Resolve's sound can get OUT to the
+# desktop. This one proves the other half: that Resolve's meters move at all.
+#
+# Resolve opens the sound card for playback and recording together. With nothing
+# to record from — empty mic/line jacks, the normal state — it keeps tearing the
+# device down and reopening it (about 100 times a second on the bench), and that
+# churn is what freezes the meters. The cure is one always-present, silent
+# virtual INPUT so the recording half always connects. It is shipped as a
+# PipeWire drop-in in system_files/ (it came in at step 50 with everything else),
+# and it runs on the HOST — PipeWire is on the desktop, not inside Resolve's box.
+#
+# This reads the finished image back three ways: the drop-in is here, it really
+# defines the virtual source, and the base pipewire.conf that pulls the drop-in
+# folder in is present (so the file is actually read, not just sitting on disk).
+AQ_PW_DROPIN=/usr/share/pipewire/pipewire.conf.d/50-aquarius-resolve-virtual-input.conf
+aq_file_has "${AQ_PW_DROPIN}" 'node\.name[[:space:]]*=[[:space:]]*"ResolveInput"' \
+    "the virtual audio input drop-in is in the image and names its node"
+aq_file_has "${AQ_PW_DROPIN}" 'media\.class[[:space:]]*=[[:space:]]*"Audio/Source/Virtual"' \
+    "and declares it as a virtual audio source, so Resolve always has something to record from"
+
+# The drop-in is only read because PipeWire's base config folds in everything in
+# its neighbouring "pipewire.conf.d" folder. If the base config ever moved or
+# lost that name, this drop-in would be silently ignored — the exact shape of
+# failure this repository writes checks for — so confirm the base file is here.
+AQ_PW_BASE=""
+for candidate in /usr/share/pipewire/pipewire.conf /etc/pipewire/pipewire.conf; do
+    if [ -r "${candidate}" ]; then
+        AQ_PW_BASE="${candidate}"
+        break
+    fi
+done
+if [ -n "${AQ_PW_BASE}" ]; then
+    ok "PipeWire's base config is here (${AQ_PW_BASE}), so the pipewire.conf.d drop-in is read"
+else
+    bad "no PipeWire base config (pipewire.conf) in this image — the virtual-input drop-in would never be read, and Resolve's meters would stay frozen"
+fi
+
+# ------------------------------------------------------------------------------
 # "Open With → DaVinci Resolve", from Files
 # ------------------------------------------------------------------------------
 # ⚠️ FEATURE 008 ITEM 9. Linux works out what a file is from a shared list of

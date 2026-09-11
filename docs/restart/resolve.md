@@ -649,6 +649,28 @@ aq resolve remove
 aq resolve install
 ```
 
+### Why the meters move even with nothing plugged in
+
+Resolve opens the sound card for playing AND recording at the same time. If
+there is nothing to record from — no microphone or line-in in the jacks, which
+is how most editing machines sit — the recording half has nothing to connect to,
+and Resolve reacts by closing the whole sound device and reopening it, again and
+again, dozens of times a second. That constant restarting is what used to freeze
+the audio meters, even though the mix itself was perfectly fine.
+
+So AquariusOS always keeps one silent, virtual "microphone" present, called
+**Resolve Audio Input (virtual)**. Resolve's recording half connects to it, the
+open finishes cleanly, and the meters move. You never have to turn it on, and it
+is deliberately the lowest-priority input there is: the moment you plug in a real
+microphone, the desktop prefers the real one automatically and the virtual one
+steps aside. It is only ever the fallback for when nothing real is there.
+
+It lives on the desktop, not inside Resolve's environment, so it is one file in
+the operating system image
+(`/usr/share/pipewire/pipewire.conf.d/50-aquarius-resolve-virtual-input.conf`),
+and the build refuses to publish an image without it. The full story is
+FEATURES entry 013.
+
 ---
 
 ## The bench list for the size and the pointer, Royce
