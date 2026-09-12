@@ -112,7 +112,7 @@ ARG AQUARIUS_SHELL_REPO=https://github.com/stoneharborent/aquarius-shell.git
 # for whichever theme and whatever AQ_UI_SCALE are in force. The reasoning is
 # written out beside the same value in aquarius-os.env, which is where a bump is
 # made — this line must match it.
-ARG AQUARIUS_SHELL_REF=e9eca645d9fbab90c590f9ce928d07c2405ba6f9
+ARG AQUARIUS_SHELL_REF=0aa2e783d7204952d50499405161e71075b73d2a
 
 # ------------------------------------------------------------------------------
 # Our own files, gathered up so the build can reach them
@@ -236,6 +236,14 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     AQUARIUS_SHELL_REPO="${AQUARIUS_SHELL_REPO}" AQUARIUS_SHELL_REF="${AQUARIUS_SHELL_REF}" \
     /ctx/build_files/stage-aquarius-shell.sh
 
+# Resolve's small menu adapter runs INSIDE the Rocky 9 app container. Build it
+# with that generation of libraries; compiling it on Fedora would make it ask
+# the older container for C/C++ library functions it does not have. Only our
+# finished adapter crosses into the OS, never Rocky's Qt or its compiler.
+FROM quay.io/rockylinux/rockylinux:9 AS resolve-menu-build
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    /ctx/build_files/stage-resolve-menu.sh
+
 # ==============================================================================
 # THE OPERATING SYSTEM ITSELF
 # ==============================================================================
@@ -328,6 +336,7 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 COPY --from=labwc-build /aq-stage/ /
 COPY --from=quickshell-build /aq-stage/ /
 COPY --from=aquarius-shell-src /aq-stage/ /
+COPY --from=resolve-menu-build /aq-stage/ /
 
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \

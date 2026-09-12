@@ -459,6 +459,16 @@ def effective_scale(screens, conf, monitors_xml_text):
     return 1.0
 
 
+def cursor_scale(screens, conf, monitors_xml_text):
+    """Desktop output scale without Resolve's independent interface zoom."""
+    enabled = [screen for screen in screens if screen.get("enabled")]
+    known = enabled and all(screen.get("scale_known", True)
+                            and 0.5 <= screen.get("scale", 0) <= 3
+                            for screen in enabled)
+    return max(screen["scale"] for screen in enabled) if known else (
+        effective_scale(screens, conf, monitors_xml_text))
+
+
 def resolve_scale(screens, conf, monitors_xml_text):
     """Resolve's whole interface, with a modest minimum on unscaled 4K desks.
 
@@ -470,8 +480,7 @@ def resolve_scale(screens, conf, monitors_xml_text):
     known = enabled and all(screen.get("scale_known", True)
                             and 0.5 <= screen.get("scale", 0) <= 3
                             for screen in enabled)
-    base = max(screen["scale"] for screen in enabled) if known else (
-        effective_scale(screens, conf, monitors_xml_text))
+    base = cursor_scale(screens, conf, monitors_xml_text)
     if known and all(screen.get("width", 0) >= 3200
                      and screen.get("height", 0) >= 1800
                      and abs(screen["scale"] - 1) < 0.001
@@ -528,6 +537,8 @@ def main(argv=None):
     # ends in a number and 1 is the last resort.
     parser.add_argument("--effective-scale", action="store_true",
                         help="print the one number this session is scaled by")
+    parser.add_argument("--cursor-scale", action="store_true",
+                        help="print the desktop cursor display scale without application zoom")
     parser.add_argument("--resolve-scale", action="store_true",
                         help="print Resolve's interface scale without changing the desktop")
     # --outputs-from exists so that this program can be tested without a
@@ -583,6 +594,10 @@ def main(argv=None):
             monitors_for_scale = handle.read()
     except OSError:
         pass
+
+    if args.cursor_scale:
+        print("%g" % cursor_scale(screens, conf_for_scale, monitors_for_scale))
+        return 0
 
     if args.resolve_scale:
         print("%g" % resolve_scale(screens, conf_for_scale, monitors_for_scale))

@@ -209,6 +209,7 @@ say "DaVinci Resolve — the files"
 
 for f in /usr/libexec/aquarius-resolve-install \
     /usr/libexec/aquarius-resolve-launch \
+    /usr/libexec/aquarius-resolve-menu-run \
     /usr/libexec/aquarius-resolve-update-notify \
     /usr/libexec/aquarius-resolve-browser/xdg-open \
     /usr/libexec/aquarius-resolve-browser/setup; do
@@ -233,6 +234,13 @@ for f in /usr/libexec/aquarius-resolve-install \
         bad "${f} has a syntax error"
     fi
 done
+
+# Fresh installs and new accounts must receive the same shipped defaults.
+if python3 /ctx/tests/test-resolve-fresh-defaults.py /; then
+    ok "Fresh Resolve accounts receive menu, cursor and integration defaults"
+else
+    bad "Resolve fresh-account defaults or packaged components are incomplete"
+fi
 
 # Check the real files shipped in this image. No browser/account opens here.
 if python3 /ctx/tests/test-resolve-browser.py /; then
