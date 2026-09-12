@@ -739,6 +739,18 @@ aq_file_has "${AQ_LAUNCH}" 'XCURSOR_THEME=' "your cursor theme is carried in"
 aq_file_has "${AQ_LAUNCH}" 'XCURSOR_SIZE=' "so is its size"
 aq_file_has "${AQ_LAUNCH}" 'XCURSOR_PATH=' "and where to find the theme from inside"
 
+# ⚠️ FEATURE 013, THE SECOND HALF: THE AUDIO ENGINE. A fresh Resolve config
+# defaults its audio engine to a Blackmagic DeckLink capture card, which these
+# machines do not have, so monitoring can be misrouted. The launcher repairs
+# config.dat to "System Audio" on launch — idempotently, only when it is still
+# the DeckLink default, never touching a deliberate choice, and never blocking
+# Resolve from opening. A launcher that silently stopped doing this would look
+# exactly like one that works, so the shipped logic is read back here.
+aq_file_has "${AQ_LAUNCH}" 'ensure_system_audio' \
+    "the launcher defaults a fresh Resolve to System Audio instead of a missing DeckLink card"
+aq_file_has "${AQ_LAUNCH}" 'Local\.Audio\.Type = System Audio' \
+    "and writes the exact audio-engine value Resolve reads"
+
 # ⚠️ AND THE FOLDER RESOLVE IS STARTED FROM — THE BENCH FAULT OF 2026-09-09.
 # Blackmagic's app-menu entries carried `Path=/opt/resolve/`, the folder the
 # desktop steps into BEFORE running the program. That folder is inside the

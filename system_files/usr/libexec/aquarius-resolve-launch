@@ -466,6 +466,88 @@ if [ "${RUN_ARGS[0]}" = /opt/resolve/bin/resolve ] && [ -x /usr/libexec/aquarius
     /usr/libexec/aquarius-resolve-window > /dev/null 2>&1 &
 fi
 
+# ------------------------------------------------------------------------------
+# RESOLVE'S AUDIO ENGINE — default a fresh install to "System Audio"
+# ------------------------------------------------------------------------------
+# Added 2026-09-11, feature 013 (the second half). This is the same KIND of step
+# as the browser-bridge repair below: fix one line of Resolve's own config on
+# launch, so an existing install is repaired too, and never let it stop Resolve
+# from opening.
+#
+# THE FAULT. Resolve stores which audio engine it uses in a plain text file,
+#     ~/.local/share/DaVinciResolve/configs/config.dat
+# as one `key = value` line:  Local.Audio.Type = <engine>. On a brand-new install
+# Resolve's built-in default is a Blackmagic **DeckLink** capture card. These
+# machines have no DeckLink, so that default points Resolve's audio at a device
+# that is not there and monitoring can be misrouted. The value we want is the
+# ordinary one for a PC with no capture card: **System Audio** (the two spelled
+# exactly like that — the enum values Resolve reads are `System Audio` and
+# `DeckLink Device`).
+#
+# THE RULES, and they are the conservative ones:
+#   * If config.dat does not exist yet — a fresh install where Resolve has never
+#     run — do NOTHING. We do not fabricate a config file. Resolve writes it on
+#     first run, and the NEXT launch repairs it before Resolve reads it again.
+#   * If the audio engine is a DeckLink default (the value starts "DeckLink"),
+#     rewrite that ONE line to `System Audio`. Every other setting is left byte
+#     for byte as it was.
+#   * If the key is absent, Resolve's effective default is DeckLink, so append
+#     the single key — nothing else is touched.
+#   * If it is set to anything else — System Audio already, or a deliberate
+#     choice — leave it. We never override a choice the person made.
+#   * Back the file up first (config.dat.pre-systemaudio-<time>), matching the
+#     backup convention the bench left behind, and swap in the new file with a
+#     rename so a half-written file can never replace a working one.
+#   * Any failure — missing, unreadable, unwritable, out of disk — returns
+#     quietly. Audio routing is never worth blocking the editor over.
+ensure_system_audio() {
+    local config_dat cur tmp backup
+    config_dat="${XDG_DATA_HOME:-${HOME}/.local/share}/DaVinciResolve/configs/config.dat"
+
+    # Nothing to repair until Resolve has written its own config.
+    [ -f "${config_dat}" ] && [ -r "${config_dat}" ] || return 0
+
+    # What is the audio engine set to right now? Last matching line wins, then
+    # trim trailing whitespace so "System Audio " still reads as System Audio.
+    cur="$(sed -n 's/^[[:space:]]*Local\.Audio\.Type[[:space:]]*=[[:space:]]*\(.*\)$/\1/p' \
+        "${config_dat}" 2> /dev/null | tail -n 1)"
+    cur="${cur%"${cur##*[![:space:]]}"}"
+
+    case "${cur}" in
+        DeckLink*) : ;;   # the wrong default for these machines — rewrite it
+        "") : ;;          # key absent; Resolve's built-in default is DeckLink
+        *) return 0 ;;     # System Audio, or an explicit choice — leave it alone
+    esac
+
+    [ -w "${config_dat}" ] || return 0
+
+    backup="${config_dat}.pre-systemaudio-$(date +%Y%m%d-%H%M%S 2> /dev/null)"
+    cp -p "${config_dat}" "${backup}" 2> /dev/null || return 0
+
+    tmp="$(mktemp "${config_dat}.aq.XXXXXX" 2> /dev/null)" || return 0
+    if [ -n "${cur}" ]; then
+        # Rewrite only the FIRST audio-engine line; print every other line as-is.
+        awk '
+            !seen && /^[[:space:]]*Local\.Audio\.Type[[:space:]]*=/ {
+                print "Local.Audio.Type = System Audio"; seen = 1; next
+            }
+            { print }
+        ' "${config_dat}" > "${tmp}" 2> /dev/null || { rm -f "${tmp}"; return 0; }
+    else
+        # Key absent: keep the file exactly, then add the single key at the end.
+        cp "${config_dat}" "${tmp}" 2> /dev/null || { rm -f "${tmp}"; return 0; }
+        printf 'Local.Audio.Type = System Audio\n' >> "${tmp}" \
+            || { rm -f "${tmp}"; return 0; }
+    fi
+    chmod --reference="${config_dat}" "${tmp}" 2> /dev/null || :
+    mv -f "${tmp}" "${config_dat}" 2> /dev/null || { rm -f "${tmp}"; return 0; }
+}
+
+# Only for a real Resolve launch (not the RAW tools), and never fatal.
+if [ "${RUN_ARGS[0]}" = /opt/resolve/bin/resolve ]; then
+    ensure_system_audio || :
+fi
+
 
 # `distrobox enter --additional-flags` takes ONE string, so the flags are joined
 # into one. None of these values can contain a space in practice — a cursor

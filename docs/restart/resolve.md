@@ -671,6 +671,36 @@ the operating system image
 and the build refuses to publish an image without it. The full story is
 FEATURES entry 013.
 
+### Meters move but there is still no sound
+
+If Resolve's audio meters bounce along but nothing comes out of your speakers,
+the meters are not the problem — the sound is being turned down somewhere after
+Resolve. **Check Resolve's own volume first**, because each app has its own:
+
+> **Settings → Sound → Applications**
+
+While Resolve is playing, look for **DaVinci Resolve** in that list and make sure
+its slider is up. It is easy to knock a single app's volume down to almost
+nothing by accident, and when that happens the meters still move (Resolve is
+mixing fine) but the speakers stay silent. Turn it back up and the sound returns.
+A fresh install starts at full volume, so this is only ever something that got
+nudged, never how AquariusOS ships.
+
+New Resolve installs are also set to the **System Audio** engine automatically,
+rather than the Blackmagic *DeckLink* capture card Resolve defaults to — these
+machines have no such card, and pointing Resolve's audio at one that is not there
+is another way to end up with silence. You never have to set this; the launcher
+does it for you on first run and leaves any choice you make yourself alone.
+
+> **For maintainers, a trap that cost a day (2026-09-11):** do not trust a
+> recording of an HDMI output's *monitor* to tell you whether that output is
+> silent. On the bench, `pw-record` against the HDMI sink's monitor read pure
+> digital zero *while an audible test tone was playing through that same sink* —
+> a false negative that sent the whole chase the wrong way. Before you believe
+> any "it's silent" measurement, validate the meter against a signal you can
+> hear: confirm by ear, or capture the stream or source node directly, never
+> that sink's monitor.
+
 ---
 
 ## The bench list for the size and the pointer, Royce
