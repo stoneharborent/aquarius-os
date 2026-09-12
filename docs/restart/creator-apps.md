@@ -41,10 +41,49 @@ The plain-language guide to the new window is
 
 ---
 
+## ⚠️ And a fifth way, added 2026-09-12 — but only for the other kind of software
+
+**[Homebrew](homebrew.md) — the `brew` command — is now on every AquariusOS
+machine**, on both images, because Royce asked for it.
+
+It is not a fifth route to the apps on this page, and it is important not to
+read it as one. Homebrew is a software shop you use by **typing**, and what it
+carries is the other kind of software entirely: command-line tools, small
+utilities, programming languages — `ffmpeg`, `yt-dlp`, `jq`, `node`. The things
+a tutorial tells you to install, which have no icon and never will.
+
+The rough rule:
+
+| If you would expect to find it by… | It comes from… |
+| --- | --- |
+| clicking around | the chooser on this page, or Aquarius Installer |
+| typing, because a tutorial said so | `brew install <name>` |
+
+So the three ways below are still the three ways an **app** reaches a person,
+and Aquarius Installer is still the one window for anything you downloaded.
+Nothing on this page changed.
+
+Two things about Homebrew are worth knowing even if you never type a command,
+because both are visible:
+
+- **It is not baked into the image the way Aquarius Writer is.** It cannot be —
+  Homebrew insists on living under `/home`, which is the half of the machine an
+  update never replaces. So the image carries a packed copy in `/usr` and a
+  service unpacks it at the first boot. The upshot is good: every update carries
+  it, so a machine installed before Homebrew existed gets `brew` anyway.
+- **It never installs anything you did not ask for**, and the weekly job that
+  runs on its own only refreshes its catalogue — it deliberately does not
+  upgrade your tools behind your back.
+
+The full guide is **[`homebrew.md`](homebrew.md)**.
+
+---
+
 ## The one idea to hold on to
 
 There are **three ways** an app gets onto this machine, and which one an app
-gets is a real decision.
+gets is a real decision. (Plus Aquarius Installer for anything you downloaded
+yourself, and `brew` for command-line tools — both above.)
 
 | | Which apps | Why |
 | --- | --- | --- |

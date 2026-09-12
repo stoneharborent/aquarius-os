@@ -1,0 +1,60 @@
+# ==============================================================================
+# AquariusOS — refresh Homebrew's catalogue (the part that does the work)
+# ==============================================================================
+# PLAIN ENGLISH
+#
+# This runs `brew update`, which refreshes Homebrew's LIST of available software
+# and nothing else. It installs nothing and upgrades nothing. The point is that
+# when somebody types `brew install <something>`, it already knows about the
+# current version instead of stopping to go and find out.
+#
+# ⚠️ IT DOES NOT RUN `brew upgrade`, ON PURPOSE. Universal Blue's equivalent
+# does. Replacing somebody's command-line tools in the middle of the night is
+# how a project that built on Friday stops building on Monday with nothing in
+# between that anybody did. The long version is at the top of
+# /usr/libexec/aquarius-brew-update.
+#
+# WHY THIS IS A SERVICE IN YOUR SESSION AND NOT A SYSTEM SERVICE
+# Homebrew refuses to run as root, so this cannot be an ordinary system
+# service. Universal Blue's answer drops to "user number 1000" — the first
+# account made on the machine. Ours simply runs as whoever is logged in, which
+# is the same thing on a one-person computer and the right thing on one with
+# two accounts, where "1000" means one particular person. It is the same shape
+# as the DaVinci Resolve update check.
+#
+# It is started by aquarius-brew-update.timer, about once a week.
+#
+# Plain-language guide: docs/restart/homebrew.md
+# ==============================================================================
+
+[Unit]
+Description=Refresh Homebrew's catalogue
+Documentation=https://github.com/stoneharborent/aquarius-os/blob/main/docs/restart/homebrew.md
+
+# Refreshing a catalogue over the internet needs the internet.
+Wants=network-online.target
+After=network-online.target
+
+# Do not even start on a machine where Homebrew was never unpacked, or where
+# somebody has removed it. Without this, a machine with no brew would log a
+# failure once a week forever.
+ConditionPathExists=/var/home/linuxbrew/.linuxbrew/bin/brew
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/aquarius-brew-update
+
+# The script always exits successfully on its own — see its header — so this
+# should never be needed. It is here so that a future edit which forgets that
+# rule cannot put a red "failed" in somebody's `systemctl --user status` for a
+# laptop that was not on any Wi-Fi.
+SuccessExitStatus=0 1
+
+# It is talking to a server. A slow or dead one must not leave this sitting
+# there for the rest of the day.
+TimeoutStartSec=15min
+
+# Be a good neighbour: this runs while somebody is using their computer, and it
+# is the least urgent thing on it. Lowest priority for both processor and disk.
+Nice=19
+IOSchedulingClass=idle

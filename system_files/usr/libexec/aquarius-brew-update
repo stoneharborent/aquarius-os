@@ -1,0 +1,114 @@
+#!/usr/bin/bash
+# ==============================================================================
+# aquarius-brew-update — refresh Homebrew's catalogue, once a week, quietly
+# ==============================================================================
+# WHAT THIS DOES, AND — MORE IMPORTANTLY — WHAT IT DOES NOT
+#
+# It runs `brew update`. That refreshes Homebrew's LIST of what is available and
+# which versions exist. It installs nothing, it upgrades nothing, and it changes
+# no program on this computer.
+#
+# ⚠️ IT DELIBERATELY DOES NOT RUN `brew upgrade`, and Universal Blue's version of
+# this does. That is our decision, not an oversight.
+#
+#   `brew upgrade` would quietly replace the command-line tools somebody is
+#   working with — the exact version of Python, ffmpeg, node or a build tool a
+#   project depends on — at three o'clock on a Sunday morning. The symptom is a
+#   project that built on Friday and does not build on Monday, with nothing in
+#   between that anybody did. That is a genuinely bad afternoon, and the thing
+#   it buys is saving a person from typing `brew upgrade`.
+#
+#   Refreshing the CATALOGUE is the half with all of the benefit and none of the
+#   risk: it means `brew install <thing>` gets the current version when somebody
+#   actually asks for it, with no wait and no surprise.
+#
+# Anybody who wants everything upgraded types `brew upgrade` and it happens.
+# docs/restart/homebrew.md says so on the page.
+#
+# ------------------------------------------------------------------------------
+# WHY IT RUNS AS YOU, NOT AS THE SYSTEM
+# ------------------------------------------------------------------------------
+# Homebrew refuses to run as root — it downloads and executes other people's
+# build instructions, and doing that as the account that owns the whole computer
+# is a bad idea. So this cannot be an ordinary system service.
+#
+# Universal Blue's answer is a system service that drops to "user number 1000",
+# the first account made on the machine. Ours is a service in YOUR OWN session,
+# which is the same thing on a one-person computer and the right thing on a
+# computer with two accounts, where there is no correct answer to "which
+# person is 1000". It is the same shape as the DaVinci Resolve update check.
+#
+# It is started by aquarius-brew-update.timer, about once a week.
+#
+# ------------------------------------------------------------------------------
+# BEING A GOOD NEIGHBOUR
+# ------------------------------------------------------------------------------
+# This runs while somebody is using their computer. It must never be the reason
+# a video export stutters, and it must never make a noise. So:
+#
+#   * the service file gives it the lowest priority for both processor and disk;
+#   * everything it prints goes to the system log, where nobody is made to look
+#     at it, rather than to a notification;
+#   * it always finishes successfully. A failed refresh is not news — the most
+#     likely cause by far is a laptop that is not on any Wi-Fi — and a red
+#     "failed" in `systemctl` for that would be noise that trains a person to
+#     ignore real ones.
+# ==============================================================================
+
+set -uo pipefail
+
+AQ_BREW_PREFIX="${AQ_BREW_PREFIX:-/home/linuxbrew/.linuxbrew}"
+AQ_BREW_BIN="${AQ_BREW_PREFIX}/bin/brew"
+
+log() { echo "aquarius-brew-update: $*"; }
+
+# The service already refuses to start without this. This is for the person who
+# runs the script by hand.
+if [ ! -x "${AQ_BREW_BIN}" ]; then
+    log "Homebrew is not installed on this machine — nothing to refresh."
+    exit 0
+fi
+
+# Homebrew works these out for itself, but telling it means it does not have to
+# go looking, and it means this script behaves the same whether it was started
+# by the timer (which has almost no environment) or typed at a terminal.
+export HOMEBREW_PREFIX="${AQ_BREW_PREFIX}"
+export HOMEBREW_CELLAR="${AQ_BREW_PREFIX}/Cellar"
+export HOMEBREW_REPOSITORY="${AQ_BREW_PREFIX}/Homebrew"
+
+# No progress bars, no colour codes: this output goes to a log file, and a log
+# full of terminal escape characters is a log nobody reads.
+export HOMEBREW_NO_ENV_HINTS=1
+export HOMEBREW_NO_COLOR=1
+export HOMEBREW_NO_EMOJI=1
+
+log "refreshing the catalogue (brew update)."
+if "${AQ_BREW_BIN}" update --quiet; then
+    log "done."
+else
+    # See the header: never a red "failed" for something this unimportant.
+    log "could not refresh this time (no internet, most likely). Trying again next week."
+fi
+
+# ------------------------------------------------------------------------------
+# The safety net Universal Blue's own notes call for
+# ------------------------------------------------------------------------------
+# Homebrew sometimes installs its own copy of a program this operating system
+# already has and depends on — bash, systemd, dbus, rpm. Its copies are built
+# for Homebrew, not for Fedora, and if one of them wins on PATH the results run
+# from "odd" to "cannot log in".
+#
+# Two things stop that. The first is the PATH rule in
+# /etc/profile.d/aquarius-brew.sh, which puts Homebrew's folder at the END so
+# the system's own copy always wins — that is the real fix. This is the second:
+# `brew unlink` on those particular names removes the shortcut Homebrew makes in
+# its own bin folder, without uninstalling anything, so even a PATH somebody has
+# rearranged by hand cannot pick them up.
+#
+# The `|| true` matters: `brew unlink` on something that was never installed is
+# an error, and on a normal machine that is every single one of these.
+for risky in systemd dbus bash rpm gsettings; do
+    "${AQ_BREW_BIN}" unlink "${risky}" > /dev/null 2>&1 || true
+done
+
+exit 0

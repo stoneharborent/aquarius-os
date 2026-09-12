@@ -1,0 +1,109 @@
+# ==============================================================================
+# AquariusOS — put Homebrew on this machine, once
+# ==============================================================================
+# PLAIN ENGLISH
+#
+# AquariusOS ships the `brew` command, but it cannot ship it in the ordinary
+# way. Homebrew insists on living at /home/linuxbrew/.linuxbrew, and on this
+# operating system that is really /var/home/linuxbrew — the half of the machine
+# that belongs to the person, which an update never replaces. Anything we baked
+# in there would reach machines installed from a disc and never reach a machine
+# that simply updated.
+#
+# So the build packs Homebrew into one compressed file in /usr (which every
+# update DOES carry) and this service unpacks it, here, on the machine.
+#
+# The program that does the work, and the long version of all of this:
+#     /usr/libexec/aquarius-brew-setup
+# The plain-language guide:
+#     docs/restart/homebrew.md
+#
+# ------------------------------------------------------------------------------
+# IT RUNS AT EVERY BOOT, AND DOES NOTHING ALMOST EVERY TIME
+# ------------------------------------------------------------------------------
+# That is on purpose, and it is what makes an update able to deliver Homebrew to
+# a machine that was installed before Homebrew existed. The two
+# ConditionPathExists lines below mean systemd itself skips it — the script is
+# not even started — on every boot after the first.
+#
+# The script has the same guard again inside it, because a person can run it by
+# hand and because a guard that only exists in a unit file is a guard that
+# disappears the moment somebody tests the script directly.
+#
+# ------------------------------------------------------------------------------
+# WHY multi-user.target AND NOT graphical.target
+# ------------------------------------------------------------------------------
+# Every other Aquarius service hangs off graphical.target, because every other
+# one is about something you look at. This one has nothing to do with a screen:
+# `brew` is a command, and a machine somebody only ever reaches over SSH should
+# have it too. multi-user.target is "the computer is up and running", which is
+# the honest requirement.
+#
+# ------------------------------------------------------------------------------
+# HOW IT IS SWITCHED ON
+# ------------------------------------------------------------------------------
+# By a link shipped in the read-only half of the system:
+#
+#     /usr/lib/systemd/system/multi-user.target.wants/aquarius-brew-setup.service
+#
+# NOT by `systemctl enable`, which writes into /etc. On this kind of operating
+# system a local `disable` deletes an /etc link and every future update then
+# carefully preserves the absence — the service would be off on that one machine
+# forever and no image could switch it back on. Royce hit exactly that on the
+# bench. The long version is in build_files/aq-lib.sh, beside
+# aq_unit_is_on_from_usr.
+#
+# THE HONEST COST OF THAT: `systemctl disable aquarius-brew-setup` will not turn
+# this off, because there is nothing in /etc to remove. This does:
+#
+#     sudo systemctl mask aquarius-brew-setup.service
+#
+# and docs/restart/homebrew.md has the full "how to get rid of Homebrew"
+# recipe, of which that is the first line.
+# ==============================================================================
+
+[Unit]
+Description=Put Homebrew on this machine (unpack it, once)
+Documentation=https://github.com/stoneharborent/aquarius-os/blob/main/docs/restart/homebrew.md
+
+# Nothing to unpack until the filesystems are really mounted. In particular
+# /var, which is where this writes, is a separate filesystem on every
+# AquariusOS installation.
+After=local-fs.target
+Wants=local-fs.target
+
+# Already done. This is the line that makes "runs at every boot" cost nothing.
+ConditionPathExists=!/var/home/linuxbrew/.linuxbrew/bin/brew
+
+# Nothing to unpack. Belt and braces: the build fails if the box is missing, so
+# on a published image this is always true.
+ConditionPathExists=/usr/share/aquarius/homebrew/homebrew.tar.zst
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/aquarius-brew-setup
+
+# It really is finished when it finishes. Without this, systemd forgets it ran
+# and anything ordered after it would be ordered after nothing.
+RemainAfterExit=yes
+
+# Unpacking a few hundred megabytes on a slow disk is not fast, and it must
+# never be killed half way — that would leave a Homebrew that exists and does
+# not work. Five minutes is far beyond any real machine.
+TimeoutStartSec=5min
+
+# Be a good neighbour. This happens during a boot, while somebody is waiting to
+# log in, so it takes the processor and the disk only when nothing else wants
+# them. Nothing waits for this service, so slowing it down costs nobody
+# anything.
+Nice=10
+IOSchedulingClass=idle
+
+# A failure here must never stop a machine booting. The worst case is a computer
+# with no `brew` on it, which is a computer, and the next boot tries again.
+Restart=no
+
+# There is deliberately NO [Install] section. See the note at the top: this is
+# switched on by a link shipped under /usr, not by `systemctl enable`. An
+# [Install] section here would be an invitation to run that command, which is
+# the thing that goes wrong.

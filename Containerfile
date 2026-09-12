@@ -671,6 +671,44 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     NVIDIA="${NVIDIA}" /ctx/build_files/68-gaming.sh
 
+# 7k. Homebrew — the `brew` command, on both images, because Royce asked for it.
+#
+#     Homebrew is a software shop you use by typing rather than by clicking:
+#     `brew install ffmpeg`. It is the thing a tutorial means when it says
+#     "install it with brew", and it is the one piece of a Mac workflow a
+#     creator coming across genuinely misses. It does NOT replace the app
+#     chooser or Aquarius Installer — those are for applications with windows.
+#     This is for command-line tools.
+#
+#     ⚠️ THIS STEP LOOKS BACK TO FRONT AND THE REASON IS WORTH KNOWING.
+#     Homebrew insists on living at /home/linuxbrew/.linuxbrew, and on this
+#     operating system /home is a signpost pointing at /var/home. /var belongs
+#     to the person and is NEVER replaced by an update — so a Homebrew baked in
+#     there would reach machines installed from a disc and never reach a machine
+#     that simply ran `bootc upgrade`. Half our users would have `brew`, half
+#     would not, and nothing would make that visible.
+#
+#     So the step installs Homebrew for real, packs it into one compressed file
+#     in /usr (which every update DOES carry), and deletes it from /var again.
+#     aquarius-brew-setup.service unpacks that file on the machine, once, at the
+#     first boot that finds no brew. Universal Blue's images solve it the same
+#     way; ours is the same shape with our own names and our own ownership rule.
+#
+#     The happy consequence: a computer that installed AquariusOS before this
+#     existed gets `brew` on its first boot after taking this image.
+#
+#     Everything else it needs arrived with system_files at step 5: the setup
+#     and weekly-refresh programs, their units, the /etc/profile.d snippet that
+#     puts brew on PATH in a terminal, and the environment.d file that does the
+#     same for apps started from the dock.
+#
+#     Before step 8 because step 8 rebuilds the boot ramdisk and nothing here
+#     touches the kernel; after 7e simply to keep the step numbers reading in
+#     the same order as the folder.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache/libdnf5 \
+    /ctx/build_files/69-homebrew.sh
+
 # 8. The boot path: the Aquarius splash screen, the name in the boot menu, the
 #    text login banners, and then a rebuild of the boot ramdisk so that all of
 #    it is really used.

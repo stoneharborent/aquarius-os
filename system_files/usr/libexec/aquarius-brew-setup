@@ -1,0 +1,202 @@
+#!/usr/bin/bash
+# ==============================================================================
+# aquarius-brew-setup — unpack Homebrew on this machine, once
+# ==============================================================================
+# WHAT THIS IS FOR, IN PLAIN ENGLISH
+#
+# AquariusOS ships Homebrew — the `brew` command — but it cannot ship it in the
+# ordinary way, and this script is the other half of the trick.
+#
+# THE TRICK, IN FOUR SENTENCES
+#
+#   Homebrew insists on living at /home/linuxbrew/.linuxbrew. On this operating
+#   system /home is a signpost pointing at /var/home, and /var is the half of
+#   the machine that belongs to YOU — an AquariusOS update replaces /usr whole
+#   and never touches /var. So a Homebrew baked into /var during the build would
+#   reach machines that installed from a disc and never reach a machine that
+#   simply ran an update. Instead the build packs Homebrew into a single
+#   compressed file in /usr — which every update carries — and this script
+#   unpacks it, on the machine, the first time it is needed.
+#
+# The happy consequence: a computer that installed AquariusOS before Homebrew
+# existed gets `brew` on the first boot after it takes an image that has this.
+#
+# ------------------------------------------------------------------------------
+# IT RUNS AT EVERY BOOT AND DOES NOTHING ALMOST EVERY TIME
+# ------------------------------------------------------------------------------
+# ⚠️ THIS IS THE MOST IMPORTANT THING ABOUT THIS FILE. aquarius-brew-setup.service
+# starts it on every single boot. It is this script's own first check that makes
+# that harmless: if brew is already there, it prints one line and stops.
+#
+# Get that wrong and every boot spends a minute unpacking three hundred
+# megabytes over the top of the Homebrew somebody has been using — wiping
+# everything they installed, every boot, and the only symptom would be "my
+# computer takes ages to start and my tools keep disappearing".
+#
+# tests/test-brew-setup.sh runs this script twice against a fake machine and
+# fails the build if the second run touches anything.
+#
+# ------------------------------------------------------------------------------
+# WHO ENDS UP OWNING IT, AND WHY IT IS NOT WHAT UNIVERSAL BLUE DOES
+# ------------------------------------------------------------------------------
+# Universal Blue, whose design this borrows, hands the whole folder to user
+# number 1000 — the first account made on the machine. That is simple and it is
+# right almost always.
+#
+# AquariusOS hands it to `root`, with the group set to `wheel` and the group
+# allowed to write. `wheel` is Linux's name for "the people who may administer
+# this computer", and the account created when AquariusOS was installed is in
+# it. The practical effect is identical for one person on one machine —
+# `brew install ffmpeg` works, with no password — and it is better on a machine
+# with two administrators, because "1000" means one specific person and `wheel`
+# means all of them.
+#
+# The `g+s` flag set on every folder is what keeps that true over time: any new
+# folder Homebrew creates inherits the `wheel` group rather than reverting.
+#
+# THE HONEST LIMITS, both of which are in docs/restart/homebrew.md:
+#   * `brew doctor` may mention that the folder is not owned by you personally.
+#     It is a remark, not a fault; nothing stops working.
+#   * On a machine with TWO administrator accounts, files one of them installs
+#     are readable and runnable by the other but not always writable by them.
+#     One `sudo chmod -R g+w /home/linuxbrew/.linuxbrew` fixes it.
+#
+# ------------------------------------------------------------------------------
+# TESTING KNOBS — how tests/test-brew-setup.sh drives this with no root
+# ------------------------------------------------------------------------------
+# Everything this script reads or writes is built from two variables, so a test
+# can point them at a temporary folder and nothing touches the real machine:
+#
+#   AQ_BREW_ROOT   stands in for /var/home           (default: /var/home)
+#   AQ_BREW_BOX    stands in for the packed Homebrew (default: the real box)
+#   AQ_BREW_NO_CHOWN   set to 1 to skip the ownership step, which a test cannot
+#                      do because it is not root
+#
+# There are no other paths in this file, and the test checks that.
+# ==============================================================================
+
+set -euo pipefail
+
+AQ_BREW_ROOT="${AQ_BREW_ROOT:-/var/home}"
+AQ_BREW_BOX="${AQ_BREW_BOX:-/usr/share/aquarius/homebrew/homebrew.tar.zst}"
+AQ_BREW_NO_CHOWN="${AQ_BREW_NO_CHOWN:-0}"
+
+# Where brew ends up, and the one file whose existence means "already done".
+AQ_BREW_DIR="${AQ_BREW_ROOT}/linuxbrew/.linuxbrew"
+AQ_BREW_BIN="${AQ_BREW_DIR}/bin/brew"
+
+# The group that may write to it. See the long note above.
+AQ_BREW_GROUP="wheel"
+
+log() { echo "aquarius-brew-setup: $*"; }
+
+# ------------------------------------------------------------------------------
+# 1. The guard. Everything else in this file depends on this being right.
+# ------------------------------------------------------------------------------
+# Deliberately NOT "does the folder exist" — a half-finished unpack from a
+# machine that lost power mid-way would leave a folder and no working brew, and
+# this would then refuse to repair it forever. The question is whether the
+# PROGRAM is there.
+if [ -x "${AQ_BREW_BIN}" ]; then
+    log "Homebrew is already installed at ${AQ_BREW_DIR} — nothing to do."
+    exit 0
+fi
+
+# ------------------------------------------------------------------------------
+# 2. Is there anything to unpack?
+# ------------------------------------------------------------------------------
+# The service also asks this (ConditionPathExists), so normally this never
+# fires. It is here for the person who runs the script by hand.
+if [ ! -r "${AQ_BREW_BOX}" ]; then
+    log "there is no packed Homebrew at ${AQ_BREW_BOX} — nothing to unpack."
+    exit 0
+fi
+
+# ------------------------------------------------------------------------------
+# 3. Unpack it, beside itself, then move it into place in one motion
+# ------------------------------------------------------------------------------
+# ⚠️ WHY NOT SIMPLY UNPACK STRAIGHT INTO PLACE. Because unpacking takes a few
+# seconds, and for those few seconds a half-written Homebrew would be sitting at
+# exactly the path this script's own guard checks. A boot interrupted in that
+# window would leave a machine that believes it has brew and does not.
+#
+# So it unpacks into a folder with a different name and then RENAMES it, which
+# on Linux happens all at once: at no instant does a partly-unpacked Homebrew
+# exist at the real path.
+STAGING="${AQ_BREW_ROOT}/.linuxbrew-unpacking.$$"
+
+# If an earlier run died half way, its leftovers are here. They are worthless —
+# the rename never happened — so clear them rather than unpacking on top.
+rm -rf "${AQ_BREW_ROOT}"/.linuxbrew-unpacking.*
+
+cleanup() { rm -rf "${STAGING}"; }
+trap cleanup EXIT
+
+log "unpacking ${AQ_BREW_BOX} — this happens once."
+mkdir -p "${STAGING}"
+
+# -x -f     extract, from this file
+# -C        into the staging folder
+#
+# ⚠️ NO --zstd HERE, ON PURPOSE, even though the box is squeezed with zstd.
+# When tar READS an archive it works out for itself how it was squeezed, so
+# naming the method is unnecessary — and naming it is worse than unnecessary,
+# because it means this script and build_files/69-homebrew.sh have to agree
+# about it forever, in two files nobody reads together. (It also means
+# tests/test-brew-setup.sh can build its pretend box with whatever squeezer the
+# machine running the test happens to have.) The `zstd` program still has to be
+# in the image for this to work, and step 69 both installs it and checks it.
+#
+# The box holds one top-level folder called `linuxbrew`, so this produces
+# "${STAGING}/linuxbrew/.linuxbrew/...".
+tar -xf "${AQ_BREW_BOX}" -C "${STAGING}"
+
+if [ ! -x "${STAGING}/linuxbrew/.linuxbrew/bin/brew" ]; then
+    log "ERROR: the packed Homebrew did not contain bin/brew. Not installing anything."
+    exit 1
+fi
+
+# ------------------------------------------------------------------------------
+# 4. Ownership and permissions, BEFORE it is visible at the real path
+# ------------------------------------------------------------------------------
+# Doing this while it is still in the staging folder means the folder that
+# finally appears is already correct — there is no moment when brew exists and
+# is unusable.
+if [ "${AQ_BREW_NO_CHOWN}" != "1" ]; then
+    chown -R "root:${AQ_BREW_GROUP}" "${STAGING}/linuxbrew"
+    # g+rwX: the group may read and write files, and enter folders. The capital
+    # X is the important letter — it means "make folders enterable, and leave
+    # ordinary files alone", so this does not turn every text file into a
+    # program.
+    chmod -R g+rwX "${STAGING}/linuxbrew"
+    # And the flag that keeps it true: anything Homebrew creates inside these
+    # folders later inherits the wheel group instead of reverting.
+    find "${STAGING}/linuxbrew" -type d -exec chmod g+s {} +
+fi
+
+# ------------------------------------------------------------------------------
+# 5. Into place, all at once
+# ------------------------------------------------------------------------------
+mkdir -p "${AQ_BREW_ROOT}"
+
+# One last look. Two boots racing each other is not a thing that happens, but a
+# person running this by hand while the service runs it is, and this makes the
+# loser of that race do nothing rather than overwrite the winner.
+if [ -x "${AQ_BREW_BIN}" ]; then
+    log "somebody else finished first — leaving their Homebrew alone."
+    exit 0
+fi
+
+mv "${STAGING}/linuxbrew" "${AQ_BREW_ROOT}/linuxbrew"
+
+# ------------------------------------------------------------------------------
+# 6. Say whether it worked, by looking rather than by hoping
+# ------------------------------------------------------------------------------
+if [ -x "${AQ_BREW_BIN}" ]; then
+    log "Homebrew is installed at ${AQ_BREW_DIR}."
+    log "Open a new terminal and type: brew install <something>"
+    exit 0
+fi
+
+log "ERROR: unpacking finished but ${AQ_BREW_BIN} is not there."
+exit 1
