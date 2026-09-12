@@ -649,6 +649,58 @@ aq resolve remove
 aq resolve install
 ```
 
+### Why the meters move even with nothing plugged in
+
+Resolve opens the sound card for playing AND recording at the same time. If
+there is nothing to record from — no microphone or line-in in the jacks, which
+is how most editing machines sit — the recording half has nothing to connect to,
+and Resolve reacts by closing the whole sound device and reopening it, again and
+again, dozens of times a second. That constant restarting is what used to freeze
+the audio meters, even though the mix itself was perfectly fine.
+
+So AquariusOS always keeps one silent, virtual "microphone" present, called
+**Resolve Audio Input (virtual)**. Resolve's recording half connects to it, the
+open finishes cleanly, and the meters move. You never have to turn it on, and it
+is deliberately the lowest-priority input there is: the moment you plug in a real
+microphone, the desktop prefers the real one automatically and the virtual one
+steps aside. It is only ever the fallback for when nothing real is there.
+
+It lives on the desktop, not inside Resolve's environment, so it is one file in
+the operating system image
+(`/usr/share/pipewire/pipewire.conf.d/50-aquarius-resolve-virtual-input.conf`),
+and the build refuses to publish an image without it. The full story is
+FEATURES entry 013.
+
+### Meters move but there is still no sound
+
+If Resolve's audio meters bounce along but nothing comes out of your speakers,
+the meters are not the problem — the sound is being turned down somewhere after
+Resolve. **Check Resolve's own volume first**, because each app has its own:
+
+> **Settings → Sound → Applications**
+
+While Resolve is playing, look for **DaVinci Resolve** in that list and make sure
+its slider is up. It is easy to knock a single app's volume down to almost
+nothing by accident, and when that happens the meters still move (Resolve is
+mixing fine) but the speakers stay silent. Turn it back up and the sound returns.
+A fresh install starts at full volume, so this is only ever something that got
+nudged, never how AquariusOS ships.
+
+New Resolve installs are also set to the **System Audio** engine automatically,
+rather than the Blackmagic *DeckLink* capture card Resolve defaults to — these
+machines have no such card, and pointing Resolve's audio at one that is not there
+is another way to end up with silence. You never have to set this; the launcher
+does it for you on first run and leaves any choice you make yourself alone.
+
+> **For maintainers, a trap that cost a day (2026-09-11):** do not trust a
+> recording of an HDMI output's *monitor* to tell you whether that output is
+> silent. On the bench, `pw-record` against the HDMI sink's monitor read pure
+> digital zero *while an audible test tone was playing through that same sink* —
+> a false negative that sent the whole chase the wrong way. Before you believe
+> any "it's silent" measurement, validate the meter against a signal you can
+> hear: confirm by ear, or capture the stream or source node directly, never
+> that sink's monitor.
+
 ---
 
 ## The bench list for the size and the pointer, Royce
