@@ -23,7 +23,7 @@ def check_window(root):
 
     gi.require_version("Gtk", "4.0")
     gi.require_version("Adw", "1")
-    from gi.repository import Adw, GLib
+    from gi.repository import Adw, GLib, Gtk
 
     # Preload these exact copies, even when another version is installed.
     for name in ("aquarius_installer", "aquarius_ui"):
@@ -117,6 +117,71 @@ def check_window(root):
                 window.take_file(str(linux))
                 draw("file")
                 assert window.install_button.get_label() == "Install"
+            # -- Cancel really stops, and a late answer cannot undo it ------
+            # ⚠️ THE FAULT OF 2026-09-13: Cancel only changed the page, the
+            # install carried on, and its answer dragged the person onto "All
+            # set." for something they had stopped.
+            window._start_working("Cancel test", ["Working"])
+            window._on_cancel(None)
+            assert window.cancel_requested
+            assert window.cancel_event.is_set(), "the worker was not told to stop"
+            assert os.path.isfile(window.cancel_file), \
+                "the app helper was not told to stop"
+            assert not window.cancel_button.get_sensitive()
+            assert window.stack.get_visible_child_name() == "working", \
+                "Cancel left the working page before the worker had stopped"
+            window._finished(True, "Installed after all")
+            draw("done")
+            assert window.done_title.get_label() == "Stopped."
+            assert not window.open_button.get_visible()
+
+            # -- Open presses what was written, not a name it guessed -------
+            window._start_working("Open test", ["Working"])
+            with tempfile.TemporaryDirectory() as entries:
+                entry = Path(entries) / "openapp.desktop"
+                entry.write_text("[Desktop Entry]\nType=Application\n"
+                                 "Name=Open App\n")
+                window.open_entry = str(entry)
+                with patch.object(subprocess, "Popen") as launch:
+                    window._on_open(None)
+                    launch.assert_called_once_with(
+                        ["gio", "launch", str(entry)], start_new_session=True)
+
+            # -- the Editor has a Remove button and Aquarius Writer does not -
+            def buttons(row):
+                found, queue = [], [row]
+                while queue:
+                    widget = queue.pop()
+                    if isinstance(widget, Gtk.Button):
+                        found.append(widget.get_label())
+                    child = widget.get_first_child()
+                    while child is not None:
+                        queue.append(child)
+                        child = child.get_next_sibling()
+                return [label for label in found if label]
+
+            editor = core.Row("aquarius-editor", "Aquarius Editor", "1.0",
+                              core.ROUTE_APPIMAGE, removable=True, managed=True,
+                              note="updates with %s" % core.OS_NAME)
+            part_of_os = core.Row("aquarius-writer", "Aquarius Writer", "1.0",
+                                  core.ROUTE_APPIMAGE, removable=False,
+                                  note="part of %s" % core.OS_NAME)
+            assert "Remove" in buttons(window._installed_row(editor)), \
+                "the window offers no Remove where the terminal removes it"
+            assert "Remove" not in buttons(window._installed_row(part_of_os)), \
+                "a part of the operating system must have no buttons"
+
+            # -- the search bar asks nothing slow on the drawing thread -----
+            with patch.object(core, "flatpak_updates",
+                              side_effect=AssertionError("asked per keystroke")), \
+                    patch.object(core, "flathub_search", return_value=[]):
+                window.search.set_text("ob")
+                window.refresh()
+                window.search.set_text("")
+                if window.search_timer:
+                    GLib.source_remove(window.search_timer)
+                    window.search_timer = 0
+
             window.show_browse()
             draw("browse")
             assert not errors, errors

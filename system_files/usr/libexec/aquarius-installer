@@ -107,6 +107,7 @@ def read_both_pipes(proc, on_stdout, on_stderr):
                         key.data(leftovers[handle])
                         leftovers[handle] = ""
                     pipes.unregister(handle)
+                    handle.close()
                     continue
                 if chunk.endswith("\n"):
                     key.data(leftovers[handle] + chunk)
