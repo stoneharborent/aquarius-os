@@ -260,6 +260,18 @@ SAY = {
                "installing it would mean." % OS_NAME,
     "empty": "That file is empty.",
     "missing": "That file is not there any more.",
+    # ⚠️ THE THREE SENTENCES FOR WHEN IT GOES WRONG. Before 2026-09-13 a disk
+    # that filled up half way through left the window sitting on "Installing"
+    # for ever, because the worker thread died and nothing told the window. Now
+    # every ending — out of space, stopped by the person, or something nobody
+    # foresaw — has a sentence of its own, and the machine's own words go into
+    # the Details log where only somebody who asks for them sees them.
+    "no_space": "There is not enough room on this computer. Needs about %s of "
+                "space and this computer has %s free. Make some room and try "
+                "again.",
+    "went_wrong": "That did not work, and nothing was left half-installed. The "
+                  "Details below say what this computer reported.",
+    "cancelled": "Stopped. Nothing was left behind.",
 }
 
 # The endings we know, and the word we use for each. Read longest-first, so
@@ -514,8 +526,12 @@ def run_text(argv, timeout=30, cwd=None):
 #    `rpm2cpio | cpio` and `dpkg-deb -x` take the FILES out of a package and
 #    nothing else. The install-time scripts, which on any other Linux run as an
 #    administrator on your computer, are never even looked at.
-def unpack(path, kind, into, progress):
-    """Open a package or archive into `into`. True if anything came out."""
+def unpack(path, kind, into, progress, cancel=None):
+    """Open a package or archive into `into`. True if anything came out.
+
+    `cancel` is looked at between files, so pressing Cancel while a very large
+    archive is opening really does stop it rather than waiting for the end.
+    """
     os.makedirs(into, exist_ok=True)
     if kind == "rpm":
         return unpack_rpm(path, into, progress)
@@ -524,9 +540,9 @@ def unpack(path, kind, into, progress):
     if kind == "appimage":
         return unpack_appimage(path, into, progress)
     if kind == "tar":
-        return unpack_tar(path, into, progress)
+        return unpack_tar(path, into, progress, cancel)
     if kind == "zip":
-        return unpack_zip(path, into, progress)
+        return unpack_zip(path, into, progress, cancel)
     return False
 
 
@@ -646,7 +662,7 @@ def safe_members(names):
     return kept, dropped
 
 
-def unpack_tar(path, into, progress):
+def unpack_tar(path, into, progress, cancel=None):
     try:
         with tarfile.open(path) as archive:
             members = archive.getmembers()
@@ -655,7 +671,10 @@ def unpack_tar(path, into, progress):
             keep = set(keep)
             chosen = [m for m in members if m.name in keep
                       and not (m.issym() and os.path.isabs(m.linkname))]
-            archive.extractall(into, members=chosen)
+            for member in chosen:
+                if stopped(cancel):
+                    return False
+                archive.extract(member, into)
         if dropped:
             progress.log("%d item(s) in that archive pointed outside it and "
                          "were left out." % dropped)
@@ -665,11 +684,14 @@ def unpack_tar(path, into, progress):
     return has_content(into)
 
 
-def unpack_zip(path, into, progress):
+def unpack_zip(path, into, progress, cancel=None):
     try:
         with zipfile.ZipFile(path) as archive:
             keep, dropped = safe_members(archive.namelist())
-            archive.extractall(into, members=keep)
+            for name in keep:
+                if stopped(cancel):
+                    return False
+                archive.extract(name, into)
             # A zip file forgets which files were runnable; the mode is in the
             # archive but Python does not apply it. Put it back, or the program
             # inside is there and cannot be started.
@@ -765,7 +787,7 @@ def elf_files(root, limit=400):
     return [path for _size, path in found]
 
 
-def missing_libraries(root, progress=None, limit=60):
+def missing_libraries(root, progress=None, limit=60, cancel=None):
     """The libraries this payload needs and this computer does not have.
 
     An empty list means every program inside it resolves — which is what Route A
@@ -777,6 +799,8 @@ def missing_libraries(root, progress=None, limit=60):
         return []
     missing = {}
     for path in elf_files(root)[:limit]:
+        if stopped(cancel):
+            return []
         try:
             done = subprocess.run(["ldd", path], capture_output=True, text=True,
                                   timeout=30, errors="replace",
@@ -1197,12 +1221,23 @@ def registry_records():
 # INSTALLING — Route A and the home-folder routes, which are the same act
 # =============================================================================
 class Result:
-    def __init__(self, ok, message="", record=None, detail="", outcome="installed"):
+    def __init__(self, ok, message="", record=None, detail="", outcome="installed",
+                 entry_path="", app_id=""):
         self.ok = ok
         self.message = message
         self.record = record
         self.detail = detail
-        self.outcome = outcome if ok else "failed"
+        # ⚠️ "cancelled" IS NOT "failed". A person who pressed Cancel does not
+        # need to be told something went wrong; they already know what happened.
+        self.outcome = outcome if ok else (
+            "cancelled" if outcome == "cancelled" else "failed")
+        # ⚠️ WHAT THE OPEN BUTTON PRESSES. Before 2026-09-13 the window hunted
+        # for a row whose name matched the file name it had guessed, and when it
+        # did not find one the button did nothing at all, silently. The thing
+        # that wrote the menu entry is the only thing that knows where it is, so
+        # it says so here.
+        self.entry_path = entry_path or (record.entry_path if record else "")
+        self.app_id = app_id
 
 
 BOTTLES_ID = "com.usebottles.bottles"
@@ -1332,10 +1367,66 @@ def sha256(path):
     return digest.hexdigest()
 
 
-def install(verdict, progress=None, update_of=None):
-    """Land one sorted file on this computer. The whole of Routes A and home."""
-    progress = progress or Progress()
+# =============================================================================
+# ROOM TO LAND IN, AND A WAY TO STOP
+# =============================================================================
+# ⚠️ A FULL DISK IS THE COMMONEST WAY AN INSTALL DIES HALF WAY, and it dies in
+#    the one step that cannot be undone cheaply — moving gigabytes into place.
+#    So the size is asked for BEFORE anything is touched: twice the download
+#    before it is opened (a compressed file roughly doubles), and the real size
+#    of the unpacked folder once it is open.
+def free_space(path):
+    """How many bytes are free where `path` is going to be. 0 if unknowable."""
+    candidate = os.path.abspath(path)
+    while candidate and not os.path.exists(candidate):
+        parent = os.path.dirname(candidate)
+        if parent == candidate:
+            break
+        candidate = parent
+    try:
+        return shutil.disk_usage(candidate).free
+    except OSError:
+        return 0
 
+
+def no_room(needed, path):
+    """The sentence to say when `needed` bytes will not fit, or "" if they will.
+
+    A little headroom is asked for on top, because a disk with nothing at all
+    left on it is a computer that misbehaves in ways nobody can explain.
+    """
+    free = free_space(path)
+    if free <= 0 or needed <= 0:
+        return ""
+    if needed + (64 * 1000 * 1000) <= free:
+        return ""
+    return SAY["no_space"] % (human_size(needed), human_size(free))
+
+
+def stopped(cancel):
+    """True when the person has pressed Cancel. `cancel` may simply be None."""
+    return cancel is not None and cancel.is_set()
+
+
+def install(verdict, progress=None, update_of=None, cancel=None):
+    """Land one sorted file on this computer, and never die without saying so.
+
+    ⚠️ NOTHING BELOW THIS LINE IS ALLOWED TO REACH THE PERSON AS A DEAD WINDOW.
+    Before 2026-09-13 an OSError anywhere inside — a full disk, a folder that
+    turned read-only, a file that vanished mid-copy — killed the worker thread,
+    and the window sat on "Installing" until it was closed. Every ending now
+    comes back as a Result with a sentence in it.
+    """
+    progress = progress or Progress()
+    try:
+        return _install_now(verdict, progress, update_of, cancel)
+    except Exception as exc:               # noqa: BLE001 — that is the point
+        progress.log("%s: %s" % (type(exc).__name__, exc))
+        progress.failed(verdict.name, SAY["went_wrong"])
+        return Result(False, SAY["went_wrong"], detail=str(exc))
+
+
+def _install_now(verdict, progress, update_of=None, cancel=None):
     if verdict.route == ROUTE_REFUSE:
         progress.fail(verdict.message)
         return Result(False, verdict.message)
@@ -1353,17 +1444,45 @@ def install(verdict, progress=None, update_of=None):
     if verdict.route == ROUTE_WINDOWS:
         return open_windows_setup(verdict, progress)
 
+    # --- 0. is there room? -----------------------------------------------
+    # Twice the size of the download, because a compressed file is roughly half
+    # of what comes out of it and both copies exist at once while it is opened.
+    try:
+        guess = os.path.getsize(verdict.path) * 2
+    except OSError:
+        guess = 0
+    tight = no_room(guess, versions_root())
+    if tight:
+        progress.failed(verdict.name, tight)
+        return Result(False, tight)
+
     total = 6
     work = tempfile.mkdtemp(prefix="aquarius-installer-")
     try:
+        def give_up():
+            progress.cancelled()
+            return Result(False, SAY["cancelled"], outcome="cancelled")
+
         # --- 1. open it ------------------------------------------------------
         progress.step(1, total, "Opening %s" % verdict.name)
         payload = os.path.join(work, "payload")
-        if not unpack(verdict.path, verdict.kind, payload, progress):
+        if stopped(cancel):
+            return give_up()
+        if not unpack(verdict.path, verdict.kind, payload, progress, cancel):
+            if stopped(cancel):
+                return give_up()
             why = "%s could not open that file." % OS_NAME
             progress.failed(verdict.name, why)
             return Result(False, why)
         progress.percent(20)
+
+        # Now the real size is known, and it is the one that counts.
+        tight = no_room(directory_size(payload), versions_root())
+        if tight:
+            progress.failed(verdict.name, tight)
+            return Result(False, tight)
+        if stopped(cancel):
+            return give_up()
 
         # --- 2. does it want the operating system? ---------------------------
         progress.step(2, total, "Checking what it would change")
@@ -1376,7 +1495,9 @@ def install(verdict, progress=None, update_of=None):
 
         # --- 3. does it run here? --------------------------------------------
         progress.step(3, total, "Checking it runs on this computer")
-        missing = missing_libraries(payload, progress)
+        missing = missing_libraries(payload, progress, cancel=cancel)
+        if stopped(cancel):
+            return give_up()
         if missing:
             for library, where in missing[:8]:
                 progress.log("%s needs %s, which is not here." % (where, library))
@@ -1397,6 +1518,8 @@ def install(verdict, progress=None, update_of=None):
         version = verdict.version or values.get("X-AppImage-Version") or "1"
         version = safe_name(version, "1")
         progress.percent(60)
+        if stopped(cancel):
+            return give_up()
 
         # --- 5. move it into place, and only then move the link --------------
         progress.step(5, total, "Putting it into your apps")
@@ -1407,6 +1530,13 @@ def install(verdict, progress=None, update_of=None):
         shutil.rmtree(target, ignore_errors=True)
         normalise_permissions(payload)
         shutil.move(payload, partial)
+        # ⚠️ CANCEL HAS ONE LAST CHANCE HERE, AND IT MUST TIDY UP AFTER ITSELF.
+        # The half-copied folder is sitting next to the real one under a
+        # .partial name; leaving it behind would fill the disk a little more
+        # every time somebody changes their mind.
+        if stopped(cancel):
+            shutil.rmtree(partial, ignore_errors=True)
+            return give_up()
         os.rename(partial, target)
 
         # ⚠️ THE LINK MOVES LAST, AND IT IS THE ONLY MOMENT ANYTHING VISIBLE
@@ -1478,7 +1608,8 @@ def install(verdict, progress=None, update_of=None):
         progress.percent(100)
         progress.ok(short)
         progress.done()
-        return Result(True, "%s is installed." % name, record=record)
+        return Result(True, "%s is installed." % name, record=record,
+                      entry_path=entry_out)
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
@@ -1629,6 +1760,15 @@ def remove(app_id, with_data=False, progress=None):
     projects, exports, documents — are never in scope, tick box or no tick box.
     """
     progress = progress or Progress()
+    try:
+        return _remove_now(app_id, with_data, progress)
+    except Exception as exc:               # noqa: BLE001 — nothing may hang
+        progress.log("%s: %s" % (type(exc).__name__, exc))
+        progress.fail(SAY["went_wrong"])
+        return Result(False, SAY["went_wrong"], detail=str(exc))
+
+
+def _remove_now(app_id, with_data, progress):
     if refuse_root():
         progress.fail(ROOT_REFUSAL)
         return Result(False, ROOT_REFUSAL)
@@ -1677,6 +1817,80 @@ def remove(app_id, with_data=False, progress=None):
                   (record.name or app_id, human_size(freed)), record=record)
 
 
+# -----------------------------------------------------------------------------
+# The same tick box, for an app that came from Flathub
+# -----------------------------------------------------------------------------
+# ⚠️ "ALSO DELETE ITS SETTINGS AND DATA" WAS SHOWN AND IGNORED FOR THESE UNTIL
+#    2026-09-13, which is worse than not offering it: the person ticked a box,
+#    watched the app go, and the settings quietly stayed. An app from Flathub
+#    keeps everything it remembers in ONE folder named after it, so this is
+#    exact rather than a hunt. The things a person MADE with the app are not in
+#    that folder and are never in scope.
+def flatpak_data_dir(app_id):
+    """The one folder a Flathub app keeps its own settings in, or "" if unsafe."""
+    name = (app_id or "").strip()
+    if not name or "/" in name or os.sep in name or name in (".", "..") \
+            or name.startswith("."):
+        return ""
+    return os.path.join(home(), ".var", "app", name)
+
+
+def flatpak_removal_plan(app_id):
+    """What Remove would free for a Flathub app: nothing of ours, and its data.
+
+    The app itself belongs to the whole computer and its size is the app
+    helper's business, so only the part this tick box governs is measured here.
+    """
+    folder = flatpak_data_dir(app_id)
+    data = []
+    if folder and os.path.isdir(folder):
+        data.append((folder, directory_size(folder)))
+    return {"record": None, "app_bytes": 0, "data": data,
+            "data_bytes": sum(size for _folder, size in data)}
+
+
+def remove_flatpak_data(app_id):
+    """Delete that one folder. Gives back how many bytes it freed."""
+    folder = flatpak_data_dir(app_id)
+    if not folder or not os.path.isdir(folder):
+        return 0
+    freed = directory_size(folder)
+    shutil.rmtree(folder, ignore_errors=True)
+    return freed
+
+
+def remove_managed_app(app_id, progress=None):
+    """Take away an app the OS's own home-folder installer put here.
+
+    ⚠️ THE WINDOW AND THE TERMINAL USED TO DISAGREE ABOUT THIS (Aquarius
+    Editor): `aq apps remove` took it away and the window offered no button at
+    all. It lives in the home folder and the OS simply offers it again, so it IS
+    removable, and both surfaces now ask this one function.
+    """
+    progress = progress or Progress()
+    if not os.access(APPIMAGE_INSTALLER, os.X_OK):
+        why = "%s cannot find the part that removes that app." % OS_NAME
+        progress.fail(why)
+        return Result(False, why)
+    try:
+        done = subprocess.run([APPIMAGE_INSTALLER, "remove", app_id],
+                              capture_output=True, text=True, errors="replace",
+                              timeout=300)
+    except (OSError, subprocess.SubprocessError) as exc:
+        progress.log(str(exc))
+        progress.fail(SAY["went_wrong"])
+        return Result(False, SAY["went_wrong"], detail=str(exc))
+    for line in (done.stdout + done.stderr).splitlines():
+        progress.log(line)
+    if done.returncode != 0:
+        why = "%s could not be removed." % app_id
+        progress.fail(why)
+        return Result(False, why)
+    progress.ok(app_id)
+    progress.done()
+    return Result(True, "%s has been removed." % app_id)
+
+
 def remove_icons(name):
     root = icon_root()
     if not os.path.isdir(root):
@@ -1708,6 +1922,9 @@ class Row:
         self.note = kw.get("note", "")
         self.update_to = kw.get("update_to", "")
         self.record = kw.get("record")
+        # True for an app the OS's own home-folder installer put here (Aquarius
+        # Editor). Removable, but not by this file's own remove().
+        self.managed = kw.get("managed", False)
 
     def __repr__(self):
         return "<Row %s %s %s>" % (self.route, self.id, self.version)
@@ -1780,9 +1997,13 @@ def appimage_installer_rows():
             current[key] = value.strip()
         if key == "path" or (key == "offered" and current.get("installed")):
             if current.get("installed"):
+                # ⚠️ REMOVABLE (decided 2026-09-13). It is a home-folder app
+                # the OS offers again, not part of the image, and `aq apps
+                # remove` has always taken it away — a window with no button was
+                # the two surfaces disagreeing, not a safety rule.
                 rows.append(Row(current["id"], current.get("name", current["id"]),
                                 current["installed"], ROUTE_APPIMAGE,
-                                removable=False,
+                                removable=True, managed=True,
                                 note=UPDATES_WITH_OS.get(current["id"],
                                                          "updates with %s" % OS_NAME)))
                 current = {}
@@ -1911,8 +2132,14 @@ def flathub_search(term):
     return results
 
 
-def search(term):
-    """The three groups, in the order the window shows them."""
+def search(term, flathub=True):
+    """The three groups, in the order the window shows them.
+
+    ⚠️ `flathub=False` IS WHAT KEEPS THE SEARCH BAR TYPEABLE. Asking Flathub is
+    a trip to another program that can take seconds; the window asks for the two
+    instant groups on every keystroke and asks for the third on a timer, in a
+    thread of its own.
+    """
     lowered = term.strip().lower()
     here = [row for row in installed_rows()
             if not lowered or lowered in (row.name or "").lower()
@@ -1924,7 +2151,7 @@ def search(term):
     known = {row.id for row in here}
     suggested = [entry for entry in suggested if entry["id"] not in known]
     on_flathub = []
-    if lowered:
+    if lowered and flathub:
         seen = known | {entry["id"] for entry in suggested}
         on_flathub = [hit for hit in flathub_search(lowered)
                       if hit["id"] not in seen]
