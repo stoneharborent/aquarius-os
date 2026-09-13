@@ -1011,15 +1011,6 @@ def library_report(root, progress=None, limit=60, cancel=None):
     return report
 
 
-def missing_libraries(root, progress=None, limit=60, cancel=None):
-    """The libraries the app ITSELF needs and this computer does not have.
-
-    Kept as its own name because that is the question the install path asks.
-    """
-    report = library_report(root, progress, limit, cancel)
-    return sorted({library: where for library, where in report.main_missing}.items())
-
-
 # =============================================================================
 # THE MENU ENTRY — our Name, a real Icon, the window class, and no stray Path
 # =============================================================================
