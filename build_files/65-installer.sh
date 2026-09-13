@@ -595,6 +595,22 @@ else
     bad "Windows setup tests FAILED against the installed files"
 fi
 
+# The tests above run the real programs on this image, and any of them that so
+# much as lists Flatpak's apps makes Flatpak set itself up — which creates
+# /var/lib/flatpak/repo, state the finished image must never carry (see the same
+# block at the end of 64-creator-apps.sh, and the refusal in 90-cleanup.sh).
+# Emptied, not deleted: the empty folder belongs to the flatpak package.
+say "Putting /var back as we found it"
+if [ -d /var/lib/flatpak ]; then
+    find /var/lib/flatpak -mindepth 1 -maxdepth 1 -printf '  %f\n' 2> /dev/null || true
+    find /var/lib/flatpak -mindepth 1 -delete 2> /dev/null || true
+fi
+if [ -z "$(find /var/lib/flatpak -mindepth 1 2> /dev/null | head -1 || true)" ]; then
+    ok "no Flatpak state left in /var by the installer tests"
+else
+    bad "Flatpak state is still in /var after the installer tests"
+fi
+
 # ==============================================================================
 # 10. Write down how this image turned out
 # ==============================================================================

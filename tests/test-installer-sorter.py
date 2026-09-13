@@ -997,7 +997,12 @@ def test_search_can_skip_the_slow_group(core, work):
     def never(_term):
         raise AssertionError("Flathub was asked on the drawing thread")
 
-    with FakeHome():
+    # ⚠️ A STAND-IN flatpak, NOT THE REAL ONE. The "here" group asks
+    # `flatpak list`, and the real command answers that by setting itself up —
+    # which, inside an image build, means creating /var/lib/flatpak/repo, state
+    # the finished image must never ship (90-cleanup.sh refuses it, rightly).
+    # Build 34767334131 attempt 2 failed on exactly that, 2026-09-13.
+    with FakeHome(), StandIn("flatpak", "#!/bin/sh\nexit 0\n"):
         with Swapped(core, "flathub_search", never):
             found = core.search("obs", flathub=False)
         check(found["flathub"] == [],
