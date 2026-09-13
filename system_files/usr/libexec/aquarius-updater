@@ -122,132 +122,290 @@ def _run(cmd, timeout=120):
 
 
 # -----------------------------------------------------------------------------
-# Is there an update? Ask bootc, and turn its answer into one of four states.
+# Is there an update? Two ordinary questions, no password, no administrator.
 # -----------------------------------------------------------------------------
+# ⚠️ 2026-09-13. This used to run `bootc upgrade --check`. On this image that
+# command refuses to run unless you are the administrator, and the refusal read
+# to us like "the internet is down" — so the check told an online machine it was
+# offline. Checking must never need a password. So the check is now two reads
+# that any ordinary person's account is allowed to do:
+#
+#   1. WHAT YOU HAVE.  Ask the system what it booted (which image it came from,
+#      and the exact fingerprint — the "digest" — of that image), and whether a
+#      newer one is already downloaded and waiting for a restart.
+#   2. WHAT IS PUBLISHED.  Ask the place the image comes from for the
+#      fingerprint of the newest one, and its version label.
+#
+# Two fingerprints the same → nothing new. Different → there is an update.
+# Only DOING the update needs the password, and that has not changed.
+#
 # States, so the window and the terminal agree on the words:
-#   up-to-date   there is nothing newer
-#   available    there is a newer image (version filled in when bootc says it)
-#   offline      the registry could not be reached — said plainly, not as a bug
-#   unknown      bootc ran but its answer could not be read (a version change in
-#                bootc's own wording, most likely) — treated as "try updating,
-#                it is safe" rather than pretending to know
-def check_update():
-    result = {"state": "unknown", "version": "", "log": ""}
+#   up-to-date        there is nothing newer
+#   available         there is a newer image (version filled in when we have it)
+#   restart-required  a newer image is already downloaded; restarting finishes it
+#   offline           the update server could not be reached — said plainly
+#   unknown           the check could not be read. We say so honestly. An
+#                     unreadable check is NEVER reported as "up to date".
+UP_TO_DATE = "up-to-date"
+AVAILABLE = "available"
+RESTART_REQUIRED = "restart-required"
+OFFLINE = "offline"
+UNKNOWN = "unknown"
 
-    code, out, err = _run([BOOTC, "upgrade", "--check"], timeout=90)
-    combined = (out or "") + (err or "")
-    result["log"] = combined.strip()
+RPM_OSTREE = "/usr/bin/rpm-ostree"
+SKOPEO = "/usr/bin/skopeo"
 
-    text = combined.lower()
-
-    # A network problem is the common, honest case on a laptop that is offline.
-    # bootc exits non-zero and says so; do not dress it up as a fault.
-    offline_markers = (
-        "no such host", "could not resolve", "connection refused",
-        "network is unreachable", "temporary failure in name resolution",
-        "timeout", "timed out", "dial tcp", "i/o error", "failed to fetch",
-    )
-    if code != 0 and any(marker in text for marker in offline_markers):
-        result["state"] = "offline"
-        return result
-
-    # bootc's own wording. "No changes" / "no update" means up to date;
-    # "Update available" means there is one. Both have been stable, but we read
-    # for the phrases rather than the exit code so a change in one does not lie.
-    if "no changes" in text or "no update available" in text or "already" in text and "latest" in text:
-        result["state"] = "up-to-date"
-        return result
-
-    if "update available" in text or "new update" in text:
-        result["state"] = "available"
-        result["version"] = _extract_version(combined)
-        return result
-
-    # bootc ran cleanly but said neither. Fall back to comparing what is booted
-    # against what is staged/available in `bootc status --json`.
-    status = _status_versions()
-    if status is not None:
-        booted, available = status
-        if available and booted and available != booted:
-            result["state"] = "available"
-            result["version"] = available
-            return result
-        if booted:
-            result["state"] = "up-to-date"
-            return result
-
-    if code != 0:
-        # Non-zero, no recognised network error, no status to fall back on: most
-        # likely there is no real deployment to check (a build container, or a
-        # machine installed some other way). Say we could not check.
-        result["state"] = "offline"
-    return result
+# Only these phrases mean "the network could not be reached". A permission
+# problem or an unreadable answer must never be dressed up as an internet fault.
+OFFLINE_MARKERS = (
+    "no such host",
+    "could not resolve",
+    "name resolution",
+    "connection refused",
+    "connection reset",
+    "network is unreachable",
+    "no route to host",
+    "timeout",
+    "timed out",
+    "dial tcp",
+    "i/o timeout",
+    "tls handshake",
+    "server misbehaving",
+)
 
 
-def _extract_version(text):
-    """Best-effort: pull a version-looking token out of bootc's message."""
-    import re
-
-    match = re.search(r"[Vv]ersion[:\s]+([^\s,]+)", text)
-    if match:
-        return match.group(1)
-    return ""
+def _looks_offline(text):
+    low = (text or "").lower()
+    return any(marker in low for marker in OFFLINE_MARKERS)
 
 
-def _status_versions():
-    """(booted_version, available_version) from `bootc status --json`, or None."""
-    code, out, _err = _run([BOOTC, "status", "--json"], timeout=30)
+# -- 1. what you have ---------------------------------------------------------
+def parse_local(code, out):
+    """Read `rpm-ostree status --json` (which needs no password) into the few
+    facts we care about. Returns a dict, or None if it could not be read.
+
+    {"ref": where updates come from, without the transport prefix,
+     "digest": the fingerprint of the image you booted,
+     "version": its version label,
+     "staged": True if a newer image is already downloaded and waiting,
+     "staged_version": that waiting version's label}
+    """
     if code != 0 or not out:
         return None
     try:
         data = json.loads(out)
     except ValueError:
         return None
-    status = data.get("status", {}) if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        return None
+    deployments = data.get("deployments")
+    if not isinstance(deployments, list):
+        return None
 
-    def version_of(node):
-        if not isinstance(node, dict):
-            return ""
-        image = node.get("image", {})
-        version = ""
-        if isinstance(image, dict):
-            version = image.get("version") or ""
-            if not version:
-                inner = image.get("image", {})
-                if isinstance(inner, dict):
-                    version = inner.get("version") or ""
-        return version
+    booted = None
+    staged = None
+    for entry in deployments:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("booted") and booted is None:
+            booted = entry
+        if entry.get("staged") and staged is None:
+            staged = entry
+    if booted is None:
+        return None
 
-    booted = version_of(status.get("booted"))
-    # "staged" is a downloaded, not-yet-booted update; that is our "available".
-    available = version_of(status.get("staged"))
-    return booted, available
+    ref = _plain_ref(booted.get("container-image-reference") or "")
+    if not ref:
+        return None
+
+    return {
+        "ref": ref,
+        "digest": _deployment_digest(booted),
+        "version": booted.get("version") or "",
+        "staged": staged is not None,
+        "staged_version": (staged or {}).get("version") or "",
+    }
+
+
+def _plain_ref(reference):
+    """'ostree-unverified-registry:ghcr.io/x/y:z' → 'ghcr.io/x/y:z'.
+
+    The part before the colon is the system's note to itself about how the
+    image is fetched; the name of the image is what we want.
+    """
+    reference = (reference or "").strip()
+    if not reference:
+        return ""
+    for prefix in (
+        "ostree-unverified-registry:",
+        "ostree-unverified-image:docker://",
+        "ostree-image-signed:docker://",
+        "ostree-remote-image:",
+        "ostree-unverified-image:",
+        "registry:",
+        "docker://",
+    ):
+        if reference.startswith(prefix):
+            reference = reference[len(prefix):]
+            break
+    # 'ostree-remote-image:name:docker://ref' leaves a trailing transport.
+    if "docker://" in reference:
+        reference = reference.split("docker://", 1)[1]
+    return reference.strip()
+
+
+def _deployment_digest(entry):
+    """The image fingerprint, wherever this version of the system records it."""
+    for key in ("container-image-reference-digest", "base-container-image-digest"):
+        value = entry.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+# -- 2. what is published -----------------------------------------------------
+def parse_published(code, out, err):
+    """Read the answer from the image store. Returns
+    ("ok", {"digest": ..., "version": ...}) or ("offline", {}) or ("unknown", {}).
+    """
+    if code != 0:
+        if _looks_offline((out or "") + (err or "")):
+            return OFFLINE, {}
+        return UNKNOWN, {}
+    if not out:
+        return UNKNOWN, {}
+    try:
+        data = json.loads(out)
+    except ValueError:
+        return UNKNOWN, {}
+    if not isinstance(data, dict):
+        return UNKNOWN, {}
+    digest = data.get("Digest") or ""
+    if not isinstance(digest, str) or not digest.strip():
+        return UNKNOWN, {}
+    labels = data.get("Labels")
+    version = ""
+    if isinstance(labels, dict):
+        version = labels.get("org.opencontainers.image.version") or ""
+        if not isinstance(version, str):
+            version = ""
+    return "ok", {"digest": digest.strip(), "version": version.strip()}
+
+
+# -- the decision, in one place, with no system anywhere near it ---------------
+def decide(local, published_code=None, published_out="", published_err=""):
+    """Turn the two answers into one state. Pure: give it the two answers and it
+    gives the same result every time, which is how the tests can check it."""
+    result = {"state": UNKNOWN, "version": "", "current": "", "log": ""}
+
+    if local is None:
+        # We could not even read what this machine is running. Say so.
+        return result
+
+    result["current"] = local.get("version") or ""
+
+    # Already downloaded and waiting: restarting is all that is left to do, and
+    # that answer needs no network at all.
+    if local.get("staged"):
+        result["state"] = RESTART_REQUIRED
+        result["version"] = local.get("staged_version") or ""
+        return result
+
+    if published_code is None:
+        return result
+
+    state, facts = parse_published(published_code, published_out, published_err)
+    if state != "ok":
+        result["state"] = state
+        return result
+
+    result["version"] = facts["version"]
+    ours = local.get("digest") or ""
+    if not ours:
+        # No fingerprint to compare against — do not guess, and do not claim
+        # the machine is up to date.
+        return result
+    if ours == facts["digest"]:
+        result["state"] = UP_TO_DATE
+        result["version"] = ""
+        return result
+    result["state"] = AVAILABLE
+    return result
+
+
+# -- the real thing: run the two commands, then decide ------------------------
+def check_update():
+    log = []
+
+    code, out, err = _run([RPM_OSTREE, "status", "--json"], timeout=30)
+    log.append("$ rpm-ostree status --json  (exit %d)" % code)
+    if err and err.strip():
+        log.append(err.strip())
+    local = parse_local(code, out)
+    if local is None:
+        result = decide(None)
+        result["log"] = "\n".join(log)
+        return result
+
+    log.append("booted image: %s" % local["ref"])
+    log.append("booted digest: %s" % (local["digest"] or "(not recorded)"))
+
+    if local["staged"]:
+        result = decide(local)
+        log.append("a newer image is already downloaded and waiting for a restart")
+        result["log"] = "\n".join(log)
+        return result
+
+    pcode, pout, perr = _run(
+        [SKOPEO, "inspect", "--no-tags", "docker://%s" % local["ref"]], timeout=90
+    )
+    log.append("$ skopeo inspect docker://%s  (exit %d)" % (local["ref"], pcode))
+    if perr and perr.strip():
+        log.append(perr.strip())
+    state, facts = parse_published(pcode, pout, perr)
+    if state == "ok":
+        log.append("published digest: %s" % facts["digest"])
+
+    result = decide(local, pcode, pout, perr)
+    result["log"] = "\n".join(log)
+    return result
 
 
 # -----------------------------------------------------------------------------
 # HEADLESS: check  (what `aq update check` runs)
 # -----------------------------------------------------------------------------
 def headless_check():
+    # Checking asks for no password. Only 'aq update apply' does.
     print("Current version: %s" % current_version())
     result = check_update()
     state = result["state"]
-    if state == "up-to-date":
+    if state == UP_TO_DATE:
         print("You're up to date.")
         return 0
-    if state == "available":
+    if state == AVAILABLE:
         if result["version"]:
-            print("An update is available (version %s)." % result["version"])
+            print("An update is available.")
+            print("  You have:      %s" % (result["current"] or current_version()))
+            print("  On offer:      %s" % result["version"])
         else:
             print("An update is available.")
         print("Install it with:  aq update apply")
         return 0
-    if state == "offline":
+    if state == RESTART_REQUIRED:
+        if result["version"]:
+            print("An update is downloaded and ready (version %s)." % result["version"])
+        else:
+            print("An update is downloaded and ready.")
+        print("Restart to finish it:  sudo systemctl reboot")
+        return 0
+    if state == OFFLINE:
         print("Could not reach the update server. Check your internet and try again.")
         if result["log"]:
             print(result["log"])
         return 1
-    print("Could not tell whether an update is available. It is always safe to")
-    print("run 'aq update apply' — the old version stays on the disk.")
+    print("Couldn't confirm the update status. Nothing is wrong with your")
+    print("computer, and it is always safe to run 'aq update apply' — the old")
+    print("version stays on the disk. You can also check again later.")
     if result["log"]:
         print(result["log"])
     return 1
@@ -293,12 +451,17 @@ def dry_run():
     print("")
     print("What the window does when it runs for real:")
     print("  * shows the current version above")
-    print("  * runs 'bootc upgrade --check' and says one of:")
+    print("  * checks WITHOUT asking for a password: it reads which image this")
+    print("    machine booted, then asks the image store for the newest one, and")
+    print("    compares their fingerprints. Says one of:")
     print("      You're up to date")
-    print("      An update is available (version X)")
+    print("      An update is available (you have X, on offer Y)")
+    print("      An update is downloaded and ready — restart to finish")
     print("      Could not reach the update server (offline, said plainly)")
+    print("      Couldn't confirm the update status (honest, never 'up to date')")
     print("  * if an update is available, the Update button runs")
-    print("    'pkexec bootc upgrade' with live output in the window")
+    print("    'pkexec bootc upgrade' with live output in the window — that is")
+    print("    the one and only password prompt")
     print("  * when it finishes: 'Update ready — restart to finish', with")
     print("    Restart now (systemctl reboot) or Later")
     return 0
@@ -506,7 +669,7 @@ def gui():
                     self.result_log.append(line)
 
             state = result["state"]
-            if state == "up-to-date":
+            if state == UP_TO_DATE:
                 aquarius_ui.set_status_glyph(self.result_glyph, ok=True)
                 self.result_title.set_label("You're up to date")
                 self.result_blurb.set_label(
@@ -515,24 +678,39 @@ def gui():
                 )
                 self.result_version.set_visible(False)
                 self.update_button.set_visible(False)
-            elif state == "available":
+            elif state == AVAILABLE:
                 aquarius_ui.set_status_glyph(self.result_glyph, ok=True)
                 self.result_title.set_label("An update is available")
+                self.result_blurb.set_label(
+                    "A newer version of AquariusOS is ready to install."
+                )
                 if result.get("version"):
-                    self.result_blurb.set_label(
-                        "A newer version of AquariusOS is ready to install."
-                    )
                     self.result_version.set_label("New version: %s" % result["version"])
                     self.result_version.set_visible(True)
                 else:
-                    self.result_blurb.set_label(
-                        "A newer version of AquariusOS is ready to install."
-                    )
                     self.result_version.set_visible(False)
                 self.update_button.set_visible(True)
                 self.update_button.grab_focus()
                 self.set_default_widget(self.update_button)
-            elif state == "offline":
+            elif state == RESTART_REQUIRED:
+                aquarius_ui.set_status_glyph(self.result_glyph, ok=True)
+                self.result_title.set_label("An update is ready")
+                self.result_blurb.set_label(
+                    "A newer version of AquariusOS is already downloaded. Restart "
+                    "the computer to finish it."
+                )
+                if result.get("version"):
+                    self.result_version.set_label("New version: %s" % result["version"])
+                    self.result_version.set_visible(True)
+                else:
+                    self.result_version.set_visible(False)
+                self.update_button.set_visible(False)
+                # Nothing left to install, so send the person straight to the
+                # page that offers the restart.
+                self.done_title.set_label("Update ready")
+                self.stack.set_visible_child_name("done")
+                return GLib.SOURCE_REMOVE
+            elif state == OFFLINE:
                 aquarius_ui.set_status_glyph(self.result_glyph, ok=False)
                 self.result_title.set_label("Couldn't check")
                 self.result_blurb.set_label(
@@ -544,9 +722,9 @@ def gui():
                 self.result_log.set_expanded(True)
             else:
                 aquarius_ui.set_status_glyph(self.result_glyph, ok=False)
-                self.result_title.set_label("Couldn't tell")
+                self.result_title.set_label("Couldn't confirm the update status")
                 self.result_blurb.set_label(
-                    "AquariusOS could not tell whether an update is available. "
+                    "AquariusOS could not confirm whether an update is available. "
                     "It is always safe to update — the previous version stays on "
                     "the disk — so you can try, or check again later."
                 )
