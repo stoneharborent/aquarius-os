@@ -766,18 +766,26 @@ def wants_the_os(root):
 # what each program inside the package needs and whether it can find it. This is
 # what catches a package built for another Linux that expects libraries this one
 # does not have — before it is installed, rather than as a dead icon afterwards.
+def is_elf(path):
+    """True when this file is a real program or library, not a script or a picture."""
+    try:
+        if os.path.islink(path) or not os.path.isfile(path):
+            return False
+        with open(path, "rb") as handle:
+            return handle.read(4) == b"\x7fELF"
+    except OSError:
+        return False
+
+
 def elf_files(root, limit=400):
     """Every ELF program and library in the payload, biggest first."""
     found = []
     for base, _dirs, files in os.walk(root):
         for name in files:
             path = os.path.join(base, name)
-            if os.path.islink(path) or not os.path.isfile(path):
+            if not is_elf(path):
                 continue
             try:
-                with open(path, "rb") as handle:
-                    if handle.read(4) != b"\x7fELF":
-                        continue
                 found.append((os.path.getsize(path), path))
             except OSError:
                 continue
@@ -787,32 +795,220 @@ def elf_files(root, limit=400):
     return [path for _size, path in found]
 
 
-def missing_libraries(root, progress=None, limit=60, cancel=None):
-    """The libraries this payload needs and this computer does not have.
+# ⚠️ THE FOLDERS AN APP CARRIES ITS OWN LIBRARIES IN. A self-contained download
+#    brings its own copies of everything it needs and points the linker at them
+#    when it starts (an AppImage's AppRun does exactly this). Asking the linker
+#    about those files WITHOUT doing the same thing asks the wrong question: it
+#    answers against this computer's copies, and a mismatch there is a clash
+#    with the wrong library rather than a part that is missing. That mistake
+#    refused a perfectly good app on the bench on 13 September 2026.
+PAYLOAD_LIB_FOLDERS = [
+    "usr/lib",
+    "usr/lib64",
+    "usr/local/lib",
+    "lib",
+    "lib64",
+]
+LIB_PATH_LIMIT = 24
 
-    An empty list means every program inside it resolves — which is what Route A
-    is allowed to install. Anything else is the honest stop.
+
+def payload_library_dirs(root, extra=(), limit=LIB_PATH_LIMIT):
+    """Every folder inside the payload that holds a library, best-known first."""
+    holding = []
+    for base, _dirs, files in os.walk(root):
+        for name in files:
+            if name.endswith(".so") or ".so." in name:
+                holding.append(base)
+                break
+
+    def rank(path):
+        relative = os.path.relpath(path, root).replace(os.sep, "/")
+        for index, known in enumerate(PAYLOAD_LIB_FOLDERS):
+            if relative == known:
+                return (0, index, len(path))
+        return (1, len(relative.split("/")), len(path))
+
+    holding.sort(key=rank)
+    ordered = []
+    for path in holding + [d for d in extra if d]:
+        full = os.path.abspath(path)
+        if os.path.isdir(full) and full not in ordered:
+            ordered.append(full)
+    return ordered[:limit]
+
+
+def linker_env(root, extra=()):
+    """The environment to ask ldd in: the app's own libraries first, ours after."""
+    parts = payload_library_dirs(root, extra)
+    was = os.environ.get("LD_LIBRARY_PATH", "")
+    if was:
+        parts = parts + [piece for piece in was.split(os.pathsep) if piece]
+    env = dict(os.environ, LC_ALL="C")
+    if parts:
+        env["LD_LIBRARY_PATH"] = os.pathsep.join(parts)
+    return env
+
+
+# `libfoo.so.6 => not found` — the one line that really means a missing part.
+NOT_FOUND = re.compile(r"^(?P<name>\S+)\s*=>\s*not found\s*$")
+# `...: /lib64/libQt6Quick.so.6: version 'Qt_6_PRIVATE_API' not found (...)`
+# — a clash with a library that IS here, which is a different thing entirely.
+VERSION_CLASH = re.compile(r"(?P<name>[^\s:]+): version '(?P<version>[^']+)' "
+                           r"not found")
+
+
+def read_ldd(text):
+    """What one run of ldd said: libraries with nothing behind them, and clashes."""
+    missing, clashes = [], []
+    for raw in text.splitlines():
+        line = raw.strip()
+        clash = VERSION_CLASH.search(line)
+        if clash:
+            name = os.path.basename(clash.group("name"))
+            pair = (name, clash.group("version"))
+            if pair not in clashes:
+                clashes.append(pair)
+            continue
+        found = NOT_FOUND.match(line)
+        if found:
+            name = found.group("name")
+            if name not in missing:
+                missing.append(name)
+    return missing, clashes
+
+
+def main_programs(root):
+    """The program(s) this payload IS — the ones a person actually starts.
+
+    Everything else inside a download is a plug-in or a helper: useful, often
+    optional, and never a reason to refuse the whole app. These are the files
+    named by the payload's own menu entries, plus an AppImage's real program.
     """
+    found = []
+
+    def keep(path):
+        full = os.path.realpath(path)
+        if is_elf(full) and full not in found:
+            found.append(full)
+
+    for path in find_desktop_entries(root):
+        values = read_entry(path)
+        if values.get("Type", "Application") != "Application":
+            continue
+        target = inside(root, exec_program(values.get("Exec", "")))
+        if target and os.path.isfile(target):
+            keep(target)
+    for name in ("AppRun.wrapped", "AppRun"):
+        candidate = os.path.join(root, name)
+        if os.path.isfile(candidate):
+            keep(candidate)
+    return found
+
+
+class LibraryReport:
+    """What the linker said about a payload, split into must-work and nice-to-have.
+
+    `main` is the app itself: trouble there is the honest stop. `other` is its
+    plug-ins and helpers: trouble there is written into Details and the app is
+    installed anyway, because an app with one plug-in that will not load is
+    still an app that works.
+    """
+
+    def __init__(self):
+        self.main_missing = []      # [(library, file)]
+        self.main_clashes = []      # [(library, version, file)]
+        self.other_missing = []
+        self.other_clashes = []
+
+    @property
+    def blocked(self):
+        return bool(self.main_missing or self.main_clashes)
+
+    @property
+    def side_problems(self):
+        return len(self.other_missing) + len(self.other_clashes)
+
+    def refusal_lines(self):
+        """One plain line per reason the app itself cannot run here."""
+        lines = []
+        for library, where in self.main_missing:
+            lines.append("%s needs %s, which is not here." % (where, library))
+        for library, _version, where in self.main_clashes:
+            lines.append("%s needs a newer %s than this computer has."
+                         % (where, library))
+        return lines
+
+    def side_lines(self, limit=8):
+        """What did not resolve in the optional parts, in a person's words."""
+        lines = []
+        for library, where in self.other_missing:
+            lines.append("%s may not load: %s is missing." % (where, library))
+        for library, _version, where in self.other_clashes:
+            lines.append("%s may not load: %s is an older version than this "
+                         "part wants." % (where, library))
+        lines = lines[:limit]
+        if self.side_problems:
+            lines.append("%d optional part%s may not load; the app itself is "
+                         "fine." % (self.side_problems,
+                                    "" if self.side_problems == 1 else "s"))
+        return lines
+
+    def names(self):
+        """Every library named, for the Details line."""
+        seen = []
+        for library, _where in self.main_missing + self.other_missing:
+            if library not in seen:
+                seen.append(library)
+        for library, _version, _where in self.main_clashes + self.other_clashes:
+            if library not in seen:
+                seen.append(library)
+        return seen
+
+
+def library_report(root, progress=None, limit=60, cancel=None):
+    """Ask the linker whether this payload runs here — the way it will really run.
+
+    Two rules, both learned on the bench:
+      1. resolve against the app's OWN libraries first, because that is what it
+         will do when it starts;
+      2. only `=> not found` means a missing part. A `version '…' not found`
+         line means the library is here but is a different build — a clash, and
+         one that usually disappears once the app's own copy is used.
+    """
+    report = LibraryReport()
     if not shutil.which("ldd"):
         if progress:
             progress.log("ldd is missing, so nothing could be checked.")
-        return []
-    missing = {}
-    for path in elf_files(root)[:limit]:
+        return report
+
+    mains = main_programs(root)
+    others = [path for path in elf_files(root)[:limit] if path not in mains]
+    if not mains and progress:
+        progress.log("No single main program could be identified, so every "
+                     "program inside was treated as one.")
+    checked = [(path, True) for path in mains] or [(path, True) for path in others]
+    if mains:
+        checked += [(path, False) for path in others]
+
+    for path, is_main in checked:
         if stopped(cancel):
-            return []
+            return LibraryReport()
         try:
-            done = subprocess.run(["ldd", path], capture_output=True, text=True,
-                                  timeout=30, errors="replace",
-                                  env=dict(os.environ, LC_ALL="C"))
+            done = subprocess.run(
+                ["ldd", path], capture_output=True, text=True, timeout=30,
+                errors="replace",
+                env=linker_env(root, [os.path.dirname(path)]))
         except (OSError, subprocess.SubprocessError):
             continue
-        for raw in done.stdout.splitlines():
-            if "not found" not in raw:
-                continue
-            name = raw.strip().split()[0]
-            missing.setdefault(name, os.path.relpath(path, root))
-    return sorted(missing.items())
+        where = os.path.relpath(path, root)
+        missing, clashes = read_ldd(done.stdout + "\n" + done.stderr)
+        for library in missing:
+            (report.main_missing if is_main
+             else report.other_missing).append((library, where))
+        for library, version in clashes:
+            (report.main_clashes if is_main
+             else report.other_clashes).append((library, version, where))
+    return report
 
 
 # =============================================================================
@@ -1495,15 +1691,21 @@ def _install_now(verdict, progress, update_of=None, cancel=None):
 
         # --- 3. does it run here? --------------------------------------------
         progress.step(3, total, "Checking it runs on this computer")
-        missing = missing_libraries(payload, progress, cancel=cancel)
+        # ⚠️ ONLY THE APP ITSELF DECIDES THIS. A plug-in that will not load is
+        #    written into Details and the app is installed anyway — refusing a
+        #    whole working app over one optional part is what happened on the
+        #    bench on 13 September 2026.
+        report = library_report(payload, progress, cancel=cancel)
         if stopped(cancel):
             return give_up()
-        if missing:
-            for library, where in missing[:8]:
-                progress.log("%s needs %s, which is not here." % (where, library))
+        if report.blocked:
+            for line in report.refusal_lines()[:8]:
+                progress.log(line)
             progress.failed(verdict.name, SAY["missing_parts"])
             return Result(False, SAY["missing_parts"],
-                          detail=", ".join(name for name, _ in missing))
+                          detail=", ".join(report.names()))
+        for line in report.side_lines():
+            progress.log(line)
         progress.percent(50)
 
         # --- 4. what is it called, and what starts it? -----------------------
