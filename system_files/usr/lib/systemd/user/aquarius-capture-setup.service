@@ -1,0 +1,93 @@
+# =============================================================================
+# aquarius-capture-setup — make the Screenshots folder yours, once
+# =============================================================================
+# WHAT IT DOES, IN PLAIN ENGLISH
+#
+# At the start of every login it runs
+#
+#     /usr/libexec/aquarius-capture setup
+#
+# which does three small things, each only if it has not already been done:
+#
+#   1. creates ~/Screenshots
+#   2. writes XDG_SCREENSHOTS_DIR into ~/.config/user-dirs.dirs, so GNOME's own
+#      screenshot tool saves into the SAME folder as ours rather than starting a
+#      second pile in ~/Pictures/Screenshots
+#   3. pins that folder in the Files sidebar, by adding one line to the GTK 3
+#      and GTK 4 bookmarks files
+#
+# The long explanation of all three, and of the marker file that means the pin
+# is offered exactly once and never fought over, is in the program's own header
+# and in docs/restart/screenshots.md.
+#
+# -----------------------------------------------------------------------------
+# WHY IT RUNS EVERY LOGIN AND NOT "AT THE FIRST ONE"
+# -----------------------------------------------------------------------------
+# Because there is no such thing as a reliable "first login" on a system that
+# can be updated into. A machine that installed AquariusOS in August and simply
+# took an update has already had its first login; if this only ever ran then, it
+# would never run there at all and that person would have no Screenshots folder.
+#
+# Running every time is safe because the program is written to be: every one of
+# its three jobs checks whether it is already done and returns immediately if it
+# is. The second login costs a few milliseconds and changes nothing.
+#
+# -----------------------------------------------------------------------------
+# ⚠️ IT RUNS IN BOTH DESKTOPS — graphical-session.target, not labwc-session
+# -----------------------------------------------------------------------------
+# GNOME is the permanent fallback desktop and it takes screenshots too. The
+# whole point of item 2 above is that both desktops agree on one folder, so this
+# has to run in both. That is the same scope as aquarius-keys and
+# aquarius-automount, and the opposite of aquarius-rfkill, which is
+# Aquarius-Desktop-only for a reason set out in its own file.
+#
+# The link that switches it on is shipped under /usr:
+#
+#   /usr/lib/systemd/user/graphical-session.target.wants/aquarius-capture-setup.service
+#
+# so an update always restores it and no local change can silently lose it. The
+# honest cost is the usual one: `systemctl --user disable` has nothing in /etc
+# to remove and will not turn this off; `systemctl --user mask` does. The full
+# reasoning is in build_files/aq-lib.sh next to aq_unit_is_on_from_usr.
+#
+#   systemctl --user status aquarius-capture-setup   did it run?
+#   journalctl --user -u aquarius-capture-setup -b   what it said this login
+#
+# Plain-English guide: docs/restart/screenshots.md
+# =============================================================================
+
+[Unit]
+Description=Aquarius — the Screenshots folder, and its pin in Files
+Documentation=file:///usr/libexec/aquarius-capture
+
+# Nothing else waits on this and it waits on nothing. It touches only files in
+# the person's own home folder.
+PartOf=graphical-session.target
+After=graphical-session.target
+
+# The login screen's own account (gdm) gets a session too, and it has no home
+# folder worth putting a Screenshots pin in. Same line, same reason, as
+# aquarius-keys.service and aquarius-automount.service.
+ConditionUser=!@system
+
+# If the helper were ever dropped from the image this would fail at every login
+# with nothing useful to say. Better to skip quietly and let the build check be
+# the thing that shouts — build_files/71-capture.sh proves the program is there.
+ConditionPathExists=/usr/libexec/aquarius-capture
+
+[Service]
+Type=oneshot
+Slice=session.slice
+ExecStart=/usr/libexec/aquarius-capture setup
+
+# It has already done its job when it exits; systemd should remember that it ran
+# rather than treating it as dead.
+RemainAfterExit=yes
+
+# ⚠️ NO Restart=. This is a program that either did its three little jobs or
+# found them already done. There is nothing a retry could fix, and a login-path
+# service that retries forever is a login-path service that can hang a login.
+TimeoutStartSec=30
+
+[Install]
+WantedBy=graphical-session.target

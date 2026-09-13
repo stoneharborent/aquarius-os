@@ -709,6 +709,37 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     /ctx/build_files/69-homebrew.sh
 
+# 7l. Screenshots and screen recording (FEATURES 017, 2026-09-13).
+#
+#     Two buttons in the top bar — Screenshot and Record screen — each offering
+#     the whole screen, one app, or a dragged area. Everything lands in one
+#     Screenshots folder in the person's home, which is pinned in the Files
+#     sidebar. This step is the operating system's half; the buttons themselves
+#     live in the aquarius-shell repository and reach this one by running a
+#     program, never by talking to the compositor.
+#
+#     It puts four small programs on the image — `grim` (takes the picture),
+#     `slurp` (the dimmed overlay you drag on, already here for the screen-
+#     sharing portal), `wl-clipboard` (so a screenshot is on the clipboard the
+#     instant it is taken) and `wf-recorder` (films) — and then reads back our
+#     own /usr/libexec/aquarius-capture, the service that makes the folder at
+#     login, and every keyboard shortcut that points at it.
+#
+#     ⚠️ grim was ALREADY in this repository and still missing from the
+#     finished image: it lives in the labwc BUILDER stage, which is thrown
+#     away. That is the kind of thing that looks installed and is not.
+#
+#     wf-recorder rather than wl-screenrec because Fedora 44 packages
+#     wf-recorder (0.6.0) in its ordinary repositories and does not package
+#     wl-screenrec at all — so no new repository, nothing new to trust. The
+#     step's own header sets out the full reasoning.
+#
+#     Anywhere after step 5 (which delivers our own files) and before step 8,
+#     which rebuilds the boot ramdisk; nothing here touches the kernel.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache/libdnf5 \
+    /ctx/build_files/71-capture.sh
+
 # 8. The boot path: the Aquarius splash screen, the name in the boot menu, the
 #    text login banners, and then a rebuild of the boot ramdisk so that all of
 #    it is really used.

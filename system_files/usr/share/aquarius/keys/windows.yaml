@@ -42,6 +42,34 @@
 #
 # The moment you add a real rule below, the run script notices and starts the
 # remapper as normal. Nothing else has to change.
+#
+# -----------------------------------------------------------------------------
+# SCREENSHOTS AND SCREEN RECORDING IN WINDOWS MODE (added 2026-09-13)
+# -----------------------------------------------------------------------------
+# These keys all work in Windows mode, and not one of them needs a rule here:
+#
+#   Print Screen              a picture of a whole monitor
+#   Shift + Print Screen      a picture of an area you drag
+#   Win + Shift + Print       a picture of a window
+#   Win + Shift + S           a picture of an area (Windows' own shortcut)
+#   Win + Alt + R             start recording an area
+#   Win + Alt + Shift + R     stop recording
+#
+# ⚠️ WHY THERE IS NOTHING TO WRITE, AND WHY WRITING IT ANYWAY WOULD BE A
+# MISTAKE. A rule in this file TRANSLATES one key press into another. These are
+# already the real keys — they are exactly what the Aquarius Desktop listens
+# for, bound in /usr/share/aquarius/labwc/rc.xml to
+# /usr/libexec/aquarius-capture. There is nothing to turn them into.
+#
+# And the file being empty is load-bearing, not tidy: /usr/libexec/
+# aquarius-keys-run reads "no rules" as "do not start the remapper at all". Add
+# a rule here for the sake of symmetry and you switch on a program that takes
+# exclusive control of the keyboard and re-types everything through an invented
+# one — for no benefit whatsoever. build_files/71-capture.sh fails the build if
+# that ever happens.
+#
+# (In GNOME these keys are answered by GNOME's own screenshot tool, which we do
+# not replace. It saves into the same folder — see docs/restart/screenshots.md.)
 # =============================================================================
 
 # An empty list of key-position swaps.

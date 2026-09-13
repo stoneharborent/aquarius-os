@@ -1,0 +1,728 @@
+#!/usr/bin/bash
+# =============================================================================
+# aquarius-capture — take a screenshot, or record the screen
+# =============================================================================
+# PLAIN ENGLISH
+#
+# This is the one program behind every screenshot and every screen recording on
+# AquariusOS. The two buttons in the top bar run it. The keyboard shortcuts run
+# it. If you ever want to do it from a terminal, you run it yourself.
+#
+#     aquarius-capture shot screen        a picture of a whole monitor
+#     aquarius-capture shot area          a picture of a rectangle you drag
+#     aquarius-capture shot window        a picture of one app's window
+#
+#     aquarius-capture record screen      start filming a whole monitor
+#     aquarius-capture record area        start filming a rectangle you drag
+#     aquarius-capture record window      start filming one app's window
+#     aquarius-capture record stop        stop filming and keep the film
+#
+#     aquarius-capture status             is it filming? (answers in JSON)
+#     aquarius-capture folder             where do the files go?
+#     aquarius-capture setup              first-login tidying (see section 6)
+#     aquarius-capture --help             this text
+#
+# Everything lands in your Screenshots folder, named the way a Mac names them:
+#
+#     Screenshot 2026-09-13 at 14.02.11.png
+#     Screen Recording 2026-09-13 at 14.02.11.mp4
+#
+# A screenshot ALSO goes on the clipboard, so the very next thing you can do is
+# paste it into the Editor, a chat window or an email without going near the
+# file at all.
+#
+# -----------------------------------------------------------------------------
+# WHAT IT IS MADE OF — four small programs, none of them ours
+# -----------------------------------------------------------------------------
+#   grim         takes the picture. It asks the compositor (the program that
+#                draws the desktop) for the pixels. Fedora package `grim`.
+#   slurp        draws the dimmed overlay you drag on, and hands back the
+#                rectangle you chose as "X,Y WxH". Fedora package `slurp`.
+#   wf-recorder  films. It is grim's moving-picture cousin from the same
+#                people, and it hands the frames straight to ffmpeg.
+#   wl-copy      puts the picture on the clipboard. Part of `wl-clipboard`.
+#
+# All four are ordinary Fedora 44 packages. Build step 71-capture.sh installs
+# them and then reads them back out of the finished image.
+#
+# -----------------------------------------------------------------------------
+# ⚠️ WHAT "window" REALLY DOES TODAY, AND WHY IT IS NOT WHAT YOU EXPECT
+# -----------------------------------------------------------------------------
+# THIS IS THE HONEST LIMITATION OF THIS FEATURE. Read it before filing a bug.
+#
+# On a Mac, Command-Shift-4 then Space gives you a camera cursor: you point at a
+# window, it lights up, you click, and you get exactly that window with its
+# shadow. Doing that needs one thing — a list of the open windows together with
+# WHERE EACH ONE IS on the screen.
+#
+# Wayland compositors publish their window list through a protocol called
+# wlr-foreign-toplevel-management. That is the list our own app switcher draws
+# from, and it is genuinely complete: every window, its app, its title, whether
+# it is minimised. What it does NOT carry, anywhere, in any version, is a
+# window's POSITION OR SIZE. That was deliberate on the protocol's part — the
+# authors did not want ordinary programs able to map out your screen.
+#
+# Sway users get window-accurate screenshots because sway has a second,
+# sway-only command channel (`swaymsg -t get_tree`) that does publish geometry.
+# **labwc, which is what draws the Aquarius Desktop, has no such channel.** We
+# checked `wlrctl` (Fedora 44 has it) and it exposes focus/close/minimise and no
+# geometry at all, because it is reading the same protocol.
+#
+# So there is nothing on this machine that can tell us where a window is, and
+# rather than pretend, "window" mode asks you to DRAG A BOX ROUND THE WINDOW —
+# the same overlay as "area", with a different message. It is one extra second
+# of your time and it is truthful.
+#
+# If you would rather it picked the whole monitor the window is on (one click,
+# no dragging), set this in your environment and it will:
+#
+#     AQ_CAPTURE_WINDOW_MODE=output
+#
+# When labwc grows a geometry source — it is discussed upstream — this is the
+# one function in this file that changes: `aq_capture_geometry`.
+#
+# -----------------------------------------------------------------------------
+# HOW RECORDING REMEMBERS THAT IT IS RECORDING
+# -----------------------------------------------------------------------------
+# `record` starts wf-recorder and walks away — the recorder keeps running after
+# this program has exited, which is the only way a bar button can start one.
+# What it leaves behind is a single small file:
+#
+#     $XDG_RUNTIME_DIR/aquarius-capture/recording.json
+#
+#     {"pid":4312,"started":1789234931,"file":"/var/home/royce/Screenshots/...","mode":"area"}
+#
+# The top bar reads that (through `status`) once a second to draw the red dot
+# and the elapsed time. `record stop` reads it to know what to stop.
+#
+# ⚠️ IT LIVES IN $XDG_RUNTIME_DIR ON PURPOSE. That folder is wiped when you log
+# out, so a recording that died with the session cannot leave a file behind
+# claiming forever that you are still recording. `status` also checks that the
+# process in the file is really alive, and quietly clears the file if it is not.
+#
+# -----------------------------------------------------------------------------
+# THE CONTRACT WITH THE TOP BAR — do not change these without changing the shell
+# -----------------------------------------------------------------------------
+#   * every command exits 0 when it worked
+#   * `shot` and `record stop` print the file's path on stdout and nothing else
+#   * `status` prints one line of JSON and exits 0 ALWAYS, even with no session,
+#     no runtime folder and nothing recording
+#   * `folder` prints the folder's path, creating it if it is not there
+#   * `record <mode>` returns only once the recorder is genuinely running
+#
+# Plain-English guide: docs/restart/screenshots.md
+# =============================================================================
+
+set -uo pipefail
+
+AQ_APP_NAME="Aquarius Capture"
+
+# -----------------------------------------------------------------------------
+# Where things live. Every one of these is overridable, and the only reason is
+# tests/test-capture.sh — nothing on a real machine sets any of them.
+# -----------------------------------------------------------------------------
+AQ_HOME="${HOME:-/tmp}"
+AQ_CONFIG_HOME="${XDG_CONFIG_HOME:-${AQ_HOME}/.config}"
+AQ_STATE_HOME="${XDG_STATE_HOME:-${AQ_HOME}/.local/state}"
+AQ_RUNTIME="${XDG_RUNTIME_DIR:-/tmp/aquarius-capture-runtime-$(id -u)}"
+AQ_STATE_DIR="${AQ_RUNTIME}/aquarius-capture"
+AQ_STATE_FILE="${AQ_STATE_DIR}/recording.json"
+
+# The folder name, in one place. It is not translated: it is the folder's real
+# name on disk, and renaming it later would strand everybody's old captures.
+AQ_FOLDER_NAME="Screenshots"
+
+# The marker that says "we have offered the Files sidebar pin once". See
+# section 6 — this is what stops the machine re-adding a pin a person removed.
+AQ_BOOKMARK_MARKER="${AQ_STATE_HOME}/aquarius/capture-bookmark-done"
+
+# "drag" (the default) or "output". See the ⚠️ section in the header.
+AQ_WINDOW_MODE="${AQ_CAPTURE_WINDOW_MODE:-drag}"
+
+say() { printf 'aquarius-capture: %s\n' "$*" >&2; }
+
+# The help text IS the header of this file, so the two can never disagree.
+# Line 3 is the title; line 5 to the end of the header block is the body. (It
+# starts at 5 and not at 2 on purpose: line 4 is the ruled line that closes the
+# title, and a range ending at the FIRST ruled line would stop right there.)
+usage() {
+    { sed -n '3p' "$0"; sed -n '5,/^# =\{70,\}$/p' "$0"; } \
+        | sed 's/^# \{0,1\}//' | head -n 220
+}
+
+# -----------------------------------------------------------------------------
+# need <command> — stop with a sentence a person can act on
+# -----------------------------------------------------------------------------
+# A missing tool here means the image was built wrong, which is rare, and the
+# build step is what is supposed to catch it. But a bar button that does nothing
+# at all is the worst possible way to find out, so we say which piece is gone.
+need() {
+    if ! command -v "$1" > /dev/null 2>&1; then
+        say "$1 is not on this computer, so this cannot work."
+        notify "Screenshot tools are missing" "The program '$1' is not installed. Reinstall or update AquariusOS." critical
+        exit 1
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# notify <title> <body> [urgency]
+# -----------------------------------------------------------------------------
+# Never fatal. A desktop with no notification service is unusual but it is not a
+# reason to lose somebody's screenshot.
+notify() {
+    command -v notify-send > /dev/null 2>&1 || return 0
+    notify-send --app-name="${AQ_APP_NAME}" \
+        --icon=camera-photo \
+        --urgency="${3:-normal}" \
+        -- "$1" "$2" > /dev/null 2>&1 || true
+}
+
+# -----------------------------------------------------------------------------
+# notify_file <title> <path>
+# -----------------------------------------------------------------------------
+# The notification with a "Show in Files" button on it.
+#
+# ⚠️ WHY THIS RUNS AS A DETACHED COPY OF THIS PROGRAM. `notify-send --action`
+# does not return until the notification is clicked or times out — up to a
+# minute of sitting there. This program has to exit immediately (the bar is
+# waiting on it, and for a recording the person wants to get on with their
+# day), so the waiting is handed to a second, silent copy of ourselves with
+# `--wait-for-action`, exactly as aquarius-extract-zip does for the same reason.
+notify_file() {
+    local title="$1" path="$2"
+    command -v notify-send > /dev/null 2>&1 || return 0
+    setsid "$0" --wait-for-action "${title}" "${path}" \
+        < /dev/null > /dev/null 2>&1 &
+    return 0
+}
+
+# The detached half of notify_file. Not a documented command; the leading "--"
+# keeps it out of the way of the real ones.
+wait_for_action() {
+    local title="$1" path="$2" answer
+    answer="$(notify-send --app-name="${AQ_APP_NAME}" \
+        --icon=camera-photo \
+        --action=show="Show in Files" \
+        -- "${title}" "$(basename "${path}")" 2> /dev/null)" || answer=""
+    if [ "${answer}" = "show" ]; then
+        # xdg-open on the FOLDER, not the file: "Show in Files" means show me
+        # where it is, not open it in an image viewer. A file:// URI keeps
+        # spaces and punctuation literal, which matters — our names have spaces
+        # and full stops in them by design.
+        local folder
+        folder="$(dirname "${path}")"
+        command -v xdg-open > /dev/null 2>&1 && xdg-open "file://${folder}" > /dev/null 2>&1
+    fi
+    exit 0
+}
+
+# =============================================================================
+# 1. The folder
+# =============================================================================
+# Where captures go. Normally ~/Screenshots, but if the person (or GNOME, or
+# `setup` below) has written XDG_SCREENSHOTS_DIR into user-dirs.dirs then that
+# is the truth and we follow it — otherwise our tool and GNOME's own tool would
+# quietly save to two different places.
+capture_folder() {
+    local dirs="${AQ_CONFIG_HOME}/user-dirs.dirs" line value
+    if [ -r "${dirs}" ]; then
+        line="$(grep -E '^[[:space:]]*XDG_SCREENSHOTS_DIR=' "${dirs}" | tail -1)"
+        if [ -n "${line}" ]; then
+            value="${line#*=}"
+            value="${value%\"}"
+            value="${value#\"}"
+            # user-dirs.dirs writes the home folder as the literal text $HOME.
+            value="${value//\$HOME/${AQ_HOME}}"
+            if [ -n "${value}" ]; then
+                printf '%s\n' "${value}"
+                return 0
+            fi
+        fi
+    fi
+    printf '%s\n' "${AQ_HOME}/${AQ_FOLDER_NAME}"
+}
+
+ensure_folder() {
+    local folder
+    folder="$(capture_folder)"
+    mkdir -p "${folder}" 2> /dev/null || true
+    printf '%s\n' "${folder}"
+}
+
+# =============================================================================
+# 2. The file name
+# =============================================================================
+# `Screenshot 2026-09-13 at 14.02.11.png`, in LOCAL time, because a person
+# looking for "the one I took after lunch" is thinking in local time.
+#
+# Full stops between the hours, minutes and seconds rather than colons: this is
+# what macOS does, and a colon in a file name is a genuine problem the moment
+# the file is copied to a Windows machine or a memory card.
+#
+# If a file of that name somehow exists already (two captures inside the same
+# second) a " 2", " 3"… is added rather than one silently replacing the other.
+capture_path() {
+    local prefix="$1" extension="$2" folder stamp candidate n
+    folder="$(ensure_folder)"
+    stamp="$(date '+%Y-%m-%d at %H.%M.%S')"
+    candidate="${folder}/${prefix} ${stamp}.${extension}"
+    n=2
+    while [ -e "${candidate}" ]; do
+        candidate="${folder}/${prefix} ${stamp} ${n}.${extension}"
+        n=$((n + 1))
+    done
+    printf '%s\n' "${candidate}"
+}
+
+# =============================================================================
+# 3. Choosing what to capture
+# =============================================================================
+# Prints a rectangle in slurp's own "X,Y WxH" wording, which is exactly what
+# both `grim -g` and `wf-recorder -g` expect. Prints nothing and fails if the
+# person pressed Escape, which is a cancellation and not an error.
+#
+# ⚠️ THE ONE FUNCTION TO CHANGE when labwc can tell us where a window is. See
+# the ⚠️ section in the header for why "window" is what it is.
+aq_capture_geometry() {
+    local mode="$1" geometry=""
+    need slurp
+    case "${mode}" in
+        screen)
+            # -o = "pick a whole display". One click, even on one monitor.
+            geometry="$(slurp -o -f '%x,%y %wx%h' 2> /dev/null)" || return 1
+            ;;
+        window)
+            if [ "${AQ_WINDOW_MODE}" = "output" ]; then
+                geometry="$(slurp -o -f '%x,%y %wx%h' 2> /dev/null)" || return 1
+            else
+                geometry="$(slurp -f '%x,%y %wx%h' 2> /dev/null)" || return 1
+            fi
+            ;;
+        area)
+            geometry="$(slurp -f '%x,%y %wx%h' 2> /dev/null)" || return 1
+            ;;
+        *)
+            say "I do not know how to capture '${mode}'. Use screen, window or area."
+            return 2
+            ;;
+    esac
+    [ -n "${geometry}" ] || return 1
+    printf '%s\n' "${geometry}"
+}
+
+# =============================================================================
+# 4. shot — the still picture
+# =============================================================================
+do_shot() {
+    local mode="${1:-screen}" geometry path
+    need grim
+
+    geometry="$(aq_capture_geometry "${mode}")" || {
+        # Escape was pressed. Not a fault, not a notification, nothing saved.
+        exit 0
+    }
+
+    path="$(capture_path "Screenshot" "png")"
+
+    if ! grim -g "${geometry}" "${path}" 2> /dev/null; then
+        say "grim could not take the picture."
+        notify "Screenshot failed" "The picture could not be taken. Try again." critical
+        exit 1
+    fi
+
+    # ⚠️ READ THE RESULT BACK. grim can exit 0 having written nothing at all if
+    # the rectangle was zero-sized (a click rather than a drag).
+    if [ ! -s "${path}" ]; then
+        rm -f "${path}"
+        say "the picture came out empty — the selection had no size."
+        notify "Nothing was captured" "Drag a box rather than clicking." critical
+        exit 1
+    fi
+
+    # On the clipboard as well as on disk. wl-copy holds the data itself, so it
+    # is detached deliberately and outlives this program; that is how every
+    # Wayland clipboard tool works.
+    if command -v wl-copy > /dev/null 2>&1; then
+        wl-copy --type image/png < "${path}" > /dev/null 2>&1 &
+    fi
+
+    notify_file "Screenshot saved" "${path}"
+    printf '%s\n' "${path}"
+    exit 0
+}
+
+# =============================================================================
+# 5. record — the moving picture
+# =============================================================================
+# THE ENCODER, AND WHY IT IS CHOSEN AT THE MOMENT YOU PRESS RECORD
+#
+# The same image runs on an AMD laptop, an Intel desktop and an NVIDIA tower.
+# Which chip can encode video is a property of the MACHINE, not of the image, so
+# it cannot be decided at build time. This picks, in order:
+#
+#   1. NVENC   — the encoder built into NVIDIA cards. Chosen when an NVIDIA
+#                card is really present (/dev/nvidia0 exists) and ffmpeg has
+#                the encoder compiled in.
+#   2. VA-API  — the encoder built into AMD and Intel graphics, reached through
+#                /dev/dri/renderD128.
+#   3. libx264 — software. Every machine has this. It costs CPU, which on a
+#                machine that is busy editing is exactly the CPU you wanted.
+#
+# All three produce an H.264 MP4, which is the format that opens in DaVinci
+# Resolve, Aquarius Editor, QuickTime, Premiere and every phone.
+#
+# NO AUDIO IN VERSION ONE. Deliberate, and stated in the docs: wf-recorder's
+# audio comes from one PipeWire source and getting "the system sound AND my
+# microphone AND not the recording of itself" right is its own feature.
+pick_encoder() {
+    local have_nvenc=0 have_vaapi=0
+    if [ -e /dev/nvidia0 ] || [ -e /dev/nvidiactl ]; then
+        if command -v ffmpeg > /dev/null 2>&1 \
+            && ffmpeg -hide_banner -encoders 2> /dev/null | grep -q 'h264_nvenc'; then
+            have_nvenc=1
+        fi
+    fi
+    if [ -e /dev/dri/renderD128 ]; then
+        if command -v ffmpeg > /dev/null 2>&1 \
+            && ffmpeg -hide_banner -encoders 2> /dev/null | grep -q 'h264_vaapi'; then
+            have_vaapi=1
+        fi
+    fi
+    if [ "${have_nvenc}" -eq 1 ]; then
+        echo "nvenc"
+    elif [ "${have_vaapi}" -eq 1 ]; then
+        echo "vaapi"
+    else
+        echo "software"
+    fi
+}
+
+# The wf-recorder arguments for the encoder we chose, one per line so that the
+# caller can read them into an array without a single quoting question.
+encoder_arguments() {
+    case "$1" in
+        nvenc)
+            printf '%s\n' -c h264_nvenc -p preset=p5 -p rc=vbr -p cq=23 -x yuv420p
+            ;;
+        vaapi)
+            printf '%s\n' -c h264_vaapi -d /dev/dri/renderD128 -p qp=23
+            ;;
+        *)
+            printf '%s\n' -c libx264 -p preset=veryfast -p crf=23 -x yuv420p
+            ;;
+    esac
+}
+
+# Is the recorder in the state file really still running?
+recording_pid() {
+    [ -r "${AQ_STATE_FILE}" ] || return 1
+    local pid
+    pid="$(sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9]\{1,\}\).*/\1/p' "${AQ_STATE_FILE}" | head -1)"
+    [ -n "${pid}" ] || return 1
+    kill -0 "${pid}" 2> /dev/null || return 1
+    printf '%s\n' "${pid}"
+}
+
+state_field() { # state_field <name>  — reads a string field out of the JSON
+    [ -r "${AQ_STATE_FILE}" ] || return 1
+    sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "${AQ_STATE_FILE}" | head -1
+}
+
+state_number() { # state_number <name> — reads a number field out of the JSON
+    [ -r "${AQ_STATE_FILE}" ] || return 1
+    sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\\([0-9]\\{1,\\}\\).*/\\1/p" "${AQ_STATE_FILE}" | head -1
+}
+
+do_record_start() {
+    local mode="${1:-screen}" geometry path encoder started pid
+    need wf-recorder
+
+    if recording_pid > /dev/null; then
+        say "there is already a recording running. Stop it first."
+        notify "Already recording" "Stop the current recording before starting another." critical
+        exit 1
+    fi
+    # A stale file from a recorder that died — clear it rather than refuse.
+    rm -f "${AQ_STATE_FILE}"
+
+    geometry="$(aq_capture_geometry "${mode}")" || exit 0
+    path="$(capture_path "Screen Recording" "mp4")"
+
+    encoder="$(pick_encoder)"
+    local line
+    local -a enc_args=()
+    while IFS= read -r line; do enc_args+=("${line}"); done < <(encoder_arguments "${encoder}")
+
+    mkdir -p "${AQ_STATE_DIR}" 2> /dev/null || true
+
+    # --------------------------------------------------------------------
+    # Starting the recorder, and the one line here that is not obvious
+    # --------------------------------------------------------------------
+    # `setsid` is what lets the recorder outlive this program: it moves it into
+    # a session of its own, so nothing that happens to the bar's button handler
+    # — or to a terminal somebody started this from — can take the recording
+    # down with it. That part is ordinary.
+    #
+    # ⚠️ THE PART THAT IS NOT: `setsid cmd & pid=$!` GIVES YOU THE WRONG PID,
+    # SOMETIMES. setsid forks a child when it is already a process-group leader
+    # and execs in place when it is not, and which of those happens depends on
+    # how the shell that ran us was started. When it forks, `$!` is setsid's
+    # pid, not the recorder's — so the state file names a process that is not
+    # the recorder, `record stop` sends its interrupt into the void, and the
+    # recording only ends fifteen seconds later when the "it did not finish"
+    # fallback kills it. That cost the test run sixteen seconds on 2026-09-13,
+    # which is exactly how it was found; on a real machine it would have been a
+    # stop button that appears to hang.
+    #
+    # So the recorder reports its own pid. `bash -c` writes down its pid and
+    # then EXECS the recorder, which keeps that same pid — no fork, no guess.
+    #   $0 is the pid file, "$@" is the recorder and its arguments.
+    #
+    # ⚠️ AND THE SECOND TRAP, WHICH IS WORSE, BECAUSE IT IS SILENT: A SHELL
+    # STARTS BACKGROUND JOBS WITH SIGINT *IGNORED*. That is POSIX behaviour and
+    # it is normally a kindness — it stops Ctrl-C in a terminal from killing
+    # everything you launched with `&`. Here it is fatal: "ignored" survives
+    # exec, so wf-recorder inherits a deaf ear, `record stop` sends its polite
+    # interrupt, nothing happens, and fifteen seconds later the fallback kills
+    # it outright — producing exactly the unplayable file that using SIGINT was
+    # meant to avoid.
+    #
+    # `set -m` (job control) is the cure: with it on, each background command
+    # gets its own process group and its signals are left at their defaults.
+    # It is switched on for this one launch and off again immediately, because
+    # leaving it on changes how the rest of this program reports jobs.
+    local pidfile="${AQ_STATE_DIR}/recorder.pid"
+    rm -f "${pidfile}"
+    set -m
+    # shellcheck disable=SC2016  # $$ and $@ are the INNER shell's, on purpose
+    setsid bash -c 'echo $$ > "$0"; exec "$@"' \
+        "${pidfile}" \
+        wf-recorder -g "${geometry}" -f "${path}" "${enc_args[@]}" \
+        < /dev/null > "${AQ_STATE_DIR}/recorder.log" 2>&1 &
+    pid=$!
+    set +m
+    started="$(date +%s)"
+
+    # Give it a moment to write that pid down, then believe it over $!.
+    local tries=0
+    while [ "${tries}" -lt 30 ] && [ ! -s "${pidfile}" ]; do
+        sleep 0.05
+        tries=$((tries + 1))
+    done
+    if [ -s "${pidfile}" ]; then
+        pid="$(tr -dc '0-9' < "${pidfile}")"
+    fi
+    rm -f "${pidfile}"
+
+    # ⚠️ DO NOT REPORT SUCCESS UNTIL THE RECORDER HAS ACTUALLY STARTED. The bar
+    # draws its red dot the moment this exits 0. wf-recorder can fail half a
+    # second later (no such encoder, no permission on the render node) and a bar
+    # that says "recording" over a dead recorder is worse than an error. So:
+    # wait for the file to appear AND the process to still be alive, for up to
+    # five seconds.
+    local waited=0
+    while [ "${waited}" -lt 50 ]; do
+        if ! kill -0 "${pid}" 2> /dev/null; then
+            say "the recorder stopped immediately. Its own words:"
+            sed 's/^/    /' "${AQ_STATE_DIR}/recorder.log" >&2 2> /dev/null || true
+            notify "Recording failed to start" "The recorder stopped straight away. Try again, or record a smaller area." critical
+            rm -f "${path}"
+            exit 1
+        fi
+        [ -s "${path}" ] && break
+        sleep 0.1
+        waited=$((waited + 1))
+    done
+
+    printf '{"pid":%s,"started":%s,"file":"%s","mode":"%s"}\n' \
+        "${pid}" "${started}" "${path}" "${mode}" > "${AQ_STATE_FILE}"
+
+    notify "Recording" "Press the record button again, or Command-Shift-7, to stop."
+    printf '%s\n' "${path}"
+    exit 0
+}
+
+do_record_stop() {
+    local pid path waited=0
+    pid="$(recording_pid)" || {
+        # Nothing running. Tidy any stale file and say so plainly; the bar may
+        # send this after a crash and it must not turn red.
+        rm -f "${AQ_STATE_FILE}"
+        say "nothing is recording."
+        exit 0
+    }
+    path="$(state_field file)"
+
+    # ⚠️ SIGINT, NEVER SIGKILL. wf-recorder catches an interrupt and finishes
+    # the file properly — it writes the index that makes an MP4 playable. Kill
+    # it outright and you get a file every player refuses to open, which is the
+    # kind of loss that is discovered a week later.
+    kill -INT "${pid}" 2> /dev/null || true
+
+    while kill -0 "${pid}" 2> /dev/null && [ "${waited}" -lt 150 ]; do
+        sleep 0.1
+        waited=$((waited + 1))
+    done
+    if kill -0 "${pid}" 2> /dev/null; then
+        say "the recorder did not finish in fifteen seconds; stopping it firmly."
+        kill -TERM "${pid}" 2> /dev/null || true
+        sleep 1
+    fi
+
+    rm -f "${AQ_STATE_FILE}"
+
+    if [ -n "${path}" ] && [ -s "${path}" ]; then
+        notify_file "Screen recording saved" "${path}"
+        printf '%s\n' "${path}"
+        exit 0
+    fi
+
+    say "the recording produced no file."
+    notify "Recording was not saved" "The file came out empty." critical
+    exit 1
+}
+
+# =============================================================================
+# `status` — the one the bar asks once a second
+# =============================================================================
+# ⚠️ THIS ALWAYS PRINTS JSON AND ALWAYS EXITS 0. The bar parses whatever comes
+# back; an error message, an empty answer or a non-zero exit would each show up
+# as a broken indicator. There is no situation in which this is allowed to fail.
+do_status() {
+    local pid started file elapsed now
+    if pid="$(recording_pid)"; then
+        started="$(state_number started)"
+        file="$(state_field file)"
+        now="$(date +%s)"
+        case "${started}" in '' | *[!0-9]*) started=0 ;; esac
+        if [ "${started}" -gt 0 ]; then elapsed=$((now - started)); else elapsed=0; fi
+        printf '{"recording":true,"started":%s,"file":"%s","elapsed":%s}\n' \
+            "${started}" "${file}" "${elapsed}"
+    else
+        # Not recording. Clear a stale file so the next start is clean, but
+        # never complain about it.
+        [ -e "${AQ_STATE_FILE}" ] && rm -f "${AQ_STATE_FILE}"
+        printf '{"recording":false,"started":0,"file":"","elapsed":0}\n'
+    fi
+    exit 0
+}
+
+# =============================================================================
+# 6. `setup` — the once-per-person tidying, at the first login
+# =============================================================================
+# Three small things, each of which only ever happens if it has not happened:
+#
+#   1. Make ~/Screenshots.
+#
+#   2. Write XDG_SCREENSHOTS_DIR into ~/.config/user-dirs.dirs, so that GNOME's
+#      own screenshot tool — which is a different program, on the other desktop,
+#      and is staying — saves into the SAME folder. Without this line GNOME
+#      quietly uses ~/Pictures/Screenshots and a person ends up with two piles.
+#
+#   3. Pin the folder in the Files sidebar, by adding one line to the GTK
+#      bookmarks files (both the GTK 3 and the GTK 4 one; Files reads whichever
+#      matches its version and the two are separate files).
+#
+# ⚠️ AND THE RULE THAT MATTERS MORE THAN ANY OF THEM: NEVER FIGHT THE PERSON.
+# If somebody drags that pin out of their sidebar, the machine must not put it
+# back at the next login. So the pin is offered exactly once, and the proof that
+# it was offered is a marker file:
+#
+#     ~/.local/state/aquarius/capture-bookmark-done
+#
+# It is checked before anything is written and created after. A person who
+# removes the pin keeps it removed forever, which is the correct behaviour and
+# the reason this is not three lines of shell in a login script.
+#
+# It runs from aquarius-capture-setup.service, once per login, in both desktops.
+# Like every login-path program of ours it ALWAYS EXITS 0.
+add_bookmark_line() {
+    local file="$1" line="$2"
+    # Never create the parent blindly: on a fresh account neither file exists,
+    # and Files is perfectly happy to be given one.
+    mkdir -p "$(dirname "${file}")" 2> /dev/null || return 0
+    if [ -e "${file}" ] && grep -Fq "${line}" "${file}" 2> /dev/null; then
+        return 0
+    fi
+    # A bookmarks file that does not end in a newline would otherwise get our
+    # entry glued onto the end of somebody else's.
+    if [ -s "${file}" ] && [ "$(tail -c 1 "${file}" | od -An -c | tr -d ' ')" != '\n' ]; then
+        printf '\n' >> "${file}" 2> /dev/null || return 0
+    fi
+    printf '%s\n' "${line}" >> "${file}" 2> /dev/null || return 0
+}
+
+do_setup() {
+    local folder uri line dirs
+    folder="$(ensure_folder)"
+
+    # --- 2. user-dirs.dirs -----------------------------------------------
+    dirs="${AQ_CONFIG_HOME}/user-dirs.dirs"
+    mkdir -p "${AQ_CONFIG_HOME}" 2> /dev/null || true
+    if ! grep -qE '^[[:space:]]*XDG_SCREENSHOTS_DIR=' "${dirs}" 2> /dev/null; then
+        {
+            echo "# Added by AquariusOS so that every screenshot tool on this"
+            echo "# computer saves into the same folder. Change the path here if"
+            echo "# you want them somewhere else."
+            echo "XDG_SCREENSHOTS_DIR=\"\$HOME/${AQ_FOLDER_NAME}\""
+        } >> "${dirs}" 2> /dev/null || true
+    fi
+
+    # --- 3. the Files sidebar pin, once and only once ---------------------
+    if [ ! -e "${AQ_BOOKMARK_MARKER}" ]; then
+        # The GTK bookmarks format is "<uri> <label>", one per line. The label
+        # is what shows in the sidebar; without it Files shows the folder name,
+        # which is the same word here but not on a translated system.
+        uri="file://${folder}"
+        line="${uri} ${AQ_FOLDER_NAME}"
+        add_bookmark_line "${AQ_CONFIG_HOME}/gtk-3.0/bookmarks" "${line}"
+        add_bookmark_line "${AQ_CONFIG_HOME}/gtk-4.0/bookmarks" "${line}"
+        mkdir -p "$(dirname "${AQ_BOOKMARK_MARKER}")" 2> /dev/null || true
+        {
+            echo "AquariusOS pinned the ${AQ_FOLDER_NAME} folder in the Files"
+            echo "sidebar once, on $(date '+%Y-%m-%d'). Because this file exists"
+            echo "it will never do it again — so if you remove the pin, it stays"
+            echo "removed. Delete this file to be offered the pin once more."
+        } > "${AQ_BOOKMARK_MARKER}" 2> /dev/null || true
+    fi
+
+    exit 0
+}
+
+# =============================================================================
+# What was I asked to do?
+# =============================================================================
+case "${1:---help}" in
+    --wait-for-action)
+        shift
+        wait_for_action "${1:-Saved}" "${2:-}"
+        ;;
+    shot)
+        do_shot "${2:-screen}"
+        ;;
+    record)
+        case "${2:-screen}" in
+            stop) do_record_stop ;;
+            *) do_record_start "${2:-screen}" ;;
+        esac
+        ;;
+    status)
+        do_status
+        ;;
+    folder)
+        ensure_folder
+        exit 0
+        ;;
+    setup)
+        do_setup
+        ;;
+    -h | --help | help)
+        usage
+        exit 0
+        ;;
+    *)
+        say "I do not understand '$1'."
+        say "Try: aquarius-capture --help"
+        exit 2
+        ;;
+esac

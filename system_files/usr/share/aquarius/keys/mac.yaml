@@ -326,18 +326,50 @@ keymap:
       # -----------------------------------------------------------------------
       # Screenshots
       # -----------------------------------------------------------------------
-      # The Print Screen key opens the screenshot tool; Shift and Print Screen
-      # goes straight to "select an area". Both go through the desktop's own
-      # screenshot window, which is what a Mac user expects from
-      # Command-Shift-3 and Command-Shift-4.
+      # The five Mac capture shortcuts, in the order a Mac has them:
+      #
+      #   Command-Shift-3   a picture of a whole screen
+      #   Command-Shift-4   a picture of an area you drag
+      #   Command-Shift-5   a picture of a window
+      #   Command-Shift-6   START recording an area
+      #   Command-Shift-7   STOP recording
+      #
+      # THESE LINES TRANSLATE; THEY DO NOT RUN ANYTHING. Each one turns a Mac
+      # key press into the Windows-style key that the desktop is already
+      # listening for. What actually takes the picture is
+      # /usr/libexec/aquarius-capture, bound to those keys in labwc's rc.xml
+      # (in the Aquarius Desktop) or answered by GNOME's own screenshot tool
+      # (in GNOME, which keeps its own and is not touched by any of this).
       #
       # ⚠️ THE KEY IS CALLED `SYSRQ`, NOT `Print`, AND THIS IS A REAL TRAP.
       # Linux has two separate keys in its list: KEY_SYSRQ, which is the one
       # actually printed "PrtSc" on your keyboard, and KEY_PRINT, which is a
       # different key that almost no keyboard has. Writing `Print` here would
       # compile fine, run fine, and take no screenshots.
+      #
+      # ⚠️ AND rc.xml SPELLS THE SAME KEY `Print`. That is not a contradiction:
+      # xremap reads Linux's own kernel names (SYSRQ) and labwc reads xkb's
+      # names (Print). Both files are right; swapping either spelling for the
+      # other gives a shortcut that takes no screenshots and says nothing.
+      #
+      # ⚠️ Command-Shift-6 and -7 become Super-Alt combinations, NOT more
+      # Print Screen variants. A keyboard has one Print Screen key and only so
+      # many modifiers fit on it before the combinations start colliding with
+      # what the compositor already uses, and recording is a thing you do for
+      # minutes rather than a thing you tap — a letter key is the honest home
+      # for it. These two must stay in step with rc.xml's W-A-r and W-A-S-r.
+      #
+      # ⚠️ WHAT Command-Shift-5 REALLY DOES. On a Mac it opens a little capture
+      # toolbar. Here it goes straight to "a picture of a window", which today
+      # means "drag a box round the window" — nothing on this computer can be
+      # asked where a window IS (the Wayland protocol that lists windows
+      # carries no position or size). docs/restart/screenshots.md says so
+      # plainly rather than pretending otherwise.
       Super-Shift-3: SYSRQ
       Super-Shift-4: Shift-SYSRQ
+      Super-Shift-5: Super-Shift-SYSRQ
+      Super-Shift-6: Super-Alt-r
+      Super-Shift-7: Super-Alt-Shift-r
 
       # -----------------------------------------------------------------------
       # WHAT IS DELIBERATELY NOT IN THIS LIST

@@ -519,6 +519,81 @@
     <!-- END: the lock screen                                                 -->
     <!-- ==================================================================== -->
 
+    <!-- ==================================================================== -->
+    <!-- BEGIN: screenshots and screen recording. Added 2026-09-13.           -->
+    <!-- ==================================================================== -->
+    <!--
+      Every one of these runs the same program:
+
+          /usr/libexec/aquarius-capture
+
+      and that is deliberate. The two buttons in the top bar run it too, and so
+      does anybody typing in a terminal. One program, one Screenshots folder,
+      one set of file names, however the capture was asked for.
+
+      THE KEYS, AND WHY THESE KEYS
+
+      What labwc listens for here are the WINDOWS-STYLE keys, because they are
+      the real keys on a real keyboard:
+
+        Print               a picture of a whole monitor
+        Shift+Print         a picture of an area you drag
+        Win+Shift+Print     a picture of a window (see the note below)
+        Win+Shift+S         a picture of an area — Windows' own shortcut, which
+                            a lot of people have in their fingers
+        Win+Alt+R           start recording an area
+        Win+Alt+Shift+R     stop recording
+
+      Mac style does not need its own bindings. Aquarius Keys TRANSLATES
+      Command-Shift-3 into Print, Command-Shift-4 into Shift+Print and so on
+      (/usr/share/aquarius/keys/mac.yaml), so the Mac shortcuts arrive here as
+      these same keys. That is the same arrangement the rest of the file uses
+      and it is why there is one list rather than two.
+
+      ⚠️ THE KEY IS SPELLED `Print` HERE AND `SYSRQ` IN mac.yaml, AND BOTH ARE
+      CORRECT. They are two different programs reading two different name
+      lists. xremap uses Linux's own kernel names, where the key printed
+      "PrtSc" is KEY_SYSRQ. labwc uses xkb's names, where the same key is
+      `Print`. Swapping either one for the other gives you a shortcut that
+      compiles, runs, and takes no screenshots.
+
+      ⚠️ WHAT `shot window` REALLY DOES. It asks you to drag a box round the
+      window — it does not light the window up and capture exactly it. It
+      cannot: the Wayland protocol that publishes the window list carries no
+      window POSITION OR SIZE, anywhere, in any version, and labwc has no
+      private channel that does (sway's screenshot tools use sway's own, which
+      we do not have). The full explanation is in the header of
+      /usr/libexec/aquarius-capture and in docs/restart/screenshots.md. It is
+      still bound to its own key so that the shortcut does not have to change
+      when that stops being true.
+
+      If a key does nothing, run the same command in a terminal — it prints the
+      path it saved, or says plainly what was missing:
+
+          /usr/libexec/aquarius-capture shot area
+    -->
+    <keybind key="Print">
+      <action name="Execute" command="/usr/libexec/aquarius-capture shot screen" />
+    </keybind>
+    <keybind key="S-Print">
+      <action name="Execute" command="/usr/libexec/aquarius-capture shot area" />
+    </keybind>
+    <keybind key="W-S-Print">
+      <action name="Execute" command="/usr/libexec/aquarius-capture shot window" />
+    </keybind>
+    <keybind key="W-S-s">
+      <action name="Execute" command="/usr/libexec/aquarius-capture shot area" />
+    </keybind>
+    <keybind key="W-A-r">
+      <action name="Execute" command="/usr/libexec/aquarius-capture record area" />
+    </keybind>
+    <keybind key="W-A-S-r">
+      <action name="Execute" command="/usr/libexec/aquarius-capture record stop" />
+    </keybind>
+    <!-- ==================================================================== -->
+    <!-- END: screenshots and screen recording                                -->
+    <!-- ==================================================================== -->
+
   </keyboard>
 
   <!--

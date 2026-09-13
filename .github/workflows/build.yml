@@ -610,6 +610,29 @@ jobs:
         run: ./tests/test-media-dir.sh
 
       # ------------------------------------------------------------------------
+      # Screenshots and screen recording
+      # ------------------------------------------------------------------------
+      # /usr/libexec/aquarius-capture is the one program behind every screenshot
+      # and every screen recording. Two buttons in the top bar call it, six
+      # keyboard shortcuts call it, and the bar polls its `status` command ONCE
+      # A SECOND while recording — so "status always prints JSON and always
+      # exits 0" is not a nicety, it is the difference between a working
+      # indicator and a broken one, and it is checked here against every way it
+      # can go wrong: no session, no runtime folder, a corrupt state file, a
+      # recorder that died.
+      #
+      # It also checks the two bugs found while writing it, both of which left
+      # the stop button apparently hanging for fifteen seconds and the recording
+      # finished by force rather than properly: a pid that was setsid's rather
+      # than the recorder's, and a background job started with SIGINT ignored.
+      # The stop is TIMED for exactly that reason.
+      #
+      # Everything is faked — no screen, no compositor, no graphics card, no
+      # root. Under a second, before the build; it runs again inside the image.
+      - name: Check the screenshot and recording helper
+        run: ./tests/test-capture.sh
+
+      # ------------------------------------------------------------------------
       # The app icons are all present, and are the sizes they claim
       # ------------------------------------------------------------------------
       # Before the build, because it takes a second and reads the same files the
@@ -2749,6 +2772,25 @@ jobs:
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" -c '
               set -e
               bash /tmp/t/tests/test-usb4-rescue.sh /usr/libexec/aquarius-usb4-rescue
+            '
+
+      # The capture helper, read back out of the FINISHED image — the only copy
+      # that will ever run on Royce's machine. The step before the build proved
+      # the repository's copy; a mis-copied file, a missing chmod, or an edit
+      # that never made it into system_files would all pass there and fail here.
+      #
+      # Same test file, given the installed path, so the two can never drift.
+      # The fake tools it puts on the PATH shadow the real grim, slurp and
+      # wf-recorder that step 71 installed, so this still needs no screen.
+      - name: Check the screenshot and recording helper in the finished image
+        run: |
+          set -euo pipefail
+          podman run --rm --pull=never \
+            -v "${GITHUB_WORKSPACE}/tests/test-capture.sh:/tmp/t/tests/test-capture.sh:ro" \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" -c '
+              set -e
+              bash /tmp/t/tests/test-capture.sh /usr/libexec/aquarius-capture
             '
 
       # The app icons, read back out of the FINISHED image — every icon, in both
