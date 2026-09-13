@@ -50,6 +50,32 @@ else
     bad "/usr/bin/bootc is missing — nothing could actually update the system"
 fi
 
+# ------------------------------------------------------------------------------
+# 1b. The two tools the CHECK uses — and neither of them needs a password
+# ------------------------------------------------------------------------------
+# ⚠️ 2026-09-13 (bench finding U1). The check used to run `bootc upgrade
+# --check`, which refuses to run unless you are the administrator; the refusal
+# came out of the window as "check your internet", on a machine that was online.
+# Checking must never need a password, so it now asks two questions any ordinary
+# account is allowed to ask:
+#   rpm-ostree  — what did this machine boot? (it answers over the system's own
+#                 message bus, so no password and no administrator)
+#   skopeo      — what is the newest published image? (a read of a public image
+#                 store; it is a small tool, added here for exactly this)
+say "The two tools the check reads its answers from"
+aq_dnf install skopeo
+aq_installed skopeo
+if [ -x /usr/bin/rpm-ostree ]; then
+    ok "/usr/bin/rpm-ostree is present — the check can read what this machine booted"
+else
+    bad "/usr/bin/rpm-ostree is missing — the check could not read the current image"
+fi
+if [ -x /usr/bin/skopeo ]; then
+    ok "/usr/bin/skopeo is present — the check can read the published version"
+else
+    bad "/usr/bin/skopeo is missing — the check could never see a new version"
+fi
+
 # The window reads the current version out of this file (written by step 70).
 aq_file_has "${IMAGE_INFO}" '"version-pretty"' \
     "the image records a version for the window to show (image-info.json)"
@@ -133,8 +159,8 @@ else
 fi
 aq_file_has /tmp/aq-updater-dry.txt 'Current version:' \
     "the rehearsal prints the current version"
-aq_file_has /tmp/aq-updater-dry.txt 'bootc upgrade --check' \
-    "the rehearsal states the check it runs"
+aq_file_has /tmp/aq-updater-dry.txt 'without asking for a password' \
+    "the rehearsal states that checking needs no password"
 aq_file_has /tmp/aq-updater-dry.txt 'pkexec bootc upgrade' \
     "the rehearsal states how it elevates to do the update"
 rm -f /tmp/aq-updater-dry.txt
@@ -189,6 +215,26 @@ if "${AQ_CLI}" update --help > /dev/null 2>&1; then
     ok "'aq update --help' works"
 else
     bad "'aq update --help' failed — the subcommand is not wired up"
+fi
+
+# ------------------------------------------------------------------------------
+# 8. The check's own test — the decision, against canned answers
+# ------------------------------------------------------------------------------
+# The same pattern step 65 uses for the installer's sorter: run the test against
+# the copy of the program that is IN THIS IMAGE, not the one on the build
+# runner. It feeds the decision canned copies of the two answers it reads and
+# proves it never calls an unreadable check "up to date", and never calls a
+# permission problem "no internet" — which is the fault this whole step exists
+# to keep from coming back.
+say "The check's own test, against the copy in this image"
+if [ -r /ctx/tests/test-updater.py ]; then
+    if python3 /ctx/tests/test-updater.py "${UPDATER}"; then
+        ok "the update-check test passed against the installed updater"
+    else
+        bad "the update-check test FAILED against the installed updater"
+    fi
+else
+    bad "/ctx/tests/test-updater.py is missing from the build context"
 fi
 
 aq_finish "Check for Update window"
