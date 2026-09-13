@@ -62,9 +62,10 @@
 #     which cannot carry the mark. This is the 2026-09-04 rule the three other
 #     windows were fixed to follow; CI greps this file for it too.
 #   * To look at the window without a real system to update:
-#         aquarius-updater --gui   (the check will honestly say it cannot reach
-#                                   the registry on a machine that has no
-#                                   deployment, which is the correct behaviour)
+#         aquarius-updater --gui   (on a machine with no deployment to read, the
+#                                   check lands on "Couldn't confirm the update
+#                                   status", which is the correct behaviour — it
+#                                   must never guess "up to date")
 #
 # Plain-English guide: docs/restart/updater.md
 # =============================================================================
