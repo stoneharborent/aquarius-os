@@ -103,6 +103,9 @@ on:
       # both were blank at the top. Same arrangement: builds and checks, never
       # publishes.
       - restart/resolve-done
+      # FEATURES 017 — screenshots and screen recording from the top bar.
+      # Same arrangement: builds and checks, never publishes.
+      - feat/capture
       # The missing right-click menu — the 2026-09-04 bench test again:
       # right-clicking a video in Files offered no "Make Editor-Ready", because
       # the extension asked for an extension interface version that Fedora 44's
