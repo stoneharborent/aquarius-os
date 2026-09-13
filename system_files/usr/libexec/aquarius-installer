@@ -119,6 +119,36 @@ def read_both_pipes(proc, on_stdout, on_stderr):
     return proc.wait()
 
 
+def helper_ending(cancel_requested, saw_cancelled, code, name, verb="install"):
+    """What to say once the app helper has finished. (ok, sentence, outcome).
+
+    ⚠️ THE ONE THAT IS EASY TO GET WRONG. The helper only stops BETWEEN apps.
+    So "the person pressed Cancel" and "the helper stopped" are two different
+    facts, and only the helper can report the second one. If Cancel was pressed
+    and the helper never said it had stopped, the app in front of it finished —
+    so it is here, it works, and the person is told so plainly and given the
+    button to open it.
+    """
+    # It really stopped, and said so itself.
+    if cancel_requested and saw_cancelled:
+        return False, core.SAY["cancelled"], "cancelled"
+    # Cancel was pressed, nothing reported stopping, and it ended happily: the
+    # one in front of it finished. Say that, and offer to open it.
+    if cancel_requested and code == 0:
+        if verb == "remove":
+            return True, "Stopped, but %s had already been removed." % name, "late"
+        return True, ("Stopped, but %s had already finished installing. "
+                      "It is in your apps." % name), "late"
+    # Anything else is an ordinary ending and gets the ordinary words.
+    if verb == "remove":
+        return (code == 0,
+                "%s has been removed." % name if code == 0
+                else "%s could not be removed." % name, "installed")
+    return (code == 0,
+            "%s is installed." % name if code == 0
+            else "%s did not install." % name, "installed")
+
+
 class LatestOnly:
     """Do a slow read in a thread, and throw away every answer but the newest.
 
@@ -201,7 +231,17 @@ def done_words(ok, outcome, cancelled=False):
     somewhere in the middle when Cancel is pressed and it reports back a moment
     later; before 2026-09-13 that late report yanked the person onto the done
     page for an install they had already stopped.
+
+    ⚠️ AND "STOPPED" MUST NEVER BE A LIE EITHER. Stopping an app that is part
+    way through downloading for the whole computer is not allowed — a
+    half-written app of that kind is a broken one — so the part that does that
+    work finishes the app in front of it and only then stops. When that
+    happens the app really is installed, and saying "Stopped. Nothing was left
+    behind." would be untrue. That ending is "late": stopped, and the one that
+    was already going arrived anyway.
     """
+    if outcome == "late":
+        return "Stopped.", True, True
     if cancelled or outcome == "cancelled":
         return "Stopped.", False, False
     if ok and outcome == "handoff":
@@ -241,6 +281,10 @@ def run_window(open_files):
             self.cancel_event = None
             self.cancel_file = ""
             self.cancel_requested = False
+            # Did the part that installs apps for the whole computer actually
+            # report that it stopped? It only ever stops BETWEEN apps, so this
+            # is a different fact from "somebody pressed Cancel".
+            self.helper_cancelled = False
             # What Open presses. Written down by whatever did the installing.
             self.open_entry = ""
             self.open_app_id = ""
@@ -663,10 +707,6 @@ def run_window(open_files):
                 proc,
                 lambda line: GLib.idle_add(self.details.append, line),
                 lambda line: GLib.idle_add(self._progress, line.rstrip("\n")))
-            if self.cancel_requested:
-                GLib.idle_add(self._finished, False, core.SAY["cancelled"],
-                              "cancelled")
-                return
             # ⚠️ 126 AND 127 FROM pkexec ARE NOT THE INSTALLER'S CODES. They mean
             # "you said no" and "nothing was able to ask you", and the second one
             # is not something a person can fix by pressing Try again.
@@ -677,19 +717,16 @@ def run_window(open_files):
                 return
             if after:
                 after(code == 0)
-            if verb == "remove":
-                GLib.idle_add(self._finished, code == 0,
-                              "%s has been removed." % name if code == 0
-                              else "%s could not be removed." % name)
-                return
-            GLib.idle_add(self._finished, code == 0,
-                          "%s is installed." % name if code == 0
-                          else "%s did not install." % name)
+            ok, message, outcome = helper_ending(self.cancel_requested,
+                                                 self.helper_cancelled,
+                                                 code, name, verb)
+            GLib.idle_add(self._finished, ok, message, outcome)
 
         def _start_working(self, name, steps):
             # A fresh flag and a fresh file for every job, so a Cancel pressed
             # on the last one can never stop this one.
             self.cancel_requested = False
+            self.helper_cancelled = False
             self.cancel_event = threading.Event()
             self.cancel_file = os.path.join(
                 tempfile.gettempdir(),
@@ -747,6 +784,12 @@ def run_window(open_files):
                 aquarius_ui.set_status_glyph(self.working_status, ok=False)
                 self.working_status.set_visible(True)
                 self.details.set_expanded(True)
+            elif head == "CANCELLED":
+                # It stopped when it was asked to, and nothing is half done.
+                self.helper_cancelled = True
+                for row in self.step_rows.values():
+                    if row.state == ACTIVE:
+                        row.set_state(PENDING)
             elif head == "DONE":
                 pass
             else:
@@ -774,12 +817,17 @@ def run_window(open_files):
                     pass
             self.cancel_button.set_label("Stopping…")
             self.cancel_button.set_sensitive(False)
-            self.working_blurb.set_label("Stopping. This takes a moment.")
+            # ⚠️ EXACTLY WHAT IT DOES, NOT A PROMISE IT CANNOT KEEP. An app
+            # being downloaded for the whole computer is finished first,
+            # because a half-written one of those is a broken one.
+            self.working_blurb.set_label(
+                "Stopping. The app that is downloading right now finishes "
+                "first.")
 
         def _finished(self, ok, message, outcome="installed"):
             title, show_open, was_good = done_words(ok, outcome,
                                                     self.cancel_requested)
-            if self.cancel_requested:
+            if self.cancel_requested and outcome != "late":
                 ok, message = False, core.SAY["cancelled"]
             self.done_title.set_label(title)
             self.done_blurb.set_label(message)

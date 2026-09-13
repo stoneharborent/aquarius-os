@@ -295,6 +295,92 @@ class WindowPieces(unittest.TestCase):
         self.assertEqual(words(False, 'cancelled'), ('Stopped.', False, False))
         self.assertIn('Stopped', core.SAY['cancelled'])
 
+    def fake_helper(self, lines, code=0):
+        """A stand-in for the part that installs apps for the whole computer.
+
+        It reports on the second pipe, exactly as the real one does, so the
+        window's own reader and its own progress handling are what is tested.
+        """
+        script = self.folder / 'helper'
+        body = ['#!/bin/sh', 'echo "working" ']
+        for line in lines:
+            body.append('echo "%s" >&2' % line)
+        body.append('exit %d' % code)
+        script.write_text('\n'.join(body) + '\n')
+        script.chmod(0o755)
+        proc = subprocess.Popen([str(script)], stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True, bufsize=1)
+        progress = []
+        exit_code = window['read_both_pipes'](proc, lambda _line: None,
+                                              lambda line: progress.append(
+                                                  line.rstrip('\n')))
+        return progress, exit_code
+
+    def test_a_cancel_the_helper_obeyed_says_nothing_was_left_behind(self):
+        progress, code = self.fake_helper(['STEP 1/2 com.example.One',
+                                           'OK com.example.One',
+                                           'CANCELLED'])
+        saw = 'CANCELLED' in progress
+        self.assertTrue(saw, progress)
+        ok, message, outcome = window['helper_ending'](True, saw, code,
+                                                       'OBS Studio')
+        self.assertFalse(ok)
+        self.assertEqual(outcome, 'cancelled')
+        self.assertEqual(message, core.SAY['cancelled'])
+        self.assertEqual(window['done_words'](ok, outcome, True),
+                         ('Stopped.', False, False))
+
+    def test_a_cancel_that_arrived_too_late_never_claims_nothing_happened(self):
+        # ⚠️ THE REVIEW FIX. The app helper stops only BETWEEN apps, so an app
+        # already downloading finishes. Saying "Nothing was left behind" then
+        # is simply false — the app is on the computer and in the app grid.
+        progress, code = self.fake_helper(['STEP 1/1 com.obsproject.Studio',
+                                           'PERCENT 100',
+                                           'OK com.obsproject.Studio',
+                                           'DONE'])
+        saw = 'CANCELLED' in progress
+        self.assertFalse(saw, progress)
+        ok, message, outcome = window['helper_ending'](True, saw, code,
+                                                       'OBS Studio')
+        self.assertTrue(ok)
+        self.assertEqual(outcome, 'late')
+        self.assertIn('had already finished installing', message)
+        self.assertIn('in your apps', message)
+        self.assertNotIn('Nothing was left behind', message)
+        # Stopped, honestly — and the button to open the app that did arrive.
+        title, show_open, was_good = window['done_words'](ok, outcome, True)
+        self.assertEqual(title, 'Stopped.')
+        self.assertTrue(show_open, 'the app is installed but cannot be opened')
+        self.assertTrue(was_good)
+
+    def test_a_late_cancel_that_also_failed_gets_the_ordinary_words(self):
+        progress, code = self.fake_helper(
+            ['FAILED com.example.App Flatpak could not install it.'], code=1)
+        ok, message, outcome = window['helper_ending'](
+            True, 'CANCELLED' in progress, code, 'Example')
+        self.assertFalse(ok)
+        self.assertEqual(outcome, 'installed')
+        self.assertEqual(message, 'Example did not install.')
+
+    def test_removing_says_removed_and_not_installed(self):
+        for cancelled, code, want in ((False, 0, 'Example has been removed.'),
+                                      (False, 1, 'Example could not be removed.')):
+            ok, message, _outcome = window['helper_ending'](
+                cancelled, False, code, 'Example', verb='remove')
+            self.assertEqual(message, want)
+            self.assertEqual(ok, code == 0)
+        ok, message, outcome = window['helper_ending'](True, False, 0, 'Example',
+                                                       verb='remove')
+        self.assertEqual(outcome, 'late')
+        self.assertIn('had already been removed', message)
+
+    def test_an_ordinary_install_is_untouched_by_any_of_this(self):
+        progress, code = self.fake_helper(['OK com.example.App', 'DONE'])
+        self.assertEqual(
+            window['helper_ending'](False, 'CANCELLED' in progress, code,
+                                    'Example'),
+            (True, 'Example is installed.', 'installed'))
+
     def test_cancel_file_reaches_the_app_helper(self):
         argv = core.flatpak_argv('install', ['com.example.App'], progress_fd=2,
                                  cancel_file='/tmp/stop-me')

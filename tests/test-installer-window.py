@@ -130,9 +130,36 @@ def check_window(root):
             assert not window.cancel_button.get_sensitive()
             assert window.stack.get_visible_child_name() == "working", \
                 "Cancel left the working page before the worker had stopped"
+            assert "finishes first" in window.working_blurb.get_label(), \
+                "Cancel promises more than the app helper can do"
             window._finished(True, "Installed after all")
             draw("done")
             assert window.done_title.get_label() == "Stopped."
+            assert not window.open_button.get_visible()
+
+            # ⚠️ AND THE HONEST HALF OF THE SAME STORY. The app helper stops
+            # only BETWEEN apps, so one already downloading finishes. "Stopped.
+            # Nothing was left behind." would be a lie, and the app the person
+            # now has would have no button to open it.
+            window._start_working("Late cancel", ["Working"])
+            window._on_cancel(None)
+            assert not window.helper_cancelled
+            late = window_module["helper_ending"](True, False, 0, "OBS Studio")
+            window._finished(*late)
+            draw("done")
+            assert window.done_title.get_label() == "Stopped."
+            assert "already finished installing" in window.done_blurb.get_label()
+            assert window.open_button.get_visible(), \
+                "the app really is installed and must be openable"
+            # ...and a helper that did stop still says nothing was left behind.
+            window._start_working("On-time cancel", ["Working"])
+            window._on_cancel(None)
+            window._progress("CANCELLED")
+            assert window.helper_cancelled
+            window._finished(*window_module["helper_ending"](True, True, 0,
+                                                             "OBS Studio"))
+            draw("done")
+            assert window.done_blurb.get_label() == core.SAY["cancelled"]
             assert not window.open_button.get_visible()
 
             # -- Open presses what was written, not a name it guessed -------
