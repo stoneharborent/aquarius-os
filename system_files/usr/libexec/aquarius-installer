@@ -52,6 +52,7 @@
 # =============================================================================
 
 import os
+import selectors
 import sys
 import tarfile
 import tempfile
@@ -68,6 +69,186 @@ CHOOSER = "/usr/libexec/aquarius-creator-apps"
 RESOLVE_SETUP = "/usr/libexec/aquarius-resolve-installer"
 
 DRY_RUN = False
+
+
+# =============================================================================
+# THE FOUR PIECES THAT HAVE NO SCREEN IN THEM
+# =============================================================================
+# ⚠️ THEY LIVE OUT HERE ON PURPOSE. Everything below this line is ordinary
+#    Python with no GTK anywhere in it, which means a test can run every one of
+#    them on a machine with no desktop at all. Each one exists because of a
+#    specific way the window misbehaved before 2026-09-13, and each one is the
+#    part that was actually wrong.
+
+
+def read_both_pipes(proc, on_stdout, on_stderr):
+    """Read a helper's two pipes at the same time, and give back its exit code.
+
+    ⚠️ READING ONE TO THE END AND THEN THE OTHER IS A DEADLOCK WAITING TO
+    HAPPEN, and it was also plainly wrong: the helper is asked to report its
+    progress on the second pipe, so every progress row sat unread until the
+    whole job had finished and the bar jumped from nothing to done. Worse, a
+    pipe nobody is reading fills up and stops the program writing to it — the
+    helper would simply stand still for ever. So both are watched together.
+    """
+    pipes = selectors.DefaultSelector()
+    leftovers = {}
+    for handle, deliver in ((proc.stdout, on_stdout), (proc.stderr, on_stderr)):
+        if handle is not None:
+            pipes.register(handle, selectors.EVENT_READ, deliver)
+            leftovers[handle] = ""
+    try:
+        while pipes.get_map():
+            for key, _mask in pipes.select(timeout=0.25):
+                handle = key.fileobj
+                chunk = handle.readline()
+                if not chunk:
+                    if leftovers[handle]:
+                        key.data(leftovers[handle])
+                        leftovers[handle] = ""
+                    pipes.unregister(handle)
+                    handle.close()
+                    continue
+                if chunk.endswith("\n"):
+                    key.data(leftovers[handle] + chunk)
+                    leftovers[handle] = ""
+                else:
+                    leftovers[handle] += chunk
+    finally:
+        pipes.close()
+    return proc.wait()
+
+
+def helper_ending(cancel_requested, saw_cancelled, code, name, verb="install"):
+    """What to say once the app helper has finished. (ok, sentence, outcome).
+
+    ⚠️ THE ONE THAT IS EASY TO GET WRONG. The helper only stops BETWEEN apps.
+    So "the person pressed Cancel" and "the helper stopped" are two different
+    facts, and only the helper can report the second one. If Cancel was pressed
+    and the helper never said it had stopped, the app in front of it finished —
+    so it is here, it works, and the person is told so plainly and given the
+    button to open it.
+    """
+    # It really stopped, and said so itself.
+    if cancel_requested and saw_cancelled:
+        return False, core.SAY["cancelled"], "cancelled"
+    # Cancel was pressed, nothing reported stopping, and it ended happily: the
+    # one in front of it finished. Say that, and offer to open it.
+    if cancel_requested and code == 0:
+        if verb == "remove":
+            return True, "Stopped, but %s had already been removed." % name, "late"
+        return True, ("Stopped, but %s had already finished installing. "
+                      "It is in your apps." % name), "late"
+    # Anything else is an ordinary ending and gets the ordinary words.
+    if verb == "remove":
+        return (code == 0,
+                "%s has been removed." % name if code == 0
+                else "%s could not be removed." % name, "installed")
+    return (code == 0,
+            "%s is installed." % name if code == 0
+            else "%s did not install." % name, "installed")
+
+
+class LatestOnly:
+    """Do a slow read in a thread, and throw away every answer but the newest.
+
+    ⚠️ THE SEARCH BAR USED TO FREEZE THE WHOLE WINDOW, because asking the app
+    store what has an update — a question that is allowed to take a minute and a
+    half — happened on the drawing thread on every single keystroke. Typing
+    "obs" stopped the window three times. The work goes in a thread now, and
+    because somebody typing fast starts several, only the answer to the most
+    recent question is ever used.
+    """
+
+    def __init__(self, work):
+        self._work = work
+        self._serial = 0
+        self._lock = threading.Lock()
+
+    def start(self, question, deliver):
+        with self._lock:
+            self._serial += 1
+            mine = self._serial
+        def run():
+            try:
+                answer = self._work(question)
+            except Exception:              # noqa: BLE001 — a slow read may fail
+                return
+            with self._lock:
+                if mine != self._serial:
+                    return                 # somebody has typed since; drop it
+            deliver(question, answer)
+        threading.Thread(target=run, daemon=True).start()
+        return mine
+
+
+class UpdateCache:
+    """What has an update, asked in the background and remembered.
+
+    Asked once when the window opens and again after anything is installed,
+    removed or updated. Every draw of the list reads this and nothing else.
+    """
+
+    def __init__(self, read):
+        self._read = read
+        self.ids = []
+
+    def start(self, deliver=None):
+        def run():
+            try:
+                found = list(self._read())
+            except Exception:              # noqa: BLE001 — no store, no updates
+                found = []
+            self.ids = found
+            if deliver:
+                deliver(found)
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        return thread
+
+
+def launch_argv(entry_path="", app_id=""):
+    """How to start the thing that was just installed, or [] if we cannot.
+
+    ⚠️ THE OPEN BUTTON USED TO DO NOTHING AT ALL, QUITE OFTEN. It looked for an
+    installed app whose name matched the name guessed from the file, and when
+    the app called itself something else — which is normal — it found nothing
+    and silently gave up. The part that wrote the menu entry knows exactly where
+    it is, so that is what gets pressed.
+    """
+    if entry_path and os.path.isfile(entry_path):
+        return ["gio", "launch", entry_path]
+    if app_id:
+        return ["flatpak", "run", app_id]
+    return []
+
+
+def done_words(ok, outcome, cancelled=False):
+    """The title, and whether Open belongs on the page. One place, so the
+    Stopped page can never be overwritten by a late answer from the worker.
+
+    ⚠️ A CANCELLED INSTALL MUST NEVER LAND ON "All set." The worker thread is
+    somewhere in the middle when Cancel is pressed and it reports back a moment
+    later; before 2026-09-13 that late report yanked the person onto the done
+    page for an install they had already stopped.
+
+    ⚠️ AND "STOPPED" MUST NEVER BE A LIE EITHER. Stopping an app that is part
+    way through downloading for the whole computer is not allowed — a
+    half-written app of that kind is a broken one — so the part that does that
+    work finishes the app in front of it and only then stops. When that
+    happens the app really is installed, and saying "Stopped. Nothing was left
+    behind." would be untrue. That ending is "late": stopped, and the one that
+    was already going arrived anyway.
+    """
+    if outcome == "late":
+        return "Stopped.", True, True
+    if cancelled or outcome == "cancelled":
+        return "Stopped.", False, False
+    if ok and outcome == "handoff":
+        return "Continue in Bottles", False, True
+    if ok:
+        return "All set.", True, True
+    return "That did not work.", False, False
 
 
 # =============================================================================
@@ -94,6 +275,24 @@ def run_window(open_files):
             self.step_rows = {}
             self.pending = list(files)
             self.updating_row = None
+
+            # What Cancel presses on. A file for the helper (it watches for one
+            # appearing), a flag for the work this window does itself.
+            self.cancel_event = None
+            self.cancel_file = ""
+            self.cancel_requested = False
+            # Did the part that installs apps for the whole computer actually
+            # report that it stopped? It only ever stops BETWEEN apps, so this
+            # is a different fact from "somebody pressed Cancel".
+            self.helper_cancelled = False
+            # What Open presses. Written down by whatever did the installing.
+            self.open_entry = ""
+            self.open_app_id = ""
+            # The two slow reads, both kept off the drawing thread.
+            self.updates = UpdateCache(core.flatpak_updates)
+            self.flathub_finder = LatestOnly(core.flathub_search)
+            self.flathub_cache = {}
+            self.search_timer = 0
 
             self.set_title(TITLE)
             self.set_default_size(900, 760)
@@ -128,8 +327,45 @@ def run_window(open_files):
             self.add_controller(keys)
 
             self.refresh()
+            self.check_for_updates()
             if self.pending:
                 self.take_file(self.pending.pop(0))
+
+        # -- the two slow reads, always in a thread -------------------------
+        def check_for_updates(self):
+            """Ask the app store what has an update. Once at open, and again
+            after anything is installed, removed or updated — never per key."""
+            self.updates.start(
+                lambda ids: GLib.idle_add(self._updates_arrived, ids))
+
+        def _updates_arrived(self, _ids):
+            if self.stack.get_visible_child_name() == "browse":
+                self.refresh()
+            return GLib.SOURCE_REMOVE
+
+        def _on_search_changed(self, _entry):
+            # The two instant groups redraw on every keystroke; Flathub is asked
+            # a quarter of a second after somebody stops typing.
+            self.refresh()
+            if self.search_timer:
+                GLib.source_remove(self.search_timer)
+            self.search_timer = GLib.timeout_add(250, self._ask_flathub)
+
+        def _ask_flathub(self):
+            self.search_timer = 0
+            term = self.search.get_text().strip().lower()
+            if term and term not in self.flathub_cache:
+                self.flathub_finder.start(
+                    term,
+                    lambda asked, hits: GLib.idle_add(self._flathub_arrived,
+                                                      asked, hits))
+            return GLib.SOURCE_REMOVE
+
+        def _flathub_arrived(self, term, hits):
+            self.flathub_cache[term] = hits
+            if self.search.get_text().strip().lower() == term:
+                self.refresh()
+            return GLib.SOURCE_REMOVE
 
         # -- page 1: search and what is here --------------------------------
         def _build_browse_page(self):
@@ -142,7 +378,7 @@ def run_window(open_files):
             self.search.set_placeholder_text(
                 "Search for an app, or paste a link")
             self.search.set_hexpand(True)
-            self.search.connect("search-changed", lambda _e: self.refresh())
+            self.search.connect("search-changed", self._on_search_changed)
             self.search.connect("activate", self._on_search_activate)
 
             self.update_all_button = aquarius_ui.pill_button("Update All")
@@ -227,7 +463,7 @@ def run_window(open_files):
             self.details = aquarius_ui.LogPane()
             copy = aquarius_ui.copy_button("Copy", lambda: self.details.text())
             self.cancel_button = aquarius_ui.pill_button("Cancel")
-            self.cancel_button.connect("clicked", lambda _b: self.show_browse())
+            self.cancel_button.connect("clicked", self._on_cancel)
 
             return aquarius_ui.page([mark, heading, self.working_blurb,
                                      self.bar, self.steps, self.details.widget,
@@ -260,11 +496,16 @@ def run_window(open_files):
         # -- the list, and the three groups ---------------------------------
         def refresh(self):
             term = self.search.get_text().strip()
-            found = core.search(term)
-            # Asked once, and used twice: for the count on Update All and for
-            # the Update button on each row that has one. Asking twice would be
-            # two trips to the app store per keystroke.
-            updates = set(core.flatpak_updates())
+            # ⚠️ NOTHING SLOW MAY HAPPEN IN HERE. This runs on the drawing
+            # thread, on every keystroke. The two instant groups are read
+            # straight off this computer; the Flathub group and the update list
+            # are whatever the two background readers have brought back so far.
+            found = core.search(term, flathub=False)
+            found["flathub"] = [
+                hit for hit in self.flathub_cache.get(term.strip().lower(), [])
+                if hit["id"] not in {row.id for row in found["here"]}
+                and hit["id"] not in {e["id"] for e in found["suggested"]}]
+            updates = set(self.updates.ids)
 
             clear_group(self.here_group)
             for row in found["here"]:
@@ -309,7 +550,11 @@ def run_window(open_files):
             # this window has nothing to offer about them — and says so in the
             # row rather than leaving them out, because "why is it not in the
             # list?" is a worse question than a row that explains itself.
-            if row.note:
+            # ⚠️ ONLY "part of AquariusOS" ROWS HAVE NO BUTTONS (2026-09-13).
+            # A row that "updates with AquariusOS" is a home-folder app the OS
+            # offers again — the terminal has always removed it, so the window
+            # offers Remove too. The two surfaces agree or one of them is lying.
+            if not row.removable:
                 return widget
             if has_update:
                 update = Gtk.Button(label="Update")
@@ -399,7 +644,8 @@ def run_window(open_files):
             if verdict is None:
                 return
             if verdict.route == core.ROUTE_FLATPAK:
-                self._install_flatpak([verdict.path], verdict.name)
+                self._install_flatpak([verdict.path], verdict.name,
+                                      app_id=verdict.app_id)
                 return
             if verdict.route == core.ROUTE_WINDOWS:
                 self._start_working(verdict.name, core.WINDOWS_STEPS)
@@ -418,19 +664,28 @@ def run_window(open_files):
             progress = core.Progress(
                 on_line=lambda line: GLib.idle_add(self._progress, line),
                 on_log=lambda text: GLib.idle_add(self.details.append, text))
-            result = core.install(self.verdict, progress)
+            result = core.install(self.verdict, progress,
+                                  cancel=self.cancel_event)
+            self.open_entry = result.entry_path
             GLib.idle_add(self._finished, result.ok, result.message, result.outcome)
 
-        def _install_flatpak(self, refs, name):
+        def _install_flatpak(self, refs, name, app_id=""):
             """The one route with a password, and it is asked once, by the desktop."""
             self._start_working(name, [name])
+            # The id to press Open on later. A reference file names the app
+            # inside it; a row or a search hit is already the id.
+            self.open_app_id = app_id or (refs[0].split("//")[0]
+                                          if refs and not os.path.exists(refs[0])
+                                          else "")
             argv = core.flatpak_argv("install-file" if refs and
                                      os.path.exists(refs[0]) else "install",
-                                     refs, progress_fd=2, dry_run=DRY_RUN)
+                                     refs, progress_fd=2,
+                                     cancel_file=self.cancel_file,
+                                     dry_run=DRY_RUN)
             threading.Thread(target=self._helper_thread, args=(argv, name),
                              daemon=True).start()
 
-        def _helper_thread(self, argv, name):
+        def _helper_thread(self, argv, name, after=None, verb="install"):
             import subprocess
 
             self.details.append("$ %s\n" % " ".join(argv))
@@ -441,26 +696,49 @@ def run_window(open_files):
                                         start_new_session=True)
             except OSError as exc:
                 GLib.idle_add(self._finished, False,
-                              "The app helper could not be started: %s" % exc)
+                              "The part that installs apps for the whole "
+                              "computer could not be started.")
+                GLib.idle_add(self.details.append, str(exc) + "\n")
                 return
-            for line in proc.stdout:
-                GLib.idle_add(self.details.append, line)
-            for line in proc.stderr:
-                GLib.idle_add(self._progress, line.rstrip("\n"))
-            code = proc.wait()
+            # ⚠️ BOTH PIPES AT ONCE. Progress arrives on the second one, so
+            # draining the first to the end first meant no row ever moved until
+            # the job was over — and could stop the helper dead.
+            code = read_both_pipes(
+                proc,
+                lambda line: GLib.idle_add(self.details.append, line),
+                lambda line: GLib.idle_add(self._progress, line.rstrip("\n")))
             # ⚠️ 126 AND 127 FROM pkexec ARE NOT THE INSTALLER'S CODES. They mean
             # "you said no" and "nothing was able to ask you", and the second one
             # is not something a person can fix by pressing Try again.
             if code in (126, 127):
                 GLib.idle_add(self._finished, False,
-                              "%s was not given permission to install that."
+                              "%s was not given permission to do that."
                               % core.OS_NAME)
                 return
-            GLib.idle_add(self._finished, code == 0,
-                          "%s is installed." % name if code == 0
-                          else "%s did not install." % name)
+            if after:
+                after(code == 0)
+            ok, message, outcome = helper_ending(self.cancel_requested,
+                                                 self.helper_cancelled,
+                                                 code, name, verb)
+            GLib.idle_add(self._finished, ok, message, outcome)
 
         def _start_working(self, name, steps):
+            # A fresh flag and a fresh file for every job, so a Cancel pressed
+            # on the last one can never stop this one.
+            self.cancel_requested = False
+            self.helper_cancelled = False
+            self.cancel_event = threading.Event()
+            self.cancel_file = os.path.join(
+                tempfile.gettempdir(),
+                "aquarius-installer-stop-%d-%d" % (os.getpid(), id(self)))
+            try:
+                os.remove(self.cancel_file)
+            except OSError:
+                pass
+            self.open_entry = ""
+            self.open_app_id = ""
+            self.cancel_button.set_label("Cancel")
+            self.cancel_button.set_sensitive(True)
             self.header_title.set_subtitle(name)
             self.working_title.set_label("Installing %s" % name)
             self.working_status.set_visible(False)
@@ -506,42 +784,98 @@ def run_window(open_files):
                 aquarius_ui.set_status_glyph(self.working_status, ok=False)
                 self.working_status.set_visible(True)
                 self.details.set_expanded(True)
+            elif head == "CANCELLED":
+                # It stopped when it was asked to, and nothing is half done.
+                self.helper_cancelled = True
+                for row in self.step_rows.values():
+                    if row.state == ACTIVE:
+                        row.set_state(PENDING)
             elif head == "DONE":
                 pass
             else:
                 self.details.append(line + "\n")
             return GLib.SOURCE_REMOVE
 
+        def _on_cancel(self, _button):
+            """Really stop it, and stay here until the worker says it has.
+
+            ⚠️ THIS BUTTON USED TO DO NOTHING BUT CHANGE THE PAGE. The install
+            carried on behind it and then dragged the person to the done page
+            for something they had stopped. Now it raises the flag the worker
+            watches, touches the file the app helper watches, and waits.
+            """
+            if self.cancel_requested:
+                return
+            self.cancel_requested = True
+            if self.cancel_event is not None:
+                self.cancel_event.set()
+            if self.cancel_file:
+                try:
+                    with open(self.cancel_file, "w"):
+                        pass
+                except OSError:
+                    pass
+            self.cancel_button.set_label("Stopping…")
+            self.cancel_button.set_sensitive(False)
+            # ⚠️ EXACTLY WHAT IT DOES, NOT A PROMISE IT CANNOT KEEP. An app
+            # being downloaded for the whole computer is finished first,
+            # because a half-written one of those is a broken one.
+            self.working_blurb.set_label(
+                "Stopping. The app that is downloading right now finishes "
+                "first.")
+
         def _finished(self, ok, message, outcome="installed"):
-            handoff = ok and outcome == "handoff"
-            self.done_title.set_label("Continue in Bottles" if handoff else
-                                      "All set." if ok else "That did not work.")
+            title, show_open, was_good = done_words(ok, outcome,
+                                                    self.cancel_requested)
+            if self.cancel_requested and outcome != "late":
+                ok, message = False, core.SAY["cancelled"]
+            self.done_title.set_label(title)
             self.done_blurb.set_label(message)
-            aquarius_ui.set_status_glyph(self.done_status, ok=ok)
-            self.open_button.set_visible(ok and not handoff)
+            aquarius_ui.set_status_glyph(self.done_status, ok=was_good)
+            self.open_button.set_visible(show_open)
             self.done_details.clear()
             for line in self.details.lines:
                 self.done_details.append(line)
-            self.done_details.set_expanded(not ok)
+            self.done_details.set_expanded(not was_good)
             self.stack.set_visible_child_name("done")
+            self.cancel_event = None
+            self.cancel_file = ""
+            # Whatever just happened may have changed what has an update.
+            self.check_for_updates()
             self.refresh()
             return GLib.SOURCE_REMOVE
 
         def _on_open(self, _button):
+            """Start exactly the thing that was installed, or say why not."""
             import subprocess
 
-            entry = ""
-            for row in core.home_rows():
-                if self.verdict and row.name == self.verdict.name:
-                    entry = row.record.entry_path if row.record else ""
-            if entry and os.path.isfile(entry):
-                subprocess.Popen(["gio", "launch", entry],
-                                 start_new_session=True)
+            argv = launch_argv(self.open_entry, self.open_app_id)
+            if argv:
+                try:
+                    subprocess.Popen(argv, start_new_session=True)
+                except OSError as exc:
+                    self.details.append(str(exc) + "\n")
+                    argv = []
+            if not argv:
+                dialog = Adw.AlertDialog(
+                    heading="That app would not open",
+                    body="It is installed and it is in your apps — try it from "
+                         "there. If it still will not open, install it again.")
+                dialog.add_response("close", "Close")
+                dialog.present(self)
+                return
             self.show_browse()
 
         # -- removing --------------------------------------------------------
         def _on_remove(self, row):
             if row.route == core.ROUTE_FLATPAK:
+                # ⚠️ THE TICK BOX IS REAL FOR THESE NOW (2026-09-13). It used to
+                # be drawn, ticked and ignored. An app from Flathub keeps
+                # everything it remembers in one folder, so its size can be
+                # shown in the label exactly as a home-folder app's is.
+                self._confirm_remove(row, core.flatpak_removal_plan(row.id))
+                return
+            if row.managed:
                 self._confirm_remove(row, None)
                 return
             self._confirm_remove(row, core.removal_plan(row.id))
@@ -549,7 +883,8 @@ def run_window(open_files):
         def _confirm_remove(self, row, plan):
             dialog = Adw.MessageDialog(transient_for=self, modal=True)
             dialog.set_heading("Remove %s?" % (row.name or row.id))
-            freed = core.human_size(plan["app_bytes"]) if plan else ""
+            freed = core.human_size(plan["app_bytes"]) \
+                if plan and plan["app_bytes"] else ""
             dialog.set_body(
                 "This frees %s. The things you made with it are not touched."
                 % freed if freed else
@@ -579,15 +914,27 @@ def run_window(open_files):
                              args=(row, with_data), daemon=True).start()
 
         def _remove_thread(self, row, with_data):
-            if row.route == core.ROUTE_FLATPAK:
-                argv = core.flatpak_argv("uninstall", [row.id], progress_fd=2,
-                                         dry_run=DRY_RUN)
-                self._helper_thread(argv, row.name or row.id)
-                return
             progress = core.Progress(
                 on_line=lambda line: GLib.idle_add(self._progress, line),
                 on_log=lambda text: GLib.idle_add(self.details.append, text))
-            result = core.remove(row.id, with_data, progress)
+            if row.route == core.ROUTE_FLATPAK:
+                argv = core.flatpak_argv("uninstall", [row.id], progress_fd=2,
+                                         cancel_file=self.cancel_file,
+                                         dry_run=DRY_RUN)
+
+                def then(ok):
+                    # Only after the app itself has really gone, and only if the
+                    # box was ticked. The things the person MADE are not here.
+                    if ok and with_data:
+                        core.remove_flatpak_data(row.id)
+
+                self._helper_thread(argv, row.name or row.id, after=then,
+                                    verb="remove")
+                return
+            if row.managed:
+                result = core.remove_managed_app(row.id, progress)
+            else:
+                result = core.remove(row.id, with_data, progress)
             GLib.idle_add(self._finished, result.ok, result.message, result.outcome)
 
         # -- updating --------------------------------------------------------
@@ -597,17 +944,19 @@ def run_window(open_files):
                 return
             self._start_working(row.name or row.id, [row.id])
             argv = core.flatpak_argv("update", [row.id], progress_fd=2,
+                                     cancel_file=self.cancel_file,
                                      dry_run=DRY_RUN)
             threading.Thread(target=self._helper_thread,
                              args=(argv, row.name or row.id),
                              daemon=True).start()
 
         def _on_update_all(self, _button):
-            ids = core.flatpak_updates()
+            ids = list(self.updates.ids)
             if not ids:
                 return
             self._start_working("Updates", ids)
             argv = core.flatpak_argv("update", ids, progress_fd=2,
+                                     cancel_file=self.cancel_file,
                                      dry_run=DRY_RUN)
             threading.Thread(target=self._helper_thread,
                              args=(argv, "%d apps" % len(ids)),
@@ -767,8 +1116,19 @@ def do_remove(app_id, with_data):
     if row is not None and row.route == core.ROUTE_FLATPAK:
         import subprocess
 
-        return subprocess.call(core.flatpak_argv("uninstall", [app_id],
+        code = subprocess.call(core.flatpak_argv("uninstall", [app_id],
                                                  progress_fd=2))
+        # ⚠️ THE TICK BOX, AS A WORD, AND IT NOW DOES SOMETHING. An app from
+        # Flathub keeps everything it remembers in one folder named after it.
+        # The things a person MADE with the app are not in there.
+        if code == 0 and with_data:
+            freed = core.remove_flatpak_data(app_id)
+            print("Its settings are gone too. %s freed." % core.human_size(freed))
+        return code
+    if row is not None and row.managed:
+        result = core.remove_managed_app(app_id, printer())
+        print(result.message)
+        return 0 if result.ok else 1
     result = core.remove(app_id, with_data, printer())
     print(result.message)
     return 0 if result.ok else 1

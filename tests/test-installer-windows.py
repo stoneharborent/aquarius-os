@@ -14,6 +14,7 @@ import runpy
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -175,6 +176,219 @@ class WindowsSetup(unittest.TestCase):
         for kind in ('application/x-msi', 'application/x-msdownload', 'application/vnd.microsoft.portable-executable'):
             self.assertIn(kind + ';', desktop)
             self.assertIn(kind + '=aquarius-installer.desktop', mimeapps)
+
+
+class WindowPieces(unittest.TestCase):
+    """The four parts of the window that have no GTK in them.
+
+    ⚠️ THEY ARE TESTED HERE BECAUSE THEY CAN BE. The window itself needs a
+    desktop, GTK 4 and libadwaita, so on a build machine it is only ever
+    import-checked (runpy, at the top of this file, with no screen anywhere).
+    Every one of the faults found on 2026-09-13 lived in a piece of ordinary
+    Python, so every one of them is reachable from here.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.folder = Path(self.temp.name)
+
+    def test_both_pipes_are_read_at_once(self):
+        # Enough on the second pipe to fill it several times over. Read one
+        # pipe to exhaustion first, as the window used to, and this hangs for
+        # ever — which is exactly what a long download did to it.
+        noisy = (
+            'import sys\n'
+            'for n in range(4000): sys.stderr.write("PERCENT %d\\n" % (n % 100))\n'
+            'sys.stderr.flush()\n'
+            'sys.stdout.write("log line\\n")\n'
+            'sys.exit(3)\n')
+        proc = subprocess.Popen([sys.executable, '-c', noisy],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, bufsize=1)
+        out, err = [], []
+        code = window['read_both_pipes'](proc, out.append, err.append)
+        self.assertEqual(code, 3)
+        self.assertEqual(out, ['log line\n'])
+        self.assertEqual(len(err), 4000)
+        self.assertTrue(err[0].startswith('PERCENT '))
+
+    def test_a_pipe_that_is_never_opened_is_not_waited_for(self):
+        proc = subprocess.Popen([sys.executable, '-c', 'print("only stdout")'],
+                                stdout=subprocess.PIPE, text=True)
+        seen = []
+        self.assertEqual(
+            window['read_both_pipes'](proc, seen.append, seen.append), 0)
+        self.assertEqual(seen, ['only stdout\n'])
+
+    def test_only_the_newest_answer_is_kept(self):
+        import threading
+
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow(term):
+            if term == 'ob':
+                started.set()
+                release.wait(5)
+            return [term]
+
+        landed = []
+        finder = window['LatestOnly'](slow)
+        finder.start('ob', lambda asked, hits: landed.append(asked))
+        started.wait(5)
+        finder.start('obs', lambda asked, hits: landed.append(asked))
+        for _ in range(200):
+            if 'obs' in landed:
+                break
+            time.sleep(0.01)
+        release.set()
+        time.sleep(0.2)
+        self.assertEqual(landed, ['obs'],
+                         'a stale answer reached the window')
+
+    def test_update_check_never_runs_on_the_drawing_thread(self):
+        import threading
+
+        where = {}
+
+        def read():
+            where['thread'] = threading.current_thread().name
+            return ['com.example.One', 'com.example.Two']
+
+        cache = window['UpdateCache'](read)
+        self.assertEqual(cache.ids, [], 'it must start out knowing nothing')
+        delivered = []
+        cache.start(delivered.append).join(5)
+        self.assertEqual(cache.ids, ['com.example.One', 'com.example.Two'])
+        self.assertEqual(delivered, [cache.ids])
+        self.assertNotEqual(where['thread'], 'MainThread')
+
+        # An app store that is not there means no updates, never a crash.
+        broken = window['UpdateCache'](lambda: 1 / 0)
+        broken.start().join(5)
+        self.assertEqual(broken.ids, [])
+
+    def test_open_presses_the_entry_that_was_written(self):
+        entry = self.folder / 'openapp.desktop'
+        entry.write_text('[Desktop Entry]\nType=Application\nName=Open App\n')
+        self.assertEqual(window['launch_argv'](str(entry)),
+                         ['gio', 'launch', str(entry)])
+        # A Flatpak has no entry of ours, so the id is what gets pressed.
+        self.assertEqual(window['launch_argv']('', 'com.example.App'),
+                         ['flatpak', 'run', 'com.example.App'])
+        # And when there is nothing to press, it says so rather than guessing:
+        # an empty list is what makes the window show a sentence.
+        self.assertEqual(window['launch_argv'](), [])
+        self.assertEqual(window['launch_argv'](str(self.folder / 'gone')), [])
+
+    def test_a_stopped_install_never_becomes_all_set(self):
+        words = window['done_words']
+        self.assertEqual(words(True, 'installed'), ('All set.', True, True))
+        self.assertEqual(words(True, 'handoff'),
+                         ('Continue in Bottles', False, True))
+        self.assertEqual(words(False, 'failed'),
+                         ('That did not work.', False, False))
+        # The late answer from a worker that was already told to stop.
+        self.assertEqual(words(True, 'installed', cancelled=True),
+                         ('Stopped.', False, False))
+        self.assertEqual(words(False, 'cancelled'), ('Stopped.', False, False))
+        self.assertIn('Stopped', core.SAY['cancelled'])
+
+    def fake_helper(self, lines, code=0):
+        """A stand-in for the part that installs apps for the whole computer.
+
+        It reports on the second pipe, exactly as the real one does, so the
+        window's own reader and its own progress handling are what is tested.
+        """
+        script = self.folder / 'helper'
+        body = ['#!/bin/sh', 'echo "working" ']
+        for line in lines:
+            body.append('echo "%s" >&2' % line)
+        body.append('exit %d' % code)
+        script.write_text('\n'.join(body) + '\n')
+        script.chmod(0o755)
+        proc = subprocess.Popen([str(script)], stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True, bufsize=1)
+        progress = []
+        exit_code = window['read_both_pipes'](proc, lambda _line: None,
+                                              lambda line: progress.append(
+                                                  line.rstrip('\n')))
+        return progress, exit_code
+
+    def test_a_cancel_the_helper_obeyed_says_nothing_was_left_behind(self):
+        progress, code = self.fake_helper(['STEP 1/2 com.example.One',
+                                           'OK com.example.One',
+                                           'CANCELLED'])
+        saw = 'CANCELLED' in progress
+        self.assertTrue(saw, progress)
+        ok, message, outcome = window['helper_ending'](True, saw, code,
+                                                       'OBS Studio')
+        self.assertFalse(ok)
+        self.assertEqual(outcome, 'cancelled')
+        self.assertEqual(message, core.SAY['cancelled'])
+        self.assertEqual(window['done_words'](ok, outcome, True),
+                         ('Stopped.', False, False))
+
+    def test_a_cancel_that_arrived_too_late_never_claims_nothing_happened(self):
+        # ⚠️ THE REVIEW FIX. The app helper stops only BETWEEN apps, so an app
+        # already downloading finishes. Saying "Nothing was left behind" then
+        # is simply false — the app is on the computer and in the app grid.
+        progress, code = self.fake_helper(['STEP 1/1 com.obsproject.Studio',
+                                           'PERCENT 100',
+                                           'OK com.obsproject.Studio',
+                                           'DONE'])
+        saw = 'CANCELLED' in progress
+        self.assertFalse(saw, progress)
+        ok, message, outcome = window['helper_ending'](True, saw, code,
+                                                       'OBS Studio')
+        self.assertTrue(ok)
+        self.assertEqual(outcome, 'late')
+        self.assertIn('had already finished installing', message)
+        self.assertIn('in your apps', message)
+        self.assertNotIn('Nothing was left behind', message)
+        # Stopped, honestly — and the button to open the app that did arrive.
+        title, show_open, was_good = window['done_words'](ok, outcome, True)
+        self.assertEqual(title, 'Stopped.')
+        self.assertTrue(show_open, 'the app is installed but cannot be opened')
+        self.assertTrue(was_good)
+
+    def test_a_late_cancel_that_also_failed_gets_the_ordinary_words(self):
+        progress, code = self.fake_helper(
+            ['FAILED com.example.App Flatpak could not install it.'], code=1)
+        ok, message, outcome = window['helper_ending'](
+            True, 'CANCELLED' in progress, code, 'Example')
+        self.assertFalse(ok)
+        self.assertEqual(outcome, 'installed')
+        self.assertEqual(message, 'Example did not install.')
+
+    def test_removing_says_removed_and_not_installed(self):
+        for cancelled, code, want in ((False, 0, 'Example has been removed.'),
+                                      (False, 1, 'Example could not be removed.')):
+            ok, message, _outcome = window['helper_ending'](
+                cancelled, False, code, 'Example', verb='remove')
+            self.assertEqual(message, want)
+            self.assertEqual(ok, code == 0)
+        ok, message, outcome = window['helper_ending'](True, False, 0, 'Example',
+                                                       verb='remove')
+        self.assertEqual(outcome, 'late')
+        self.assertIn('had already been removed', message)
+
+    def test_an_ordinary_install_is_untouched_by_any_of_this(self):
+        progress, code = self.fake_helper(['OK com.example.App', 'DONE'])
+        self.assertEqual(
+            window['helper_ending'](False, 'CANCELLED' in progress, code,
+                                    'Example'),
+            (True, 'Example is installed.', 'installed'))
+
+    def test_cancel_file_reaches_the_app_helper(self):
+        argv = core.flatpak_argv('install', ['com.example.App'], progress_fd=2,
+                                 cancel_file='/tmp/stop-me')
+        self.assertIn('--cancel-file', argv)
+        self.assertEqual(argv[argv.index('--cancel-file') + 1], '/tmp/stop-me')
+        helper = (ROOT / 'usr/libexec/aquarius-creator-apps-install').read_text()
+        self.assertIn('--cancel-file', helper,
+                      'the helper must still understand the flag we pass it')
 
 
 if __name__ == '__main__':

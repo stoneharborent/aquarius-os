@@ -1839,7 +1839,23 @@ apps_remove() {
             return 1
         fi
         echo "Removing ${want}. You will be asked for your password once."
-        echo "Your own files and its settings are left alone."
+        if [ "${with_data}" -eq 1 ]; then
+            echo "Its settings go too. The things you MADE with it are left alone."
+        else
+            echo "Your own files and its settings are left alone."
+        fi
+        # ⚠️ THROUGH THE INSTALLER, NOT AROUND IT (2026-09-13). Going straight
+        # to the app store here is how --with-data came to be accepted, printed
+        # in the help, and then quietly ignored: the app went and its settings
+        # stayed. One implementation, so the window and the terminal agree.
+        if [ -x "${AQ_APPS_INSTALLER}" ]; then
+            if [ "${with_data}" -eq 1 ]; then
+                "${AQ_APPS_INSTALLER}" --remove "${want}" --with-data || return 1
+            else
+                "${AQ_APPS_INSTALLER}" --remove "${want}" || return 1
+            fi
+            continue
+        fi
         flatpak uninstall -y --system "${want}" || return 1
     done
 }

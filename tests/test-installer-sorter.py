@@ -759,6 +759,253 @@ def test_update_by_dropping(core, work):
         core.REHEARSAL = False
 
 
+# ==============================================================================
+# The seven faults of 2026-09-13, each with the test that would have caught it
+# ==============================================================================
+class Swapped:
+    """Put one of the decider's own functions aside for the length of a test."""
+
+    def __init__(self, core, name, stand_in):
+        self.core = core
+        self.name = name
+        self.stand_in = stand_in
+        self.was = None
+
+    def __enter__(self):
+        self.was = getattr(self.core, self.name)
+        setattr(self.core, self.name, self.stand_in)
+        return self.stand_in
+
+    def __exit__(self, *_):
+        setattr(self.core, self.name, self.was)
+
+
+class CancelAfter:
+    """A Cancel that is pressed once the install has got `count` steps in.
+
+    Stands in for a real threading.Event, which is all the decider ever asks of
+    it: does `is_set()` say stop yet?
+    """
+
+    def __init__(self, count=0):
+        self.count = count
+        self.asked = 0
+
+    def is_set(self):
+        self.asked += 1
+        return self.asked > self.count
+
+
+def test_no_room_to_land(core, work):
+    heading("a disk with no room left on it")
+    tarball = make_tarball(os.path.join(work, "roomapp-1.0.tar.gz"),
+                           name="roomapp")
+    with FakeHome():
+        core.REHEARSAL = True
+        # Eight hundred megabytes free, and something much bigger arriving.
+        with Swapped(core, "free_space", lambda _p: 800 * 1000 * 1000), \
+                Swapped(core, "no_room",
+                        lambda _n, p: core.SAY["no_space"]
+                        % (core.human_size(2100 * 1000 * 1000),
+                           core.human_size(core.free_space(p)))):
+            result = core.install(core.sort_path(tarball))
+        check(not result.ok, "it stops rather than trying")
+        check("2.1 GB" in result.message and "800 MB" in result.message,
+              "and says how much is needed and how much there is",
+              result.message)
+        check("Needs about" in core.SAY["no_space"],
+              "the sentence lives in the SAY block with the others")
+        check(core.registry_ids() == [],
+              "and nothing at all was written before it gave up")
+        core.REHEARSAL = False
+
+    # The real reading, against the real disk this test is running on.
+    check(core.free_space(work) > 0, "free space can be read for a real folder")
+    check(core.free_space(os.path.join(work, "no", "such", "place")) > 0,
+          "and for a folder that does not exist yet, by looking at its parent")
+    check(core.no_room(10, work) == "",
+          "ten bytes always fit")
+    check("space" in core.no_room(1 << 60, work),
+          "and a thousand terabytes never do")
+
+
+def test_nothing_ever_hangs(core, work):
+    heading("something nobody foresaw, half way through")
+    tarball = make_tarball(os.path.join(work, "boomapp-1.0.tar.gz"),
+                           name="boomapp")
+
+    def explode(*_args, **_kw):
+        raise OSError(28, "No space left on device")
+
+    with FakeHome():
+        core.REHEARSAL = True
+        progress = core.Progress()
+        with Swapped(core, "unpack", explode):
+            result = core.install(core.sort_path(tarball), progress)
+        check(result is not None and not result.ok,
+              "the install still answers, rather than killing its own thread")
+        check(result.message == core.SAY["went_wrong"],
+              "with one plain sentence for the person", result.message)
+        check("No space left on device" in result.detail,
+              "and the machine's own words kept for the Details log",
+              result.detail)
+        check(any(line.startswith("FAILED ") for line in progress.lines),
+              "and the window is told it has finished", progress.lines)
+
+        # The same promise for taking something away again.
+        with Swapped(core, "Record", None):
+            gone = core.remove("anything")
+        check(not gone.ok and gone.message == core.SAY["went_wrong"],
+              "removing answers the same way", gone.message)
+        core.REHEARSAL = False
+
+
+def test_cancel_really_cancels(core, work):
+    heading("Cancel, and what it leaves behind")
+    tarball = make_tarball(os.path.join(work, "stopapp-1.0.tar.gz"),
+                           name="stopapp")
+    with FakeHome():
+        core.REHEARSAL = True
+        result = core.install(core.sort_path(tarball), cancel=CancelAfter(0))
+        check(not result.ok, "a Cancel pressed at the start stops it")
+        check(result.outcome == "cancelled",
+              "and it is called cancelled, not failed", result.outcome)
+        check(result.message == core.SAY["cancelled"],
+              "in the words a person reads", result.message)
+        check(core.registry_ids() == [], "nothing was installed")
+
+        # And now one pressed late, after the folder has been moved into place
+        # but before the link was moved: the half-copy must not be left behind.
+        for pressed_at in range(1, 12):
+            progress = core.Progress()
+            stop = CancelAfter(pressed_at)
+            outcome = core.install(core.sort_path(tarball), progress,
+                                   cancel=stop)
+            if outcome.ok:
+                break
+            check(outcome.outcome == "cancelled",
+                  "a Cancel %d step(s) in still stops cleanly" % pressed_at,
+                  outcome.message)
+            leftovers = []
+            for base, dirs, _files in os.walk(core.home()):
+                leftovers += [d for d in dirs if d.endswith(".partial")]
+            check(not leftovers,
+                  "and leaves no half-copied folder behind", leftovers)
+        # And a Cancel nobody ever presses changes nothing at all.
+        patient = core.install(core.sort_path(tarball),
+                               cancel=CancelAfter(1000000))
+        check(patient.ok,
+              "while an install nobody stops finishes exactly as before",
+              patient.message)
+        core.REHEARSAL = False
+
+
+def test_open_knows_what_it_wrote(core, work):
+    heading("what the Open button presses")
+    tarball = make_tarball(os.path.join(work, "openapp-1.0.tar.gz"),
+                           name="openapp")
+    with FakeHome():
+        core.REHEARSAL = True
+        result = core.install(core.sort_path(tarball))
+        if check(result.ok, "it installed", result.message):
+            check(result.entry_path and os.path.isfile(result.entry_path),
+                  "the result carries the menu entry it really wrote",
+                  result.entry_path)
+            check(result.entry_path == result.record.entry_path,
+                  "and it is the same one the registry wrote down")
+        stopped = core.Result(False, "no", outcome="cancelled")
+        check(stopped.outcome == "cancelled",
+              "and a cancelled result is not turned into a failed one")
+        core.REHEARSAL = False
+
+
+def test_flatpak_settings_and_data(core, work):
+    heading("\"also delete its settings and data\", for an app from Flathub")
+    with FakeHome() as home:
+        folder = os.path.join(home, ".var", "app", "com.example.App")
+        os.makedirs(folder)
+        with open(os.path.join(folder, "prefs"), "wb") as handle:
+            handle.write(b"x" * 4096)
+        plan = core.flatpak_removal_plan("com.example.App")
+        check(plan["data_bytes"] >= 4096,
+              "its settings folder is found and measured, so the label can say "
+              "how big it is", plan["data_bytes"])
+        check(plan["app_bytes"] == 0,
+              "and the app itself is not ours to measure")
+        freed = core.remove_flatpak_data("com.example.App")
+        check(freed >= 4096 and not os.path.isdir(folder),
+              "ticking the box really deletes it", freed)
+        check(core.remove_flatpak_data("com.example.App") == 0,
+              "and doing it twice is harmless")
+
+        for nasty in ("../../..", "", "/etc", ".hidden", "a/b"):
+            check(core.flatpak_data_dir(nasty) == "",
+                  "an id that tries to name somewhere else is refused: %r"
+                  % nasty)
+        check(core.flatpak_data_dir("com.example.App")
+              == os.path.join(home, ".var", "app", "com.example.App"),
+              "and an ordinary id names exactly one folder")
+
+
+def test_editor_is_removable(core, work):
+    heading("the window and the terminal agree about Aquarius Editor")
+    folder = tempfile.mkdtemp(prefix="aq-managed-")
+    try:
+        catalog = os.path.join(folder, "catalog")
+        with open(catalog, "w") as handle:
+            handle.write("#!/bin/sh\necho aquarius-editor\n")
+        os.chmod(catalog, 0o755)
+        manager = os.path.join(folder, "manager")
+        with open(manager, "w") as handle:
+            handle.write("#!/bin/sh\n"
+                         "if [ \"$1\" = \"--status\" ]; then\n"
+                         "  echo 'id=aquarius-editor'\n"
+                         "  echo 'name=Aquarius Editor'\n"
+                         "  echo 'installed=1.0.0'\n"
+                         "  echo 'path=/somewhere'\n"
+                         "  exit 0\n"
+                         "fi\n"
+                         "echo \"removed $2\"\nexit 0\n")
+        os.chmod(manager, 0o755)
+        with Swapped(core, "CATALOG_CLI", catalog), \
+                Swapped(core, "APPIMAGE_INSTALLER", manager):
+            rows = core.appimage_installer_rows()
+            if check(len(rows) == 1, "the Editor shows up as one row", rows):
+                row = rows[0]
+                check(row.removable,
+                      "and it is removable — the window may draw the button")
+                check(row.managed,
+                      "and marked as one the OS's own installer looks after")
+                check("updates with" in row.note,
+                      "while still saying that it updates with the system",
+                      row.note)
+            result = core.remove_managed_app("aquarius-editor")
+            check(result.ok, "and removing it goes through that same installer",
+                  result.message)
+
+        # With nothing there to ask, it says so rather than pretending.
+        with Swapped(core, "APPIMAGE_INSTALLER", os.path.join(folder, "gone")):
+            check(not core.remove_managed_app("aquarius-editor").ok,
+                  "and when that installer is missing it refuses honestly")
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+def test_search_can_skip_the_slow_group(core, work):
+    heading("the search bar does not have to wait for Flathub")
+
+    def never(_term):
+        raise AssertionError("Flathub was asked on the drawing thread")
+
+    with FakeHome():
+        with Swapped(core, "flathub_search", never):
+            found = core.search("obs", flathub=False)
+        check(found["flathub"] == [],
+              "asking without Flathub really does not ask it")
+        check("here" in found and "suggested" in found,
+              "and the two instant groups are still there")
+
+
 def test_escaping_archive(core, work):
     heading("an archive that tries to climb out of the folder it unpacks into")
     path = make_escaping_tarball(os.path.join(work, "sneaky.tar.gz"))
@@ -961,6 +1208,13 @@ def main(argv):
         test_root_refusal(core, work)
         test_flatpak_command(core)
         test_helper_understands_the_modes()
+        test_no_room_to_land(core, work)
+        test_nothing_ever_hangs(core, work)
+        test_cancel_really_cancels(core, work)
+        test_open_knows_what_it_wrote(core, work)
+        test_flatpak_settings_and_data(core, work)
+        test_editor_is_removable(core, work)
+        test_search_can_skip_the_slow_group(core, work)
 
         # A real .rpm, when this machine can make one. It is the same code path
         # as the .deb above — that is the point of "no conversion, ever" — so
