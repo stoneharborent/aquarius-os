@@ -126,11 +126,16 @@ PNG = (b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR"
 
 
 def build_payload(root, name="testapp", os_bits=False, elf=False,
-                  entry=True, icon=True):
+                  entry=True, icon=True, plugin=False):
     """An app-shaped tree: a program, a menu entry, an icon.
 
     `os_bits` adds the folders that mean "this wants to be part of the
     operating system" — which is the one thing the installer must refuse.
+
+    `plugin` adds what a real download actually looks like: its own library
+    folder and a plug-in inside it that no menu entry names. That plug-in is
+    the file the 13 September 2026 bench fault refused a whole working app
+    over, so it has a fixture of its own.
     """
     binary = os.path.join(root, "opt", name, name)
     os.makedirs(os.path.dirname(binary), exist_ok=True)
@@ -142,6 +147,14 @@ def build_payload(root, name="testapp", os_bits=False, elf=False,
         else:
             handle.write(b"#!/bin/sh\necho hello\n")
     os.chmod(binary, 0o755)
+
+    if plugin:
+        for parts in ((("usr", "lib"), "libcore.so"),
+                      (("usr", "lib", name, "plugins"), "libplug.so")):
+            folder = os.path.join(root, *parts[0])
+            os.makedirs(folder, exist_ok=True)
+            with open(os.path.join(folder, parts[1]), "wb") as handle:
+                handle.write(b"\x7fELF" + b"\x00" * 60)
 
     if entry:
         path = os.path.join(root, "usr", "share", "applications",
@@ -704,6 +717,89 @@ def test_ldd_failure(core, work):
         core.REHEARSAL = False
 
 
+def test_a_version_clash_is_not_a_missing_part(core, work):
+    """The 13 September 2026 bench fault, read straight out of ldd's own words."""
+    heading("a clash with the WRONG library is not a missing part")
+    missing, clashes = core.read_ldd(
+        "\t/tmp/x/libstyle.so: /lib64/libQt6QuickControls2.so.6: version "
+        "'Qt_6_PRIVATE_API' not found (required by /tmp/x/libstyle.so)\n"
+        "\tlibc.so.6 => /lib64/libc.so.6 (0x0)\n")
+    check(missing == [], "a version line is NOT counted as a missing library",
+          missing)
+    check(clashes == [("libQt6QuickControls2.so.6", "Qt_6_PRIVATE_API")],
+          "it is recorded as a clash, named by the LIBRARY and not the file",
+          clashes)
+    check(not any(name.endswith(":") or name.startswith("/tmp")
+                  for name, _ in clashes),
+          "and nothing a person reads is a file name with a colon on it")
+
+    missing, clashes = core.read_ldd("\tlibnothing.so.6 => not found\n")
+    check(missing == ["libnothing.so.6"] and clashes == [],
+          "while '=> not found' still means exactly what it says",
+          (missing, clashes))
+
+
+def test_a_plugin_does_not_refuse_the_app(core, work):
+    heading("one plug-in that will not load does not refuse a working app")
+    tarball = make_tarball(os.path.join(work, "plugged.tar.gz"),
+                           name="plugged", elf=True, plugin=True)
+    seen = os.path.join(work, "ldd-was-told.txt")
+    # The stand-in answers for the plug-in the way the bench did, answers
+    # cleanly for everything else, and writes down the library path it was
+    # given so the test can prove the app's own folders went in front.
+    script = ("#!/bin/sh\n"
+              "echo \"$LD_LIBRARY_PATH\" >> %s\n"
+              "case \"$1\" in\n"
+              "  *libplug.so)\n"
+              "    echo '\\tlibhelper.so.1 => not found'\n"
+              "    echo \"$1: /lib64/libQt6Quick.so.6: version "
+              "'Qt_6_PRIVATE_API' not found (required by $1)\"\n"
+              "    ;;\n"
+              "  *) echo '\\tlibc.so.6 => /lib64/libc.so.6 (0x0)' ;;\n"
+              "esac\n" % seen)
+    with FakeHome():
+        core.REHEARSAL = True
+        progress = core.Progress()
+        with StandIn("ldd", script):
+            result = core.install(core.sort_path(tarball), progress)
+        check(result.ok, "the app installs, because the app itself is fine",
+              result.message)
+        details = "\n".join(progress.log_lines)
+        check("optional part" in details and "the app itself is fine" in details,
+              "and Details says so in one summary line", details)
+        check("libhelper.so.1 is missing" in details,
+              "naming the library that is missing", details)
+        check("libQt6Quick.so.6 is an older version" in details,
+              "and the library that clashed", details)
+        core.REHEARSAL = False
+
+    told = open(seen).read().splitlines() if os.path.isfile(seen) else []
+    check(bool(told), "ldd really was run", told)
+    check(all(line.split(os.pathsep)[0].endswith(os.path.join("usr", "lib"))
+              for line in told if line),
+          "and every time, the payload's OWN library folder came first — "
+          "which is how the app will really start", told[:3])
+
+    # And the main program's own trouble still stops the whole thing.
+    tarball = make_tarball(os.path.join(work, "broken.tar.gz"),
+                           name="broken", elf=True, plugin=True)
+    script = ("#!/bin/sh\n"
+              "case \"$1\" in\n"
+              "  */opt/broken/broken) echo '\\tlibnothing.so.6 => not found' ;;\n"
+              "  *) echo '\\tlibc.so.6 => /lib64/libc.so.6 (0x0)' ;;\n"
+              "esac\n")
+    with FakeHome():
+        core.REHEARSAL = True
+        with StandIn("ldd", script):
+            result = core.install(core.sort_path(tarball))
+        check(not result.ok,
+              "a MAIN program with a missing library is still refused",
+              result.message)
+        check("libnothing.so.6" in (result.detail or ""),
+              "and the library is named behind Details", result.detail)
+        core.REHEARSAL = False
+
+
 def test_archive_routes(core, work):
     heading("archives — a tarball and a zip with a program inside")
     for maker, name in ((make_tarball, "app-2.0.tar.gz"),
@@ -1210,6 +1306,8 @@ def main(argv):
         test_escaping_archive(core, work)
         test_route_c_is_off(core, work)
         test_ldd_failure(core, work)
+        test_a_version_clash_is_not_a_missing_part(core, work)
+        test_a_plugin_does_not_refuse_the_app(core, work)
         test_root_refusal(core, work)
         test_flatpak_command(core)
         test_helper_understands_the_modes()
