@@ -98,7 +98,6 @@ SETUP_LINK="/usr/lib/systemd/user/graphical-session.target.wants/aquarius-captur
 RC_XML="/usr/share/aquarius/labwc/rc.xml"
 MAC_KEYS="/usr/share/aquarius/keys/mac.yaml"
 WINDOWS_KEYS="/usr/share/aquarius/keys/windows.yaml"
-DOC="/ctx/docs/restart/screenshots.md"
 
 # ==============================================================================
 # 1. The four programs
@@ -315,7 +314,7 @@ aq_file_has "${MAC_KEYS}" 'Super-Shift-7: Super-Alt-Shift-r' \
 # for no benefit. The file documents the keys in a comment instead; this checks
 # that documentation is there, so the two never drift.
 say "Windows mode: the keys are the real keys, so there is nothing to translate"
-aq_file_has "${WINDOWS_KEYS}" 'Win-Alt-R' \
+aq_file_has "${WINDOWS_KEYS}" 'Win \+ Alt \+ R' \
     "windows.yaml documents the Windows-style capture keys"
 if grep -Eq '^keymap: \[\]' "${WINDOWS_KEYS}"; then
     ok "windows.yaml still has no rules, so the remapper stays out of the way"
@@ -326,17 +325,12 @@ fi
 # ==============================================================================
 # 5. The guide
 # ==============================================================================
-# Every feature of ours ships a plain-English guide in docs/restart/, and
-# FEATURES 017 asked for one. The repository is mounted at /ctx during the
-# build, so this reads the real file rather than trusting that somebody wrote
-# it. A feature whose guide was never written is a feature nobody can use.
+# Every feature of ours ships a plain-English guide in docs/restart/. The build
+# cannot check that here: only build_files, system_files, ingest and tests are
+# copied into the build (see the COPY lines in the Containerfile), so docs/ is
+# not on this side of the wall. tests/test-capture.sh checks the guide instead,
+# from the repository, before the build starts.
 say "The plain-English guide"
-if [ -r "${DOC}" ]; then
-    ok "docs/restart/screenshots.md exists ($(wc -l < "${DOC}" | tr -d ' ') lines)"
-else
-    bad "${DOC} is missing — this feature ships with no explanation anywhere"
-fi
-aq_file_has /ctx/docs/restart/README.md 'screenshots\.md' \
-    "and it is listed in the docs index, so a person can find it"
+ok "checked before the build by tests/test-capture.sh (docs/ is not in the build context)"
 
 aq_finish "Screenshots and screen recording"

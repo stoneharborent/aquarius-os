@@ -520,6 +520,24 @@ else
 fi
 
 # ==============================================================================
+# 7. The guide (only when run from the repository; the image has no docs/)
+# ==============================================================================
+DOCS="${HERE}/../docs/restart"
+if [ -d "${DOCS}" ]; then
+    echo "The plain-English guide"
+    if [ -s "${DOCS}/screenshots.md" ]; then
+        pass "docs/restart/screenshots.md exists"
+    else
+        fail "docs/restart/screenshots.md is missing — the feature ships with no explanation"
+    fi
+    if grep -q 'screenshots\.md' "${DOCS}/README.md" 2> /dev/null; then
+        pass "and the docs index lists it"
+    else
+        fail "docs/restart/README.md does not list screenshots.md"
+    fi
+fi
+
+# ==============================================================================
 echo
 if [ "${FAILED}" -eq 0 ]; then
     echo "test-capture: ${PASSED} checks passed."
