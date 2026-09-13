@@ -451,7 +451,7 @@ def dry_run():
     print("")
     print("What the window does when it runs for real:")
     print("  * shows the current version above")
-    print("  * checks WITHOUT asking for a password: it reads which image this")
+    print("  * checks without asking for a password: it reads which image this")
     print("    machine booted, then asks the image store for the newest one, and")
     print("    compares their fingerprints. Says one of:")
     print("      You're up to date")
