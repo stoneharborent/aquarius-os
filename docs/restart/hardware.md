@@ -477,6 +477,135 @@ read:** [`mac-drives.md`](mac-drives.md).
 
 ---
 
+## Why an inside drive asks once, and an outside drive never asks
+
+*Added 2026-09-14 (FEATURES 020, at Royce's request: "have the internal drives
+also be automatically verified with permissions when logging in").*
+
+### The two kinds of drive, and why Linux treats them differently
+
+| | |
+| --- | --- |
+| **A drive you plug in** — USB stick, SD card, external SSD | opens by itself, no password, ever. That is what the section above is about. |
+| **A drive that lives inside the computer** — a second SSD full of footage, the disk Windows is on | used to ask for an administrator password **every single login**. |
+
+That difference is not an accident or an oversight. Linux uses two separate
+permissions for mounting a drive: one for the removable ones, and a different,
+stricter one for the disks inside the case. AquariusOS grants the first and
+deliberately does not grant the second, because "mount any internal partition,
+no password, no questions" is the kind of permission that is convenient on
+Tuesday and regretted on Friday.
+
+**So it asks for a password. Right the first time, annoying the tenth.**
+
+### What happens now
+
+The first time AquariusOS sees an inside drive it does not know, it asks you
+**once**, with a notification:
+
+```
+Mount "Footage" every login?
+"Footage" lives inside this computer (/dev/sdb1, formatted ext4).
+Right now it asks for a password every time you log in.
+Say yes once and it will simply be there from now on.
+
+  [ Mount every login ]        [ Never ask ]
+```
+
+Three answers, and all three are undoable:
+
+| You click | What happens |
+| --- | --- |
+| **Mount every login** | You type your administrator password once. The drive is written into the computer's own list of drives (`/etc/fstab`) and opened straight away. From then on it is simply there, at every login and after every restart, with no password ever again. |
+| **Never ask** | One line in your own settings file, and the question never comes back for that drive. `aq drives ask-again` brings it back. |
+| **Neither — you close it or ignore it** | Nothing at all is changed, and you will be asked again at your next login. A question somebody walked away from is not an answer. |
+
+### Why it is done this way, and not the obvious way
+
+The obvious way is to change the permission rule so internal disks stop asking.
+**We deliberately did not, and the build stops anybody who tries.**
+
+Changing the rule would have made *every* internal partition on the machine
+mountable with no password — including ones you never chose, on a machine you
+might one day hand to somebody else. What AquariusOS does instead is narrower
+and, we think, more honest: **the handful of drives you actually picked are
+opened by the machine itself, and nothing else changes at all.** The rule stays
+exactly as tight as it was.
+
+There is a nice side effect. A drive in `/etc/fstab` is mounted by the computer
+*before anybody logs in*, so it is not really "no password" — it is "no
+permission needed, because this is now one of the computer's own drives".
+
+### The drives it will never, ever offer
+
+This list is checked twice — once by the part that asks, and again by the
+privileged part that writes — because a program running as the administrator
+must not simply believe what it was told.
+
+- **The disk AquariusOS is installed on.** Any partition of it.
+- **The EFI partition**, the small one the computer boots from.
+- **Swap**, and anything that is not a plain filesystem (encrypted containers,
+  LVM, RAID members).
+- **Windows' own system volume** — an NTFS partition with a `Windows` folder on
+  it, or one locked with BitLocker. If you say yes to one of those by mistake,
+  it is refused and tells you why.
+- **Anything already in `/etc/fstab`.** It is already remembered.
+- **A drive with no UUID**, because there would be no safe way to name it.
+
+### Windows drives are opened read-only
+
+An NTFS drive that *is* remembered is mounted **read-only**. Windows' "fast
+startup" does not really shut the computer down, which leaves the drive
+half-closed; writing to a drive in that state is one of the standard ways people
+lose a Windows install. Read-only is the honest default, and the notification
+says so before you answer.
+
+### Where a remembered drive appears
+
+At **`/media/aquarius/<name of the drive>`**, not in the usual
+`/run/media/<you>/` folder. That is not a quirk, it is the point: the usual
+folder only exists *after* you log in, and a drive that is supposed to be ready
+*before* you log in cannot live there.
+
+> ⚠️ **Not yet confirmed on the bench:** the dock lists the drives in
+> `/run/media/<you>/`, so a remembered drive may appear in Files and the
+> sidebar but **not as a dock tile**. That is expected from reading the code and
+> has not been seen with eyes yet. If it matters, the fix is a one-line change
+> in the shell repository (have the dock watch `/media/aquarius` too), not here.
+
+### Seeing and undoing your choices
+
+```bash
+# Which inside drives open at every login?
+aq drives remembered
+
+# Stop opening one by itself (it will be offered again next time).
+aq drives forget Footage
+
+# Undo every "Never ask" answer, so the questions come back next login.
+aq drives ask-again
+```
+
+`aq drives forget` asks for your administrator password, because it is editing
+the computer's own list of drives.
+
+> **Settings has no page for this yet.** Everything here is the notification and
+> the `aq drives` commands. A "Remembered drives" panel in Settings is a small
+> follow-up job, listed in FEATURES 020's build list as item 3.
+
+### The pieces, for whoever changes this next
+
+| Piece | Where |
+| --- | --- |
+| The question on screen | `/usr/libexec/aquarius-automount`, the `maybe_offer()` method and the `--ask` worker. It **mounts nothing**; it only asks. |
+| The part that writes | `/usr/libexec/aquarius-remember-drive`. Runs as the administrator, carries its own copy of the never-touch list. |
+| Who may run it | `/usr/share/polkit-1/actions/org.aquariusos.rememberdrive.policy` and `/usr/share/polkit-1/rules.d/50-aquarius-remember-drive.rules` — the person at this screen, in the active local session, in the `wheel` group, with their password (remembered for polkit's own short window, so three drives are one prompt). |
+| Your "never ask" answers | `~/.config/aquarius/remembered-drives.conf`. A plain text file; delete a line to be asked again. |
+| The build checks | `build_files/83-remembered-drives.sh` and `tests/test-remember-drive.py`. Most of the test is drives that must **never** be offered. |
+| ⚠️ The rule that did **not** change | `/usr/share/polkit-1/rules.d/49-aquarius-udisks.rules`, and the gate in `build_files/76-automount.sh` that stops the build if it ever does. Do not touch either. |
+
+---
+
 ## For whoever changes this next
 
 - The list lives in **`build_files/20-hardware-media.sh`**, under the heading
