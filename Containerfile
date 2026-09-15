@@ -648,6 +648,31 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     /ctx/build_files/82-apfs-drives.sh
 
+# 7d-ii. An INSIDE drive asks once, and then opens at every login.
+#
+#     Step 7f is about drives you plug in. This is about the ones that live
+#     inside the machine — a second SSD full of footage, the disk Windows is on.
+#     They have always asked for an administrator password at every single
+#     login. Now AquariusOS asks ONCE per drive and, if the answer is yes,
+#     writes one UUID-keyed line into /etc/fstab, where mounting does not go
+#     through polkit at all.
+#
+#     ⚠️ THE NARROW RULE DID NOT MOVE. The obvious way to do this is to widen
+#     49-aquarius-udisks.rules to cover udisks2's internal-disk action, which
+#     would make EVERY internal partition mountable with no password — and step
+#     7f STOPS THE BUILD if that ever happens. This step checks that gate is
+#     still standing, and then checks the alternative that was built instead:
+#     a privileged helper with its own never-touch list (the OS disk, the EFI
+#     partition, swap, Windows' own volume, anything already in fstab), two
+#     polkit files of ours, and the question the session agent puts on screen.
+#
+#     The refusals are the safety, and no amount of reading proves a refusal, so
+#     the step runs the real decision code against fake drives.
+#
+#     After step 7d (the automount agent it extends) and step 5 (its files).
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    /ctx/build_files/83-remembered-drives.sh
+
 # 7e. The gaming layer: Steam, Proton's supporting cast, gamescope, gamemode,
 #     MangoHud, the 32-bit graphics libraries a Windows game needs, and the
 #     Xbox controller drivers. In BOTH images — this machine is meant to be a

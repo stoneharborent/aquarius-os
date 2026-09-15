@@ -589,6 +589,29 @@ jobs:
           ./tests/test-automount-mount.py
 
       # ------------------------------------------------------------------------
+      # An INSIDE drive asks once — and never the wrong drive
+      # ------------------------------------------------------------------------
+      # Since 2026-09-14 a drive that lives inside the computer is offered once
+      # ("Mount Footage every login?") instead of asking for a password at every
+      # login. The dangerous half of that is the drives it must NEVER offer: the
+      # disk AquariusOS is on, the EFI partition, swap, Windows' own volume.
+      # No amount of reading proves a refusal, so the real decision code is run
+      # against fake drives here, before the image is even built.
+      - name: Check the right inside drives are offered, and the wrong ones refused
+        run: |
+          set -uo pipefail
+          if ! python3 -c 'import gi' 2> /dev/null; then
+            sudo apt-get install -y python3-gi > /dev/null 2>&1 || true
+          fi
+          if ! python3 -c 'import gi' 2> /dev/null; then
+            echo "NOTE  PyGObject is not available on this runner, so the fast"
+            echo "      warning could not run. The same test runs inside the"
+            echo "      finished image, and that run can fail the build."
+            exit 0
+          fi
+          ./tests/test-remember-drive.py
+
+      # ------------------------------------------------------------------------
       # The folder every drive appears in is made at login — and can never stop
       # a login
       # ------------------------------------------------------------------------

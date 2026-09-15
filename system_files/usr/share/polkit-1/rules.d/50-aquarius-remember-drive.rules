@@ -1,0 +1,40 @@
+// ===========================================================================
+// 50-aquarius-remember-drive.rules — who may say "remember this inside drive"
+// ===========================================================================
+// PLAIN ENGLISH
+//
+// This narrows the one privileged job AquariusOS adds for drives
+// (org.aquariusos.rememberdrive.manage, described in
+// /usr/share/polkit-1/actions/org.aquariusos.rememberdrive.policy) down to the
+// only person who should ever be asked: somebody sitting at this computer, in
+// the session that owns the screen right now, who is an administrator.
+//
+// They still type their password — this file does not remove the prompt, it
+// removes everybody else. Over SSH, in a session that has been switched away
+// from, or from an account that is not an administrator, the answer is a flat
+// no and no password box appears at all.
+//
+// ⚠️ THIS IS A DIFFERENT FILE FROM 49-aquarius-udisks.rules AND DOES NOT TOUCH
+// IT. 49 is the narrow no-password rule for REMOVABLE drives, and it says
+// nothing at all about internal disks on purpose — the build stops if it ever
+// does. This feature exists precisely so that 49 never has to change: instead
+// of making every internal partition mountable with no password, AquariusOS
+// writes the handful of drives you actually chose into /etc/fstab, where they
+// mount without going through polkit at all.
+// ===========================================================================
+
+polkit.addRule(function(action, subject) {
+    if (action.id != "org.aquariusos.rememberdrive.manage") {
+        return polkit.Result.NOT_HANDLED;
+    }
+
+    // The person at the screen, in the session that owns it, who is an
+    // administrator. Ask them for their password, and remember the answer for
+    // polkit's own short window so three drives are not three prompts.
+    if (subject.active && subject.local && subject.isInGroup("wheel")) {
+        return polkit.Result.AUTH_ADMIN_KEEP;
+    }
+
+    // Anybody else: no, and do not even ask.
+    return polkit.Result.NO;
+});
