@@ -706,11 +706,119 @@ question in the Aquarius Desktop:
 - **Screen recording and screenshots → `wlr`.** labwc is built on a library
   called wlroots and speaks its screen-copy protocol, so the small,
   purpose-built `xdg-desktop-portal-wlr` can capture it.
-- **Everything else → `gtk`.** File pickers, printing, notifications, the
-  "an app wants permission" prompt, and the light/dark setting.
+- **Open and Save dialogs → `nautilus`.** The Files app draws them itself. This
+  is the next section.
+- **Everything else → `gtk`.** Printing, notifications, the "an app wants
+  permission" prompt, and the light/dark setting.
 
 The GNOME session is completely unaffected — it looks for a differently named
 file and finds its own.
+
+## Why the picker is the Files app
+
+When any program on this desktop asks you to open or save a file, the window
+that appears **is the Files app** — the same sidebar, the same pinned folders,
+the same drives, the same look as when you open Files from the dock. Not a
+second, older-looking chooser that happens to list the same files.
+
+That is Royce's decision, made on 2026-09-14: *"the unified files app window
+when selecting files or folders from other apps. I want it to always pop up the
+files app from the OS."* It is design rule 14 — one file picker for the whole
+desktop — followed all the way through.
+
+It works because of two small files and one setting that was already there:
+
+| The piece | What it does |
+| --- | --- |
+| `/usr/bin/aquarius-session` sets `GTK_USE_PORTAL=1` | Tells every ordinary app "do not draw your own Open dialog, ask the desktop for one". This was already the case. |
+| `aquarius-portals.conf` says `FileChooser=nautilus` | The one line that chooses *which* window answers. |
+| `portals/nautilus.portal` | A note saying the Files app is able to answer. **We write this one ourselves** — see below. |
+
+### Why we had to write a file Nautilus should have shipped
+
+Every program that can answer one of these requests ships a small note file in
+`/usr/share/xdg-desktop-portal/portals/` saying what it can do. The Files app is
+the exception: it genuinely can draw Open and Save dialogs, but it ships no note
+file, because on GNOME nobody needs one — GNOME's own portal has the Files app's
+address written into its code.
+
+We are not GNOME, so nothing calls Files for us. Without a note file the desktop
+has no idea Files can do the job. `portals/nautilus.portal` is that note, and it
+is why this feature is three lines of configuration rather than a program.
+
+### The trap we deliberately avoided
+
+The obvious way to get the Files picker is to send Open dialogs to the **GNOME**
+portal back end, because opening Files is exactly what GNOME's back end does.
+**That does not work here, and it fails in the worst possible way.**
+
+`xdg-desktop-portal-gnome` needs GNOME's window manager, Mutter, to be running.
+We run labwc. When it starts and cannot find Mutter it prints
+
+```
+Non-compatible display server, exposing settings only.
+```
+
+and then quietly skips setting up the file chooser — **while still answering to
+its name**. So the desktop would hand every Open dialog to a program that was
+listening but had switched that feature off. Nothing would report an error. You
+would click "Open", wait about 25 seconds, and get no window.
+
+(The 25 seconds is not a setting of ours. It is how long the desktop's internal
+message bus waits for an answer before giving up. Another labwc-like desktop hit
+exactly this and spent a while chasing it — Omarchy issue 7944.)
+
+The Files app itself has no such problem. It needs nothing from Mutter; it is an
+ordinary program drawing an ordinary window. So we skip the middleman and send
+the request straight to it. Build step 55 **fails the build** if anyone ever
+points Open dialogs back at the GNOME back end.
+
+### What to check if a dialog never appears
+
+Work down this list in order. Each step tells you which link in the chain broke.
+
+1. **Is the routing line there?** In a terminal:
+
+   ```
+   grep FileChooser /usr/share/xdg-desktop-portal/aquarius-portals.conf
+   ```
+
+   It must say `org.freedesktop.impl.portal.FileChooser=nautilus`. If it says
+   `=gnome`, that is the trap above — change it back to `nautilus`.
+
+2. **Is the note file there?**
+
+   ```
+   cat /usr/share/xdg-desktop-portal/portals/nautilus.portal
+   ```
+
+   It must exist and its `Interfaces=` line must mention `FileChooser`.
+
+3. **Can the Files app start on its own?**
+
+   ```
+   gdbus call --session --dest org.gnome.Nautilus \
+     --object-path /org/freedesktop/portal/desktop \
+     --method org.freedesktop.DBus.Peer.Ping
+   ```
+
+   An answer of `()` means Files started and is reachable. An error here means
+   the Files app is the problem, not the portal configuration.
+
+4. **Did the portals get refreshed at login?** If you arrived here straight from
+   GNOME, a portal from the old session may still be running and still convinced
+   it is in GNOME. Log out and back in, or run
+   `systemctl --user stop xdg-desktop-portal.service` and try again — it restarts
+   by itself the next time something asks.
+
+### One note about the Aquarius Editor
+
+The Editor is an Electron app, and Electron's file dialogs now go through the
+portal **always** — recent versions removed the switch that used to turn it off.
+That is good news (it means the Editor gets the Files picker like everything
+else) but it also means the portal has to genuinely work, because there is no
+longer a fallback to an app-drawn dialog. It is on the bench list for that
+reason.
 
 ### Which screen gets recorded
 
@@ -868,6 +976,7 @@ of its own, it must not also start this one — it should write `agent=none` int
 | `/usr/libexec/aquarius-display-scale` | Sets each monitor to the right size at login. Without it every screen stays at 100% and a 4K desktop is tiny. Guide: [`aquarius-display.md`](aquarius-display.md). |
 | `~/.config/aquarius/display.conf` | Your own screen-size answers, written by `aq display`. |
 | `/usr/share/xdg-desktop-portal/aquarius-portals.conf` | Which portal back end answers which request. |
+| `/usr/share/xdg-desktop-portal/portals/nautilus.portal` | The note saying the Files app can be the Open/Save picker. Ours, because Nautilus ships none. |
 | `/etc/xdg/xdg-desktop-portal-wlr/config` | How screen recording picks a screen. |
 | `/etc/greetd/config.toml` | The AquariusOS login screen, installed and switched off. See [`login.md`](login.md). |
 | `~/.local/state/aquarius-session/session.log` | **The log. Read this first when something is wrong.** |
@@ -991,8 +1100,12 @@ In order. Stop at the first failure and read the log.
    start it, add a *Screen Capture (PipeWire)* source. A dimmed overlay should
    appear asking which screen — click one — and OBS should then show the screen.
    **This is the one that proves the portal configuration.**
-8. **A file dialog.** In any Flatpak application, open a file. The dialog should
-   appear. (This proves the GTK portal is answering.)
+8. **A file dialog.** In any Flatpak application, open a file. The window that
+   appears should be **the Files app**, with the same sidebar and the same
+   drives you see when you open Files from the dock — not a plainer, older
+   chooser. Do it a second time: it should appear straight away. (If it pauses
+   for about 25 seconds and then nothing happens, go to "Why the picker is the
+   Files app" above and work down the four checks.)
 9. **Light and dark.** In a terminal:
    `gsettings set org.gnome.desktop.interface color-scheme prefer-dark`. The bar
    should turn Midnight while you watch. Set it back to `default` for Ice.
