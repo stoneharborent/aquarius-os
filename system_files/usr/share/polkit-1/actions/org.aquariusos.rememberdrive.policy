@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!--
+  ===========================================================================
+  org.aquariusos.rememberdrive.policy — "remember this inside drive"
+  ===========================================================================
+  PLAIN ENGLISH
+
+  This file tells polkit — the part of Linux that decides who may do what —
+  that AquariusOS has one new privileged job, and what to ask before doing it.
+
+  The job is: write one line into /etc/fstab so that a drive living INSIDE this
+  computer opens by itself at every login, instead of asking for a password
+  every time. The program that does it is
+  /usr/libexec/aquarius-remember-drive, and it refuses, by itself, to touch the
+  disk the operating system is on, the EFI partition, swap, or Windows' own
+  volume.
+
+  THE ANSWER BELOW IS "ASK FOR AN ADMINISTRATOR PASSWORD, THEN REMEMBER IT FOR
+  A FEW MINUTES" (auth_admin_keep). Two reasons:
+
+    * it is the same answer every other "this changes the whole computer"
+      moment on AquariusOS gives, so nothing new has to be learned, and
+    * a machine with three inside drives asks once rather than three times,
+      because the person is answering three prompts in the same minute.
+
+  The "keep" lasts only as long as polkit's own short window and never survives
+  a reboot. Nothing here grants a standing permission.
+
+  Who may answer at all is narrowed further in
+  /usr/share/polkit-1/rules.d/50-aquarius-remember-drive.rules: the person at
+  this screen, in the active local session, in the `wheel` group. Over SSH, the
+  answer is simply no.
+
+  ⚠️ This file has NOTHING to do with
+  /usr/share/polkit-1/rules.d/49-aquarius-udisks.rules and must never be used
+  as a reason to widen it. That rule stays exactly as narrow as it is: this
+  feature exists so it does not have to change.
+  ===========================================================================
+-->
+<policyconfig>
+
+  <vendor>AquariusOS</vendor>
+  <vendor_url>https://github.com/stoneharborent</vendor_url>
+
+  <action id="org.aquariusos.rememberdrive.manage">
+    <description>Remember a drive inside this computer</description>
+    <message>Authentication is required to open this drive at every login</message>
+    <icon_name>drive-harddisk</icon_name>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/aquarius-remember-drive</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+
+</policyconfig>

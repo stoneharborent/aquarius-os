@@ -1,0 +1,575 @@
+#!/usr/bin/python3
+# =============================================================================
+# aquarius-remember-drive — say "yes" once, and an inside drive opens for ever
+# =============================================================================
+# PLAIN ENGLISH
+#
+# A drive you PLUG IN — a USB stick, an SD card, an external SSD — opens by
+# itself on AquariusOS and never asks for a password. A drive that lives INSIDE
+# the computer is different: Linux asks for an administrator password every
+# single time, because mounting an internal disk is the kind of thing that
+# should not happen behind your back.
+#
+# That is right the first time and annoying the tenth. So AquariusOS asks you
+# ONCE, per drive: "Mount Footage every login?" If you say yes, this program
+# writes one line into /etc/fstab — the machine's own list of drives it should
+# always have — and from then on that drive is simply there, with no password,
+# at every login and after every restart.
+#
+# ⚠️ WHY IT IS DONE THIS WAY AND NOT THE OBVIOUS WAY
+#
+# The obvious way is to widen the no-password rule in
+# /usr/share/polkit-1/rules.d/49-aquarius-udisks.rules so that internal disks
+# stop asking. That is deliberately forbidden here — the build refuses it — and
+# the reason is that it would make EVERY internal partition on the machine
+# mountable with no password, including ones nobody ever chose. This program
+# does the opposite: it makes exactly the drives you picked, and nothing else,
+# open without a password. The rule stays as narrow as it was.
+#
+# -----------------------------------------------------------------------------
+# HOW IT IS ALLOWED TO RUN
+# -----------------------------------------------------------------------------
+# It edits /etc/fstab, so it runs as the administrator. The session agent
+# (/usr/libexec/aquarius-automount) starts it through `pkexec`, and polkit
+# decides whether that is allowed using two files of ours:
+#
+#   /usr/share/polkit-1/actions/org.aquariusos.rememberdrive.policy
+#   /usr/share/polkit-1/rules.d/50-aquarius-remember-drive.rules
+#
+# The answer is "yes, if you are sitting at this machine, in the session that
+# owns the screen, and you are an administrator — and type your password".
+# The password is remembered for a few minutes (polkit's `auth_admin_keep`), so
+# a machine with three inside drives asks once, not three times. That is the
+# least surprising behaviour we could pick: it matches every other "this needs
+# an administrator" moment on the system, and it does not invent a new kind of
+# trust that survives a reboot.
+#
+# -----------------------------------------------------------------------------
+# WHAT IT WILL NEVER TOUCH — THE NEVER-TOUCH LIST
+# -----------------------------------------------------------------------------
+# These checks run HERE, in the privileged program, not only in the friendly
+# window that calls it. That is the whole point: a privileged program must not
+# believe what it was told.
+#
+#   1. The disk AquariusOS itself lives on. Any partition of it.
+#   2. The EFI partition — the little one the computer boots from.
+#   3. Swap, and anything that is not a plain filesystem (LUKS, LVM, RAID).
+#   4. Windows' own system volume — an NTFS partition with a Windows folder on
+#      it, or one locked with BitLocker.
+#   5. Anything already named in /etc/fstab. It is already remembered.
+#   6. A drive with no UUID. Without one there is no safe way to name it.
+#
+# NTFS drives that DO pass are mounted READ-ONLY. Windows' "fast startup" leaves
+# an NTFS volume half-shut-down, and writing to a volume in that state is how
+# people lose a Windows install. Read-only is the honest default.
+#
+# -----------------------------------------------------------------------------
+# HOW TO RUN IT BY HAND
+# -----------------------------------------------------------------------------
+#   aquarius-remember-drive --dry-run
+#         Say the rules out loud and change nothing. This is what the build runs.
+#   aquarius-remember-drive list
+#         Print the drives that are remembered. Needs no password.
+#   aquarius-remember-drive remember --uuid U --label L --fstype T --uid N --gid N
+#         Add one. Administrator only.
+#   aquarius-remember-drive forget --uuid U
+#         Take one back out again. Administrator only.
+#
+# Most people never type any of this: the notification does it, and
+# `aq drives remembered` / `aq drives forget` is the friendly way to look and to
+# undo.
+#
+# Plain-English guide: docs/restart/hardware.md, section "Why an inside drive
+# asks once, and an outside drive never asks".
+# =============================================================================
+
+import os
+import re
+import subprocess
+import sys
+
+FSTAB = "/etc/fstab"
+
+# Every line we wrote carries this on the end, so that a line written by us is
+# never confused with a line Fedora's installer or a person wrote by hand. We
+# only ever remove a line that carries it.
+TAG = "# aquarius-remember-drive"
+
+# Where a remembered drive is mounted. NOT /run/media/<you>/, which belongs to
+# udisks2 and is emptied when you log out — a drive that is supposed to be there
+# before you log in cannot live in a folder that only exists after you do.
+MEDIA_ROOT = "/media/aquarius"
+
+# The mounts that mean "this is the operating system". A partition of the same
+# physical disk as any of these is never offered.
+CRITICAL_MOUNTS = ("/", "/boot", "/boot/efi", "/efi", "/var", "/usr", "/sysroot")
+
+# The partition type that marks the EFI System Partition. Fixed by the UEFI
+# standard; it is the same four words on every computer ever made.
+EFI_PARTTYPE = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+
+# Filesystems that are real filesystems a person keeps files on. Anything not in
+# here is refused rather than guessed at — swap, LUKS, LVM and RAID members all
+# fall off this list on purpose, and so does APFS, which has its own path in
+# /usr/libexec/aquarius-automount and cannot be put in fstab at all.
+KNOWN_FILESYSTEMS = (
+    "ext2", "ext3", "ext4", "xfs", "btrfs", "f2fs",
+    "vfat", "exfat", "ntfs",
+)
+
+# The options every remembered drive gets, whatever it is formatted as.
+#
+#   nofail                      a drive that is missing (pulled out, died) must
+#                               never stop the computer from starting up. This
+#                               is the single most important one.
+#   x-systemd.automount         do not mount it during start-up at all — mount
+#                               it the first time somebody actually opens the
+#                               folder. Nothing waits on a slow disk.
+#   x-systemd.device-timeout=10 and if the drive does not answer within ten
+#                               seconds, give up quietly rather than hang.
+COMMON_OPTIONS = "nofail,x-systemd.automount,x-systemd.device-timeout=10"
+
+
+def out(message):
+    print(message, flush=True)
+
+
+def fail(message):
+    print("aquarius-remember-drive: %s" % message, file=sys.stderr, flush=True)
+    return 1
+
+
+# -----------------------------------------------------------------------------
+# --dry-run — states the rules, changes nothing, needs no root and no drives
+# -----------------------------------------------------------------------------
+def dry_run():
+    out("aquarius-remember-drive --dry-run")
+    out("Nothing is written and nothing is mounted. This is the rehearsal the build runs.")
+    out("")
+    out("What it does when it runs for real:")
+    out("  * writes ONE line into %s, naming the drive by its UUID" % FSTAB)
+    out("  * marks that line with '%s' so it can be taken out again" % TAG)
+    out("  * mounts it under %s/<label>" % MEDIA_ROOT)
+    out("  * always with: %s" % COMMON_OPTIONS)
+    out("  * then runs 'systemctl daemon-reload' and brings the drive up now")
+    out("")
+    out("The never-touch list — it refuses, every time, to remember:")
+    out("  * the disk AquariusOS is installed on (any partition of it)")
+    out("  * the EFI partition (partition type %s)" % EFI_PARTTYPE)
+    out("  * swap, and anything that is not a plain filesystem (LUKS, LVM, RAID)")
+    out("  * Windows' system volume: NTFS with a Windows folder, or BitLocker")
+    out("  * anything already named in %s" % FSTAB)
+    out("  * a drive with no UUID")
+    out("  * anything backing one of: %s" % ", ".join(CRITICAL_MOUNTS))
+    out("")
+    out("NTFS drives are mounted READ-ONLY, because Windows' fast startup leaves")
+    out("the volume dirty and writing to it is how a Windows install is lost.")
+    out("")
+    out("It never widens /usr/share/polkit-1/rules.d/49-aquarius-udisks.rules.")
+    return 0
+
+
+# -----------------------------------------------------------------------------
+# Reading the machine
+# -----------------------------------------------------------------------------
+def read_mounts():
+    """Every mount on this machine: (mount point, source device)."""
+    found = []
+    try:
+        with open("/proc/self/mountinfo", "r") as handle:
+            for line in handle:
+                parts = line.split(" - ")
+                if len(parts) < 2:
+                    continue
+                left = parts[0].split()
+                right = parts[1].split()
+                if len(left) < 5 or len(right) < 2:
+                    continue
+                found.append((left[4], right[1]))
+    except OSError:
+        pass
+    return found
+
+
+def whole_disk(dev_path):
+    """/dev/sda3 -> sda ; /dev/nvme0n1p2 -> nvme0n1 ; /dev/mmcblk0p1 -> mmcblk0"""
+    name = os.path.basename(dev_path)
+    for stem in ("nvme", "mmcblk", "loop"):
+        if name.startswith(stem):
+            idx = name.rfind("p")
+            if idx > 0 and name[idx + 1:].isdigit():
+                return name[:idx]
+            return name
+    return name.rstrip("0123456789")
+
+
+def critical_disks():
+    """The whole-disk names that the operating system is living on."""
+    disks = set()
+    for mount_point, source in read_mounts():
+        if mount_point in CRITICAL_MOUNTS and source.startswith("/dev/"):
+            disks.add(whole_disk(source))
+    return disks
+
+
+def device_for_uuid(uuid):
+    """The /dev path of the partition with this UUID, or '' if there is none."""
+    link = os.path.join("/dev/disk/by-uuid", uuid)
+    if not os.path.exists(link):
+        return ""
+    return os.path.realpath(link)
+
+
+def lsblk(device, column):
+    """One column of lsblk for one device, as plain text. '' if it cannot say."""
+    try:
+        result = subprocess.run(
+            ["/usr/bin/lsblk", "-no", column, device],
+            capture_output=True, text=True, timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return (result.stdout or "").strip().splitlines()[0].strip() \
+        if (result.stdout or "").strip() else ""
+
+
+def fstab_lines():
+    try:
+        with open(FSTAB, "r") as handle:
+            return handle.read().splitlines()
+    except OSError:
+        return []
+
+
+def fstab_mentions(uuid, mount_point):
+    """Is this drive, or this folder, already in fstab? Ours or anybody's."""
+    for line in fstab_lines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        fields = stripped.split()
+        if len(fields) < 2:
+            continue
+        if fields[0].upper() == ("UUID=%s" % uuid).upper():
+            return True
+        if fields[1] == mount_point:
+            return True
+    return False
+
+
+# -----------------------------------------------------------------------------
+# The two Windows tests
+# -----------------------------------------------------------------------------
+def looks_like_bitlocker(device):
+    """BitLocker writes '-FVE-FS-' at byte 3 of the volume. Read it, do not mount it."""
+    try:
+        with open(device, "rb") as handle:
+            handle.seek(3)
+            return handle.read(8) == b"-FVE-FS-"
+    except OSError:
+        # Cannot read it at all: treat that as "do not touch", not as "fine".
+        return True
+
+
+def has_windows_folder(device):
+    """Mount it read-only for a moment and look for Windows' own folder.
+
+    Read-only, `nodev,noexec,nosuid`, into a throwaway folder, and unmounted
+    again before this function returns. Nothing is written to the volume.
+    """
+    probe = "/run/aquarius-remember-drive-probe"
+    try:
+        os.makedirs(probe, 0o700, exist_ok=True)
+    except OSError:
+        return True  # cannot check → refuse
+    mounted = False
+    try:
+        for fstype in ("ntfs3", "ntfs-3g"):
+            result = subprocess.run(
+                ["/usr/bin/mount", "-t", fstype, "-o",
+                 "ro,nodev,noexec,nosuid", device, probe],
+                capture_output=True, text=True, timeout=60,
+            )
+            if result.returncode == 0:
+                mounted = True
+                break
+        if not mounted:
+            return True  # cannot look inside → refuse
+        for name in ("Windows", "WINDOWS"):
+            if os.path.isdir(os.path.join(probe, name, "System32")):
+                return True
+        return False
+    except (OSError, subprocess.SubprocessError):
+        return True
+    finally:
+        if mounted:
+            subprocess.run(["/usr/bin/umount", probe],
+                           capture_output=True, timeout=60)
+        try:
+            os.rmdir(probe)
+        except OSError:
+            pass
+
+
+# -----------------------------------------------------------------------------
+# Naming the folder
+# -----------------------------------------------------------------------------
+def safe_folder_name(label, uuid):
+    """A drive's label turned into a folder name that cannot surprise anybody.
+
+    Letters, digits, space, dash, dot and underscore survive; everything else
+    becomes a dash. A drive with no label at all is named after its UUID, which
+    is ugly and unambiguous — better than two drives called 'Untitled'.
+    """
+    cleaned = re.sub(r"[^A-Za-z0-9 ._-]", "-", (label or "").strip())
+    cleaned = cleaned.strip(" .-")
+    if not cleaned:
+        cleaned = "Drive-%s" % uuid[:8]
+    return cleaned[:64]
+
+
+def fstab_escape(text):
+    """fstab separates fields with spaces, so a space inside one is written \\040."""
+    return text.replace("\\", "\\134").replace(" ", "\\040").replace("\t", "\\011")
+
+
+def options_for(fstype, uid, gid):
+    """The mount options for one kind of filesystem, and why.
+
+    ext4/xfs/btrfs and friends carry real Linux ownership, so nothing extra is
+    needed. The Windows and camera filesystems do not carry ownership at all —
+    every file on them would belong to root — so they are told to present every
+    file as belonging to the person who uses this computer.
+    """
+    if fstype in ("vfat", "exfat"):
+        return "%s,uid=%d,gid=%d,umask=022" % (COMMON_OPTIONS, uid, gid)
+    if fstype == "ntfs":
+        # ⚠️ READ-ONLY. See the header: Windows' fast startup leaves the volume
+        # dirty, and writing to a dirty NTFS volume is how a Windows install is
+        # lost. If somebody one day wants read-write, that is a decision with a
+        # warning attached, not a default.
+        return "%s,ro,uid=%d,gid=%d,umask=022" % (COMMON_OPTIONS, uid, gid)
+    return COMMON_OPTIONS
+
+
+def fstab_type(fstype):
+    """What to write in fstab's type column. ntfs-3g is the driver we ship."""
+    return "ntfs-3g" if fstype == "ntfs" else fstype
+
+
+# -----------------------------------------------------------------------------
+# list — what is remembered right now (no password needed)
+# -----------------------------------------------------------------------------
+def do_list():
+    found = 0
+    for line in fstab_lines():
+        if TAG not in line:
+            continue
+        fields = line.split()
+        if len(fields) < 4:
+            continue
+        found += 1
+        uuid = fields[0].split("=", 1)[-1]
+        out("%s" % fields[1].replace("\\040", " "))
+        out("    UUID %s" % uuid)
+        out("    %s, %s" % (fields[2], fields[3]))
+        out("")
+    if not found:
+        out("No inside drives are remembered yet.")
+        out("")
+        out("AquariusOS asks you the first time it sees one. If you said")
+        out("\"Never ask\" and changed your mind, run 'aq drives ask-again'.")
+    return 0
+
+
+# -----------------------------------------------------------------------------
+# remember — the one that writes
+# -----------------------------------------------------------------------------
+def do_remember(uuid, label, fstype, uid, gid):
+    if os.geteuid() != 0:
+        return fail("this has to run as an administrator. The notification and"
+                    " 'aq drives' do that for you.")
+
+    if not re.fullmatch(r"[A-Za-z0-9-]{4,64}", uuid or ""):
+        return fail("'%s' is not a filesystem UUID." % uuid)
+
+    fstype = (fstype or "").lower()
+    if fstype not in KNOWN_FILESYSTEMS:
+        return fail("'%s' is not a filesystem this can remember. Only %s."
+                    % (fstype, ", ".join(KNOWN_FILESYSTEMS)))
+
+    device = device_for_uuid(uuid)
+    if not device:
+        return fail("no drive with UUID %s is plugged into this computer." % uuid)
+
+    # ---- the never-touch list, checked here and not taken on trust ----------
+    if whole_disk(device) in critical_disks():
+        return fail("%s is part of the disk AquariusOS is installed on. Refusing."
+                    % device)
+
+    parttype = lsblk(device, "PARTTYPE").lower()
+    if parttype == EFI_PARTTYPE:
+        return fail("%s is the EFI partition the computer boots from. Refusing."
+                    % device)
+
+    real_fstype = lsblk(device, "FSTYPE").lower()
+    if real_fstype and real_fstype != fstype:
+        return fail("%s is really formatted %s, not %s. Refusing rather than"
+                    " guessing." % (device, real_fstype, fstype))
+
+    folder = safe_folder_name(label, uuid)
+    mount_point = os.path.join(MEDIA_ROOT, folder)
+
+    if fstab_mentions(uuid, mount_point):
+        return fail("that drive (or %s) is already in %s. Nothing to do."
+                    % (mount_point, FSTAB))
+
+    if fstype == "ntfs":
+        if looks_like_bitlocker(device):
+            return fail("%s is locked with BitLocker. AquariusOS cannot read it,"
+                        " and will not pretend to." % device)
+        if has_windows_folder(device):
+            return fail("%s is Windows' own system volume. AquariusOS never"
+                        " mounts that on its own." % device)
+
+    # ---- write the line ----------------------------------------------------
+    try:
+        os.makedirs(mount_point, 0o755, exist_ok=True)
+    except OSError as error:
+        return fail("could not make the folder %s: %s" % (mount_point, error))
+
+    line = "UUID=%s %s %s %s 0 0 %s" % (
+        uuid, fstab_escape(mount_point), fstab_type(fstype),
+        options_for(fstype, uid, gid), TAG,
+    )
+
+    try:
+        existing = fstab_lines()
+        with open(FSTAB, "w") as handle:
+            handle.write("\n".join(existing).rstrip("\n") + "\n")
+            handle.write(line + "\n")
+    except OSError as error:
+        return fail("could not write %s: %s" % (FSTAB, error))
+
+    out("Remembered %s. It will be there at every login from now on." % folder)
+    out("  %s" % line)
+
+    # ---- and bring it up now, so the answer to "yes" is a drive, not a promise
+    subprocess.run(["/usr/bin/systemctl", "daemon-reload"],
+                   capture_output=True, timeout=120)
+    unit = subprocess.run(
+        ["/usr/bin/systemd-escape", "-p", "--suffix=automount", mount_point],
+        capture_output=True, text=True, timeout=30,
+    )
+    unit_name = (unit.stdout or "").strip()
+    if unit_name:
+        subprocess.run(["/usr/bin/systemctl", "start", unit_name],
+                       capture_output=True, timeout=120)
+    # Touching the folder is what makes an x-systemd.automount mount actually
+    # happen. If it does not, say so plainly instead of leaving a silent hole.
+    try:
+        os.listdir(mount_point)
+    except OSError:
+        pass
+    if any(point == mount_point for point, _ in read_mounts()):
+        out("It is open now at %s." % mount_point)
+    else:
+        out("It is remembered, but it did not open just now. It will at your")
+        out("next login; 'journalctl -b -u %s' says why." % (unit_name or "the automount unit"))
+    return 0
+
+
+# -----------------------------------------------------------------------------
+# forget — take one back out
+# -----------------------------------------------------------------------------
+def do_forget(uuid):
+    if os.geteuid() != 0:
+        return fail("this has to run as an administrator. 'aq drives forget' does"
+                    " that for you.")
+    if not re.fullmatch(r"[A-Za-z0-9-]{4,64}", uuid or ""):
+        return fail("'%s' is not a filesystem UUID." % uuid)
+
+    kept, removed = [], []
+    for line in fstab_lines():
+        fields = line.split()
+        # ⚠️ ONLY a line WE wrote. A line somebody else put in fstab by hand is
+        # none of our business, even if it names the same drive.
+        if TAG in line and fields and fields[0].upper() == ("UUID=%s" % uuid).upper():
+            removed.append(line)
+            continue
+        kept.append(line)
+
+    if not removed:
+        return fail("UUID %s is not one of the drives AquariusOS remembers."
+                    " 'aq drives remembered' lists the ones it does." % uuid)
+
+    try:
+        with open(FSTAB, "w") as handle:
+            handle.write("\n".join(kept).rstrip("\n") + "\n")
+    except OSError as error:
+        return fail("could not write %s: %s" % (FSTAB, error))
+
+    for line in removed:
+        fields = line.split()
+        mount_point = fields[1].replace("\\040", " ") if len(fields) > 1 else ""
+        if mount_point:
+            subprocess.run(["/usr/bin/umount", mount_point],
+                           capture_output=True, timeout=60)
+            try:
+                os.rmdir(mount_point)
+            except OSError:
+                pass
+    subprocess.run(["/usr/bin/systemctl", "daemon-reload"],
+                   capture_output=True, timeout=120)
+    out("Forgotten. That drive will ask again the next time AquariusOS sees it.")
+    return 0
+
+
+# -----------------------------------------------------------------------------
+# The command line
+# -----------------------------------------------------------------------------
+def value(argv, name, default=None):
+    flag = "--" + name
+    for index, arg in enumerate(argv):
+        if arg == flag and index + 1 < len(argv):
+            return argv[index + 1]
+        if arg.startswith(flag + "="):
+            return arg.split("=", 1)[1]
+    return default
+
+
+def usage():
+    out("aquarius-remember-drive — remember an inside drive, so it opens at every login")
+    out("")
+    out("  aquarius-remember-drive --dry-run")
+    out("  aquarius-remember-drive list")
+    out("  aquarius-remember-drive remember --uuid U --label L --fstype T --uid N --gid N")
+    out("  aquarius-remember-drive forget --uuid U")
+    out("")
+    out("The friendly way to do all of this is 'aq drives'.")
+    return 0
+
+
+def main(argv):
+    if "--dry-run" in argv[1:]:
+        return dry_run()
+    command = argv[1] if len(argv) > 1 else ""
+    if command in ("", "-h", "--help", "help"):
+        return usage()
+    if command == "list":
+        return do_list()
+    if command == "remember":
+        try:
+            uid = int(value(argv, "uid", "0"))
+            gid = int(value(argv, "gid", "0"))
+        except ValueError:
+            return fail("--uid and --gid have to be numbers.")
+        return do_remember(value(argv, "uuid", ""), value(argv, "label", ""),
+                           value(argv, "fstype", ""), uid, gid)
+    if command == "forget":
+        return do_forget(value(argv, "uuid", ""))
+    return fail("I do not understand '%s'. Try --help." % command)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
