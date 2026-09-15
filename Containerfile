@@ -734,6 +734,41 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     /ctx/build_files/69-homebrew.sh
 
+# 7n. Swift — the programming language, on the OS out of the box.
+#
+#     Royce asked for this on 2026-09-14 (FEATURES 022): open a terminal on a
+#     brand-new machine, type `swift --version`, and get an answer, the same
+#     way `python3 --version` already answers. This installs the whole
+#     toolchain — the compiler, `swift build` / `swift run` / `swift package`,
+#     the interactive prompt, Foundation, and `sourcekit-lsp` for editors.
+#
+#     ⚠️ SWIFT.ORG'S OWN INSTALLER IS NOT AN OPTION HERE. `swiftly` stops on
+#     Fedora with "Unsupported Linux platform", and the loose tar files
+#     swift.org offers instead are built against Ubuntu's libraries. Fedora
+#     packages the toolchain itself as `swift-lang`, which is the supported
+#     path on this operating system. Do not later "fix" this with a tarball.
+#
+#     ⚠️ THIS IS THE LARGEST SINGLE THING ON THE IMAGE — roughly 3 GB, because
+#     a compiler ships its own clang, linker, debugger and standard library.
+#     Royce accepted that cost knowingly. The step PRINTS the real measured
+#     size every build so it is never a surprise. If image size ever has to
+#     come down, this is the first thing to look at, and the answer would be
+#     to move Swift into the first-login app chooser — not to trim pieces off
+#     a compiler.
+#
+#     The step's real check is not `swift --version`; it is building and
+#     running a hello-world with the actual `swift build` and `swift run`,
+#     in a throwaway folder that is deleted again. If that cannot run inside
+#     the build container it degrades to a compile-only check and says so
+#     loudly in the log.
+#
+#     Nothing here touches the kernel, so it sits before step 8 (which rebuilds
+#     the boot ramdisk) and after 7k, purely so the step numbers read in the
+#     same order as the folder.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache/libdnf5 \
+    /ctx/build_files/84-swift.sh
+
 # 8. The boot path: the Aquarius splash screen, the name in the boot menu, the
 #    text login banners, and then a rebuild of the boot ramdisk so that all of
 #    it is really used.
