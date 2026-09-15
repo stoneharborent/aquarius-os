@@ -33,10 +33,10 @@
 #     aq apps install ID      install one you skipped
 #
 #     aq drives               what is plugged in right now
-    aq drives remembered    which inside drives open at every login
-    aq drives forget NAME   stop opening one of them by itself
-
-    aq welcome              see the AquariusOS welcome again
+#     aq drives remembered    which inside drives open at every login
+#     aq drives forget NAME   stop opening one of them by itself
+#
+#     aq welcome              see the AquariusOS welcome again
 #
 #     aq ingest FILE…         make camera files editable
 #     aq ingest watch on      watch ~/Videos/Ingest and do it automatically
@@ -193,6 +193,12 @@ USAGE
                         Open a Mac drive that is protected with FileVault. It
                         asks for the password you use for it on the Mac; nothing
                         is shown as you type and nothing is saved.
+
+    aq drives remembered
+                        A drive that lives INSIDE this computer asks once
+                        whether it should open at every login. This lists the
+                        ones that said yes. 'aq drives forget NAME' stops one,
+                        and 'aq drives ask-again' undoes every "Never ask".
 
     aq usb4 status      The chip that runs this computer's fast USB-C sockets
                         (USB4 / Thunderbolt): is its driver attached, and what
