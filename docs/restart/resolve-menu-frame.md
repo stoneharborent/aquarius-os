@@ -27,7 +27,29 @@ The pinned labwc source receives the documented `decorationColors` window-rule
 extension. Resolve normal windows use a charcoal palette for the active/inactive
 background, border and title text. Rounded corners follow that palette; all
 other windows retain the desktop theme. Existing window-control placement,
-geometry, button artwork and shadows remain unchanged. The menu stays inside
+geometry and shadows remain unchanged.
+
+## The three round buttons on Resolve's bar
+
+Plainly: the title bar matched Resolve, and then you could not see the close,
+minimise and maximise buttons on it. Those buttons are little pictures, and the
+desktop draws them in its own ink — which in the light theme is almost black.
+Almost black on Resolve's almost-black bar is nothing at all.
+
+So Resolve now gets its own set of the same three buttons, drawn in the same
+white Resolve writes its own window title in (`#dedee2`). Nothing else about
+them changes: same round discs in the same places, same sizes, the same faded
+look on a window you are not working in, and the close button still turns red
+only while your pointer is on it.
+
+How it reaches the screen, in one line each:
+
+1. `generate-theme` draws the buttons twice — the ordinary set, and a second set
+   in white inside a folder called `buttons-resolve`. It does this for both the
+   light (Ice) and dark (Midnight) themes, so flipping the theme cannot lose it.
+2. `rc.xml`'s DaVinci Resolve rule says `decorationButtons="buttons-resolve"`.
+3. The labwc patch reads that, and gives that one window that one folder of
+   buttons. Every other window on the desktop is untouched. The menu stays inside
 Resolve: no exported appmenu interface was found in the running application,
 and no duplicate or simulated menu is added to the title bar.
 
@@ -44,7 +66,8 @@ and no duplicate or simulated menu is added to the title bar.
 - Patched labwc compiled at pinned source; upstream tests pass. Real headless
   XWayland pixel tests cover active/inactive palettes, ordinary-window isolation,
   corners, borders, title text, malformed/default rules, maximize/restore,
-  fullscreen recreation and reconfiguration. ASan/UBSan/leak checks passed.
+  fullscreen recreation, reconfiguration, and that a rule's own button set
+  reaches its window while every other window keeps the theme's buttons. ASan/UBSan/leak checks passed.
 - These gates run in the build stages; the finished-image launch test runs in CI.
 
 The live bench currently uses the temporary menu test launcher. Persistent

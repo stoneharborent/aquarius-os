@@ -156,9 +156,13 @@ if [ "${AQ_GOT}" != "${AQ_LABWC_COMMIT}" ]; then
 fi
 ok "the source is commit ${AQ_GOT}, exactly as pinned"
 
-# A narrow Aquarius extension gives selected app windows their own frame colors.
-# It keeps upstream geometry, controls and shadow rendering. Check the patch
-# against the exact source first so a future version cannot silently skip it.
+# A narrow Aquarius extension gives selected app windows their own frame colors
+# (decorationColors) and, since 2026-09-15, their own folder of title-bar button
+# pictures inside the theme (decorationButtons) — which is how DaVinci Resolve's
+# dark title bar gets buttons drawn in Resolve's own white instead of the
+# desktop's near-black ink. It keeps upstream geometry, button placement and
+# shadow rendering. Check the patch against the exact source first so a future
+# version cannot silently skip it.
 AQ_DECORATION_PATCH="${AQ_LABWC_BUILD_FILES}/patches/labwc-decoration-colors.patch"
 git apply --check "${AQ_DECORATION_PATCH}"
 git apply "${AQ_DECORATION_PATCH}"
@@ -223,7 +227,8 @@ say "Compiling"
 ninja -C build
 
 # Render real XWayland windows on a private headless desktop and inspect the
-# frame pixels. The test also checks ordinary windows and reconfiguration.
+# frame pixels. The test also checks ordinary windows, reconfiguration, and that
+# a rule's own button set reaches its window and no other.
 # These tools stay in this build container and never enter the OS image.
 python3 "${AQ_LABWC_BUILD_FILES}/test-labwc-decoration-colors.py" /src/build/labwc
 

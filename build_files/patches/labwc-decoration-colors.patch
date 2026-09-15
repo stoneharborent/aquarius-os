@@ -1,8 +1,8 @@
 diff --git a/docs/labwc-config.5.scd b/docs/labwc-config.5.scd
-index cf142cf..2c052ad 100644
+index cf142cf..ccd41ca 100644
 --- a/docs/labwc-config.5.scd
 +++ b/docs/labwc-config.5.scd
-@@ -1581,3 +1581,15 @@ See xkeyboard-config(7) for details.
+@@ -1581,3 +1581,27 @@ See xkeyboard-config(7) for details.
  # SEE ALSO
  
  labwc(1), labwc-actions(5), labwc-theme(5)
@@ -15,9 +15,21 @@ index cf142cf..2c052ad 100644
 +	border, inactive border, active title text, inactive title text.
 +	The whole palette is selected by the last matching rule that specifies
 +	this property. "default" restores the desktop theme. Invalid palettes
-+	are ignored. Backgrounds are solid; dimensions, button images and shadows
-+	continue to follow the desktop theme. Colors apply when decorations are
++	are ignored. Backgrounds are solid; dimensions and shadows continue to
++	follow the desktop theme, and so do the button images unless
++	decorationButtons is also given. Colors apply when decorations are
 +	created, including after Reconfigure; title changes alone do not rematch.
++
++*<windowRules><windowRule decorationButtons="">*
++	Aquarius extension: the name of a folder INSIDE the theme directory
++	(<theme-dir>/<theme-name>/labwc/<folder>/) from which this window's
++	title-bar button images are loaded, so selected windows can carry buttons
++	drawn for their own frame colors. One plain path segment only: no slash,
++	no "..". The set is selected by the last matching rule that specifies
++	this property; "default" restores the theme's own buttons. Button names,
++	states, geometry, placement and hover behaviour are unchanged, and a name
++	the folder does not provide falls back exactly as it would otherwise.
++	Applies when decorations are created, including after Reconfigure.
 diff --git a/include/ssd-internal.h b/include/ssd-internal.h
 index 600b907..fdfd008 100644
 --- a/include/ssd-internal.h
@@ -33,24 +45,48 @@ index 600b907..fdfd008 100644
  
  	/*
 diff --git a/include/theme.h b/include/theme.h
-index 2fb499a..787339e 100644
+index 2fb499a..c4fe397 100644
 --- a/include/theme.h
 +++ b/include/theme.h
-@@ -227,4 +227,9 @@ void theme_init(struct theme *theme, const char *theme_name);
+@@ -208,6 +208,16 @@ struct theme {
+ 	struct theme_snapping_overlay
+ 		snapping_overlay_region, snapping_overlay_edge;
+ 
++	/*
++	 * Aquarius: set only on a clone made by
++	 * theme_clone_decoration_colors(). They say which of the resources
++	 * above this theme allocated for itself, and therefore which of them
++	 * theme_free_decoration_colors() may destroy. Everything else is
++	 * borrowed from the global theme and must be left alone.
++	 */
++	bool owns_decoration_backgrounds;
++	bool owns_button_imgs;
++
+ 	/* magnifier */
+ 	float mag_border_color[4];
+ 	int mag_border_width;
+@@ -227,4 +237,16 @@ void theme_init(struct theme *theme, const char *theme_name);
   */
  void theme_finish(struct theme *theme);
  
-+/* Color-only clone: geometry, buttons and shadows remain borrowed from base. */
++/*
++ * Per-rule clone: geometry and shadows remain borrowed from base.
++ * `colors` (may be NULL) replaces the six decoration colors and, when given,
++ * makes the clone own freshly rendered title backgrounds and corners.
++ * `button_subdir` (may be NULL) is a folder name INSIDE the theme directory
++ * from which this clone loads its own button pictures; when given, the clone
++ * owns those images too. At least one of the two must be non-NULL.
++ */
 +struct theme *theme_clone_decoration_colors(const struct theme *base,
-+	const float colors[6][4]);
++	const float colors[6][4], const char *button_subdir);
 +void theme_free_decoration_colors(struct theme *theme);
 +
  #endif /* LABWC_THEME_H */
 diff --git a/include/window-rules.h b/include/window-rules.h
-index 624f3b8..94fcdb4 100644
+index 624f3b8..91d1737 100644
 --- a/include/window-rules.h
 +++ b/include/window-rules.h
-@@ -33,6 +33,11 @@ struct window_rule {
+@@ -33,6 +33,18 @@ struct window_rule {
  	enum window_rule_event event;
  	struct wl_list actions;
  
@@ -59,23 +95,32 @@ index 624f3b8..94fcdb4 100644
 +	bool decoration_colors_default;
 +	float decoration_colors[6][4];
 +
++	/*
++	 * Folder of button pictures inside the theme directory, or NULL.
++	 * "default" clears it back to the theme's own buttons.
++	 */
++	bool decoration_buttons_set;
++	char *decoration_buttons;
++
  	enum property server_decoration;
  	enum property skip_taskbar;
  	enum property skip_window_switcher;
-@@ -46,6 +51,8 @@ struct window_rule {
+@@ -46,6 +58,10 @@ struct window_rule {
  };
  
  struct view;
 +bool window_rule_parse_decoration_colors(struct window_rule *rule, const char *value);
++bool window_rule_parse_decoration_buttons(struct window_rule *rule, const char *value);
 +const float (*window_rules_get_decoration_colors(struct view *view))[4];
++const char *window_rules_get_decoration_buttons(struct view *view);
  
  void window_rules_apply(struct view *view, enum window_rule_event event);
  enum property window_rules_get_property(struct view *view, const char *property);
 diff --git a/src/config/rcxml.c b/src/config/rcxml.c
-index b341e8e..afb070b 100644
+index b341e8e..3bca3e7 100644
 --- a/src/config/rcxml.c
 +++ b/src/config/rcxml.c
-@@ -317,6 +317,10 @@ fill_window_rule(xmlNode *node)
+@@ -317,6 +317,14 @@ fill_window_rule(xmlNode *node)
  			}
  
  		/* Properties */
@@ -83,9 +128,21 @@ index b341e8e..afb070b 100644
 +			if (!window_rule_parse_decoration_colors(window_rule, content)) {
 +				wlr_log(WLR_ERROR, "Invalid decorationColors: expected six #RRGGBB colors or default");
 +			}
++		} else if (!strcasecmp(key, "decorationButtons")) {
++			if (!window_rule_parse_decoration_buttons(window_rule, content)) {
++				wlr_log(WLR_ERROR, "Invalid decorationButtons: expected a plain folder name inside the theme, or default");
++			}
  		} else if (!strcasecmp(key, "serverDecoration")) {
  			set_property(content, &window_rule->server_decoration);
  		} else if (!strcasecmp(key, "iconPriority")) {
+@@ -1913,6 +1921,7 @@ rule_destroy(struct window_rule *rule)
+ 	zfree(rule->title);
+ 	zfree(rule->sandbox_engine);
+ 	zfree(rule->sandbox_app_id);
++	zfree(rule->decoration_buttons);
+ 	action_list_free(&rule->actions);
+ 	zfree(rule);
+ }
 diff --git a/src/ssd/ssd-border.c b/src/ssd/ssd-border.c
 index c2c99f8..e236dda 100644
 --- a/src/ssd/ssd-border.c
@@ -167,7 +224,7 @@ index d1a0881..aa398a3 100644
  	bool title_unchanged = state->text && !strcmp(view->title, state->text);
  
 diff --git a/src/ssd/ssd.c b/src/ssd/ssd.c
-index e2ab637..c55bcb8 100644
+index e2ab637..3ec274f 100644
 --- a/src/ssd/ssd.c
 +++ b/src/ssd/ssd.c
 @@ -19,6 +19,7 @@
@@ -178,18 +235,20 @@ index e2ab637..c55bcb8 100644
  
  struct border
  ssd_thickness(struct view *view)
-@@ -146,6 +147,10 @@ ssd_create(struct view *view, bool active)
+@@ -146,6 +147,12 @@ ssd_create(struct view *view, bool active)
  	struct ssd *ssd = znew(*ssd);
  
  	ssd->view = view;
 +	const float (*colors)[4] = window_rules_get_decoration_colors(view);
-+	ssd->owns_decoration_theme = colors != NULL;
-+	ssd->decoration_theme = colors
-+		? theme_clone_decoration_colors(rc.theme, colors) : rc.theme;
++	const char *buttons = window_rules_get_decoration_buttons(view);
++	ssd->owns_decoration_theme = colors || buttons;
++	ssd->decoration_theme = ssd->owns_decoration_theme
++		? theme_clone_decoration_colors(rc.theme, colors, buttons)
++		: rc.theme;
  	ssd->tree = lab_wlr_scene_tree_create(view->scene_tree);
  
  	/*
-@@ -285,6 +290,9 @@ ssd_destroy(struct ssd *ssd)
+@@ -285,6 +292,9 @@ ssd_destroy(struct ssd *ssd)
  	ssd_shadow_destroy(ssd);
  	wlr_scene_node_destroy(&ssd->tree->node);
  
@@ -199,7 +258,7 @@ index e2ab637..c55bcb8 100644
  	free(ssd);
  }
  
-@@ -348,7 +356,7 @@ ssd_enable_keybind_inhibit_indicator(struct ssd *ssd, bool enable)
+@@ -348,7 +358,7 @@ ssd_enable_keybind_inhibit_indicator(struct ssd *ssd, bool enable)
  
  	float *color = enable
  		? rc.theme->window_toggled_keybinds_color
@@ -209,30 +268,157 @@ index e2ab637..c55bcb8 100644
  }
  
 diff --git a/src/theme.c b/src/theme.c
-index 71e577c..9fa2080 100644
+index 71e577c..3dc0d8f 100644
 --- a/src/theme.c
 +++ b/src/theme.c
-@@ -1879,3 +1879,36 @@ theme_finish(struct theme *theme)
+@@ -135,12 +135,24 @@ round_right_corner_button(cairo_t *cairo, int w, int h)
+  * file is not found.
+  */
+ static void
+-get_button_filename(char *buf, size_t len, const char *name, const char *postfix)
++get_button_filename(char *buf, size_t len, const char *subdir, const char *name,
++		const char *postfix)
+ {
+ 	buf[0] = '\0';
+ 
++	/*
++	 * Aquarius: `subdir`, when given, is a folder inside the theme, so the
++	 * name looked up becomes "buttons-resolve/close-active.svg" and the
++	 * search lands in <theme-dir>/<theme>/labwc/buttons-resolve/ instead of
++	 * <theme-dir>/<theme>/labwc/. Nothing else about the search changes.
++	 */
+ 	char filename[4096];
+-	snprintf(filename, sizeof(filename), "%s%s", name, postfix);
++	if (subdir) {
++		snprintf(filename, sizeof(filename), "%s/%s%s", subdir, name,
++			postfix);
++	} else {
++		snprintf(filename, sizeof(filename), "%s%s", name, postfix);
++	}
+ 
+ 	struct wl_list paths;
+ 	paths_theme_create(&paths, rc.theme_name, filename);
+@@ -160,7 +172,8 @@ get_button_filename(char *buf, size_t len, const char *name, const char *postfix
+ }
+ 
+ static void
+-load_button(struct theme *theme, struct button *b, enum ssd_active_state active)
++load_button(struct theme *theme, const char *subdir, struct button *b,
++		enum ssd_active_state active)
+ {
+ 	struct lab_img *(*button_imgs)[LAB_BS_ALL + 1] =
+ 		theme->window[active].button_imgs;
+@@ -171,14 +184,14 @@ load_button(struct theme *theme, struct button *b, enum ssd_active_state active)
+ 	assert(!*img);
+ 
+ 	/* PNG */
+-	get_button_filename(filename, sizeof(filename), b->name,
++	get_button_filename(filename, sizeof(filename), subdir, b->name,
+ 		active ? "-active.png" : "-inactive.png");
+ 	*img = lab_img_load(LAB_IMG_PNG, filename, rgba);
+ 
+ #if HAVE_RSVG
+ 	/* SVG */
+ 	if (!*img) {
+-		get_button_filename(filename, sizeof(filename), b->name,
++		get_button_filename(filename, sizeof(filename), subdir, b->name,
+ 			active ? "-active.svg" : "-inactive.svg");
+ 		*img = lab_img_load(LAB_IMG_SVG, filename, rgba);
+ 	}
+@@ -186,7 +199,7 @@ load_button(struct theme *theme, struct button *b, enum ssd_active_state active)
+ 
+ 	/* XBM */
+ 	if (!*img) {
+-		get_button_filename(filename, sizeof(filename), b->name, ".xbm");
++		get_button_filename(filename, sizeof(filename), subdir, b->name, ".xbm");
+ 		*img = lab_img_load(LAB_IMG_XBM, filename, rgba);
+ 	}
+ 
+@@ -195,7 +208,7 @@ load_button(struct theme *theme, struct button *b, enum ssd_active_state active)
+ 	 * For example max_hover_toggled instead of max_toggled_hover
+ 	 */
+ 	if (!*img && b->alt_name) {
+-		get_button_filename(filename, sizeof(filename),
++		get_button_filename(filename, sizeof(filename), subdir,
+ 			b->alt_name, ".xbm");
+ 		*img = lab_img_load(LAB_IMG_XBM, filename, rgba);
+ 	}
+@@ -273,7 +286,7 @@ load_button(struct theme *theme, struct button *b, enum ssd_active_state active)
+  * ...in the button array definition below.
+  */
+ static void
+-load_buttons(struct theme *theme)
++load_buttons(struct theme *theme, const char *subdir)
+ {
+ 	struct button buttons[] = { {
+ 		.name = "menu",
+@@ -372,8 +385,8 @@ load_buttons(struct theme *theme)
+ 
+ 	for (size_t i = 0; i < ARRAY_SIZE(buttons); ++i) {
+ 		struct button *b = &buttons[i];
+-		load_button(theme, b, SSD_INACTIVE);
+-		load_button(theme, b, SSD_ACTIVE);
++		load_button(theme, subdir, b, SSD_INACTIVE);
++		load_button(theme, subdir, b, SSD_ACTIVE);
+ 	}
+ }
+ 
+@@ -1844,7 +1857,7 @@ theme_init(struct theme *theme, const char *theme_name)
+ 	post_processing(theme);
+ 	create_backgrounds(theme);
+ 	create_corners(theme);
+-	load_buttons(theme);
++	load_buttons(theme, /* subdir */ NULL);
+ 	create_shadows(theme);
+ }
+ 
+@@ -1879,3 +1892,76 @@ theme_finish(struct theme *theme)
  		zdrop(&theme->window[active].shadow_edge);
  	}
  }
 +
 +struct theme *
-+theme_clone_decoration_colors(const struct theme *base, const float colors[6][4])
++theme_clone_decoration_colors(const struct theme *base, const float colors[6][4],
++	const char *button_subdir)
 +{
++	assert(colors || button_subdir);
 +	struct theme *theme = znew(*theme);
 +	*theme = *base;
++	theme->owns_decoration_backgrounds = false;
++	theme->owns_button_imgs = false;
++
 +	enum ssd_active_state active;
-+	FOR_EACH_ACTIVE_STATE(active) {
-+		int i = active == SSD_ACTIVE ? 0 : 1;
-+		theme->window[active].title_bg.gradient = LAB_GRADIENT_NONE;
-+		memcpy(theme->window[active].title_bg.color, colors[i], sizeof(colors[i]));
-+		memcpy(theme->window[active].border_color, colors[i + 2], sizeof(colors[i]));
-+		memcpy(theme->window[active].label_text_color, colors[i + 4], sizeof(colors[i]));
++	if (colors) {
++		FOR_EACH_ACTIVE_STATE(active) {
++			int i = active == SSD_ACTIVE ? 0 : 1;
++			theme->window[active].title_bg.gradient = LAB_GRADIENT_NONE;
++			memcpy(theme->window[active].title_bg.color, colors[i], sizeof(colors[i]));
++			memcpy(theme->window[active].border_color, colors[i + 2], sizeof(colors[i]));
++			memcpy(theme->window[active].label_text_color, colors[i + 4], sizeof(colors[i]));
++		}
++		/*
++		 * Replace only these borrowed resources; the global theme keeps
++		 * ownership of everything this clone did not allocate.
++		 */
++		create_backgrounds(theme);
++		create_corners(theme);
++		theme->owns_decoration_backgrounds = true;
 +	}
-+	/* Replace only these borrowed resources; the global theme keeps ownership. */
-+	create_backgrounds(theme);
-+	create_corners(theme);
++
++	if (button_subdir) {
++		/*
++		 * The copied pointers belong to the base theme. Drop them on the
++		 * floor FIRST — never free them — so load_buttons() sees the
++		 * empty array its assert() expects and every image this clone
++		 * ends up holding is one it allocated itself.
++		 */
++		FOR_EACH_ACTIVE_STATE(active) {
++			memset(theme->window[active].button_imgs, 0,
++				sizeof(theme->window[active].button_imgs));
++		}
++		load_buttons(theme, button_subdir);
++		theme->owns_button_imgs = true;
++	}
 +	return theme;
 +}
 +
@@ -240,20 +426,34 @@ index 71e577c..9fa2080 100644
 +theme_free_decoration_colors(struct theme *theme)
 +{
 +	enum ssd_active_state active;
-+	FOR_EACH_ACTIVE_STATE(active) {
-+		zfree_pattern(theme->window[active].titlebar_pattern);
-+		zdrop(&theme->window[active].titlebar_fill);
-+		zdrop(&theme->window[active].corner_top_left_normal);
-+		zdrop(&theme->window[active].corner_top_right_normal);
++	if (theme->owns_decoration_backgrounds) {
++		FOR_EACH_ACTIVE_STATE(active) {
++			zfree_pattern(theme->window[active].titlebar_pattern);
++			zdrop(&theme->window[active].titlebar_fill);
++			zdrop(&theme->window[active].corner_top_left_normal);
++			zdrop(&theme->window[active].corner_top_right_normal);
++		}
 +	}
-+	/* Never theme_finish(): buttons and shadows still belong to the base. */
++	if (theme->owns_button_imgs) {
++		for (enum lab_node_type type = LAB_NODE_BUTTON_FIRST;
++				type <= LAB_NODE_BUTTON_LAST; type++) {
++			for (uint8_t state_set = LAB_BS_DEFAULT;
++					state_set <= LAB_BS_ALL; state_set++) {
++				FOR_EACH_ACTIVE_STATE(active) {
++					destroy_img(&theme->window[active]
++						.button_imgs[type][state_set]);
++				}
++			}
++		}
++	}
++	/* Never theme_finish(): the shadows still belong to the base. */
 +	free(theme);
 +}
 diff --git a/src/window-rules.c b/src/window-rules.c
-index 4118ae3..07bb404 100644
+index 4118ae3..5bfd87f 100644
 --- a/src/window-rules.c
 +++ b/src/window-rules.c
-@@ -2,6 +2,9 @@
+@@ -2,9 +2,13 @@
  #define _POSIX_C_SOURCE 200809L
  #include "window-rules.h"
  #include <assert.h>
@@ -263,7 +463,11 @@ index 4118ae3..07bb404 100644
  #include <stdbool.h>
  #include <strings.h>
  #include "action.h"
-@@ -118,3 +121,63 @@ window_rules_get_property(struct view *view, const char *property)
++#include "common/mem.h"
+ #include "config/rcxml.h"
+ #include "labwc.h"
+ #include "view.h"
+@@ -118,3 +122,103 @@ window_rules_get_property(struct view *view, const char *property)
  	}
  	return LAB_PROP_UNSPECIFIED;
  }
@@ -314,6 +518,46 @@ index 4118ae3..07bb404 100644
 +	rule->decoration_colors_set = true;
 +	rule->decoration_colors_default = false;
 +	return true;
++}
++
++/*
++ * A plain folder name, one path segment: no slash, no "..", nothing absolute.
++ * It is joined onto a theme path, so anything clever here would read files
++ * outside the theme, and there is no reason a theme folder needs it.
++ */
++bool
++window_rule_parse_decoration_buttons(struct window_rule *rule, const char *value)
++{
++	if (!strcasecmp(value, "default")) {
++		rule->decoration_buttons_set = true;
++		zfree(rule->decoration_buttons);
++		return true;
++	}
++	if (!*value || strchr(value, '/') || !strcmp(value, ".")
++			|| !strcmp(value, "..")) {
++		return false;
++	}
++	for (const char *c = value; *c; c++) {
++		if (!isalnum((unsigned char)*c) && *c != '-' && *c != '_'
++				&& *c != '.') {
++			return false;
++		}
++	}
++	xstrdup_replace(rule->decoration_buttons, value);
++	rule->decoration_buttons_set = true;
++	return true;
++}
++
++const char *
++window_rules_get_decoration_buttons(struct view *view)
++{
++	struct window_rule *rule;
++	wl_list_for_each_reverse(rule, &rc.window_rules, link) {
++		if (rule->decoration_buttons_set && view_matches_rule(rule, view)) {
++			return rule->decoration_buttons;
++		}
++	}
++	return NULL;
 +}
 +
 +const float (*

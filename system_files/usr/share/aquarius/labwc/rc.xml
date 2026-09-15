@@ -599,11 +599,30 @@
     <windowRule identifier="resolve">
       <action name="FitToOutput" />
     </windowRule>
-    <!-- Aquarius labwc extension: Resolve's charcoal frame, preserving the
-         desktop's button placement and dimensions. Match class/type so colors
-         also apply when the project title arrives after decoration creation. -->
+    <!-- Aquarius labwc extension, and the only place in these files a colour is
+         typed by hand. Everything else labwc draws is generated out of the
+         shell's palette by generate-theme; these six are not the desktop's
+         colours at all, they are DaVinci Resolve's own, read off Resolve's own
+         window so its title bar stops looking bolted on.
+
+         The six, in order: active title background, inactive title background,
+         active border, inactive border, active title text, inactive title text.
+
+         decorationButtons names a folder of button pictures INSIDE the theme,
+         so this one window gets its three round buttons drawn in the same white
+         as its title text — the fifth colour above — instead of the desktop's
+         near-black ink. Royce, 2026-09-15: the controls were blending into the
+         bar. The folder
+         is written by generate-theme (RESOLVE_BUTTON_INK) in both Ice and
+         Midnight. Everything else about the buttons is the desktop's: same
+         places, same sizes, same mix-B design, close still red under the
+         pointer. Every other window is untouched by both attributes.
+
+         Match class AND normal-window type, so the colours also apply when the
+         project title arrives after the decoration has been created. -->
     <windowRule identifier="resolve" type="normal"
-                decorationColors="#222226 #202024 #101012 #101012 #dedee2 #a0a0a8" />
+                decorationColors="#222226 #202024 #101012 #101012 #dedee2 #a0a0a8"
+                decorationButtons="buttons-resolve" />
     <windowRule identifier="resolve" title="DaVinci Resolve* - *" type="normal" serverDecoration="yes">
       <action name="UnMaximize" direction="both" />
       <action name="FitToOutput" />
