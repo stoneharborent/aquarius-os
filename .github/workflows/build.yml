@@ -7462,7 +7462,9 @@ jobs:
           if "${UPD}" --dry-run > /tmp/udry.txt 2>&1; then ok "'aquarius-updater --dry-run' runs"
           else bad "'aquarius-updater --dry-run' failed"; cat /tmp/udry.txt; fi
           grep -q 'Current version:'    /tmp/udry.txt && ok "the rehearsal prints the current version" || bad "the rehearsal does not print the version"
-          grep -q 'bootc upgrade --check' /tmp/udry.txt && ok "the rehearsal states the check it runs" || bad "the rehearsal does not state the check"
+          # Since bug U1 (2026-09-13) the check compares digests as an ordinary user;
+          # the rehearsal says so in words. Same pattern as build_files/77-updater.sh.
+          grep -q 'without asking for a password' /tmp/udry.txt && ok "the rehearsal states that checking needs no password" || bad "the rehearsal does not state that checking needs no password"
           grep -q 'pkexec bootc upgrade' /tmp/udry.txt && ok "the rehearsal states how it elevates" || bad "the rehearsal does not state how it elevates"
           # The launcher entry.
           DESK=/usr/share/applications/aquarius-updater.desktop
