@@ -90,6 +90,9 @@ def worker(work):
             event_mask=X.SubstructureRedirectMask|X.SubstructureNotifyMask)
         d.sync()
         time.sleep(.3)
+        # Activation restacks and repaints; wait for the new frame to actually
+        # be on screen before anything samples pixels again.
+        settle()
     def capture():
         subprocess.run(['grim', str(work/'frame.png')], check=True)
         return Image.open(work/'frame.png').convert('RGB')
@@ -114,6 +117,56 @@ def worker(work):
         for px in strip(name):
             seen[px]=seen.get(px,0)+1
         return sorted(seen.items(),key=lambda kv:-kv[1])[:4]
+    # --- readiness -----------------------------------------------------------
+    # X telling us a window exists at a position is NOT the same as the
+    # compositor having mapped, drawn and composited it. A fixed sleep guesses
+    # how long that takes; on a slow or busy CI runner the guess is sometimes
+    # wrong and the last fixture created ('badbuttons') is still unmapped when
+    # the first screenshot is read -- its client area comes back pure black.
+    # So instead of guessing, look: re-screenshot until every fixture is
+    # actually drawn, then read pixels. This weakens nothing -- a window that
+    # never draws still fails, with the same precise message, after the budget.
+    READY_TIMEOUT = 10.0        # seconds; normally satisfied on the first look
+    READY_INTERVAL = .1
+    def body(name):
+        im=capture();x,y,width,height=positions(name)
+        return im.getpixel((x+width//2,y+height//2)),im.size
+    def not_drawn(im):
+        """Fixtures that are not yet drawn on screen, with what was seen.
+
+        A fixture counts as drawn when BOTH are true:
+          * the centre of its client area is the flat 0x111111 the X server
+            paints, so the window's own content is composited; and
+          * a pixel just above it is not black, so the frame the compositor
+            draws around it is there too.
+        """
+        late=[]
+        for name in wins:
+            try:
+                x,y,width,height=positions(name)
+                centre=im.getpixel((x+width//2,y+height//2))
+                frame=im.getpixel((x+width//2,y-6))
+            except Exception as exc:
+                late.append((name,'unreadable='+str(exc)));continue
+            if centre!=(17,17,17) or frame==(0,0,0):
+                late.append((name,'body='+str(centre),'frame='+str(frame),
+                             'placed='+str((x,y,width,height))))
+        return late
+    def settle():
+        """Wait until every fixture is drawn; fail loudly if one never is."""
+        until=time.monotonic()+READY_TIMEOUT
+        while True:
+            im=capture()
+            late=not_drawn(im)
+            if not late:return im
+            if time.monotonic()>=until:break
+            time.sleep(READY_INTERVAL)
+        name=late[0][0]
+        pixel,size=body(name)
+        raise AssertionError((name+' is not on screen at all','body='+str(pixel),
+            'placed='+str(positions(name)),'screen='+str(size),
+            'above='+str(strip_colours(name)),'waited='+str(READY_TIMEOUT)+'s',
+            'late='+str(late)))
     def check(name,bg,border,text=None):
         im=capture();x,y,width,height=positions(name)
         assert im.getpixel((x+width//2,y-6))==bg,(name,'background',im.getpixel((x+width//2,y-6)),bg,(x,y))
@@ -183,10 +236,9 @@ def worker(work):
     # "this window is not on screen" have completely different causes and the
     # frame checks below cannot tell them apart -- both read as bare desktop.
     # The message carries the screen size and the colours actually found above
-    # the window, so a failure here needs no second run to interpret.
-    def body(name):
-        im=capture();x,y,width,height=positions(name)
-        return im.getpixel((x+width//2,y+height//2)),im.size
+    # the window, so a failure here needs no second run to interpret. settle()
+    # above has already waited for exactly this, so reaching a failure here
+    # means the window really never drew, not that the test looked too soon.
     pixel,size=body('badbuttons')
     assert pixel==(17,17,17),('badbuttons is not on screen at all',
         'body='+str(pixel),'placed='+str(positions('badbuttons')),
@@ -225,6 +277,8 @@ def worker(work):
     (work/'config/rc.xml').write_text(config('default'))
     subprocess.run([os.environ['AQ_LABWC_TEST_BINARY'],'--reconfigure'],check=True)
     time.sleep(.5)
+    # Reconfigure rebuilds every frame; wait for them all to be back on screen.
+    settle()
     check('colored',(129,130,131),(145,146,147))
     for w in wins.values(): w.destroy()
     d.sync();d.close()
