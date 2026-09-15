@@ -1290,6 +1290,8 @@ jobs:
           # a ceiling is asserted. The ceiling is deliberately generous — this
           # is a warning about one very large app, not a budget for the whole
           # operating system — and it is expressed in bytes, from podman's own
+          # (Raised by 3 GB on 2026-09-15 when Royce chose to bake Swift in:
+          # 13.0 GB NVIDIA / 11.1 GB base against the old 12 / 9 ceilings.)
           # machine-readable field, because "11.1 GB" as text sorts wrongly and
           # rounds differently on different days.
           BYTES="$(podman image inspect "${IMAGE_NAME}:${DEFAULT_TAG}" \
@@ -1297,9 +1299,9 @@ jobs:
           GB="$(awk -v b="${BYTES}" 'BEGIN { printf "%.1f", b / 1000000000 }')"
 
           if [ "${NVIDIA}" = "1" ]; then
-            WAS="14.2"; CEILING=12000000000
+            WAS="14.2"; CEILING=15000000000   # +3 GB on 2026-09-15: Swift (FEATURES 022) is ~3 GB
           else
-            WAS="11.1"; CEILING=9000000000
+            WAS="11.1"; CEILING=12000000000   # +3 GB on 2026-09-15: Swift (FEATURES 022) is ~3 GB
           fi
 
           echo
