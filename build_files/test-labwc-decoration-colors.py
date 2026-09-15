@@ -63,8 +63,10 @@ def worker(work):
     d = display.Display()
     root = d.screen().root
     wins = {}
+    placed = {}
     for i, name in enumerate(('colored', 'normal', 'reset', 'invalid',
                               'buttons', 'badbuttons')):
+        placed[name] = (30 + (i % 3)*350, 90 + (i//3)*280, 280, 190)
         w = root.create_window(30 + (i % 3)*350, 90 + (i//3)*280, 280, 190,
                                0, d.screen().root_depth, X.InputOutput,
                                X.CopyFromParent, background_pixel=0x111111)
@@ -94,6 +96,24 @@ def worker(work):
     def positions(name):
         w=wins[name];g=w.get_geometry();p=root.translate_coords(w,0,0)
         return p.x,p.y,g.width,g.height
+    def strip(name):
+        """The band of pixels immediately above a window's own top-left corner.
+
+        34 is comfortably taller than the title bar; the extra rows are the
+        desktop behind it and hold neither button colour.
+        """
+        im=capture();x,y,width,height=positions(name)
+        return list(im.crop((x,y-34,x+width,y)).getdata())
+    def strip_colours(name):
+        """The few colours actually present in that band, commonest first.
+
+        Named in a failure message so "this window lost its buttons" can be
+        told apart from "the test is not looking at a title bar at all".
+        """
+        seen={}
+        for px in strip(name):
+            seen[px]=seen.get(px,0)+1
+        return sorted(seen.items(),key=lambda kv:-kv[1])[:4]
     def check(name,bg,border,text=None):
         im=capture();x,y,width,height=positions(name)
         assert im.getpixel((x+width//2,y-6))==bg,(name,'background',im.getpixel((x+width//2,y-6)),bg,(x,y))
@@ -103,6 +123,15 @@ def worker(work):
         if text:
             pixels=list(im.crop((x,y-34,x+width,y)).getdata())
             assert text in pixels,(name,'title text')
+    # Raise every fixture once, and prove each one landed where it was asked
+    # to. A window that has never been focused sits at the bottom of the
+    # stack, and until a window has been raised and its geometry confirmed the
+    # test cannot tell "this frame is drawn wrong" from "this frame is not
+    # where the test is looking".
+    for name in wins:
+        focus(name)
+        assert positions(name)==placed[name],(name,'is not where it was placed',
+            positions(name),placed[name])
     focus('colored')
     check('colored',(49,50,51),(81,82,83),(241,242,243))
     original=positions('colored')
@@ -139,12 +168,12 @@ def worker(work):
     # "the right window changed" and "no other window changed" are two different
     # failures and only the pair of them is the feature.
     def button_pixels(name, colour):
-        im=capture();x,y,width,height=positions(name)
-        # The title bar is the strip immediately above the window's own top-left
-        # corner. 34 is comfortably taller than it; the extra rows are the
-        # desktop behind it and hold neither button colour.
-        strip=list(im.crop((x,y-34,x+width,y)).getdata())
-        return strip.count(colour)
+        return strip(name).count(colour)
+    # 'badbuttons' is about to be read as a plain, ordinary window, so prove
+    # first that it IS one: a full frame, in the desktop's own palette for
+    # this rule, exactly where the button counting below will look for it.
+    focus('badbuttons')
+    check('badbuttons',(49,50,51),(81,82,83),(241,242,243))
     for name in ('buttons','normal','colored'):
         focus(name)
         light=button_pixels('buttons',ALT_BUTTON)
@@ -160,6 +189,11 @@ def worker(work):
             other_light=button_pixels(other,ALT_BUTTON)
             counts=(other,'focused='+name,'dark='+str(other_dark),
                     'light='+str(other_light),'titlebar='+str(positions(other)))
+            # Neither colour anywhere is not a button failure at all: it means
+            # the band held no buttons of any kind, so say what it did hold.
+            assert other_dark or other_light,(
+                'nothing drawn here - window hidden or not decorated',
+                )+counts+('strip='+str(strip_colours(other)),)
             assert other_dark>500,('lost the theme buttons',)+counts
             assert other_light==0,('leaked the alternative buttons',)+counts
     # A folder name that tries to climb out of the theme is refused outright, so
