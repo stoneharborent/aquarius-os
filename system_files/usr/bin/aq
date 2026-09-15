@@ -32,7 +32,11 @@
 #     aq apps list            which creator apps you have
 #     aq apps install ID      install one you skipped
 #
-#     aq welcome              see the AquariusOS welcome again
+#     aq drives               what is plugged in right now
+    aq drives remembered    which inside drives open at every login
+    aq drives forget NAME   stop opening one of them by itself
+
+    aq welcome              see the AquariusOS welcome again
 #
 #     aq ingest FILE…         make camera files editable
 #     aq ingest watch on      watch ~/Videos/Ingest and do it automatically
@@ -2671,6 +2675,14 @@ usb4() {
 # -----------------------------------------------------------------------------
 AQ_DRIVE_UNLOCK="/usr/libexec/aquarius-drive-unlock"
 
+# The privileged helper behind "remember this inside drive". See its own header,
+# and docs/restart/hardware.md, "Why an inside drive asks once, and an outside
+# drive never asks".
+AQ_REMEMBER_DRIVE="/usr/libexec/aquarius-remember-drive"
+
+# Where a person's "never ask me about that drive again" answers are kept.
+AQ_NEVER_ASK="${AQ_CONF_DIR}/remembered-drives.conf"
+
 drive_usage() {
     cat << 'EOF'
 aq drive — the drives plugged into this computer
@@ -2681,6 +2693,18 @@ aq drive — the drives plugged into this computer
                          what the drive is called — the name under its tile in
                          the dock.
     aq drive unlock NAME Open a Mac drive protected with FileVault.
+
+DRIVES THAT LIVE INSIDE THIS COMPUTER
+
+A drive you plug in never asks for a password. A drive inside the computer asks
+once, the first time AquariusOS sees it, and then never again.
+
+    aq drives remembered  Which inside drives open by themselves at every login.
+    aq drives forget NAME Stop opening one by itself. NAME is the folder name
+                          shown by 'aq drives remembered' (or its UUID). It will
+                          be offered again next time.
+    aq drives ask-again   Forget every "Never ask" answer, so the questions come
+                          back at your next login.
 
 A Mac (APFS) drive is always read-only on AquariusOS. You can copy files OFF it;
 you cannot write TO it. See docs/restart/mac-drives.md.
@@ -2829,9 +2853,68 @@ drive_eject() {
     return 0
 }
 
+# ------------------------------------------------------------------------------
+# aq drives remembered / forget / ask-again
+# ------------------------------------------------------------------------------
+# The undo half of "an inside drive asks once". Everything privileged is done by
+# /usr/libexec/aquarius-remember-drive through pkexec — this is only the friendly
+# way in. Settings has no page for this yet; see docs/restart/hardware.md.
+drive_remembered() {
+    if [ ! -x "${AQ_REMEMBER_DRIVE}" ]; then
+        echo "aq: ${AQ_REMEMBER_DRIVE} is missing from this copy of AquariusOS." >&2
+        return 1
+    fi
+    "${AQ_REMEMBER_DRIVE}" list
+    if [ -r "${AQ_NEVER_ASK}" ] && grep -q '^never ' "${AQ_NEVER_ASK}" 2> /dev/null; then
+        echo "You also said \"Never ask\" about:"
+        sed -n 's/^never \([^ ]*\)  *# \(.*\)$/    \2 (UUID \1)/p' "${AQ_NEVER_ASK}"
+        echo
+        echo "Run 'aq drives ask-again' to be asked about those again."
+        echo
+    fi
+}
+
+# NAME may be the folder name ('aq drives remembered' prints it) or the UUID
+# itself. Looking the folder up here means nobody has to type a UUID by hand.
+drive_forget() {
+    local name="$1" uuid="" line
+    if [ -z "${name}" ]; then
+        echo "aq: which drive? 'aq drives remembered' lists them." >&2
+        return 1
+    fi
+    if [ ! -x "${AQ_REMEMBER_DRIVE}" ]; then
+        echo "aq: ${AQ_REMEMBER_DRIVE} is missing from this copy of AquariusOS." >&2
+        return 1
+    fi
+    while IFS= read -r line; do
+        case "${line}" in
+            *"# aquarius-remember-drive")
+                set -- ${line}
+                if [ "$(basename "${2//\\040/ }")" = "${name}" ]; then
+                    uuid="${1#UUID=}"
+                fi
+                ;;
+        esac
+    done < <(cat /etc/fstab 2> /dev/null)
+    [ -n "${uuid}" ] || uuid="${name}"
+    pkexec "${AQ_REMEMBER_DRIVE}" forget --uuid "${uuid}"
+}
+
+drive_ask_again() {
+    if [ ! -e "${AQ_NEVER_ASK}" ]; then
+        echo "You have not told AquariusOS to stop asking about any drive."
+        return 0
+    fi
+    rm -f "${AQ_NEVER_ASK}"
+    echo "Done. AquariusOS will ask about those drives again at your next login."
+}
+
 drive() {
     case "${1:-list}" in
         list | status | "") drive_list ;;
+        remembered | remember) drive_remembered ;;
+        forget) drive_forget "${2:-}" ;;
+        ask-again | askagain) drive_ask_again ;;
         eject | unmount) drive_eject "${2:-}" ;;
         unlock)
             if [ ! -x "${AQ_DRIVE_UNLOCK}" ]; then
