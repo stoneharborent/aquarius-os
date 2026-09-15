@@ -60,28 +60,17 @@ def paint_buttons(theme_root):
 def worker(work):
     from Xlib import X, Xatom, display, protocol
     from PIL import Image
+    # ONE X CLIENT, SIX WINDOWS. This program is itself the client: it opens a
+    # single connection to Xwayland and asks for six windows on it. There are no
+    # child processes to die and no separate client to lose its connection, so a
+    # window that never appears is never "the sixth program crashed" — it is
+    # this connection, the X server, or the compositor. The checks below say
+    # which, by name, at the moment it happens.
     d = display.Display()
     root = d.screen().root
     wins = {}
     placed = {}
-    for i, name in enumerate(('colored', 'normal', 'reset', 'invalid',
-                              'buttons', 'badbuttons')):
-        placed[name] = (30 + (i % 3)*350, 90 + (i//3)*280, 280, 190)
-        w = root.create_window(30 + (i % 3)*350, 90 + (i//3)*280, 280, 190,
-                               0, d.screen().root_depth, X.InputOutput,
-                               X.CopyFromParent, background_pixel=0x111111)
-        w.set_wm_class(name, name)
-        w.set_wm_name('Frame Palette Test')
-        w.change_property(d.intern_atom('_NET_WM_WINDOW_TYPE'), Xatom.ATOM, 32,
-                          [d.intern_atom('_NET_WM_WINDOW_TYPE_NORMAL')])
-        w.map()
-        wins[name] = w
-    d.sync()
-    time.sleep(1)
-    for i, w in enumerate(wins.values()):
-        w.configure(x=30+(i%3)*350, y=90+(i//3)*280)
-    d.sync()
-    time.sleep(.3)
+    NAMES = ('colored', 'normal', 'reset', 'invalid', 'buttons', 'badbuttons')
     def focus(name):
         w = wins[name]
         root.send_event(protocol.event.ClientMessage(window=w,
@@ -152,6 +141,71 @@ def worker(work):
                 late.append((name,'body='+str(centre),'frame='+str(frame),
                              'placed='+str((x,y,width,height))))
         return late
+    # --- what X and the window manager each think of a window ----------------
+    # Three different things have to be true before a fixture can be read, and
+    # when one of them is not, the pixels look identical. So ask each of them
+    # separately and by name:
+    #
+    #   map_state   the X server's own answer: has this window been mapped?
+    #   WM_STATE    the window manager's answer: have I taken this window on?
+    #               labwc writes this property when it manages a window, so its
+    #               absence means labwc never mapped it -- which is the one
+    #               failure a pixel can never tell apart from "drawn wrong".
+    #   pixels      the compositor actually put it on the screen.
+    WM_STATE = d.intern_atom('WM_STATE')
+    MAP_STATES = {X.IsUnmapped:'unmapped', X.IsUnviewable:'unviewable',
+                  X.IsViewable:'viewable'}
+    def x_state(name):
+        """One line of ground truth about a window, never raising."""
+        w=wins[name]
+        try:
+            state=MAP_STATES.get(w.get_attributes().map_state,'?')
+        except Exception as exc:
+            state='unreadable('+str(exc)+')'
+        try:
+            prop=w.get_full_property(WM_STATE,X.AnyPropertyType)
+            wm='WM_STATE='+(str(list(prop.value)) if prop else 'ABSENT')
+        except Exception as exc:
+            wm='WM_STATE=unreadable('+str(exc)+')'
+        try:
+            where=str(positions(name))
+        except Exception as exc:
+            where='unreadable('+str(exc)+')'
+        return name+': map_state='+state+' '+wm+' at '+where
+    def compositor_log(lines=40):
+        """The tail of the compositor's own output, as it stands right now.
+
+        labwc starts this program, so its stdout and ours are the same file.
+        Reading it back is how a failure here carries labwc's and Xwayland's
+        complaints with it instead of leaving them a scroll away in a log.
+        """
+        try:
+            text=(work/'log').read_text(errors='replace').splitlines()
+        except Exception as exc:
+            return ['(could not read the compositor log: '+str(exc)+')']
+        return text[-lines:]
+    def ground_truth():
+        return ([x_state(n) for n in wins]+['--- compositor log tail ---']
+                +compositor_log())
+    def wait_mapped(name,timeout=READY_TIMEOUT):
+        """Wait for the X server to say this window is really on the screen.
+
+        A pixel poll cannot start until this is true, and this is the step that
+        used to be assumed. Serialising it -- create, wait, next -- also means
+        a window that never maps is reported against ITSELF, at the moment it
+        was made, instead of surfacing minutes later as somebody else's
+        screenshot coming back black.
+        """
+        until=time.monotonic()+timeout
+        while True:
+            try:
+                if wins[name].get_attributes().map_state==X.IsViewable:return
+            except Exception:
+                pass
+            if time.monotonic()>=until:break
+            time.sleep(READY_INTERVAL)
+        raise AssertionError(tuple(['the X server never mapped '+name,
+            'waited='+str(timeout)+'s']+ground_truth()))
     def settle():
         """Wait until every fixture is drawn; fail loudly if one never is."""
         until=time.monotonic()+READY_TIMEOUT
@@ -163,10 +217,39 @@ def worker(work):
             time.sleep(READY_INTERVAL)
         name=late[0][0]
         pixel,size=body(name)
-        raise AssertionError((name+' is not on screen at all','body='+str(pixel),
-            'placed='+str(positions(name)),'screen='+str(size),
-            'above='+str(strip_colours(name)),'waited='+str(READY_TIMEOUT)+'s',
-            'late='+str(late)))
+        raise AssertionError(tuple([name+' is not on screen at all',
+            'body='+str(pixel),'placed='+str(positions(name)),
+            'screen='+str(size),'above='+str(strip_colours(name)),
+            'waited='+str(READY_TIMEOUT)+'s','late='+str(late)]+ground_truth()))
+
+    # --- the fixtures, made one at a time ------------------------------------
+    # Every window is created, mapped, confirmed mapped by the X server, and
+    # confirmed DRAWN before the next one is asked for. Making all six at once
+    # and then sleeping for a second was a guess about how fast Xwayland
+    # accepts connections and how fast labwc manages what arrives, and on the
+    # NVIDIA runner the guess was wrong often enough to fail builds (build 9,
+    # 2026-09-15: the sixth window, and only ever the sixth, never drew).
+    for i, name in enumerate(NAMES):
+        placed[name] = (30 + (i % 3)*350, 90 + (i//3)*280, 280, 190)
+        w = root.create_window(30 + (i % 3)*350, 90 + (i//3)*280, 280, 190,
+                               0, d.screen().root_depth, X.InputOutput,
+                               X.CopyFromParent, background_pixel=0x111111,
+                               event_mask=X.StructureNotifyMask)
+        w.set_wm_class(name, name)
+        w.set_wm_name('Frame Palette Test')
+        w.change_property(d.intern_atom('_NET_WM_WINDOW_TYPE'), Xatom.ATOM, 32,
+                          [d.intern_atom('_NET_WM_WINDOW_TYPE_NORMAL')])
+        w.map()
+        wins[name] = w
+        d.sync()
+        wait_mapped(name)
+        settle()
+    # Put every window back exactly where it was asked for (mapping can move
+    # one), then wait for all six to be drawn again before anything is read.
+    for i, w in enumerate(wins.values()):
+        w.configure(x=30+(i%3)*350, y=90+(i//3)*280)
+    d.sync()
+    settle()
     def check(name,bg,border,text=None):
         im=capture();x,y,width,height=positions(name)
         assert im.getpixel((x+width//2,y-6))==bg,(name,'background',im.getpixel((x+width//2,y-6)),bg,(x,y))
