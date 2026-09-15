@@ -3796,6 +3796,7 @@ jobs:
                      components/notifications/NotificationLayer.qml \
                      components/switcher/AppSwitcher.qml \
                      components/switcher/SwitcherModel.qml \
+                     components/switcher/switcher-keys.js \
                      services/KeyProfile.qml services/AppIdentity.qml; do
               if [ -s "/usr/share/aquarius/shell/${f}" ]; then ok "${f}"; else bad "${f} is missing"; fi
             done
@@ -7878,10 +7879,72 @@ jobs:
           sudo apt-get install -y shellcheck
           python3 -m pip install --user pyyaml
 
+      # ⚠️ WHY THERE IS A FAKE `grep` IN FRONT OF THIS
+      #
+      # The shell's suite runs with `set -o pipefail` and asks most of its
+      # questions like this:
+      #
+      #     printf '%s' "${the_whole_file}" | grep -q 'the thing'
+      #
+      # `grep -q` stops reading the moment it finds the thing and closes the
+      # pipe. bash's `printf` hands its text over in 4 KB pieces, so it can
+      # still have pieces left when the pipe closes — and then `printf` fails
+      # with "write error: Broken pipe". Under `pipefail` a failure ANYWHERE in
+      # the pipeline fails the whole pipeline, so the test is recorded as a
+      # FAIL even though grep found exactly what it was looking for.
+      #
+      # It is a race, so it is different every run. Build 9 (2026-09-14) hit it
+      # twice in one section and reported that the app switcher does not handle
+      # Qt.Key_Meta or Qt.Key_Super_R being released — both of which are plainly
+      # there, in AppSwitcher.qml, at the pinned commit, right next to the two
+      # keys the same loop said were fine.
+      #
+      # The real repair belongs in aquarius-shell (a here-string, `grep -q ...
+      # <<< "${code}"`, cannot break). We do not write in that repository, and
+      # we must not have this image's CI reporting invented failures in the
+      # meantime, so this step puts a tiny stand-in for `grep` at the front of
+      # PATH which reads ALL of its input before handing it to the real grep.
+      # Nothing can then be left to write, so the pipe can never break. The
+      # stand-in changes nothing else: same arguments, same output, same exit
+      # status, and it steps aside entirely when grep is reading files rather
+      # than a pipe.
+      - name: Make the shell's `printf | grep -q` checks race-free
+        if: steps.fetch.outputs.available == 'yes'
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/grep-shim"
+          # The ten leading spaces are this file's indentation, not the
+          # script's; sed takes them off so the '#!' line starts the file.
+          sed 's/^          //' > "${RUNNER_TEMP}/grep-shim/grep" <<'SHIM'
+          #!/usr/bin/env bash
+          # A stand-in for grep that never lets the program feeding it get a
+          # "Broken pipe". See the note beside this step in build.yml.
+          if [ -p /dev/stdin ]; then
+              shim_input="$(cat)"          # drain the writer completely
+              printf '%s' "${shim_input}" 2>/dev/null | /usr/bin/grep "$@"
+              exit $?
+          fi
+          exec /usr/bin/grep "$@"
+          SHIM
+          chmod +x "${RUNNER_TEMP}/grep-shim/grep"
+          bash -n "${RUNNER_TEMP}/grep-shim/grep"
+          # Prove it before trusting it: the real thing still answers the same.
+          printf 'alpha\nbeta\n' | "${RUNNER_TEMP}/grep-shim/grep" -q beta
+          printf 'alpha\nbeta\n' | "${RUNNER_TEMP}/grep-shim/grep" -qF alpha
+          if printf 'alpha\n' | "${RUNNER_TEMP}/grep-shim/grep" -q zulu; then
+            echo "::error::the grep stand-in says it found something that is not there"
+            exit 1
+          fi
+          echo "the grep stand-in behaves like grep"
+
       - name: Run the shell's own checks
         if: steps.fetch.outputs.available == 'yes'
         working-directory: aquarius-shell
-        run: ./tests/test-shell.sh
+        run: |
+          set -euo pipefail
+          PATH="${RUNNER_TEMP}/grep-shim:${PATH}"
+          export PATH
+          ./tests/test-shell.sh
 
       # ------------------------------------------------------------------------
       # ⚠️ CHANGE ONE, CHANGE BOTH — and this is what makes that true
