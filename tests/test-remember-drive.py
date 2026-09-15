@@ -321,6 +321,15 @@ def check_helper(path):
         ok("the helper's rehearsal states the never-touch list out loud")
 
     # 13 (first, because it gates everything). Not the administrator.
+    #
+    # The build runs this test as root inside the build container, so we cannot
+    # simply "be" a normal user here. Instead we hand the helper a stand-in for
+    # the one question it asks — "who am I running as?" — and have that stand-in
+    # answer with an ordinary user's number (1000) instead of root's 0. That is
+    # the honest test: the helper's real refusal code runs, and it must refuse
+    # BEFORE it looks at the UUID or touches any disk.
+    real_geteuid = helper.os.geteuid
+    helper.os.geteuid = lambda: 1000
     del said[:]
     code = helper.do_remember("1234-ABCD-5678", "Footage", "ext4", 1000, 1000)
     if code != 0 and "administrator" in "\n".join(said):
@@ -329,7 +338,6 @@ def check_helper(path):
         bad("a non-root 'remember' was not refused: %r" % said)
 
     # From here on, pretend to be root but keep it away from the real machine.
-    real_geteuid = helper.os.geteuid
     helper.os.geteuid = lambda: 0
     fake = FakeRun()
     real_subprocess = helper.subprocess

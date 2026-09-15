@@ -126,7 +126,10 @@ aq_file_has "${ACTION}" '<allow_any>no</allow_any>' \
     "nobody who is not sitting at this machine may do it"
 aq_file_has "${ACTION}" '<allow_inactive>no</allow_inactive>' \
     "not even from a session that has been switched away from"
-aq_file_has "${ACTION}" "org\.freedesktop\.policykit\.exec\.path</annotate>" \
+# The path is written as an ATTRIBUTE of the <annotate> tag, not as its text:
+#   <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/...</annotate>
+# so the one line below checks the key and the helper's real path together.
+aq_file_has "${ACTION}" "annotate key=\"org\.freedesktop\.policykit\.exec\.path\">${HELPER}</annotate>" \
     "the action is tied to one program on disk, so nothing else can borrow it"
 aq_file_has "${ACTION}" "${HELPER}" \
     "and that program is ${HELPER}"
