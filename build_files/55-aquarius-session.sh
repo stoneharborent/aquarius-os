@@ -714,6 +714,10 @@ chmod 0755 "${AQ_LAUNCHER}" /usr/libexec/aquarius-shell-start \
 # reads it.
 chmod 0644 /usr/libexec/aquarius-session-lib
 chmod 0644 "${AQ_SESSION_ENTRY}" "${AQ_PORTAL_CONF}"
+# The note that says the Files app can be the file picker. Everybody who logs in
+# has to be able to READ it; if it arrives unreadable, Open and Save dialogs
+# quietly stop appearing. See the checks further down and FEATURES 021.
+chmod 0644 /usr/share/xdg-desktop-portal/portals/nautilus.portal
 # ⚠️ NOT EVERY FILE IN THE labwc FOLDER IS A SETTINGS FILE, and this line used
 # to assume they all were. `chmod 0644` over the whole folder took the
 # executable bit off generate-theme — the program that builds the window frame
@@ -2070,6 +2074,113 @@ aq_file_has "${AQ_PORTAL_CONF}" '^default=gtk$' "everything unlisted is answered
 aq_file_has "${AQ_PORTAL_CONF}" '^org\.freedesktop\.impl\.portal\.ScreenCast=wlr$' "screen recording goes to the wlroots back end"
 aq_file_has "${AQ_PORTAL_CONF}" '^org\.freedesktop\.impl\.portal\.Screenshot=wlr$' "screenshots go to the wlroots back end"
 aq_file_has "${AQ_PORTAL_CONF}" '^org\.freedesktop\.impl\.portal\.Settings=gtk$' "light/dark follows the system setting"
+
+# ------------------------------------------------------------------------------
+# The file picker is the Files app (FEATURES 021, Royce 2026-09-14)
+# ------------------------------------------------------------------------------
+# Every Open and Save dialog on this desktop should be the Files app itself.
+# That is one line in the portal configuration plus a small note file, and BOTH
+# have to be right or dialogs stop appearing with no error anywhere.
+#
+# ⚠️ THE FAILURE THIS SECTION EXISTS TO CATCH IS A 25-SECOND PAUSE AND THEN
+#    NOTHING. It is worth understanding once, because it looks like a hung app.
+#
+#    When a program asks for a file dialog, xdg-desktop-portal reads the line
+#    below, gets a back end's name, and calls that back end over the message
+#    bus. It waits 25 seconds for an answer before giving up — that is the
+#    standard bus timeout, not a setting of ours. If the name points at
+#    something that is not there, or at something that is there but has decided
+#    not to do file dialogs, the person sees a frozen program for 25 seconds and
+#    then no dialog at all. This is exactly what happened to another labwc-like
+#    desktop (Omarchy issue 7944) and it is the reason these checks are strict.
+#
+# The checks below confirm the whole chain, one link at a time.
+aq_file_has "${AQ_PORTAL_CONF}" '^org\.freedesktop\.impl\.portal\.FileChooser=' \
+    "Open and Save dialogs are routed somewhere on purpose, not left to the default"
+
+# Read the back end's name out of the finished image rather than assuming it.
+# Everything after this point is checked against whatever the file really says,
+# so this section cannot drift away from the configuration it is testing.
+AQ_FC_BACKEND="$(sed -n 's/^org\.freedesktop\.impl\.portal\.FileChooser=//p' "${AQ_PORTAL_CONF}" | tail -n 1)"
+echo "  info   Open/Save dialogs are answered by: ${AQ_FC_BACKEND:-<nothing>}"
+
+# ⚠️ IT MUST NOT BE "gnome", AND THIS IS THE SUBTLE ONE.
+#
+# Sending file dialogs to the GNOME back end is the obvious thing to do and it
+# is wrong on this desktop. xdg-desktop-portal-gnome needs GNOME's window
+# manager (Mutter) running. We run labwc. Without Mutter it prints "Non-
+# compatible display server, exposing settings only", skips setting up the file
+# chooser, AND STILL ANSWERS TO ITS NAME on the bus. So the dialog request goes
+# to a program that is listening but has switched that feature off, and the
+# person gets the 25-second pause described above. Verified in that program's
+# own source, version 50.0. Full explanation in aquarius-portals.conf.
+if [ "${AQ_FC_BACKEND}" = "gnome" ]; then
+    bad "Open/Save dialogs are pointed at the GNOME back end, which cannot draw them without GNOME's window manager — dialogs would pause 25 seconds and never appear"
+else
+    ok "Open/Save dialogs are NOT pointed at the GNOME back end (which needs Mutter and would silently never answer)"
+fi
+
+# The back end named above has to have a note file saying it can do this job.
+# xdg-desktop-portal SKIPS, without complaint, any back end whose note file does
+# not list the job being asked for. A missing or wrong note file here is the
+# difference between "the Files picker opens" and "nothing happens".
+AQ_FC_PORTAL_FILE="/usr/share/xdg-desktop-portal/portals/${AQ_FC_BACKEND}.portal"
+if [ -r "${AQ_FC_PORTAL_FILE}" ]; then
+    ok "${AQ_FC_PORTAL_FILE} exists, so the name in the configuration means something"
+else
+    bad "${AQ_FC_PORTAL_FILE} is missing — the configuration names a back end the desktop has never heard of, and every Open dialog would pause 25 seconds and then not appear"
+fi
+aq_file_has "${AQ_FC_PORTAL_FILE}" '^Interfaces=.*org\.freedesktop\.impl\.portal\.FileChooser' \
+    "that back end's note file really does offer to answer Open and Save dialogs"
+
+# Where the picker actually lives on the message bus, read back out of the note
+# file, and then checked to be a program that is really on this image.
+AQ_FC_BUS_NAME="$(sed -n 's/^DBusName=//p' "${AQ_FC_PORTAL_FILE}" 2> /dev/null | tail -n 1)"
+echo "  info   the picker is reached on the bus as: ${AQ_FC_BUS_NAME:-<nothing>}"
+
+# --- the Files app itself -----------------------------------------------------
+# Nautilus IS the Files app. It has to be installed, it has to be new enough to
+# answer file-dialog requests, and the bus has to know how to start it.
+aq_installed nautilus
+
+# Version floor. Nautilus grew the ability to act as the file picker in the
+# version-49 series; before that it was only a file manager and the picker would
+# never appear. Fedora 44 ships 50.x, so this passes today — it is here to fail
+# loudly if a future rebuild ever lands on something older.
+AQ_NAUTILUS_VER="$(rpm -q --queryformat '%{VERSION}' nautilus 2> /dev/null || echo 0)"
+AQ_NAUTILUS_MAJOR="${AQ_NAUTILUS_VER%%.*}"
+if [ "${AQ_NAUTILUS_MAJOR}" -ge 49 ] 2> /dev/null; then
+    ok "the Files app is version ${AQ_NAUTILUS_VER}, new enough to be the file picker (49 or later)"
+else
+    bad "the Files app is version ${AQ_NAUTILUS_VER} — too old to act as the file picker, so Open dialogs would never appear"
+fi
+
+# Belt and braces, and the check that would survive even a surprising version
+# number: look inside the installed program for the name of the job it claims to
+# do. This is reading the finished image back, not trusting a label on it.
+if [ -x /usr/bin/nautilus ] \
+    && grep -qa 'org\.freedesktop\.impl\.portal\.FileChooser' /usr/bin/nautilus; then
+    ok "the installed Files app really contains the file-picker machinery"
+else
+    bad "the installed Files app does not contain the file-picker machinery — Open dialogs would pause and then never appear"
+fi
+
+# How the bus starts Files when a dialog is needed and Files is not running yet.
+# Without this file nothing can start it on demand, and the very first Open
+# dialog after logging in would be the 25-second pause.
+AQ_NAUTILUS_DBUS_SERVICE="/usr/share/dbus-1/services/org.gnome.Nautilus.service"
+aq_file_has "${AQ_NAUTILUS_DBUS_SERVICE}" '^Name=org\.gnome\.Nautilus$' \
+    "the desktop knows how to start the Files app on demand when a dialog is needed"
+
+# The last link: the name our note file dials must be the name that start-up
+# file answers to. These two strings are written in different packages — one
+# ours, one Fedora's — and nothing but this check keeps them in step.
+if [ -n "${AQ_FC_BUS_NAME}" ] \
+    && grep -q "^Name=${AQ_FC_BUS_NAME}$" "${AQ_NAUTILUS_DBUS_SERVICE}" 2> /dev/null; then
+    ok "the name the picker is dialled by (${AQ_FC_BUS_NAME}) is the name the Files app answers to"
+else
+    bad "the picker is dialled as '${AQ_FC_BUS_NAME}' but nothing on this image answers to that name — every Open dialog would pause 25 seconds and then not appear"
+fi
 
 # GNOME's own portal configuration has to be exactly as it was. If our file had
 # been written with the wrong name it would land on top of GNOME's and break
