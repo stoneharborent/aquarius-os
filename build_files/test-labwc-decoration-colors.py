@@ -152,8 +152,16 @@ def worker(work):
         assert light>500,('buttons window is not wearing the light set',name,light)
         assert dark==0,('buttons window still shows theme buttons',name,dark)
         for other in ('normal','colored','badbuttons'):
-            assert button_pixels(other,ORDINARY_BUTTON)>500,(other,'lost the theme buttons')
-            assert button_pixels(other,ALT_BUTTON)==0,(other,'leaked the alternative buttons')
+            # Both counts are read before either is judged, and both are named
+            # in either failure message. "no theme buttons" and "wearing the
+            # other set" fail the same assert, and only the pair of numbers
+            # says which happened.
+            other_dark=button_pixels(other,ORDINARY_BUTTON)
+            other_light=button_pixels(other,ALT_BUTTON)
+            counts=(other,'focused='+name,'dark='+str(other_dark),
+                    'light='+str(other_light),'titlebar='+str(positions(other)))
+            assert other_dark>500,('lost the theme buttons',)+counts
+            assert other_light==0,('leaked the alternative buttons',)+counts
     # A folder name that tries to climb out of the theme is refused outright, so
     # 'badbuttons' above is wearing the theme's own set — already asserted.
     # Reconfigure destroys/rebuilds the cloned assets. Check both changed colors and fallback.

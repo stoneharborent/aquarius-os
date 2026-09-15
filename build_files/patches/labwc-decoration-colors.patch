@@ -1,8 +1,8 @@
 diff --git a/docs/labwc-config.5.scd b/docs/labwc-config.5.scd
-index cf142cf..ccd41ca 100644
+index cf142cf..cb83a35 100644
 --- a/docs/labwc-config.5.scd
 +++ b/docs/labwc-config.5.scd
-@@ -1581,3 +1581,27 @@ See xkeyboard-config(7) for details.
+@@ -1581,3 +1581,32 @@ See xkeyboard-config(7) for details.
  # SEE ALSO
  
  labwc(1), labwc-actions(5), labwc-theme(5)
@@ -14,8 +14,9 @@ index cf142cf..ccd41ca 100644
 +	this order: active title background, inactive title background, active
 +	border, inactive border, active title text, inactive title text.
 +	The whole palette is selected by the last matching rule that specifies
-+	this property. "default" restores the desktop theme. Invalid palettes
-+	are ignored. Backgrounds are solid; dimensions and shadows continue to
++	this property. "default" restores the desktop theme, and so does an
++	invalid palette: a malformed value never inherits the palette of an
++	earlier, broader rule. Backgrounds are solid; dimensions and shadows continue to
 +	follow the desktop theme, and so do the button images unless
 +	decorationButtons is also given. Colors apply when decorations are
 +	created, including after Reconfigure; title changes alone do not rematch.
@@ -26,10 +27,14 @@ index cf142cf..ccd41ca 100644
 +	title-bar button images are loaded, so selected windows can carry buttons
 +	drawn for their own frame colors. One plain path segment only: no slash,
 +	no "..". The set is selected by the last matching rule that specifies
-+	this property; "default" restores the theme's own buttons. Button names,
-+	states, geometry, placement and hover behaviour are unchanged, and a name
-+	the folder does not provide falls back exactly as it would otherwise.
-+	Applies when decorations are created, including after Reconfigure.
++	this property; "default" restores the theme's own buttons, and so does a
++	value this rule cannot use -- a malformed value never inherits a folder
++	named by an earlier, broader rule. Button names, states, geometry,
++	placement and hover behaviour are unchanged. Any picture the folder does
++	not provide -- including all of them, if the folder is missing -- stays
++	the theme's own picture, so a window can never end up with buttons the
++	rest of the desktop does not have. Applies when decorations are created,
++	including after Reconfigure.
 diff --git a/include/ssd-internal.h b/include/ssd-internal.h
 index 600b907..fdfd008 100644
 --- a/include/ssd-internal.h
@@ -268,7 +273,7 @@ index e2ab637..3ec274f 100644
  }
  
 diff --git a/src/theme.c b/src/theme.c
-index 71e577c..3dc0d8f 100644
+index 71e577c..2430360 100644
 --- a/src/theme.c
 +++ b/src/theme.c
 @@ -135,12 +135,24 @@ round_right_corner_button(cairo_t *cairo, int w, int h)
@@ -303,8 +308,8 @@ index 71e577c..3dc0d8f 100644
  
  static void
 -load_button(struct theme *theme, struct button *b, enum ssd_active_state active)
-+load_button(struct theme *theme, const char *subdir, struct button *b,
-+		enum ssd_active_state active)
++load_button(struct theme *theme, const struct theme *base, const char *subdir,
++		struct button *b, enum ssd_active_state active)
  {
  	struct lab_img *(*button_imgs)[LAB_BS_ALL + 1] =
  		theme->window[active].button_imgs;
@@ -334,7 +339,7 @@ index 71e577c..3dc0d8f 100644
  		*img = lab_img_load(LAB_IMG_XBM, filename, rgba);
  	}
  
-@@ -195,7 +208,7 @@ load_button(struct theme *theme, struct button *b, enum ssd_active_state active)
+@@ -195,11 +208,40 @@ load_button(struct theme *theme, struct button *b, enum ssd_active_state active)
  	 * For example max_hover_toggled instead of max_toggled_hover
  	 */
  	if (!*img && b->alt_name) {
@@ -343,36 +348,105 @@ index 71e577c..3dc0d8f 100644
  			b->alt_name, ".xbm");
  		*img = lab_img_load(LAB_IMG_XBM, filename, rgba);
  	}
-@@ -273,7 +286,7 @@ load_button(struct theme *theme, struct button *b, enum ssd_active_state active)
+ 
++	/*
++	 * Aquarius: the desktop theme's own picture.
++	 *
++	 * `base` is set only while loading a per-rule clone, which looks its
++	 * pictures up inside `subdir`. If that folder does not offer this
++	 * picture -- the folder is missing, a file will not load, or the set
++	 * is simply smaller than the theme's -- the window keeps the picture
++	 * the rest of the desktop uses. That is the promise the attribute
++	 * makes: a folder replaces the buttons it provides and nothing else,
++	 * and a clone can never end up with a button that has no picture at
++	 * all (a titlebar button with no picture crashes labwc when the
++	 * decorations are built).
++	 *
++	 * This must come before the built-in bitmap below: falling back to
++	 * labwc's built-in shape would silently give this one window a
++	 * different button from every other window, which is exactly what the
++	 * attribute is supposed to avoid.
++	 *
++	 * lab_img_copy() shares the loaded picture behind a reference count,
++	 * so this is cheap and the desktop theme keeps its own.
++	 */
++	if (!*img && base) {
++		struct lab_img *base_img =
++			base->window[active].button_imgs[b->type][b->state_set];
++		if (base_img) {
++			*img = lab_img_copy(base_img);
++		}
++	}
++
+ 	/*
+ 	 * Builtin bitmap
+ 	 *
+@@ -217,9 +259,16 @@ load_button(struct theme *theme, struct button *b, enum ssd_active_state active)
+ 	if (!*img && (b->state_set & LAB_BS_HOVERED)) {
+ 		struct lab_img *non_hover_img =
+ 			button_imgs[b->type][b->state_set & ~LAB_BS_HOVERED];
+-		*img = lab_img_copy(non_hover_img);
+-		lab_img_add_modifier(*img,
+-			draw_hover_overlay_on_button);
++		/*
++		 * Aquarius: there may be nothing to copy (the theme has no
++		 * picture for this button and there is no built-in shape for
++		 * it). Copying nothing dereferences a null pointer, so don't.
++		 */
++		if (non_hover_img) {
++			*img = lab_img_copy(non_hover_img);
++			lab_img_add_modifier(*img,
++				draw_hover_overlay_on_button);
++		}
+ 	}
+ 
+ 	/*
+@@ -229,12 +278,13 @@ load_button(struct theme *theme, struct button *b, enum ssd_active_state active)
+ 	struct lab_img **rounded_img =
+ 		&button_imgs[b->type][b->state_set | LAB_BS_ROUNDED];
+ 
+-	if (rc.nr_title_buttons_left > 0
++	/* Aquarius: `*img` may be NULL; there is then nothing to round. */
++	if (*img && rc.nr_title_buttons_left > 0
+ 			&& b->type == rc.title_buttons_left[0]) {
+ 		*rounded_img = lab_img_copy(*img);
+ 		lab_img_add_modifier(*rounded_img, round_left_corner_button);
+ 	}
+-	if (rc.nr_title_buttons_right > 0
++	if (*img && rc.nr_title_buttons_right > 0
+ 			&& b->type == rc.title_buttons_right
+ 				[rc.nr_title_buttons_right - 1]) {
+ 		*rounded_img = lab_img_copy(*img);
+@@ -273,7 +323,7 @@ load_button(struct theme *theme, struct button *b, enum ssd_active_state active)
   * ...in the button array definition below.
   */
  static void
 -load_buttons(struct theme *theme)
-+load_buttons(struct theme *theme, const char *subdir)
++load_buttons(struct theme *theme, const struct theme *base, const char *subdir)
  {
  	struct button buttons[] = { {
  		.name = "menu",
-@@ -372,8 +385,8 @@ load_buttons(struct theme *theme)
+@@ -372,8 +422,8 @@ load_buttons(struct theme *theme)
  
  	for (size_t i = 0; i < ARRAY_SIZE(buttons); ++i) {
  		struct button *b = &buttons[i];
 -		load_button(theme, b, SSD_INACTIVE);
 -		load_button(theme, b, SSD_ACTIVE);
-+		load_button(theme, subdir, b, SSD_INACTIVE);
-+		load_button(theme, subdir, b, SSD_ACTIVE);
++		load_button(theme, base, subdir, b, SSD_INACTIVE);
++		load_button(theme, base, subdir, b, SSD_ACTIVE);
  	}
  }
  
-@@ -1844,7 +1857,7 @@ theme_init(struct theme *theme, const char *theme_name)
+@@ -1844,7 +1894,7 @@ theme_init(struct theme *theme, const char *theme_name)
  	post_processing(theme);
  	create_backgrounds(theme);
  	create_corners(theme);
 -	load_buttons(theme);
-+	load_buttons(theme, /* subdir */ NULL);
++	load_buttons(theme, /* base */ NULL, /* subdir */ NULL);
  	create_shadows(theme);
  }
  
-@@ -1879,3 +1892,76 @@ theme_finish(struct theme *theme)
+@@ -1879,3 +1929,83 @@ theme_finish(struct theme *theme)
  		zdrop(&theme->window[active].shadow_edge);
  	}
  }
@@ -411,12 +485,19 @@ index 71e577c..3dc0d8f 100644
 +		 * floor FIRST — never free them — so load_buttons() sees the
 +		 * empty array its assert() expects and every image this clone
 +		 * ends up holding is one it allocated itself.
++		 *
++		 * Passing `base` in means load_button() falls back to the base
++		 * theme's own picture (as its own reference-counted copy) for
++		 * anything the folder does not provide. So a missing folder, an
++		 * unreadable file or a folder with only some of the buttons in
++		 * it leaves this window looking like every other window, and
++		 * never leaves a button with no picture at all.
 +		 */
 +		FOR_EACH_ACTIVE_STATE(active) {
 +			memset(theme->window[active].button_imgs, 0,
 +				sizeof(theme->window[active].button_imgs));
 +		}
-+		load_buttons(theme, button_subdir);
++		load_buttons(theme, base, button_subdir);
 +		theme->owns_button_imgs = true;
 +	}
 +	return theme;
@@ -450,7 +531,7 @@ index 71e577c..3dc0d8f 100644
 +	free(theme);
 +}
 diff --git a/src/window-rules.c b/src/window-rules.c
-index 4118ae3..5bfd87f 100644
+index 4118ae3..c28e768 100644
 --- a/src/window-rules.c
 +++ b/src/window-rules.c
 @@ -2,9 +2,13 @@
@@ -467,7 +548,7 @@ index 4118ae3..5bfd87f 100644
  #include "config/rcxml.h"
  #include "labwc.h"
  #include "view.h"
-@@ -118,3 +122,103 @@ window_rules_get_property(struct view *view, const char *property)
+@@ -118,3 +122,126 @@ window_rules_get_property(struct view *view, const char *property)
  	}
  	return LAB_PROP_UNSPECIFIED;
  }
@@ -475,14 +556,26 @@ index 4118ae3..5bfd87f 100644
 +/*
 + * Keep this deliberately narrow: six opaque RGB colors or "default".
 + * Reject the entire palette on malformed input, never partially change it.
++ *
++ * A rejected value is not the same as no value at all. The rule still said
++ * something about this window's frame colors, so it is pinned to the desktop
++ * theme rather than left to inherit the palette of some earlier, broader rule
++ * that happens to match the same window. A typo makes a window look ordinary;
++ * it never makes it wear somebody else's colors.
 + */
++static bool
++decoration_colors_use_theme(struct window_rule *rule, bool valid)
++{
++	rule->decoration_colors_set = true;
++	rule->decoration_colors_default = true;
++	return valid;
++}
++
 +bool
 +window_rule_parse_decoration_colors(struct window_rule *rule, const char *value)
 +{
 +	if (!strcasecmp(value, "default")) {
-+		rule->decoration_colors_set = true;
-+		rule->decoration_colors_default = true;
-+		return true;
++		return decoration_colors_use_theme(rule, /* valid */ true);
 +	}
 +	float colors[6][4];
 +	const char *s = value;
@@ -491,11 +584,11 @@ index 4118ae3..5bfd87f 100644
 +			s++;
 +		}
 +		if (strlen(s) < 7 || *s++ != '#') {
-+			return false;
++			return decoration_colors_use_theme(rule, /* valid */ false);
 +		}
 +		for (int j = 0; j < 6; j++) {
 +			if (!isxdigit((unsigned char)s[j])) {
-+				return false;
++				return decoration_colors_use_theme(rule, /* valid */ false);
 +			}
 +		}
 +		for (int j = 0; j < 3; j++) {
@@ -505,14 +598,14 @@ index 4118ae3..5bfd87f 100644
 +		colors[i][3] = 1.0f;
 +		s += 6;
 +		if (*s && !isspace((unsigned char)*s)) {
-+			return false;
++			return decoration_colors_use_theme(rule, /* valid */ false);
 +		}
 +	}
 +	while (isspace((unsigned char)*s)) {
 +		s++;
 +	}
 +	if (*s) {
-+		return false;
++		return decoration_colors_use_theme(rule, /* valid */ false);
 +	}
 +	memcpy(rule->decoration_colors, colors, sizeof(colors));
 +	rule->decoration_colors_set = true;
@@ -524,23 +617,34 @@ index 4118ae3..5bfd87f 100644
 + * A plain folder name, one path segment: no slash, no "..", nothing absolute.
 + * It is joined onto a theme path, so anything clever here would read files
 + * outside the theme, and there is no reason a theme folder needs it.
++ *
++ * As with the colors above, a rejected value still counts as this rule having
++ * decided: the window is pinned to the theme's own buttons and cannot inherit
++ * a folder named by an earlier, broader rule.
 + */
++static bool
++decoration_buttons_use_theme(struct window_rule *rule, bool valid)
++{
++	rule->decoration_buttons_set = true;
++	zfree(rule->decoration_buttons);
++	return valid;
++}
++
 +bool
 +window_rule_parse_decoration_buttons(struct window_rule *rule, const char *value)
 +{
 +	if (!strcasecmp(value, "default")) {
-+		rule->decoration_buttons_set = true;
-+		zfree(rule->decoration_buttons);
-+		return true;
++		return decoration_buttons_use_theme(rule, /* valid */ true);
 +	}
 +	if (!*value || strchr(value, '/') || !strcmp(value, ".")
 +			|| !strcmp(value, "..")) {
-+		return false;
++		return decoration_buttons_use_theme(rule, /* valid */ false);
 +	}
 +	for (const char *c = value; *c; c++) {
 +		if (!isalnum((unsigned char)*c) && *c != '-' && *c != '_'
 +				&& *c != '.') {
-+			return false;
++			return decoration_buttons_use_theme(rule,
++				/* valid */ false);
 +		}
 +	}
 +	xstrdup_replace(rule->decoration_buttons, value);
