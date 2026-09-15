@@ -50,6 +50,11 @@
 #   <config-out>/environment         copied, unchanged
 #   <theme-out>/*.svg                the round window buttons, one file per
 #                                    button per state
+#   <theme-out>/buttons-resolve/*.svg
+#                                    the same buttons again, drawn in Resolve's
+#                                    own title-text white, for the one window
+#                                    rule that asks for them. See
+#                                    RESOLVE_BUTTON_INK below.
 #   <gtk-out>/gtk-4.0/gtk.css        the window colours and the three window
 #                                    buttons for GNOME's own applications, which
 #                                    draw their own title bar — see "GTK" below.
@@ -326,6 +331,41 @@ DISC_HOVER = {"ice": 16, "midnight": 18}         # section 4
 INACTIVE_OPACITY = 45                            # section 4: a window you are
                                                  # not in draws its whole button
                                                  # at 45%
+
+# ------------------------------------------------------------------------------
+# THE SECOND SET OF BUTTONS — the ones DaVinci Resolve gets
+# ------------------------------------------------------------------------------
+# Design rule 6, second sentence (added 2026-09-15 after Royce asked for it):
+# Resolve's frame draws its buttons in Resolve's own text white.
+#
+# Resolve paints its own dark window in its own charcoal, and our labwc patch
+# gives that window a title bar to match — the six colours on the `windowRule
+# decorationColors=` line in rc.xml. The fifth of those six is the colour the
+# title TEXT is written in, #dedee2, and that is the colour named here.
+#
+# ⚠️ THIS IS THE ONE COLOUR IN THIS PROGRAM THAT DOES NOT COME OUT OF THE
+# PALETTE, AND IT IS DELIBERATE. Ice's ink is near-black, and near-black discs
+# on a near-black title bar are the three buttons Royce could not see. The
+# palette has no role for "the colour another company's application writes its
+# own title in", and inventing one would put a Resolve colour in the desktop's
+# palette, where the next person would reasonably use it for something else.
+# So it is written once, here, and the shell's test suite checks that it still
+# matches the fifth colour of the Resolve rule in rc.xml. Change one, change
+# both — or the buttons stop matching the title beside them.
+#
+# Everything else about these buttons is unchanged: the same round discs, at the
+# same percentages of ink as the table above, the glyph always drawn, and close
+# still going to the palette's danger red — with its X in inkOnAccent — only
+# while the pointer is on it. That is mix B, drawn in a different ink.
+RESOLVE_BUTTON_INK = "#dedee2"
+
+# The folder the second set is written into, INSIDE the theme folder. labwc
+# looks a button picture up by name under <theme>/labwc/, so a name with a
+# folder in front of it — "buttons-resolve/close-active.svg" — lands here and
+# nowhere else. rc.xml names this folder on the Resolve rule
+# (decorationButtons="buttons-resolve"), our labwc patch reads it, and the three
+# spellings have to agree or Resolve quietly gets the ordinary buttons back.
+RESOLVE_BUTTON_DIR = "buttons-resolve"
 
 # Menu sizes. Section 5 says "keep the shipped Ice values", so these are the
 # numbers the old hand-written themerc-override had, unchanged.
@@ -608,9 +648,16 @@ def glyph_paths(kind, colour, stroke):
     ]
 
 
-def build_button_svg(palette, scheme, kind, hovered, active):
-    """One button picture, as SVG text."""
-    ink = rgb_of(palette["ink"])
+def build_button_svg(palette, scheme, kind, hovered, active, ink=None):
+    """
+    One button picture, as SVG text.
+
+    `ink` is the colour the disc and the glyph are drawn in. Left alone it is
+    the palette's own ink, which is every ordinary window on the desktop. The
+    Resolve set passes RESOLVE_BUTTON_INK instead; nothing else about the
+    picture changes, which is the point — same design, different ink.
+    """
+    ink = rgb_of(ink or palette["ink"])
 
     if hovered and kind == "close":
         # The one button that changes colour rather than weight, because the one
@@ -653,8 +700,15 @@ def build_button_svg(palette, scheme, kind, hovered, active):
 BUTTON_KINDS = ("close", "iconify", "max", "max_toggled")
 
 
-def button_files(palette, scheme):
-    """Every button picture for one theme: name -> SVG text."""
+def button_files(palette, scheme, ink=None):
+    """
+    Every button picture for one theme: name -> SVG text.
+
+    Called twice: once with no ink for the desktop's own buttons, and once with
+    RESOLVE_BUTTON_INK for the set Resolve's dark title bar gets. The names are
+    the same in both sets — labwc looks them up by exact name — so the two sets
+    have to live in two folders, which is what write_button_set does.
+    """
     files = {}
     for kind in BUTTON_KINDS:
         glyph = "max" if kind == "max_toggled" else kind
@@ -666,9 +720,24 @@ def button_files(palette, scheme):
                     "active" if active else "inactive",
                 )
                 files[name] = build_button_svg(
-                    palette, scheme, glyph, hovered, active
+                    palette, scheme, glyph, hovered, active, ink
                 )
     return files
+
+
+def write_button_set(folder, wanted):
+    """
+    Write one set of button pictures into one folder, and take away anything
+    left there by an earlier run that is no longer wanted — so a renamed button
+    cannot linger and quietly go on being drawn.
+    """
+    os.makedirs(folder, exist_ok=True)
+    for name, text in sorted(wanted.items()):
+        write_file(os.path.join(folder, name), text)
+    for name in sorted(os.listdir(folder)):
+        if name.endswith(".svg") and name not in wanted:
+            os.remove(os.path.join(folder, name))
+    return len(wanted)
 
 
 # =============================================================================
@@ -1813,14 +1882,18 @@ def main(argv):
     # Written into a labwc THEME folder, because that is the only place labwc
     # looks for them. Anything already there from an earlier run and no longer
     # wanted is removed, so a renamed button cannot linger.
-    os.makedirs(theme_out, exist_ok=True)
-    wanted = button_files(palette, scheme)
-    for name, text in sorted(wanted.items()):
-        write_file(os.path.join(theme_out, name), text)
-    for name in sorted(os.listdir(theme_out)):
-        if name.endswith(".svg") and name not in wanted:
-            os.remove(os.path.join(theme_out, name))
-    report("  drew %d button pictures" % len(wanted))
+    drawn = write_button_set(theme_out, button_files(palette, scheme))
+
+    # The second set: the same buttons, drawn in Resolve's own text white, in a
+    # folder of their own. Written in BOTH schemes and always — a folder that is
+    # there in Midnight and missing in Ice would give Resolve its ordinary
+    # buttons back the moment somebody flipped the theme, which is exactly the
+    # kind of fault nobody thinks to look for.
+    drawn += write_button_set(
+        os.path.join(theme_out, RESOLVE_BUTTON_DIR),
+        button_files(palette, scheme, RESOLVE_BUTTON_INK),
+    )
+    report("  drew %d button pictures (including the Resolve set)" % drawn)
 
     # -- the icons, which follow light and dark like the colours do ------------
     # Done before the GTK files, because the name it settles on is one of the

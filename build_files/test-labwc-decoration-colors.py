@@ -11,15 +11,51 @@ import time
 
 PALETTE = '#313233 #414243 #515253 #616263 #f1f2f3 #d1d2d3'
 
+# The two button sets the test paints. Each button picture is a plain, solid,
+# fully opaque square of one of these colours, so "did this window get the other
+# button set?" becomes "is this exact colour anywhere in its title bar?" — which
+# needs no arithmetic about where a button lands and cannot be fooled by
+# anti-aliasing at a disc's edge.
+#
+# This is the AquariusOS case in miniature: on a real machine the theme's own
+# buttons are the desktop's near-black ink, the alternative set is Resolve's own
+# near-white #dedee2, and the whole point of the feature is that the second set
+# reaches Resolve's window and nothing else. Both colours below are chosen not
+# to occur anywhere else on the test desktop.
+THEME_NAME = 'AqDecorationTest'
+BUTTON_DIR = 'buttons-alt'
+ORDINARY_BUTTON = (10, 11, 12)      # dark, like the desktop ink
+ALT_BUTTON = (244, 245, 246)        # light, like Resolve's title text
+BUTTON_NAMES = ('menu', 'iconify', 'max', 'max_toggled', 'close',
+                'iconify_hover', 'max_hover', 'max_toggled_hover', 'close_hover')
+
 def config(palette):
     return f'''<labwc_config><placement><policy>client</policy></placement>
-<theme><cornerRadius>12</cornerRadius><font place="ActiveWindow" name="sans" size="12"/><font place="InactiveWindow" name="sans" size="12"/></theme>
+<theme><name>{THEME_NAME}</name><cornerRadius>12</cornerRadius><font place="ActiveWindow" name="sans" size="12"/><font place="InactiveWindow" name="sans" size="12"/></theme>
 <windowRules>
 <windowRule identifier="colored" decorationColors="{palette}"/>
 <windowRule identifier="reset" decorationColors="{palette}"/>
 <windowRule identifier="reset" decorationColors="default"/>
 <windowRule identifier="invalid" decorationColors="#bad"/>
+<windowRule identifier="buttons" decorationColors="{palette}" decorationButtons="{BUTTON_DIR}"/>
+<windowRule identifier="badbuttons" decorationColors="{palette}" decorationButtons="../escape"/>
 </windowRules></labwc_config>'''
+
+
+def paint_buttons(theme_root):
+    """Write both button sets into a throwaway labwc theme folder.
+
+    The theme's own buttons go in <theme>/labwc/; the alternative set goes in
+    <theme>/labwc/<BUTTON_DIR>/, which is exactly the layout generate-theme
+    produces on a real machine (buttons-resolve/ beside the ordinary pictures).
+    """
+    from PIL import Image
+    base = theme_root / 'themes' / THEME_NAME / 'labwc'
+    for folder, colour in ((base, ORDINARY_BUTTON), (base / BUTTON_DIR, ALT_BUTTON)):
+        folder.mkdir(parents=True, exist_ok=True)
+        for name in BUTTON_NAMES:
+            for state in ('-active.png', '-inactive.png'):
+                Image.new('RGBA', (20, 20), colour + (255,)).save(folder / (name + state))
 
 def worker(work):
     from Xlib import X, Xatom, display, protocol
@@ -27,8 +63,9 @@ def worker(work):
     d = display.Display()
     root = d.screen().root
     wins = {}
-    for i, name in enumerate(('colored', 'normal', 'reset', 'invalid')):
-        w = root.create_window(30 + (i % 2)*350, 90 + (i//2)*280, 280, 190,
+    for i, name in enumerate(('colored', 'normal', 'reset', 'invalid',
+                              'buttons', 'badbuttons')):
+        w = root.create_window(30 + (i % 3)*350, 90 + (i//3)*280, 280, 190,
                                0, d.screen().root_depth, X.InputOutput,
                                X.CopyFromParent, background_pixel=0x111111)
         w.set_wm_class(name, name)
@@ -40,7 +77,7 @@ def worker(work):
     d.sync()
     time.sleep(1)
     for i, w in enumerate(wins.values()):
-        w.configure(x=30+(i%2)*350, y=90+(i//2)*280)
+        w.configure(x=30+(i%3)*350, y=90+(i//3)*280)
     d.sync()
     time.sleep(.3)
     def focus(name):
@@ -96,6 +133,29 @@ def worker(work):
     for name in ('reset','invalid'):
         focus(name)
         check(name,(129,130,131),(145,146,147))
+    # --- decorationButtons: the per-rule button set ---------------------------
+    # A window the rule names gets the LIGHT buttons; every other window keeps
+    # the theme's own DARK ones. Both are checked in both directions, because
+    # "the right window changed" and "no other window changed" are two different
+    # failures and only the pair of them is the feature.
+    def button_pixels(name, colour):
+        im=capture();x,y,width,height=positions(name)
+        # The title bar is the strip immediately above the window's own top-left
+        # corner. 34 is comfortably taller than it; the extra rows are the
+        # desktop behind it and hold neither button colour.
+        strip=list(im.crop((x,y-34,x+width,y)).getdata())
+        return strip.count(colour)
+    for name in ('buttons','normal','colored'):
+        focus(name)
+        light=button_pixels('buttons',ALT_BUTTON)
+        dark=button_pixels('buttons',ORDINARY_BUTTON)
+        assert light>500,('buttons window is not wearing the light set',name,light)
+        assert dark==0,('buttons window still shows theme buttons',name,dark)
+        for other in ('normal','colored','badbuttons'):
+            assert button_pixels(other,ORDINARY_BUTTON)>500,(other,'lost the theme buttons')
+            assert button_pixels(other,ALT_BUTTON)==0,(other,'leaked the alternative buttons')
+    # A folder name that tries to climb out of the theme is refused outright, so
+    # 'badbuttons' above is wearing the theme's own set — already asserted.
     # Reconfigure destroys/rebuilds the cloned assets. Check both changed colors and fallback.
     (work/'config/rc.xml').write_text(config('#717273 #747576 #777879 #7a7b7c #f1f2f3 #d1d2d3'))
     subprocess.run([os.environ['AQ_LABWC_TEST_BINARY'],'--reconfigure'],check=True)
@@ -108,7 +168,7 @@ def worker(work):
     check('colored',(129,130,131),(145,146,147))
     for w in wins.values(): w.destroy()
     d.sync();d.close()
-    (work/'passed').write_text('PASS: isolated decoration colors, active/inactive, corners, borders, text, defaults, invalid palette, maximize/fullscreen restore, reconfigure')
+    (work/'passed').write_text('PASS: isolated decoration colors, active/inactive, corners, borders, text, defaults, invalid palette, maximize/fullscreen restore, reconfigure, per-rule button sets and their isolation')
 
 def main():
     if len(sys.argv)>1 and sys.argv[1]=='--worker':
@@ -118,6 +178,8 @@ def main():
         work=Path(tmp)
         (work/'run').mkdir(mode=0o700)
         (work/'config').mkdir()
+        (work/'data').mkdir()
+        paint_buttons(work/'data')
         (work/'config/rc.xml').write_text(config(PALETTE))
         (work/'config/themerc-override').write_text('''border.width: 4
 window.active.title.bg.color: #818283
@@ -132,7 +194,7 @@ window.titlebar.padding.height: 6
         wrapper=work/'xwayland'
         wrapper.write_text('#!/bin/sh\nexec '+shlex.quote(shutil.which('Xwayland'))+' -glamor off -extension GLX "$@"\n')
         wrapper.chmod(0o700)
-        env=dict(os.environ,XDG_RUNTIME_DIR=str(work/'run'),XDG_CONFIG_HOME=str(work/'config'),WLR_BACKENDS='headless',WLR_HEADLESS_OUTPUTS='1',WLR_RENDERER='pixman',WLR_XWAYLAND=str(wrapper),AQ_LABWC_TEST_BINARY=binary)
+        env=dict(os.environ,XDG_RUNTIME_DIR=str(work/'run'),XDG_CONFIG_HOME=str(work/'config'),XDG_DATA_HOME=str(work/'data'),WLR_BACKENDS='headless',WLR_HEADLESS_OUTPUTS='1',WLR_RENDERER='pixman',WLR_XWAYLAND=str(wrapper),AQ_LABWC_TEST_BINARY=binary)
         env.pop('DISPLAY',None);env.pop('WAYLAND_DISPLAY',None)
         with (work/'log').open('w+') as log:
             wm=subprocess.Popen([binary,'-C',str(work/'config'),'-s',str(command)],env=env,stdout=log,stderr=log)
