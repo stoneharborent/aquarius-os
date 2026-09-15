@@ -186,9 +186,10 @@ def build_payload(root, name="testapp", os_bits=False, elf=False,
 
 
 def make_tarball(path, **kw):
+    builder = kw.pop("builder", build_payload)
     work = tempfile.mkdtemp(prefix="aq-fixture-")
     try:
-        build_payload(work, **kw)
+        builder(work, **kw)
         mode = "w:xz" if path.endswith((".xz", ".txz")) else "w:gz"
         with tarfile.open(path, mode) as archive:
             for name in sorted(os.listdir(work)):
@@ -212,6 +213,95 @@ def make_zip(path, **kw):
     return path
 
 
+# ==============================================================================
+# The ChatGPT layout — the fixture for bench bug I4 (15 September 2026)
+# ==============================================================================
+# ⚠️ THIS IS THE SHAPE OF A REAL DOWNLOAD, AND IT IS WHY I4 HAPPENED. The app a
+# person starts is usr/lib/chatgpt/chatgpt. Nothing points at it directly: the
+# menu entry says `Exec=/usr/bin/chatgpt`, and usr/bin/chatgpt is a LINK whose
+# target is written for a computer where the package is already installed.
+# Follow it with the ordinary tools and it walks out of the unpacked folder, the
+# app looks as if it has no main program, and the old code then treated every
+# program and library inside as the app — including five Alpine-Linux (musl)
+# spares that only a musl computer would ever load, and one optional Qt 5 shim.
+# Eight false alarms, one refused app, an app that runs here perfectly well.
+CHATGPT_DESKTOP = """[Desktop Entry]
+Type=Application
+Name=ChatGPT
+Exec=/usr/bin/chatgpt %U
+Icon=chatgpt
+Terminal=false
+Categories=Utility;
+"""
+
+# The five .node files and the shim are named exactly as the bench reported them.
+CHATGPT_EXTRAS = [
+    "usr/lib/chatgpt/resources/cua_node/lib/node_modules/classic-level/"
+    "prebuilds/linux-x64/classic-level.musl.node",
+    "usr/lib/chatgpt/resources/cua_node/lib/node_modules/@oai/cua/dist/lib/js/"
+    "oai_js_browser/dist/skill/node_modules/classic-level/prebuilds/linux-x64/"
+    "classic-level.musl.node",
+    "usr/lib/chatgpt/resources/app.asar.unpacked/node_modules/"
+    "@worklouder/device-kit-oai/node_modules/@worklouder/wl-device-kit/"
+    "node_modules/node-hid/prebuilds/HID-linux-x64-musl/node-napi-v4.node",
+    "usr/lib/chatgpt/resources/app.asar.unpacked/node_modules/"
+    "@worklouder/device-kit-oai/node_modules/@worklouder/wl-device-kit/"
+    "node_modules/node-hid/prebuilds/HID_hidraw-linux-x64-musl/node-napi-v4.node",
+    "usr/lib/chatgpt/resources/app.asar.unpacked/node_modules/"
+    "@worklouder/device-kit-oai/node_modules/@worklouder/wl-device-kit/"
+    "node_modules/serialport/node_modules/@serialport/bindings-cpp/prebuilds/"
+    "linux-x64/node.napi.musl.node",
+    "usr/lib/chatgpt/libqt5_shim.so",
+]
+FAKE_ELF = b"\x7fELF" + b"\x00" * 60
+
+
+def write_elf(path, mode=0o755):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as handle:
+        handle.write(FAKE_ELF)
+    os.chmod(path, mode)
+    return path
+
+
+def build_chatgpt_payload(root, wrapper=False):
+    """The ChatGPT shape: menu entry → usr/bin link → the real program.
+
+    `wrapper` swaps the link for the other thing packages do — a small starter
+    script whose last `exec` line names the real program.
+    """
+    real = write_elf(os.path.join(root, "usr", "lib", "chatgpt", "chatgpt"))
+    launcher = os.path.join(root, "usr", "bin", "chatgpt")
+    os.makedirs(os.path.dirname(launcher), exist_ok=True)
+    if wrapper:
+        with open(launcher, "w") as handle:
+            handle.write("#!/bin/sh\n"
+                         "exec /usr/lib/chatgpt/chatgpt \"$@\"\n")
+        os.chmod(launcher, 0o755)
+    else:
+        # An ABSOLUTE link, written for the computer the package expects.
+        os.symlink("/usr/lib/chatgpt/chatgpt", launcher)
+    for relative in CHATGPT_EXTRAS:
+        write_elf(os.path.join(root, *relative.split("/")))
+    entry = os.path.join(root, "usr", "share", "applications", "chatgpt.desktop")
+    os.makedirs(os.path.dirname(entry), exist_ok=True)
+    with open(entry, "w") as handle:
+        handle.write(CHATGPT_DESKTOP)
+    return real
+
+
+def build_nameless_payload(root):
+    """A package that never says which program is the app."""
+    starter = os.path.join(root, "usr", "bin", "nameless")
+    os.makedirs(os.path.dirname(starter), exist_ok=True)
+    with open(starter, "w") as handle:
+        handle.write("#!/bin/sh\necho hello\n")
+    os.chmod(starter, 0o755)
+    write_elf(os.path.join(root, "usr", "lib", "nameless", "prebuilds",
+                           "linux-x64", "thing.musl.node"))
+    return root
+
+
 def make_deb(path, **kw):
     """A real .deb, built the way a .deb is built.
 
@@ -221,9 +311,10 @@ def make_deb(path, **kw):
     with neither — which is also the fallback the installer itself carries, so
     testing through it is testing something real rather than a stunt.
     """
+    builder = kw.pop("builder", build_payload)
     work = tempfile.mkdtemp(prefix="aq-fixture-")
     try:
-        build_payload(work, **kw)
+        builder(work, **kw)
         control = os.path.join(work, "DEBIAN")
         os.makedirs(control, exist_ok=True)
         with open(os.path.join(control, "control"), "w") as handle:
@@ -268,13 +359,26 @@ def make_deb(path, **kw):
         shutil.rmtree(work, ignore_errors=True)
 
 
+def payload_files(root):
+    """Every file in a payload, as the absolute path it will have once installed."""
+    listed = []
+    for base, _dirs, files in os.walk(root):
+        for name in files:
+            full = os.path.join(base, name)
+            listed.append("/" + os.path.relpath(full, root))
+        # A link to a file is a file too, and os.walk counts a link to a folder
+        # as a folder, so nothing here is missed.
+    return sorted(set(listed))
+
+
 def make_rpm(path, **kw):
     """A real .rpm, if this machine can build one. "" if it cannot."""
     if not shutil.which("rpmbuild"):
         return ""
+    builder = kw.pop("builder", build_payload)
     work = tempfile.mkdtemp(prefix="aq-fixture-")
     try:
-        build_payload(os.path.join(work, "root"), **kw)
+        builder(os.path.join(work, "root"), **kw)
         spec = os.path.join(work, "testapp.spec")
         with open(spec, "w") as handle:
             # ⚠️ Built by joining pieces, NOT with Python's % formatting: an
@@ -294,8 +398,10 @@ def make_rpm(path, **kw):
                 "Summary: a test\nLicense: MIT\nBuildArch: x86_64\n"
                 "%description\na test\n"
                 "%install\ncp -a " + root + "/. %{buildroot}/\n"
-                "%files\n/opt/testapp\n/usr/share/applications\n"
-                "/usr/share/icons\n")
+                # Every file in the fixture, listed by name. Listing folders
+                # instead would make the package claim /usr/share, and it also
+                # meant a new fixture shape needed a new spec every time.
+                "%files\n" + "\n".join(payload_files(root)) + "\n")
         done = subprocess.run(
             ["rpmbuild", "-bb", "--define", "_topdir %s" % work,
              "--define", "_rpmdir %s" % work, spec],
@@ -797,6 +903,112 @@ def test_a_plugin_does_not_refuse_the_app(core, work):
               result.message)
         check("libnothing.so.6" in (result.detail or ""),
               "and the library is named behind Details", result.detail)
+        core.REHEARSAL = False
+
+
+def test_i4_the_chatgpt_layout(core, work):
+    """Bench bug I4 — the ChatGPT .deb and .rpm, refused over parts it never loads."""
+    heading("I4 — the app is found through the menu entry, not guessed at")
+
+    # --- the app itself is found, through the link ---------------------------
+    for wrapper, how in ((False, "a link"), (True, "a starter script")):
+        payload = tempfile.mkdtemp(prefix="aq-chatgpt-")
+        try:
+            real = build_chatgpt_payload(payload, wrapper=wrapper)
+            mains = core.main_programs(payload)
+            check(mains == [real],
+                  "the app is usr/lib/chatgpt/chatgpt, found through %s" % how,
+                  [os.path.relpath(m, payload) for m in mains])
+            for relative in CHATGPT_EXTRAS:
+                full = os.path.join(payload, *relative.split("/"))
+                check(core.never_main(payload, full),
+                      "never the app: .../%s" % os.path.basename(relative))
+        finally:
+            shutil.rmtree(payload, ignore_errors=True)
+
+    # --- the whole route, the way the bench ran it ---------------------------
+    # The stand-in answers the way the bench's real ldd did: every musl spare
+    # and the Qt 5 shim is "missing something", the app itself is fine. If any
+    # of those six is asked about, the app is refused and this test fails.
+    fine = ("#!/bin/sh\n"
+            "case \"$1\" in\n"
+            "  *.node) echo '\\tlibc.musl-x86_64.so.1 => not found' ;;\n"
+            "  *libqt5_shim.so) echo '\\tlibQt5Core.so.5 => not found' ;;\n"
+            "  *) echo '\\tlibc.so.6 => /lib64/libc.so.6 (0x0)' ;;\n"
+            "esac\n")
+    made = []
+    deb = make_deb(os.path.join(work, "chatgpt.deb"),
+                   builder=build_chatgpt_payload)
+    if deb:
+        made.append(("chatgpt.deb", deb))
+    rpm = make_rpm(os.path.join(work, "chatgpt.rpm"),
+                   builder=build_chatgpt_payload)
+    if rpm:
+        made.append(("chatgpt.rpm", rpm))
+    else:
+        skip("I4 against a real .rpm", "no rpmbuild here; the .deb proves the "
+             "same route")
+    for label, package in made:
+        with FakeHome():
+            core.REHEARSAL = True
+            progress = core.Progress()
+            with StandIn("ldd", fine):
+                result = core.install(core.sort_path(package), progress)
+            check(result.ok, "%s installs — the musl spares and the Qt 5 shim "
+                  "are not the app" % label, result.message)
+            details = "\n".join(progress.log_lines)
+            check("musl" not in details and ".node" not in details,
+                  "and nothing a person reads mentions the Alpine spares",
+                  details)
+            check("libQt5Core.so.5" not in (result.detail or ""),
+                  "and the optional Qt 5 shim never becomes a reason to refuse",
+                  result.detail)
+            core.REHEARSAL = False
+
+    # --- a real missing library on the app itself still refuses --------------
+    broken = ("#!/bin/sh\n"
+              "case \"$1\" in\n"
+              "  */usr/lib/chatgpt/chatgpt) echo '\\tlibnothing.so.6 => not found' ;;\n"
+              "  *) echo '\\tlibc.so.6 => /lib64/libc.so.6 (0x0)' ;;\n"
+              "esac\n")
+    if deb:
+        with FakeHome():
+            core.REHEARSAL = True
+            with StandIn("ldd", broken):
+                result = core.install(core.sort_path(deb))
+            check(not result.ok,
+                  "a library the APP itself needs is still an honest refusal",
+                  result.message)
+            check("libnothing.so.6" in (result.detail or ""),
+                  "and only that library is named", result.detail)
+            core.REHEARSAL = False
+
+    # --- no main program at all: a notice, not a refusal ---------------------
+    payload = tempfile.mkdtemp(prefix="aq-nameless-")
+    try:
+        build_nameless_payload(payload)
+        check(core.main_programs(payload) == [],
+              "a package that names no program has no main program")
+        progress = core.Progress()
+        report = core.library_report(payload, progress)
+        check(report.no_main and not report.blocked,
+              "so nothing is checked and nothing is refused")
+        check(any("could not tell which program" in line
+                  for line in progress.log_lines),
+              "and it says so plainly", progress.log_lines)
+    finally:
+        shutil.rmtree(payload, ignore_errors=True)
+
+    nameless = make_tarball(os.path.join(work, "nameless.tar.gz"),
+                            builder=build_nameless_payload)
+    with FakeHome():
+        core.REHEARSAL = True
+        progress = core.Progress()
+        with StandIn("ldd", "#!/bin/sh\necho '\\tlibnope.so.1 => not found'\n"):
+            result = core.install(core.sort_path(nameless), progress)
+        check(result.ok,
+              "and it is installed anyway, because the person asked for it",
+              result.message)
         core.REHEARSAL = False
 
 
@@ -1308,6 +1520,7 @@ def main(argv):
         test_ldd_failure(core, work)
         test_a_version_clash_is_not_a_missing_part(core, work)
         test_a_plugin_does_not_refuse_the_app(core, work)
+        test_i4_the_chatgpt_layout(core, work)
         test_root_refusal(core, work)
         test_flatpak_command(core)
         test_helper_understands_the_modes()

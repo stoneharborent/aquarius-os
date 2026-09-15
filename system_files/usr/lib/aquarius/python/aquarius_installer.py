@@ -877,31 +877,182 @@ def read_ldd(text):
     return missing, clashes
 
 
+# ⚠️ WHAT IS NEVER THE APP ITSELF. A modern download carries hundreds of little
+#    programs and libraries that are not the app: bits of Node, spare builds of
+#    the same part for a different kind of Linux, optional add-ons. Treating one
+#    of those as "the app" is what refused the ChatGPT .deb and .rpm on the
+#    bench on 15 September 2026 (bug I4): five of the files it complained about
+#    were Alpine-Linux (musl) copies sitting beside the ordinary ones, picked
+#    between at start-up, and the sixth was an optional Qt 5 shim that is only
+#    ever loaded if Qt 5 is on the computer.
+NEVER_MAIN_FOLDERS = ("node_modules", "prebuilds", "resources")
+
+
+def never_main(root, path):
+    """True when this file cannot possibly be the program a person starts."""
+    relative = os.path.relpath(path, root).replace(os.sep, "/")
+    parts = relative.split("/")
+    for folder in parts[:-1]:
+        if folder in NEVER_MAIN_FOLDERS or folder.endswith(".asar.unpacked"):
+            return True
+    name = parts[-1]
+    if name.endswith(".node"):          # a Node add-on, never a program
+        return True
+    if name.endswith(".so") or ".so." in name:   # a shared library
+        return True
+    if "musl" in name.lower():          # a build for a different kind of Linux
+        return True
+    if not os.access(path, os.X_OK):    # nothing a person can start
+        return True
+    return False
+
+
+def pointless_to_check(root, path):
+    """True when even asking the linker about this file would be a false alarm.
+
+    A spare copy built for Alpine Linux (musl) sits in the SAME folder as the
+    ordinary one and is chosen at start-up by whichever kind of Linux is
+    running. On this computer it is never loaded, so of course it cannot find
+    the Alpine C library — and saying so out loud only frightens somebody.
+    """
+    relative = os.path.relpath(path, root).replace(os.sep, "/")
+    parts = relative.split("/")
+    for folder in parts[:-1]:
+        if folder in ("node_modules", "prebuilds") or folder.endswith(".asar.unpacked"):
+            return True
+    return "musl" in parts[-1].lower()
+
+
+def follow_inside(root, path, hops=10):
+    """A link followed to the real file, never leaving the unpacked folder.
+
+    ⚠️ `os.path.realpath` IS THE WRONG TOOL HERE. Inside a package, a link like
+    /usr/bin/chatgpt → /usr/lib/chatgpt/chatgpt is written as it will be AFTER
+    the package is installed on a normal computer. Followed on this computer it
+    walks straight out of the unpacked folder and lands on nothing, and the app
+    then looks as if it has no main program at all.
+    """
+    current = path
+    for _ in range(hops):
+        if not os.path.islink(current):
+            return current
+        try:
+            target = os.readlink(current)
+        except OSError:
+            return ""
+        if os.path.isabs(target):
+            current = os.path.join(root, target.lstrip("/"))
+        else:
+            current = os.path.normpath(
+                os.path.join(os.path.dirname(current), target))
+        if os.path.relpath(current, root).split(os.sep)[0] == "..":
+            return ""
+    return ""
+
+
+# `exec /usr/lib/chatgpt/chatgpt "$@"` — the last line of a starter script.
+WRAPPER_EXEC = re.compile(r"^\s*exec\s+(?:-a\s+\S+\s+)?(?P<rest>.+)$")
+
+
+def wrapper_target(path):
+    """What a small starter script actually runs, out of its last `exec` line."""
+    try:
+        with open(path, "r", errors="replace") as handle:
+            head = handle.read(64 * 1024)
+    except OSError:
+        return ""
+    if not head.startswith("#!"):
+        return ""
+    last = ""
+    for raw in head.splitlines():
+        found = WRAPPER_EXEC.match(raw)
+        if found:
+            last = found.group("rest")
+    return exec_program(last)
+
+
+def program_in_payload(root, token):
+    """The file inside the payload that a command name or path points at."""
+    if not token:
+        return ""
+    token = token.strip("\"'")
+    if "$" in token or "`" in token:
+        # `exec "$HERE/chatgpt"` — the folder is only known at start-up, so all
+        # we can honestly take from it is the name of the program.
+        token = os.path.basename(token).strip("\"'{}")
+        if "$" in token or not token:
+            return ""
+    places = []
+    if token.startswith("/"):
+        places.append(inside(root, token))
+    elif "/" in token:
+        places.append(os.path.join(root, token.lstrip("./")))
+    else:
+        for folder in ("usr/bin", "bin", "usr/local/bin", "usr/sbin"):
+            places.append(os.path.join(root, folder, token))
+        places.append(os.path.join(root, "opt", token, token))
+    for place in places:
+        real = follow_inside(root, place)
+        if real and os.path.isfile(real):
+            return real
+    return ""
+
+
 def main_programs(root):
     """The program(s) this payload IS — the ones a person actually starts.
 
     Everything else inside a download is a plug-in or a helper: useful, often
-    optional, and never a reason to refuse the whole app. These are the files
-    named by the payload's own menu entries, plus an AppImage's real program.
+    optional, and never a reason to refuse the whole app.
+
+    How the app is found, in order, and why each step exists:
+      1. the payload's own menu entries. `Exec=` names the command, and that
+         command is usually in usr/bin — very often as a LINK to the real
+         program deeper in the package (ChatGPT: usr/bin/chatgpt →
+         usr/lib/chatgpt/chatgpt), or as a small starter script whose last
+         `exec` line names it.
+      2. an AppImage's AppRun.
+      3. only if neither said anything: the runnable programs in usr/bin, and
+         an /opt/<name>/<name> laid out the way most packages lay it out.
     """
     found = []
 
     def keep(path):
-        full = os.path.realpath(path)
-        if is_elf(full) and full not in found:
-            found.append(full)
+        for _ in range(4):
+            if not path or not os.path.isfile(path):
+                return
+            if is_elf(path):
+                break
+            nxt = program_in_payload(root, wrapper_target(path))
+            if not nxt or nxt == path:
+                return
+            path = nxt
+        if not is_elf(path) or never_main(root, path):
+            return
+        if path not in found:
+            found.append(path)
 
     for path in find_desktop_entries(root):
         values = read_entry(path)
         if values.get("Type", "Application") != "Application":
             continue
-        target = inside(root, exec_program(values.get("Exec", "")))
-        if target and os.path.isfile(target):
-            keep(target)
+        keep(program_in_payload(root, exec_program(values.get("Exec", ""))))
     for name in ("AppRun.wrapped", "AppRun"):
         candidate = os.path.join(root, name)
         if os.path.isfile(candidate):
-            keep(candidate)
+            keep(follow_inside(root, candidate) or candidate)
+    if found:
+        return found
+
+    for folder in ("usr/bin", "bin", "usr/local/bin"):
+        base = os.path.join(root, folder)
+        if not os.path.isdir(base):
+            continue
+        for name in sorted(os.listdir(base)):
+            keep(follow_inside(root, os.path.join(base, name)))
+    opt = os.path.join(root, "opt")
+    if os.path.isdir(opt):
+        for name in sorted(os.listdir(opt)):
+            keep(follow_inside(root, os.path.join(opt, name, name)))
     return found
 
 
@@ -919,6 +1070,9 @@ class LibraryReport:
         self.main_clashes = []      # [(library, version, file)]
         self.other_missing = []
         self.other_clashes = []
+        # True when nothing in the package could honestly be called "the app".
+        # Then nothing is checked and nothing is refused — see NO_MAIN_NOTICE.
+        self.no_main = False
 
     @property
     def blocked(self):
@@ -965,6 +1119,11 @@ class LibraryReport:
         return seen
 
 
+NO_MAIN_NOTICE = ("I could not tell which program in this package is the app, "
+                  "so I did not check its libraries. Installing it anyway — if "
+                  "it does not start, that is why.")
+
+
 def library_report(root, progress=None, limit=60, cancel=None):
     """Ask the linker whether this payload runs here — the way it will really run.
 
@@ -982,13 +1141,23 @@ def library_report(root, progress=None, limit=60, cancel=None):
         return report
 
     mains = main_programs(root)
-    others = [path for path in elf_files(root)[:limit] if path not in mains]
-    if not mains and progress:
-        progress.log("No single main program could be identified, so every "
-                     "program inside was treated as one.")
-    checked = [(path, True) for path in mains] or [(path, True) for path in others]
-    if mains:
-        checked += [(path, False) for path in others]
+    # ⚠️ NO MAIN PROGRAM MEANS NO ANSWER, NOT A REFUSAL. Until 15 September 2026
+    #    this fell back to treating every program and library inside the package
+    #    as if it were the app, and then refused the whole thing over any one of
+    #    them. That is how the ChatGPT .deb and .rpm were turned away over five
+    #    Alpine-Linux spares and one optional Qt 5 shim, none of which the app
+    #    would ever have loaded (bug I4). If we cannot tell what the app is, we
+    #    say so and install it anyway; the person asked for it.
+    if not mains:
+        report.no_main = True
+        if progress:
+            progress.log(NO_MAIN_NOTICE)
+        return report
+    # The app's plug-ins and helpers, minus the ones it was never going to load.
+    others = [path for path in elf_files(root)[:limit]
+              if path not in mains and not pointless_to_check(root, path)]
+    checked = ([(path, True) for path in mains]
+               + [(path, False) for path in others])
 
     for path, is_main in checked:
         if stopped(cancel):
