@@ -173,6 +173,24 @@ def worker(work):
     # first that it IS one: a full frame, in the desktop's own palette for
     # this rule, exactly where the button counting below will look for it.
     focus('badbuttons')
+    # But before reading its FRAME, read its BODY. Every window here is painted
+    # a flat 0x111111 by the X server, so the middle of the client area says
+    # whether this window is being drawn on screen at all. X reporting a
+    # position is not the same as the compositor drawing something there: an
+    # X window that the compositor never mapped keeps the position its client
+    # asked for, and every geometry check in this file would still pass.
+    # Separating the two matters, because "this window has no title bar" and
+    # "this window is not on screen" have completely different causes and the
+    # frame checks below cannot tell them apart -- both read as bare desktop.
+    # The message carries the screen size and the colours actually found above
+    # the window, so a failure here needs no second run to interpret.
+    def body(name):
+        im=capture();x,y,width,height=positions(name)
+        return im.getpixel((x+width//2,y+height//2)),im.size
+    pixel,size=body('badbuttons')
+    assert pixel==(17,17,17),('badbuttons is not on screen at all',
+        'body='+str(pixel),'placed='+str(positions('badbuttons')),
+        'screen='+str(size),'above='+str(strip_colours('badbuttons')))
     check('badbuttons',(49,50,51),(81,82,83),(241,242,243))
     for name in ('buttons','normal','colored'):
         focus(name)
