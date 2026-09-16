@@ -809,7 +809,9 @@ aq_file_has "${AQ_DM_ALIAS_UNIT}" '^Before=display-manager\.service$' \
 # login screen and reloads or restarts services can turn a working boot into a
 # broken one. Checked by reading the program, because this is the one property
 # that makes it safe to run unconditionally.
-if grep -Eq 'systemctl (daemon-reload|start|restart|reload)' "${AQ_DM_ALIAS_PROG}"; then
+# Comment lines are skipped: the program's own header is allowed to SAY it never
+# runs these, which is exactly what tripped this check on build 4 (2026-09-16).
+if grep -Ev '^[[:space:]]*#' "${AQ_DM_ALIAS_PROG}" | grep -Eq 'systemctl (daemon-reload|start|restart|reload)'; then
     bad "${AQ_DM_ALIAS_PROG} reloads or restarts something — it must only repair a link"
 else
     ok "it only repairs the link: it starts, restarts and reloads nothing"
