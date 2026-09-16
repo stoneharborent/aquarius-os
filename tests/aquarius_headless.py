@@ -24,9 +24,9 @@ WHAT IT TRIES, IN ORDER, AND WHY
 --------------------------------
   1. kwin_wayland --virtual   KDE Plasma's compositor, in the headless mode KDE
                               themselves test with. It is in every AquariusOS
-                              image (build_files/41-kde-desktop.sh) and it does
-                              XWayland with a wrapper we can point at software
-                              rendering, which the Resolve test needs.
+                              image (build_files/41-kde-desktop.sh) and it is
+                              the only one of the three that can be pointed at
+                              a different Xwayland, which the Resolve test needs.
   2. gnome-shell --headless   GNOME's, in its own headless mode. Also in every
                               image. Heavier to start, which is why it is
                               second, but it is a real second answer rather than
@@ -36,6 +36,51 @@ WHAT IT TRIES, IN ORDER, AND WHY
   3. labwc                    only if somebody running these tests by hand on
                               their own machine happens to have it. Never in an
                               AquariusOS image any more.
+
+⚠️ HOW EACH ONE FINDS Xwayland — MEASURED, NOT GUESSED — 2026-09-15
+-------------------------------------------------------------------
+The Resolve test needs the X half of the desktop, and it needs its OWN Xwayland
+— a little wrapper script that turns GPU rendering off, because a build machine
+has no graphics card (and on the NVIDIA image it has NVIDIA's libraries and no
+card, which is worse). So the test hands us a wrapper and we have to make the
+compositor run that instead of the real Xwayland. Each one answers differently,
+and the first attempt at this got it wrong, so here is what was actually
+measured, in a Fedora 44 container with KWin 6.7.5:
+
+  * kwin_wayland  runs the bare program name `Xwayland` and lets the system
+                  find it on PATH. There is NO environment variable for it:
+                  `strings` on the binary shows exactly one KWIN_XWAYLAND-ish
+                  name, KWIN_XWAYLAND_DEBUG, and that only turns on logging.
+                  ⚠️ The first version of this file set KWIN_XWAYLAND and KWin
+                  ignored it in silence (build 35045190614).
+                  So: we put a folder at the FRONT of PATH containing a link
+                  called `Xwayland` that points at the test's wrapper. KWin
+                  finds ours first. That is `_xwayland_shim()` below.
+  * labwc         reads WLR_XWAYLAND (it is wlroots underneath). We set that as
+                  well as the PATH folder — either one is enough.
+  * gnome-shell   CANNOT be redirected at all. mutter has the full path
+                  /usr/bin/Xwayland compiled into libmutter, so neither PATH nor
+                  any variable changes it. That is why GNOME is left off the
+                  list whenever a wrapper is asked for: better to say "GNOME
+                  cannot do this job" than to pass a test that never used the
+                  wrapper.
+
+⚠️ AND KWin NEEDS /tmp/.X11-unix TO EXIST — 2026-09-15
+------------------------------------------------------
+The X socket every X program connects to lives in /tmp/.X11-unix/X0. On a real
+machine systemd makes that folder at boot. A container starts without it, and
+KWin does not create it: it quietly gives up on the X half, starts the desktop
+anyway, and hands the program it launches an environment with no DISPLAY in it.
+
+The program then dies with a message that names nothing useful:
+
+    RuntimeError: Gtk couldn't be initialized
+
+That was the second failure of build 35045190614. So when a wrapper is asked
+for — which only happens when a test needs X — we make /tmp/.X11-unix first.
+With the folder there, KWin sets up display :0, sets DISPLAY for the program it
+starts, and starts our wrapper the moment the first X program connects (Plasma
+6 starts Xwayland late, on demand; that is normal and is not a failure).
 
 ⚠️ A CANDIDATE CAN FAIL BEFORE IT EVEN STARTS — 2026-09-15
 ----------------------------------------------------------
@@ -65,6 +110,10 @@ passes forever.
 import os
 import subprocess
 import time
+
+# Where every X server on Linux puts its socket. KWin needs this folder to
+# already exist before it will set up the X half of the desktop at all.
+X11_SOCKET_DIR = "/tmp/.X11-unix"
 
 
 class Compositor:
@@ -103,9 +152,10 @@ def _candidates(runtime_dir, config_dir, xwayland_wrapper, run_after):
     (starts_run_after True). GNOME Shell has no such switch, so it says False
     and start() launches the program itself once the socket appears.
 
-    GNOME Shell is skipped when an XWayland wrapper is asked for: mutter reads
-    no such variable, so it could not honour the software-rendering wrapper the
-    Resolve test needs and would give a confusing pass-that-is-not-a-pass.
+    GNOME Shell is skipped when an XWayland wrapper is asked for: mutter has
+    /usr/bin/Xwayland compiled in, so it cannot be pointed at the test's
+    software-rendering wrapper and would give a confusing pass-that-is-not-a-pass.
+    See the Xwayland section of this file's opening notes.
     """
     socket = "aq-test-%d" % os.getpid()
 
@@ -118,10 +168,11 @@ def _candidates(runtime_dir, config_dir, xwayland_wrapper, run_after):
     # KWIN_COMPOSE=Q is KWin's software (QPainter) renderer. A build machine has
     # no GPU, and on the NVIDIA image it has NVIDIA's libraries and no card,
     # which is the worst of both.
+    #
+    # There is deliberately NO Xwayland variable here: KWin has none. It runs
+    # whatever `Xwayland` PATH finds first, and start() puts ours there.
     kwin_env = {"KWIN_COMPOSE": "Q", "QT_QPA_PLATFORM": "offscreen",
                 "KWIN_WAYLAND_NO_PERMISSION_CHECKS": "1"}
-    if xwayland_wrapper is not None:
-        kwin_env["KWIN_XWAYLAND"] = str(xwayland_wrapper)
     yield ("kwin_wayland", kwin, kwin_env, socket, True)
 
     if xwayland_wrapper is None:
@@ -137,8 +188,45 @@ def _candidates(runtime_dir, config_dir, xwayland_wrapper, run_after):
     labwc_env = {"WLR_BACKENDS": "headless", "WLR_HEADLESS_OUTPUTS": "1",
                  "WLR_RENDERER": "pixman"}
     if xwayland_wrapper is not None:
+        # wlroots reads this one by name. The PATH folder start() makes would
+        # be enough on its own; this is simply the direct way to say it.
         labwc_env["WLR_XWAYLAND"] = str(xwayland_wrapper)
     yield ("labwc", labwc, labwc_env, None, True)
+
+
+def _make_x11_socket_dir(log):
+    """Make /tmp/.X11-unix if it is missing. Without it KWin skips X entirely.
+
+    Harmless when it is already there (a normal machine, or a second test in
+    the same container). If it cannot be made, say so in the log and carry on:
+    the compositor will then fail for a reason the caller can read.
+    """
+    try:
+        os.makedirs(X11_SOCKET_DIR, mode=0o1777, exist_ok=True)
+        os.chmod(X11_SOCKET_DIR, 0o1777)
+        log.write("== %s is there (X sockets go in it)\n" % X11_SOCKET_DIR)
+    except OSError as problem:
+        log.write("== could not make %s (%s) — the X half may not come up\n"
+                  % (X11_SOCKET_DIR, problem))
+    log.flush()
+
+
+def _xwayland_shim(config_dir, wrapper, log):
+    """Return a folder holding a link called `Xwayland` that is the wrapper.
+
+    Put at the FRONT of PATH, this is how a compositor that runs the bare name
+    `Xwayland` — KWin does exactly that — ends up running the test's wrapper
+    instead of the real X server. Nothing else on the machine is touched.
+    """
+    folder = os.path.join(str(config_dir), "xwayland-path")
+    os.makedirs(folder, exist_ok=True)
+    link = os.path.join(folder, "Xwayland")
+    if os.path.lexists(link):
+        os.unlink(link)
+    os.symlink(os.path.abspath(str(wrapper)), link)
+    log.write("== Xwayland comes from %s -> %s\n" % (link, wrapper))
+    log.flush()
+    return folder
 
 
 def start(runtime_dir, config_dir, log, env,
@@ -150,7 +238,16 @@ def start(runtime_dir, config_dir, log, env,
     config_dir   a scratch folder for compositors that want one
     log          an open file, in "w+" mode, that gets everything it printed
     env          the base environment; each candidate adds its own variables
+    xwayland_wrapper
+                 a program to run INSTEAD of the real Xwayland. Asking for one
+                 also means "this test needs X", so /tmp/.X11-unix is made and
+                 the wrapper is put on PATH under the name Xwayland.
     """
+    shim = None
+    if xwayland_wrapper is not None:
+        _make_x11_socket_dir(log)
+        shim = _xwayland_shim(config_dir, xwayland_wrapper, log)
+
     attempts = []
     for name, command, extra, socket, starts_run_after in _candidates(
             runtime_dir, config_dir, xwayland_wrapper, run_after):
@@ -161,6 +258,9 @@ def start(runtime_dir, config_dir, log, env,
         run_env = dict(env)
         run_env.update(extra)
         run_env["XDG_RUNTIME_DIR"] = str(runtime_dir)
+        if shim is not None:
+            run_env["PATH"] = shim + os.pathsep + run_env.get(
+                "PATH", os.environ.get("PATH", ""))
         if socket:
             run_env["WAYLAND_DISPLAY"] = socket
         run_env.pop("DISPLAY", None)
