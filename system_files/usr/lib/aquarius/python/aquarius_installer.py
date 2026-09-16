@@ -884,7 +884,10 @@ def read_ldd(text):
 #    bench on 15 September 2026 (bug I4): five of the files it complained about
 #    were Alpine-Linux (musl) copies sitting beside the ordinary ones, picked
 #    between at start-up, and the sixth was an optional Qt 5 shim that is only
-#    ever loaded if Qt 5 is on the computer.
+#    ever loaded if Qt 5 is on the computer. The real package also carries
+#    usr/lib/chatgpt/browser_crashpad_handler — a real program, but a helper
+#    that reports crashes, never the thing a person starts. Following the menu
+#    entry hop by hop is what keeps these apart from the app itself.
 NEVER_MAIN_FOLDERS = ("node_modules", "prebuilds", "resources")
 
 
@@ -927,10 +930,12 @@ def follow_inside(root, path, hops=10):
     """A link followed to the real file, never leaving the unpacked folder.
 
     ⚠️ `os.path.realpath` IS THE WRONG TOOL HERE. Inside a package, a link like
-    /usr/bin/chatgpt → /usr/lib/chatgpt/chatgpt is written as it will be AFTER
-    the package is installed on a normal computer. Followed on this computer it
-    walks straight out of the unpacked folder and lands on nothing, and the app
-    then looks as if it has no main program at all.
+    /usr/bin/chatgpt → /usr/lib/chatgpt/codex-launcher may be written as an
+    ABSOLUTE path, as it will be AFTER the package is installed on a normal
+    computer. Followed on this computer it walks straight out of the unpacked
+    folder and lands on nothing, and the app then looks as if it has no main
+    program at all. (The real ChatGPT .deb uses a RELATIVE link,
+    ../lib/chatgpt/codex-launcher; packages do both, so both are handled here.)
     """
     current = path
     for _ in range(hops):
@@ -953,9 +958,77 @@ def follow_inside(root, path, hops=10):
 # `exec /usr/lib/chatgpt/chatgpt "$@"` — the last line of a starter script.
 WRAPPER_EXEC = re.compile(r"^\s*exec\s+(?:-a\s+\S+\s+)?(?P<rest>.+)$")
 
+# The three things that open a piece of a command line and then close it again.
+QUOTES = ("'", '"', "`")
+
+
+def first_word(line):
+    """The first whole word of a command line, and everything left after it.
+
+    ⚠️ SPLITTING ON SPACES IS NOT GOOD ENOUGH HERE. The real ChatGPT starter
+    script runs
+
+        exec "$(dirname "$(readlink -f "$0")")/ChatGPT" "$@"
+
+    and that ENTIRE first lump — quotes, nested `$( … )`, spaces and all — is
+    one word naming one program. Cutting it at the first space gives `$(dirname`
+    and the app then looks as if it has no main program (bench bug I4).
+
+    So this walks the line a character at a time and only treats a space as the
+    end of the word when it is not inside quotes and not inside `$( … )`.
+    """
+    word = ""
+    depth = 0        # how deep we are inside $( … )
+    quote = ""       # the quote we are inside, if any
+    at = 0
+    while at < len(line):
+        char = line[at]
+        if char == "\\" and at + 1 < len(line):     # a backslash protects one char
+            word += line[at:at + 2]
+            at += 2
+            continue
+        if quote:                                   # inside quotes: only the
+            word += char                            # matching quote ends it
+            if char == quote:
+                quote = ""
+            at += 1
+            continue
+        if char in QUOTES:
+            quote = char
+            word += char
+            at += 1
+            continue
+        if line[at:at + 2] == "$(":
+            depth += 1
+            word += "$("
+            at += 2
+            continue
+        if char == ")" and depth:
+            depth -= 1
+            word += char
+            at += 1
+            continue
+        if char.isspace() and depth == 0:
+            break
+        word += char
+        at += 1
+    return word, line[at:].strip()
+
 
 def wrapper_target(path):
-    """What a small starter script actually runs, out of its last `exec` line."""
+    """What a small starter script actually runs, out of its last `exec` line.
+
+    Two jobs. First: take the FIRST WORD of the exec line without breaking it
+    at a space (see `first_word`), skipping `env` and any `NAME=value` set in
+    front of the program the way `exec_program` does for menu entries.
+
+    Second: if that word is built at start-up — it contains `$`, `$(` or a
+    backtick — keep only its last piece. `$(dirname "$0")/ChatGPT`, `$HERE/app`
+    and `${BASH_SOURCE%/*}/app` all mean the same ordinary thing: "the program
+    sitting NEXT TO this script". We cannot know the folder from here, but the
+    name is enough, and `program_in_payload` is told where the script lives so
+    it can look there first.
+    """
     try:
         with open(path, "r", errors="replace") as handle:
             head = handle.read(64 * 1024)
@@ -968,30 +1041,61 @@ def wrapper_target(path):
         found = WRAPPER_EXEC.match(raw)
         if found:
             last = found.group("rest")
-    return exec_program(last)
+    rest = last
+    word = ""
+    for _ in range(8):          # peel off `env` and any NAME=value in front
+        word, rest = first_word(rest)
+        if not word:
+            return ""
+        if word in ("env", "/usr/bin/env", "/bin/env"):
+            continue
+        if "=" in word and not word.startswith("/") and "/" not in word.split("=")[0]:
+            continue
+        break
+    if not word:
+        return ""
+    if "$" in word or "`" in word:
+        word = os.path.basename(word.strip("\"'")).strip("\"'`{}")
+        if "$" in word or "`" in word or not word:
+            return ""
+    return word.strip("\"'")
 
 
-def program_in_payload(root, token):
-    """The file inside the payload that a command name or path points at."""
+def program_in_payload(root, token, near=""):
+    """The file inside the payload that a command name or path points at.
+
+    `near` is the folder of the starter script we got this name out of, when it
+    came from one. A starter script almost always runs the program sitting in
+    its OWN folder, so that folder is looked in first — that is where the real
+    ChatGPT program (usr/lib/chatgpt/ChatGPT) lives, right beside the little
+    script that starts it.
+    """
     if not token:
         return ""
     token = token.strip("\"'")
     if "$" in token or "`" in token:
         # `exec "$HERE/chatgpt"` — the folder is only known at start-up, so all
         # we can honestly take from it is the name of the program.
-        token = os.path.basename(token).strip("\"'{}")
-        if "$" in token or not token:
+        token = os.path.basename(token).strip("\"'`{}")
+        if "$" in token or "`" in token or not token:
             return ""
     places = []
     if token.startswith("/"):
         places.append(inside(root, token))
     elif "/" in token:
+        if near:
+            places.append(os.path.normpath(os.path.join(near, token)))
         places.append(os.path.join(root, token.lstrip("./")))
     else:
+        if near:
+            places.append(os.path.join(near, token))
         for folder in ("usr/bin", "bin", "usr/local/bin", "usr/sbin"):
             places.append(os.path.join(root, folder, token))
         places.append(os.path.join(root, "opt", token, token))
     for place in places:
+        # Never let a guess climb out of the unpacked folder.
+        if os.path.relpath(place, root).split(os.sep)[0] == "..":
+            continue
         real = follow_inside(root, place)
         if real and os.path.isfile(real):
             return real
@@ -1005,11 +1109,15 @@ def main_programs(root):
     optional, and never a reason to refuse the whole app.
 
     How the app is found, in order, and why each step exists:
-      1. the payload's own menu entries. `Exec=` names the command, and that
-         command is usually in usr/bin — very often as a LINK to the real
-         program deeper in the package (ChatGPT: usr/bin/chatgpt →
-         usr/lib/chatgpt/chatgpt), or as a small starter script whose last
-         `exec` line names it.
+      1. the payload's own menu entries. `Exec=` names the command — often a
+         bare name with no folder at all (ChatGPT: `Exec=chatgpt %U`) — and
+         that command is usually in usr/bin, very often as a LINK to something
+         deeper in the package (ChatGPT: usr/bin/chatgpt →
+         ../lib/chatgpt/codex-launcher). What it lands on is not always the app
+         either: it can be a small starter script whose last `exec` line names
+         the real program, and that name can be built at start-up
+         (`exec "$(dirname "$(readlink -f "$0")")/ChatGPT"`), which means "the
+         program next to me". Each hop is followed, up to four times.
       2. an AppImage's AppRun.
       3. only if neither said anything: the runnable programs in usr/bin, and
          an /opt/<name>/<name> laid out the way most packages lay it out.
@@ -1022,7 +1130,8 @@ def main_programs(root):
                 return
             if is_elf(path):
                 break
-            nxt = program_in_payload(root, wrapper_target(path))
+            nxt = program_in_payload(root, wrapper_target(path),
+                                      near=os.path.dirname(path))
             if not nxt or nxt == path:
                 return
             path = nxt
@@ -1284,7 +1393,12 @@ def pick_entry(root):
         if values.get("Type", "Application") != "Application":
             continue
         program = exec_program(values.get("Exec", ""))
-        target = inside(root, program)
+        # ⚠️ A BARE NAME IS STILL A REAL PROGRAM. `Exec=chatgpt %U` names no
+        #    folder at all, and asking `inside` for it gives nothing — which
+        #    used to make the real ChatGPT entry look like upstream leftovers.
+        #    `program_in_payload` knows the places a bare name can live, and
+        #    follows links and starter scripts to the program itself.
+        target = inside(root, program) or program_in_payload(root, program)
         if target and os.path.isfile(target):
             return path, values, target
         if best is None:

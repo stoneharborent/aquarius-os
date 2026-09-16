@@ -216,23 +216,35 @@ def make_zip(path, **kw):
 # ==============================================================================
 # The ChatGPT layout — the fixture for bench bug I4 (15 September 2026)
 # ==============================================================================
-# ⚠️ THIS IS THE SHAPE OF A REAL DOWNLOAD, AND IT IS WHY I4 HAPPENED. The app a
-# person starts is usr/lib/chatgpt/chatgpt. Nothing points at it directly: the
-# menu entry says `Exec=/usr/bin/chatgpt`, and usr/bin/chatgpt is a LINK whose
-# target is written for a computer where the package is already installed.
-# Follow it with the ordinary tools and it walks out of the unpacked folder, the
-# app looks as if it has no main program, and the old code then treated every
-# program and library inside as the app — including five Alpine-Linux (musl)
-# spares that only a musl computer would ever load, and one optional Qt 5 shim.
-# Eight false alarms, one refused app, an app that runs here perfectly well.
+# ⚠️ THIS IS THE SHAPE OF THE REAL DOWNLOAD, COPIED FROM THE REAL .deb, AND IT
+# IS WHY I4 HAPPENED. The app a person starts is usr/lib/chatgpt/ChatGPT, and
+# THREE hops stand between the menu entry and it:
+#
+#   1. the menu entry says `Exec=chatgpt %U` — a bare name, no folder at all;
+#   2. usr/bin/chatgpt is a RELATIVE link to ../lib/chatgpt/codex-launcher;
+#   3. codex-launcher is a 63-byte shell script whose one line reads
+#        exec "$(dirname "$(readlink -f "$0")")/ChatGPT" "$@"
+#      — "run the program sitting next to me", with the folder only worked out
+#      at start-up.
+#
+# Miss any hop and the app looks as if it has no main program, and the old code
+# then treated every program and library inside as the app — including five
+# Alpine-Linux (musl) spares that only a musl computer would ever load, and one
+# optional Qt 5 shim. Eight false alarms, one refused app, an app that runs here
+# perfectly well. The package also carries browser_crashpad_handler, a real
+# program next to the app that must never be mistaken for it.
 CHATGPT_DESKTOP = """[Desktop Entry]
 Type=Application
 Name=ChatGPT
-Exec=/usr/bin/chatgpt %U
+Exec=chatgpt %U
 Icon=chatgpt
 Terminal=false
 Categories=Utility;
 """
+
+# The exact line out of the real usr/lib/chatgpt/codex-launcher.
+CHATGPT_LAUNCHER = ('#!/bin/sh\n'
+                    'exec "$(dirname "$(readlink -f "$0")")/ChatGPT" "$@"\n')
 
 # The five .node files and the shim are named exactly as the bench reported them.
 CHATGPT_EXTRAS = [
@@ -264,23 +276,33 @@ def write_elf(path, mode=0o755):
     return path
 
 
-def build_chatgpt_payload(root, wrapper=False):
-    """The ChatGPT shape: menu entry → usr/bin link → the real program.
+def build_chatgpt_payload(root, shape="real"):
+    """The ChatGPT shape, laid out exactly as the real .deb lays it out.
 
-    `wrapper` swaps the link for the other thing packages do — a small starter
-    script whose last `exec` line names the real program.
+    `shape` picks which of the two real-world layouts to build:
+      "real"   — what the actual download does: bare `Exec=chatgpt`, a relative
+                 link in usr/bin, and a `$(dirname …)` starter script beside the
+                 program. This is the one that broke on the bench.
+      "direct" — the simpler layout other packages use: the link in usr/bin
+                 points straight at the program. Kept so the simple case cannot
+                 quietly stop working while we fix the hard one.
     """
-    real = write_elf(os.path.join(root, "usr", "lib", "chatgpt", "chatgpt"))
-    launcher = os.path.join(root, "usr", "bin", "chatgpt")
-    os.makedirs(os.path.dirname(launcher), exist_ok=True)
-    if wrapper:
-        with open(launcher, "w") as handle:
-            handle.write("#!/bin/sh\n"
-                         "exec /usr/lib/chatgpt/chatgpt \"$@\"\n")
-        os.chmod(launcher, 0o755)
+    app = os.path.join(root, "usr", "lib", "chatgpt")
+    real = write_elf(os.path.join(app, "ChatGPT"))
+    # A real program sitting right beside the app that is NOT the app.
+    write_elf(os.path.join(app, "browser_crashpad_handler"))
+    link = os.path.join(root, "usr", "bin", "chatgpt")
+    os.makedirs(os.path.dirname(link), exist_ok=True)
+    if shape == "real":
+        starter = os.path.join(app, "codex-launcher")
+        with open(starter, "w") as handle:
+            handle.write(CHATGPT_LAUNCHER)
+        os.chmod(starter, 0o755)
+        # A RELATIVE link, exactly as the real package writes it.
+        os.symlink("../lib/chatgpt/codex-launcher", link)
     else:
         # An ABSOLUTE link, written for the computer the package expects.
-        os.symlink("/usr/lib/chatgpt/chatgpt", launcher)
+        os.symlink("/usr/lib/chatgpt/ChatGPT", link)
     for relative in CHATGPT_EXTRAS:
         write_elf(os.path.join(root, *relative.split("/")))
     entry = os.path.join(root, "usr", "share", "applications", "chatgpt.desktop")
@@ -910,21 +932,38 @@ def test_i4_the_chatgpt_layout(core, work):
     """Bench bug I4 — the ChatGPT .deb and .rpm, refused over parts it never loads."""
     heading("I4 — the app is found through the menu entry, not guessed at")
 
-    # --- the app itself is found, through the link ---------------------------
-    for wrapper, how in ((False, "a link"), (True, "a starter script")):
+    # --- the app itself is found, through every hop --------------------------
+    for shape, how in (("real", "a relative link and a $(dirname …) script"),
+                       ("direct", "a link straight to the program")):
         payload = tempfile.mkdtemp(prefix="aq-chatgpt-")
         try:
-            real = build_chatgpt_payload(payload, wrapper=wrapper)
+            real = build_chatgpt_payload(payload, shape=shape)
             mains = core.main_programs(payload)
             check(mains == [real],
-                  "the app is usr/lib/chatgpt/chatgpt, found through %s" % how,
+                  "the app is usr/lib/chatgpt/ChatGPT, found through %s" % how,
                   [os.path.relpath(m, payload) for m in mains])
+            crash = os.path.join(payload, "usr", "lib", "chatgpt",
+                                 "browser_crashpad_handler")
+            check(crash not in mains,
+                  "and the crash helper beside it is never taken for the app")
             for relative in CHATGPT_EXTRAS:
                 full = os.path.join(payload, *relative.split("/"))
                 check(core.never_main(payload, full),
                       "never the app: .../%s" % os.path.basename(relative))
         finally:
             shutil.rmtree(payload, ignore_errors=True)
+
+    # --- the one word `exec` really runs -------------------------------------
+    quoted = tempfile.mkdtemp(prefix="aq-exec-")
+    try:
+        script = os.path.join(quoted, "codex-launcher")
+        with open(script, "w") as handle:
+            handle.write(CHATGPT_LAUNCHER)
+        check(core.wrapper_target(script) == "ChatGPT",
+              "a $(dirname …) exec line reads as one word naming ChatGPT",
+              core.wrapper_target(script))
+    finally:
+        shutil.rmtree(quoted, ignore_errors=True)
 
     # --- the whole route, the way the bench ran it ---------------------------
     # The stand-in answers the way the bench's real ldd did: every musl spare
@@ -968,7 +1007,7 @@ def test_i4_the_chatgpt_layout(core, work):
     # --- a real missing library on the app itself still refuses --------------
     broken = ("#!/bin/sh\n"
               "case \"$1\" in\n"
-              "  */usr/lib/chatgpt/chatgpt) echo '\\tlibnothing.so.6 => not found' ;;\n"
+              "  */usr/lib/chatgpt/ChatGPT) echo '\\tlibnothing.so.6 => not found' ;;\n"
               "  *) echo '\\tlibc.so.6 => /lib64/libc.so.6 (0x0)' ;;\n"
               "esac\n")
     if deb:
