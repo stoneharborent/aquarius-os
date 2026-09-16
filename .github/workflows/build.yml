@@ -1137,29 +1137,49 @@ jobs:
           # just takes ten minutes longer and every person downloading
           # AquariusOS pays four gigabytes for an app they may never open.
           #
-          # So the number is printed beside what it was before the change, and
-          # a ceiling is asserted. The ceiling is deliberately generous — this
-          # is a warning about one very large app, not a budget for the whole
-          # operating system — and it is expressed in bytes, from podman's own
-          # (Raised by 3 GB on 2026-09-15 when Royce chose to bake Swift in:
-          # 13.0 GB NVIDIA / 11.1 GB base against the old 12 / 9 ceilings.)
-          # machine-readable field, because "11.1 GB" as text sorts wrongly and
-          # rounds differently on different days.
+          # So the number is printed beside what it was before the last change
+          # that moved it, and a ceiling is asserted. The ceiling is
+          # deliberately generous — this is a warning about one very large app,
+          # not a budget for the whole operating system — and it is expressed
+          # in bytes, from podman's own machine-readable field, because
+          # "11.1 GB" as text sorts wrongly and rounds differently on different
+          # days.
+          #
+          # HOW THESE CEILINGS GOT WHERE THEY ARE
+          #   2026-09-04  Aquarius Editor (4.1 GB) stopped being baked in and
+          #               became a card in the first-login chooser. That is the
+          #               thing this check exists to notice coming back.
+          #   2026-09-15  Swift (FEATURES 022) baked in — about 3 GB. Ceilings
+          #               went to 15 GB NVIDIA / 12 GB base.
+          #   2026-09-15  GNOME AND KDE Plasma, both on every image (the
+          #               two-desktop decision — see
+          #               docs/decision-2026-09-15-two-desktops.md). Plasma is
+          #               the new one and it adds about 1.6 GB. The base image
+          #               went 11.1 -> 12.7 GB and walked straight through the
+          #               12.0 ceiling; that is what failed build 35045190614.
+          #               NVIDIA went 13.1 -> 14.7 GB and only just squeezed
+          #               under 15.0. So the ceilings are now 16 GB NVIDIA and
+          #               14 GB base — room for the second desktop and a little
+          #               growth, and still far less than 4.1 GB of head room,
+          #               so Aquarius Editor creeping back in is caught on the
+          #               very next build.
           BYTES="$(podman image inspect "${IMAGE_NAME}:${DEFAULT_TAG}" \
             --format '{{.Size}}' 2>/dev/null || echo 0)"
           GB="$(awk -v b="${BYTES}" 'BEGIN { printf "%.1f", b / 1000000000 }')"
 
+          # WAS is the last size measured BEFORE the two desktops went in on
+          # 2026-09-15 — the number this build should land about 1.6 GB above.
           if [ "${NVIDIA}" = "1" ]; then
-            WAS="14.2"; CEILING=15000000000   # +3 GB on 2026-09-15: Swift (FEATURES 022) is ~3 GB
+            WAS="13.1"; CEILING=16000000000   # +1 GB on 2026-09-15: KDE Plasma is ~1.6 GB
           else
-            WAS="11.1"; CEILING=12000000000   # +3 GB on 2026-09-15: Swift (FEATURES 022) is ~3 GB
+            WAS="11.1"; CEILING=14000000000   # +2 GB on 2026-09-15: KDE Plasma is ~1.6 GB
           fi
 
           echo
           echo "=== how big this image is ==="
           echo "  now:    ${GB} GB"
-          echo "  before: ${WAS} GB  (with Aquarius Editor baked in, up to 2026-09-04)"
-          echo "  saved:  about $(awk -v w="${WAS}" -v g="${GB}" 'BEGIN { printf "%.1f", w - g }') GB"
+          echo "  before: ${WAS} GB  (the last build with GNOME as the only desktop, up to 2026-09-15)"
+          echo "  change: $(awk -v w="${WAS}" -v g="${GB}" 'BEGIN { printf "%+.1f", g - w }') GB  (KDE Plasma is about +1.6 GB of that)"
 
           if [ "${BYTES}" -eq 0 ]; then
             echo "::warning::podman would not say how big the image is; skipping the size check"
@@ -1167,7 +1187,9 @@ jobs:
             echo "  OK   under the ceiling of $(awk -v c="${CEILING}" 'BEGIN { printf "%.1f", c / 1000000000 }') GB"
           else
             echo "::error::this image is ${GB} GB, over the $(awk -v c="${CEILING}" 'BEGIN { printf "%.1f", c / 1000000000 }') GB ceiling."
-            echo "Something large has been added back. The usual suspect is Aquarius Editor,"
+            echo "The second desktop is already paid for here: KDE Plasma added about 1.6 GB"
+            echo "on 2026-09-15 and the ceiling was raised past that on the same day."
+            echo "So something ELSE large has been added. The usual suspect is Aquarius Editor,"
             echo "which is 4.1 GB and stopped being baked in on 2026-09-04 — check"
             echo "AQUARIUS_APPS in build_files/64-creator-apps.sh."
             exit 1
