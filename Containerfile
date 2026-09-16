@@ -306,10 +306,31 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     /ctx/build_files/30-session.sh
 
-# 4. The desktop: a deliberately short list of GNOME, not the whole of it.
+# 4. The first desktop: a deliberately short list of GNOME, not the whole of it.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     /ctx/build_files/40-gnome-desktop.sh
+
+# 4b. The SECOND desktop: a deliberately short list of KDE Plasma, the same way.
+#
+#     ⚠️ TWO DESKTOPS, ONE LOGIN SCREEN — Royce's decision of 2026-09-15. Until
+#     that day AquariusOS was building a desktop of its own (the Aquarius
+#     Session: labwc + Quickshell, steps 5.5 and 5.7, which no longer exist).
+#     He stopped that work and asked for GNOME and KDE Plasma side by side so he
+#     can use each one for real and pick. GDM stays the one login screen and
+#     lists both; GNOME is what a brand-new account lands in.
+#
+#     Everything else in this file is UNCHANGED by that decision, because the
+#     desktop was only ever the top layer. The reasoning and the full feature
+#     map: ../docs/decision-2026-09-15-two-desktops.md. The plain-language guide
+#     for a person at the machine: docs/restart/desktops.md.
+#
+#     After step 4 because it checks GDM and the boot target that step set, and
+#     because Firefox, the language pack and the app store are installed once,
+#     there, for both desktops.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache/libdnf5 \
+    /ctx/build_files/41-kde-desktop.sh
 
 # 5. How that desktop looks and behaves out of the box: Ice light theme, our
 #    wallpaper, our fonts, our dock, our logo. This step also copies in

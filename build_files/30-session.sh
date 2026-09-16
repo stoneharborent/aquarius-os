@@ -112,6 +112,41 @@ say "XWayland (for X11-only software, including DaVinci Resolve)"
 aq_dnf install xorg-x11-server-Xwayland
 
 # ------------------------------------------------------------------------------
+# Three small programs that AquariusOS's own features talk to a person through
+# ------------------------------------------------------------------------------
+# ⚠️ THESE MOVED HERE ON 2026-09-15 AND THE REASON MATTERS. They used to be
+# installed by 55-aquarius-session.sh, the step that built our own desktop. That
+# step is gone (the Aquarius Session was retired; see
+# ../docs/decision-2026-09-15-two-desktops.md), and these three are not about a
+# desktop at all — they belong to features that survive on BOTH GNOME and Plasma.
+# Leaving them in a deleted step would have taken working features down with it,
+# silently, because nothing in this repo asked for them by name anywhere else.
+#
+#   libnotify   supplies `notify-send`, the standard way any program on this
+#               machine puts a message in the corner of the screen. Both desktops
+#               show them. It is how a drive announces itself when it mounts
+#               (7f), how the inside-drive question is ASKED with buttons (7d-ii,
+#               which needs libnotify 0.8 or newer for `--action`), how a
+#               finished ZIP extraction reports, how Aquarius Installer says it
+#               is done, and how Resolve says there is an update.
+#   zenity      a plain dialog box from a shell script: a message, a question, a
+#               progress bar. The Resolve launcher and the app launcher use it to
+#               say something went wrong at a moment when there is no window of
+#               ours to say it in.
+#   wlr-randr   reads the monitors. /usr/libexec/aquarius-display-scale asks it
+#               first and falls back to GNOME's own monitors.xml when it gets no
+#               answer — which is what happens on GNOME and on Plasma, because
+#               neither Mutter nor KWin speaks the protocol it uses. It is kept
+#               because that fallback is a FALLBACK: a helper that cannot even
+#               ask is a different failure from one that asked and was refused,
+#               and the Resolve launcher reads its answer.
+say "The three small programs our own features talk through"
+aq_dnf install \
+    libnotify \
+    zenity \
+    wlr-randr
+
+# ------------------------------------------------------------------------------
 # Flatpak and Flathub
 # ------------------------------------------------------------------------------
 # The creator applications — OBS, Blender, Krita, Kdenlive, Ardour — ship as
@@ -290,6 +325,9 @@ aq_installed \
     xdg-desktop-portal-gnome \
     xdg-desktop-portal-gtk \
     xorg-x11-server-Xwayland \
+    libnotify \
+    zenity \
+    wlr-randr \
     flatpak \
     rsms-inter-fonts \
     jetbrains-mono-fonts \
