@@ -2457,10 +2457,20 @@ jobs:
 
       # CLI checks never construct GTK widgets. Open the actual shipped window
       # on an invisible desktop as well, so a bad page cannot ship again.
+      #
+      # --cap-add=SYS_NICE on every step below that mounts aquarius_headless.py:
+      # the invisible desktop is KDE's kwin_wayland, and Fedora ships that
+      # program with a file capability (cap_sys_nice+ep — permission to raise
+      # its own scheduling priority). The kernel refuses to run a program
+      # carrying a capability the container does not have in its bounding set,
+      # so without this flag it fails at exec with "Operation not permitted"
+      # before KWin runs a single line. Adding SYS_NICE lets it start; it grants
+      # the container nothing more than the right to be nice to itself.
       - name: Open Aquarius Installer in the finished image
         run: |
           set -euo pipefail
           podman run --rm --pull=never \
+            --cap-add=SYS_NICE \
             -v "${GITHUB_WORKSPACE}/tests/test-installer-window.py:/tmp/test-installer-window.py:ro" \
             -v "${GITHUB_WORKSPACE}/tests/aquarius_headless.py:/tmp/aquarius_headless.py:ro" \
             --entrypoint /usr/bin/python3 \
@@ -2470,6 +2480,7 @@ jobs:
         run: |
           set -euo pipefail
           podman run --rm --pull=never \
+            --cap-add=SYS_NICE \
             -v "${GITHUB_WORKSPACE}/tests/test-installer-window.py:/tmp/test-installer-window.py:ro" \
             -v "${GITHUB_WORKSPACE}/tests/aquarius_headless.py:/tmp/aquarius_headless.py:ro" \
             -v "${GITHUB_WORKSPACE}/tests/test-resolve-done-window.py:/tmp/test-resolve-done-window.py:ro" \
@@ -2480,12 +2491,14 @@ jobs:
         run: |
           set -euo pipefail
           podman run --rm --pull=never \
+            --cap-add=SYS_NICE \
             -v "${GITHUB_WORKSPACE}/tests/test-installer-window.py:/tmp/test-installer-window.py:ro" \
             -v "${GITHUB_WORKSPACE}/tests/aquarius_headless.py:/tmp/aquarius_headless.py:ro" \
             -v "${GITHUB_WORKSPACE}/tests/test-resolve-settings.py:/tmp/test-resolve-settings.py:ro" \
             --entrypoint /usr/bin/python3 \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" /tmp/test-resolve-settings.py /
           podman run --rm --pull=never \
+            --cap-add=SYS_NICE \
             -v "${GITHUB_WORKSPACE}/tests/test-resolve-window.py:/tmp/test-resolve-window.py:ro" \
             -v "${GITHUB_WORKSPACE}/tests/aquarius_headless.py:/tmp/aquarius_headless.py:ro" \
             --entrypoint /usr/bin/python3 \

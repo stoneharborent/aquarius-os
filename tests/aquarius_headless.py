@@ -25,14 +25,37 @@ WHAT IT TRIES, IN ORDER, AND WHY
   1. kwin_wayland --virtual   KDE Plasma's compositor, in the headless mode KDE
                               themselves test with. It is in every AquariusOS
                               image (build_files/41-kde-desktop.sh) and it does
-                              XWayland, which the Resolve test needs.
+                              XWayland with a wrapper we can point at software
+                              rendering, which the Resolve test needs.
   2. gnome-shell --headless   GNOME's, in its own headless mode. Also in every
                               image. Heavier to start, which is why it is
                               second, but it is a real second answer rather than
-                              a hope.
+                              a hope. It has no "start this program for me"
+                              switch, so when one is asked for we start that
+                              program ourselves once the desktop is up.
   3. labwc                    only if somebody running these tests by hand on
                               their own machine happens to have it. Never in an
                               AquariusOS image any more.
+
+⚠️ A CANDIDATE CAN FAIL BEFORE IT EVEN STARTS — 2026-09-15
+----------------------------------------------------------
+Fedora ships kwin_wayland with a FILE CAPABILITY (cap_sys_nice+ep — the kernel
+grants it the right to raise its own scheduling priority). A container is only
+allowed to run such a program if that capability is in the container's own
+bounding set. Podman's default set does not include SYS_NICE, so the kernel
+refuses the program before a single line of KWin runs, and Python sees:
+
+    PermissionError: [Errno 1] Operation not permitted: 'kwin_wayland'
+
+That is exactly what failed build 35043434847. Two things came of it:
+
+  * the CI steps that run these tests now pass `--cap-add=SYS_NICE` to podman
+    (.github/workflows/build.yml), so KWin can be executed at all; and
+  * this file now treats ANY OSError from starting a candidate — cannot be
+    executed, is not there, is not a program — as "this desktop cannot run
+    here", writes the reason into the attempt list, and moves to the next
+    candidate. Only when every candidate has failed does it raise, with every
+    attempt's reason and the whole log.
 
 If none of them starts, this raises with every attempt's log in the message.
 It never quietly skips: a window test that does not run is a window test that
@@ -47,27 +70,42 @@ import time
 class Compositor:
     """A started compositor: .process, .wayland_display, .name, .log_path."""
 
-    def __init__(self, process, wayland_display, name, log_path):
+    def __init__(self, process, wayland_display, name, log_path, child=None):
         self.process = process
         self.wayland_display = wayland_display
         self.name = name
         self.log_path = log_path
+        # child is the run_after program when WE had to start it (GNOME Shell
+        # has no switch for it). None when the compositor started it itself.
+        self.child = child
 
     def stop(self):
-        self.process.terminate()
-        try:
-            self.process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            self.process.kill()
-            self.process.wait(timeout=5)
+        for process in (self.child, self.process):
+            if process is None:
+                continue
+            try:
+                process.terminate()
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+            except OSError:  # already gone
+                pass
 
 
 def _candidates(runtime_dir, config_dir, xwayland_wrapper, run_after):
     """The command lines, in the order they are tried.
 
-    run_after, if given, is a program the compositor starts once it is up —
-    labwc's `-s` and kwin_wayland's trailing argument do the same thing. GNOME
-    Shell has no such switch, so it is not offered when one is asked for.
+    Each one is (name, command, extra environment, socket name, starts_run_after).
+
+    run_after, if given, is a program that must run once the desktop is up.
+    labwc's `-s` and kwin_wayland's trailing argument do that themselves
+    (starts_run_after True). GNOME Shell has no such switch, so it says False
+    and start() launches the program itself once the socket appears.
+
+    GNOME Shell is skipped when an XWayland wrapper is asked for: mutter reads
+    no such variable, so it could not honour the software-rendering wrapper the
+    Resolve test needs and would give a confusing pass-that-is-not-a-pass.
     """
     socket = "aq-test-%d" % os.getpid()
 
@@ -84,14 +122,14 @@ def _candidates(runtime_dir, config_dir, xwayland_wrapper, run_after):
                 "KWIN_WAYLAND_NO_PERMISSION_CHECKS": "1"}
     if xwayland_wrapper is not None:
         kwin_env["KWIN_XWAYLAND"] = str(xwayland_wrapper)
-    yield ("kwin_wayland", kwin, kwin_env, socket)
+    yield ("kwin_wayland", kwin, kwin_env, socket, True)
 
-    if run_after is None:
+    if xwayland_wrapper is None:
         shell = ["gnome-shell", "--headless", "--wayland",
                  "--wayland-display", socket,
                  "--virtual-monitor", "1920x1080"]
         yield ("gnome-shell", shell, {"MUTTER_DEBUG_DUMMY_MODE_SPECS": "1920x1080"},
-               socket)
+               socket, False)
 
     labwc = ["labwc", "-C", str(config_dir)]
     if run_after is not None:
@@ -100,7 +138,7 @@ def _candidates(runtime_dir, config_dir, xwayland_wrapper, run_after):
                  "WLR_RENDERER": "pixman"}
     if xwayland_wrapper is not None:
         labwc_env["WLR_XWAYLAND"] = str(xwayland_wrapper)
-    yield ("labwc", labwc, labwc_env, None)
+    yield ("labwc", labwc, labwc_env, None, True)
 
 
 def start(runtime_dir, config_dir, log, env,
@@ -114,7 +152,7 @@ def start(runtime_dir, config_dir, log, env,
     env          the base environment; each candidate adds its own variables
     """
     attempts = []
-    for name, command, extra, socket in _candidates(
+    for name, command, extra, socket, starts_run_after in _candidates(
             runtime_dir, config_dir, xwayland_wrapper, run_after):
         if _which(command[0], env) is None:
             attempts.append("%s: not in this image" % name)
@@ -129,7 +167,19 @@ def start(runtime_dir, config_dir, log, env,
 
         log.write("== trying %s: %s\n" % (name, " ".join(command)))
         log.flush()
-        process = subprocess.Popen(command, env=run_env, stdout=log, stderr=log)
+        try:
+            process = subprocess.Popen(command, env=run_env,
+                                       stdout=log, stderr=log)
+        except OSError as problem:
+            # The program is there but the kernel would not run it — a file
+            # capability the container cannot grant (KWin's cap_sys_nice), a
+            # missing shared library, a file that is not a program at all.
+            # That is this desktop saying "not here", not the end of the road.
+            reason = "%s: cannot be started here (%s)" % (name, problem)
+            log.write("== %s\n" % reason)
+            log.flush()
+            attempts.append(reason)
+            continue
 
         deadline = time.monotonic() + timeout
         found = None
@@ -145,15 +195,33 @@ def start(runtime_dir, config_dir, log, env,
         if found:
             log.write("== %s is up on %s\n" % (name, found))
             log.flush()
-            return Compositor(process, found, name, getattr(log, "name", None))
+            child = None
+            if run_after is not None and not starts_run_after:
+                child_env = dict(run_env)
+                child_env["WAYLAND_DISPLAY"] = found
+                log.write("== starting %s ourselves on %s\n" % (run_after, found))
+                log.flush()
+                try:
+                    child = subprocess.Popen([str(run_after)], env=child_env,
+                                             stdout=log, stderr=log)
+                except OSError as problem:
+                    log.write("== could not start %s: %s\n" % (run_after, problem))
+                    log.flush()
+                    _stop_quietly(process)
+                    attempts.append("%s: came up, but %s could not be started (%s)"
+                                    % (name, run_after, problem))
+                    continue
+            return Compositor(process, found, name, getattr(log, "name", None),
+                              child=child)
 
-        try:
-            process.terminate()
-            process.wait(timeout=5)
-        except Exception:  # noqa: BLE001 — a dead process is what we wanted
-            pass
-        attempts.append("%s: started but no Wayland socket within %ds"
-                        % (name, timeout))
+        died = process.poll()
+        _stop_quietly(process)
+        if died is not None:
+            attempts.append("%s: stopped on its own (exit %s) before a Wayland "
+                            "socket appeared" % (name, died))
+        else:
+            attempts.append("%s: started but no Wayland socket within %ds"
+                            % (name, timeout))
 
     log.flush()
     log.seek(0)
@@ -161,6 +229,19 @@ def start(runtime_dir, config_dir, log, env,
         "No invisible desktop could be started. Tried:\n  "
         + "\n  ".join(attempts)
         + "\n\nThe log of every attempt:\n" + log.read())
+
+
+def _stop_quietly(process):
+    """Stop a process we have given up on. A dead one is what we wanted."""
+    try:
+        process.terminate()
+        process.wait(timeout=5)
+    except Exception:  # noqa: BLE001
+        try:
+            process.kill()
+            process.wait(timeout=5)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _which(program, env):
