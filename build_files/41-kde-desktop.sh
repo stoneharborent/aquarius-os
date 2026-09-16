@@ -123,6 +123,14 @@ source "$(dirname "$0")/aq-lib.sh"
 #                           dictionary, weather, notes, the window-list applet).
 #                           16 MB, which is inside the "is it small?" test this
 #                           file is allowed to apply.
+#   kf6-kconfig             supplies /usr/bin/kwriteconfig6, which is how one of
+#                           OUR programs writes a Plasma setting: `aq keys mac`
+#                           moves the window buttons to the left on both
+#                           desktops, and on Plasma that is two keys in kwinrc.
+#                           It arrives as a dependency of Plasma anyway — it is
+#                           named here because a feature of ours depends on it,
+#                           and "it comes in anyway" is exactly the kind of
+#                           accident this repository asks for by name instead.
 say "KDE Plasma"
 aq_dnf install --exclude=plasma-welcome \
     plasma-desktop \
@@ -135,7 +143,8 @@ aq_dnf install --exclude=plasma-welcome \
     bluedevil \
     powerdevil \
     kde-cli-tools \
-    kdeplasma-addons
+    kdeplasma-addons \
+    kf6-kconfig
 
 # ------------------------------------------------------------------------------
 # The look — and why GTK apps need three of these
@@ -317,6 +326,7 @@ aq_installed \
     powerdevil \
     kde-cli-tools \
     kdeplasma-addons \
+    kf6-kconfig \
     plasma-breeze \
     breeze-icon-theme \
     kf6-qqc2-desktop-style \
@@ -335,7 +345,7 @@ aq_installed \
 
 # The programs a session is actually made of. A package can install and put its
 # program somewhere nothing looks; this asks the PATH.
-for aq_cmd in startplasma-wayland kwin_wayland plasmashell systemsettings dolphin konsole spectacle; do
+for aq_cmd in startplasma-wayland kwin_wayland plasmashell systemsettings dolphin konsole spectacle kwriteconfig6; do
     if aq_have "${aq_cmd}"; then ok "${aq_cmd} is on the path"; else bad "${aq_cmd} is missing"; fi
 done
 

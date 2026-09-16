@@ -44,7 +44,8 @@
 # -----------------------------------------------------------------------------
 # It only looks at all when ALL of these are true:
 #
-#   1. GDM is the login screen this computer is using       (not greetd, not none)
+#   1. GDM is the login screen this computer is using       (not none, and not
+#      the greetd a pre-2026-09-15 machine may still be set to)
 #   2. at least one of the two copied files actually exists  (there is something
 #                                                             to take away)
 #   3. it has not already acted once during this boot
@@ -421,7 +422,8 @@ if [ -e "${AQ_STAMP}" ]; then
     stand_aside "it already acted once during this boot (${AQ_STAMP})"
 fi
 
-# greetd is the other login screen (see `aq login`). This guard knows how to
+# greetd was the other login screen until 2026-09-15 and a machine that ran the
+# old `aq login use greetd` may still be set to it. This guard knows how to
 # repair GDM and nothing else, and quietly standing aside is much better than
 # restarting a login screen it does not understand.
 if ! systemctl is-enabled gdm.service > /dev/null 2>&1; then

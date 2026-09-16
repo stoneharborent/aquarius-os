@@ -172,7 +172,7 @@ fi
 # ------------------------------------------------------------------------------
 # What does this person's pointer look like?
 # ------------------------------------------------------------------------------
-# GNOME and the Aquarius Desktop both keep it in the same place — the GSettings
+# GNOME keeps it in the GSettings
 # key org.gnome.desktop.interface — so one question answers it for both of the
 # sessions AquariusOS ships.
 #

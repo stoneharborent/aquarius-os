@@ -85,34 +85,21 @@ ARG XREMAP_VERSION=0.15.12
 ARG XREMAP_COMMIT=7e6649e442ca445b781e4cf0e90c165f86e717db
 
 # ------------------------------------------------------------------------------
-# The three pieces of the Aquarius Desktop that do not come from Fedora
+# RETIRED 2026-09-15 — the three pieces of the Aquarius Desktop
 # ------------------------------------------------------------------------------
-# Two are compiled from source and one is fetched, and all three are pinned to
-# an exact commit. Real values live in aquarius-os.env; these defaults exist so
-# that a plain `podman build .` still works. Each build script CHECKS the commit
-# it got against the one it was asked for and stops if they differ, so a moved
-# tag upstream cannot silently change what AquariusOS ships.
+# Three ARGs used to live here: LABWC_VERSION / LABWC_COMMIT, QUICKSHELL_VERSION
+# / QUICKSHELL_COMMIT and AQUARIUS_SHELL_REPO / AQUARIUS_SHELL_REF. They pinned
+# the window manager, the bar runtime and our own shell that made up the
+# Aquarius Session.
 #
-# Why we build our own at all is explained at length in the three
-# build_files/stage-*.sh scripts. The short version:
-#   labwc      Fedora 44 has 0.9.6; the HDR and colour-management release is 0.20
-#   Quickshell Fedora's package is a 0.2.1 snapshot missing modules our shell
-#              imports — and building in-image is what stops the Qt version
-#              mismatch that broke the first bench boot
-#   the shell  is ours, and lives in its own repository
-ARG LABWC_VERSION=0.20.2
-ARG LABWC_COMMIT=97f28877a343e062f3178d201f0248cd9c2610cf
-ARG QUICKSHELL_VERSION=v0.3.1
-ARG QUICKSHELL_COMMIT=1a4716cde794a59928d9d9fc15f2afc7a95de360
-ARG AQUARIUS_SHELL_REPO=https://github.com/stoneharborent/aquarius-shell.git
-# e421a60 (2026-09-06, the window frame): labwc's colours are no longer written
-# by hand. session/labwc/themerc-override is gone and session/labwc/generate-theme
-# is what replaced it — it reads the shell's theme/Ice.qml or theme/Midnight.qml
-# and writes labwc's themerc, its rc.xml and the round window buttons out of it,
-# for whichever theme and whatever AQ_UI_SCALE are in force. The reasoning is
-# written out beside the same value in aquarius-os.env, which is where a bump is
-# made — this line must match it.
-ARG AQUARIUS_SHELL_REF=0aa2e783d7204952d50499405161e71075b73d2a
+# Royce retired that desktop on 15 September 2026 and asked for GNOME and KDE
+# Plasma instead (steps 4 and 4b below). Nothing in this file compiles a
+# desktop any more; both come from Fedora's own packages, hand-picked.
+#
+# Nothing is lost: the shell repository is tagged `aquarius-session-final`, and
+# the last image that shipped it is in the registry. The reasoning is in
+# ../docs/decision-2026-09-15-two-desktops.md and the retired guide is
+# docs/restart/history/aquarius-session.md.
 
 # ------------------------------------------------------------------------------
 # Our own files, gathered up so the build can reach them
@@ -202,39 +189,15 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 # which is all a workshop needs. Same release means the compiled programs work
 # on the finished image — this is not two different Fedoras.
 #
-# The three stages are independent of one another, so a build machine with the
-# capacity runs all three at the same time.
+# The workshops are independent of one another, so a build machine with the
+# capacity runs them at the same time.
 # ------------------------------------------------------------------------------
 
-# Workshop 1 — labwc, the window manager. About two minutes.
-FROM quay.io/fedora/fedora:${FEDORA_VERSION} AS labwc-build
-ARG LABWC_VERSION
-ARG LABWC_COMMIT
-RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
-    --mount=type=cache,dst=/var/cache/libdnf5 \
-    LABWC_VERSION="${LABWC_VERSION}" LABWC_COMMIT="${LABWC_COMMIT}" \
-    /ctx/build_files/stage-labwc.sh
-
-# Workshop 2 — Quickshell, the runtime that draws the bar. The long one:
-# it compiles a Qt application, which is several minutes.
-FROM quay.io/fedora/fedora:${FEDORA_VERSION} AS quickshell-build
-ARG QUICKSHELL_VERSION
-ARG QUICKSHELL_COMMIT
-RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
-    --mount=type=cache,dst=/var/cache/libdnf5 \
-    QUICKSHELL_VERSION="${QUICKSHELL_VERSION}" QUICKSHELL_COMMIT="${QUICKSHELL_COMMIT}" \
-    /ctx/build_files/stage-quickshell.sh
-
-# Workshop 3 — the Aquarius Shell itself. Nothing is compiled; this stage exists
-# to fetch one folder at one exact commit and leave the repository's test suite,
-# development harness and .git folder behind.
-FROM quay.io/fedora/fedora:${FEDORA_VERSION} AS aquarius-shell-src
-ARG AQUARIUS_SHELL_REPO
-ARG AQUARIUS_SHELL_REF
-RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
-    --mount=type=cache,dst=/var/cache/libdnf5 \
-    AQUARIUS_SHELL_REPO="${AQUARIUS_SHELL_REPO}" AQUARIUS_SHELL_REF="${AQUARIUS_SHELL_REF}" \
-    /ctx/build_files/stage-aquarius-shell.sh
+# ⚠️ THERE USED TO BE THREE MORE WORKSHOPS HERE, AND THEY ARE GONE (2026-09-15).
+# labwc-build, quickshell-build and aquarius-shell-src compiled or fetched the
+# Aquarius Session. That desktop was retired in favour of GNOME and KDE Plasma,
+# both of which come from Fedora's own packages and need no workshop at all.
+# See ../docs/decision-2026-09-15-two-desktops.md.
 
 # Resolve's small menu adapter runs INSIDE the Rocky 9 app container. Build it
 # with that generation of libraries; compiling it on Fedora would make it ask
@@ -339,31 +302,22 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     /ctx/build_files/50-aquarius-desktop.sh
 
-# 5.5 The Aquarius Desktop — our own desktop, added beside GNOME.
+# 5.5 The Resolve menu adapter, built in the Rocky 9 workshop above, is copied
+#     in. It is laid out exactly like the root of a Linux system, so this is a
+#     straight copy with no rearranging.
 #
-#     First the three finished trees come across from the workshops above. Each
-#     one is laid out exactly like the root of a Linux system, so these are
-#     straight copies with no rearranging:
-#
-#       labwc-build         /usr/bin/labwc and its manual pages
-#       quickshell-build    /usr/bin/qs and the QML modules it provides
-#       aquarius-shell-src  /usr/share/aquarius/shell — the bar, dock, search
-#
-#     Then the build script installs the libraries all of that needs, sets up
-#     the login-screen entry and the portals, and CHECKS THE RESULT by running
-#     both programs and reading what they say. The check that matters most is
-#     `qs --version`: it is the exact thing that failed on the bench on
-#     2026-09-02 and left a person looking at an empty desktop.
-COPY --from=labwc-build /aq-stage/ /
-COPY --from=quickshell-build /aq-stage/ /
-COPY --from=aquarius-shell-src /aq-stage/ /
+#     ⚠️ THIS STEP USED TO BE THE AQUARIUS DESKTOP (2026-09-15). Three more
+#     COPY lines and 55-aquarius-session.sh lived here: our own shell on the
+#     labwc window manager, added beside GNOME. Royce retired that desktop and
+#     asked for GNOME and KDE Plasma instead — steps 4 and 4b. What that step
+#     installed and is NOT lost: libnotify, zenity and wlr-randr moved up to
+#     step 3, because the features that use them (drive notifications, the
+#     inside-drive question, the Resolve launcher) are the same on both
+#     desktops. Everything else it did was about a desktop that no longer
+#     exists. See ../docs/decision-2026-09-15-two-desktops.md.
 COPY --from=resolve-menu-build /aq-stage/ /
 
-RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
-    --mount=type=cache,dst=/var/cache/libdnf5 \
-    /ctx/build_files/55-aquarius-session.sh
-
-# 5.6 The app icons — the eight pictures Royce looks at every day. Both Aquarius
+# 5.6 The app icons — the eight pictures Royce looks at every day. Both
 #     desktops, and the login screen, use them.
 #
 #     Nothing is DRAWN here. The two icon themes were drawn on the Mac by
@@ -374,37 +328,23 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 #
 #     ⚠️ WHY THAT IS WORTH A STEP OF ITS OWN. A missing icon is not an error
 #     anywhere. Our themes say Inherits=Adwaita,hicolor, so anything we fail to
-#     provide falls silently through to GNOME's artwork and the machine looks
+#     provide falls silently through to GNOME's or Breeze's artwork and the machine looks
 #     perfectly fine — it just is not AquariusOS. There would be no red text to
 #     find. This step is the red text.
 #
-#     After 5.5, so that both the GNOME fallback and the Aquarius Session are
-#     fully in place — and after step 5, whose settings file names Aquarius-Ice
-#     as the default and whose dconf write does the same for the login screen.
+#     After steps 4 and 4b, so that both desktops are fully in place — and after
+#     step 5, whose settings file names Aquarius-Ice as the default and whose
+#     dconf write does the same for the login screen.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/build_files/56-aquarius-icons.sh
 
-# 5.7 The lock screen. Super+L, the Aquarius menu's Lock Screen row, or ten
-#     minutes of nobody touching the machine.
-#
-#     The DRAWING of it came across with the shell at 5.5 (the shell's lock/
-#     folder). This step is the operating system's half: the PAM rules that let
-#     the lock screen ask "is this really you", the service that locks the screen
-#     before the machine sleeps, and wlopm, which turns the monitor off after
-#     fifteen minutes.
-#
-#     ⚠️ THE SHELL NEVER CHECKS A PASSWORD, and the file this step installs at
-#     /etc/pam.d/aquarius-lock is what it asks instead. Without that file nobody
-#     can unlock the machine — which is why this step reads it back rather than
-#     assuming it was copied, and why it also checks that the shell asks for that
-#     exact name. Two repositories, one word, and a rename on either side would
-#     lock somebody out of their own computer.
-#
-#     After 5.5, because it reads the shell's own files; after 5, because the
-#     pam.d file, the service and the helper all arrived with system_files.
-RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
-    --mount=type=cache,dst=/var/cache/libdnf5 \
-    /ctx/build_files/57-lock-screen.sh
+# ⚠️ STEP 5.7 IS GONE (2026-09-15). It was the operating system's half of the
+#     Aquarius Session's lock screen: the /etc/pam.d/aquarius-lock rules, the
+#     lock-before-sleep service, and wlopm to blank the monitor. GNOME and KDE
+#     Plasma each bring a complete, maintained lock screen of their own, with
+#     their own PAM rules and their own idle handling, so none of ours is
+#     needed or wanted. Locking is Super+L on both. See
+#     docs/restart/desktops.md and docs/restart/history/aquarius-session.md.
 
 # 5.8 The kernel pin. Runs on BOTH images, and must run before ANY step that
 #     installs a kernel module.
@@ -576,28 +516,19 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/build_files/77-updater.sh
 
-# 7h. Bluetooth (and airplane mode) show up in the Settings app inside OUR
-#     desktop too.
+# ⚠️ STEP 7h IS GONE (2026-09-15). It existed for one bench bug of 6 September
+#     2026: inside the Aquarius Session, GNOME's Settings said "No Bluetooth
+#     Found" while a Bluetooth mouse was in use, because our session did not
+#     start the small helper (/usr/libexec/gsd-rfkill) that publishes the
+#     answer. The fix was a service of ours, switched on for the Aquarius
+#     session ONLY — GNOME runs its own copy and two would fight over one bus
+#     name.
 #
-#     ⚠️ THE BENCH BUG OF 6 SEPTEMBER 2026. The arrow beside the Bluetooth tile
-#     in Quick Settings opens GNOME's Settings on its Bluetooth page, and that
-#     page said "No Bluetooth Found" while a Bluetooth mouse was in use. The
-#     page does not ask Bluetooth anything: it reads one value published by a
-#     helper, /usr/libexec/gsd-rfkill, that GNOME's session starts and ours did
-#     not. The fix is a service of ours that starts the same helper, switched on
-#     for the Aquarius session ONLY — GNOME runs its own copy and two would
-#     fight over one bus name.
-#
-#     The service file arrived with system_files at step 5; this step proves the
-#     helper is in the image, that our service says the right things, that the
-#     "switched on" link hangs off labwc-session.target and not the
-#     both-desktops one, and that /dev/rfkill is writable by the person at the
-#     screen so aeroplane mode can actually be switched.
-#
-#     After step 4 (gnome-settings-daemon, which the helper comes in), step 5
-#     (its files) and step 5.5 (labwc-session.target, which the link hangs off).
-RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
-    /ctx/build_files/78-rfkill.sh
+#     With the Aquarius Session retired there is no session left that fails to
+#     start that helper: GNOME starts it, and Plasma does not use it at all
+#     (bluedevil talks to BlueZ directly and has its own aeroplane-mode
+#     switch). The service, its /usr-shipped "switched on" link and this step
+#     are removed rather than ported to a bug neither desktop has.
 
 # 7i. When the USB4 / Thunderbolt chip does not wake up, try it again — instead
 #     of leaving every drive on a dock invisible.

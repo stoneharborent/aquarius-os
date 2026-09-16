@@ -552,7 +552,7 @@ aq_file_has /usr/lib/os-release "^PRETTY_NAME=\"${PRETTY_NAME}\"$" \
 # Ctrl+Alt+F3 still gives a usable console.
 #
 # It does NOT hide text; it hides the cursor. The text itself is dealt with by
-# `quiet` (kernel messages) and by /usr/libexec/aquarius-greeter no longer
+# `quiet` (kernel messages) and by the retired AquariusOS greeter no longer
 # printing to the screen at all. See docs/restart/boot-branding.md.
 #
 # /usr/lib/bootc/kargs.d/ is how an image ships kernel options: a machine picks

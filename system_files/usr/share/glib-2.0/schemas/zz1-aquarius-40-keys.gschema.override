@@ -1,0 +1,51 @@
+# =============================================================================
+# zz1-aquarius-40-keys — the one Mac shortcut GNOME does not already answer
+# =============================================================================
+# PLAIN ENGLISH
+#
+# AquariusOS remaps the keyboard so that Copy is Command-C (Aquarius Keys —
+# docs/restart/aquarius-keys.md). A handful of combinations are left alone on
+# purpose so they reach the DESKTOP rather than the app you are typing in, and
+# after the remap they arrive as Super combinations:
+#
+#     Command-Tab       switch apps          GNOME already answers Super-Tab
+#     Command-`         switch windows       GNOME already answers Super-`
+#     Control-Command-Q lock the screen      GNOME answers nothing.  ← this file
+#
+# This file is the third line. It is the only GNOME key AquariusOS changes.
+#
+# -----------------------------------------------------------------------------
+# ⚠️ WHY THE LOCK NEEDS A SECOND KEY AT ALL — THE ONE-DAY BUG OF 6 SEPTEMBER 2026
+# -----------------------------------------------------------------------------
+# GNOME's lock is Super+L, and on a machine in Windows mode that is the whole
+# story. In MAC mode it is not, because Command-L is remapped — to Control-L,
+# "jump to the address bar", which is what Command-L does on a Mac — before the
+# desktop ever sees it. So on a Mac-mode machine, Super+L never arrives and the
+# lock shortcut is silently unreachable. Nothing reports that; the key just
+# does nothing.
+#
+# Control-Command-Q is the Mac's own lock shortcut, it is what Royce's hands
+# already do, and nothing in mac.yaml remaps it (75-aquarius-keys.sh fails the
+# build if that ever changes). Adding it here makes the lock reachable in both
+# modes without taking Super+L away from anybody.
+#
+# KDE Plasma is given the same key, in its own format, by
+# /etc/xdg/kglobalshortcutsrc. One shortcut, both desktops — that is the rule
+# this whole two-desktop change is trying to hold to.
+#
+# -----------------------------------------------------------------------------
+# WHAT IS DELIBERATELY NOT HERE
+# -----------------------------------------------------------------------------
+#   Command-Space (Super+Space)
+#       On GNOME this is already taken: it is "switch input source", GNOME's
+#       key for changing keyboard layout. Freeing it and pointing it at the
+#       Overview is a real change to somebody's typing and belongs in a
+#       decision of Royce's, not in a change whose job was to swap the desktop.
+#       It is logged as a follow-up. On Plasma it is bound, to KRunner, by
+#       /etc/xdg/kglobalshortcutsrc.
+# =============================================================================
+
+[org.gnome.settings-daemon.plugins.media-keys]
+# The lock. Super+L is GNOME's own and stays; Super+Escape is GNOME's own too.
+# Control-Super-Q is ours, and it is the one that survives Mac mode.
+screensaver=['<Super>l', '<Super>Escape', '<Control><Super>q']

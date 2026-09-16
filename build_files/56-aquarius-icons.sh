@@ -68,15 +68,19 @@
 # ⚠️ TODO — NOT THIS REPO'S JOB: SWITCHING TO THE DARK ICONS
 # ------------------------------------------------------------------------------
 # Aquarius-Midnight is built, installed, checked, and nothing ever selects it.
-# That is on purpose. Following the desktop's light/dark setting is the SHELL's
-# job — the aquarius-shell repository already watches the colour scheme, and the
-# image has no business trying to do it a second time from a different place.
 #
-#   TODO (aquarius-shell): when the shell switches the colour scheme to dark, it
-#   should also set org.gnome.desktop.interface icon-theme to
-#   'Aquarius-Midnight', and back to 'Aquarius-Ice' when it goes light. Both
-#   themes are already in the image; this is a one-setting change with no image
-#   work behind it.
+# ⚠️ THIS USED TO BE SOMEBODY ELSE'S JOB AND NOW IT IS NOBODY'S. Until
+# 2026-09-15 the plan was for the Aquarius Shell to watch the light/dark setting
+# and swap the icon theme with it. That shell was retired
+# (../docs/decision-2026-09-15-two-desktops.md), so the gap is real and open on
+# both desktops:
+#
+#   TODO (Workstream C): when the desktop goes dark, the icon theme should
+#   follow. On GNOME that is one GSettings key —
+#   org.gnome.desktop.interface icon-theme = 'Aquarius-Midnight' — and there is
+#   no built-in "when dark" hook for it; on KDE Plasma the icon theme is part of
+#   the colour scheme and Plasma switches it itself, once we ship an Aquarius
+#   colour scheme that names ours. Both themes are already in the image.
 #
 # Until that lands, a person who wants the dark icons sets them by hand:
 #     gsettings set org.gnome.desktop.interface icon-theme 'Aquarius-Midnight'

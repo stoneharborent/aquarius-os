@@ -1933,10 +1933,17 @@ def run_window(first_run, embedded=False):
         # to show its list of apps, which is a different thing on each of the
         # two desktops AquariusOS ships:
         #
-        #   the Aquarius Desktop   the search palette (the thing Super+Space
-        #                          opens) — `qs ipc call search toggle`
-        #   GNOME                  the Activities app grid, asked for over
-        #                          D-Bus with org.gnome.Shell.ShowApplications
+        #   GNOME    the Activities app grid, asked for over D-Bus with
+        #            org.gnome.Shell.ShowApplications
+        #   KDE      KRunner, Plasma's search box, asked for over D-Bus with
+        #            org.kde.krunner /App display(). KRunner with an empty
+        #            query lists applications, which is the nearest thing
+        #            Plasma has to "show me everything I just installed".
+        #
+        # ⚠️ THE AQUARIUS DESKTOP'S ROUTE IS GONE (2026-09-15). It used to be
+        #    `qs ipc call search toggle`, which asked our own shell for its
+        #    search palette. That shell was retired; see
+        #    ../docs/decision-2026-09-15-two-desktops.md.
         #
         # ⚠️ NOT org.gnome.Shell.Eval. Eval is the answer the internet gives and
         #    it is the wrong one: modern GNOME refuses it unless the session is
@@ -1952,33 +1959,40 @@ def run_window(first_run, embedded=False):
         def _on_open_apps(self, _button):
             desktop = os.environ.get("XDG_CURRENT_DESKTOP", "")
 
-            if "Aquarius" in desktop and self._show_aquarius_palette():
+            if "GNOME" in desktop and self._show_gnome_app_grid():
                 self.close()
                 return
-            if "GNOME" in desktop and self._show_gnome_app_grid():
+            if "KDE" in desktop and self._show_kde_app_list():
                 self.close()
                 return
 
             self._back_to_the_list()
 
-        def _show_aquarius_palette(self):
-            """Ask the running Aquarius Shell to open its search palette.
+        def _show_kde_app_list(self):
+            """Ask Plasma's KRunner to open, listing applications.
 
-            `qs ipc` reaches whichever shell is running the configuration named
-            by QS_CONFIG_PATH, which this window inherited from the session —
-            the same route the Super+Space key binding takes. It takes no
-            configuration name; the target is "search" and the function is
-            "toggle" (declared by the shell's own IpcHandler).
+            org.kde.krunner is the bus name plasma-workspace publishes for the
+            search box. `display("")` opens it with an empty query, which is
+            the state that lists applications. It is the nearest thing Plasma
+            has to GNOME's app grid, and it is a method meant to be called
+            rather than a back door.
             """
             try:
-                result = subprocess.run(
-                    ["qs", "ipc", "call", "search", "toggle"],
-                    capture_output=True,
-                    timeout=5,
+                bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+                bus.call_sync(
+                    "org.kde.krunner",
+                    "/App",
+                    "org.kde.krunner.App",
+                    "display",
+                    GLib.Variant("(s)", ("",)),
+                    None,
+                    Gio.DBusCallFlags.NONE,
+                    2000,
+                    None,
                 )
-            except (OSError, subprocess.SubprocessError):
+            except GLib.Error:
                 return False
-            return result.returncode == 0
+            return True
 
         def _show_gnome_app_grid(self):
             """Ask GNOME Shell for the app grid, over the session bus."""

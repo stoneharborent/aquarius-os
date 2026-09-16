@@ -59,10 +59,14 @@ AQ_PROFILE_DIR="/usr/share/aquarius/keys"
 AQ_SERVICE="aquarius-keys.service"
 AQ_DISPLAY_HELPER="/usr/libexec/aquarius-display-scale"
 
-# The program that builds the Aquarius Desktop's window frame out of the shell's
-# palette. `aq keys` runs it because the window buttons move with the Mac /
-# Windows choice — see apply_window_buttons() below.
-AQ_FRAME_GENERATOR="/usr/share/aquarius/labwc/generate-theme"
+# KDE's settings writer. `aq keys` uses it to move Plasma's window buttons,
+# because they move with the Mac / Windows choice — see apply_window_buttons()
+# below. It comes from kf6-kconfig, installed by build_files/41-kde-desktop.sh.
+#
+# (This used to be /usr/share/aquarius/labwc/generate-theme, which rebuilt the
+# Aquarius Session's whole window frame. That desktop was retired on
+# 2026-09-15 — see docs/restart/desktops.md.)
+AQ_KDE_WRITE="kwriteconfig6"
 
 # -----------------------------------------------------------------------------
 # usage — printed by `aq`, `aq --help`, and anything it does not understand
@@ -152,21 +156,11 @@ USAGE
                         Your files are untouched and the old version stays on
                         the disk, so you can always roll back.
 
-    aq login status     Which login screen this computer starts with — GNOME's
-                        (GDM) or the AquariusOS one (greetd) — and whether the
-                        AquariusOS one is ready to be switched on.
-
-    aq login use greetd Use the AquariusOS login screen: the Ice wallpaper, the
-                        Aquarius mark, and a password box drawn by our own
-                        desktop. EXPERIMENTAL and off by default — it warns and
-                        asks you to confirm, and if it ever fails to draw twice
-                        in a row this computer switches itself back to GDM. Takes
-                        effect at the next restart.
-
-    aq login use gdm    Go back to GNOME's login screen. This is the one the
-                        computer starts with out of the box, and it is what to
-                        type if the other one gives you trouble — it works from
-                        a text console (Ctrl+Alt+F3) too.
+    aq login status     Which login screen this computer starts with, and which
+                        desktops it can offer you. AquariusOS ships two — GNOME
+                        and KDE Plasma — and you pick one AT the login screen,
+                        not with a command: click your name, then the small
+                        button at the bottom-right of the password box.
 
     aq login scale status
                         Is GNOME's login screen given your display settings,
@@ -316,55 +310,75 @@ EOF
 #   GNOME           a gsettings key, org.gnome.desktop.wm.preferences
 #                   button-layout. Its syntax puts a colon between the left
 #                   side and the right side.
-#   Aquarius        rc.xml's <theme><titlebar><layout>, which is written by
-#   Desktop         /usr/share/aquarius/labwc/generate-theme. That program reads
-#                   the same keys.conf this command just wrote, so it needs no
-#                   argument — and running it is also what redraws the buttons
-#                   at the right size and in the right theme.
+#   KDE Plasma      two keys in kwinrc, ButtonsOnLeft and ButtonsOnRight, under
+#                   [org.kde.kdecoration2]. KDE spells each button as one
+#                   letter: X is close, I is minimise, A is maximise, M is the
+#                   application menu. A running KWin is then told to re-read
+#                   them over D-Bus, so there is no need to log out.
 #
 # Both are applied here whichever desktop you happen to be sitting in, so
-# switching desktops later does not need this command run again.
+# switching desktops later does not need this command run again. Neither one
+# fails the command: over SSH, or on a machine where the other desktop has
+# never been started, the write simply does not take and the layout is right at
+# the next login.
 apply_window_buttons() {
     local mode="$1"
-    local gnome_layout labwc_done=0
+    local gnome_layout kde_left kde_right gnome_done=0 kde_done=0
 
-    # --- the Aquarius Desktop ------------------------------------------------
-    # generate-theme rewrites the whole window frame — colours, sizes, buttons
-    # and which side they are on — and then tells a running labwc to re-read its
-    # files. If labwc is not running (you are in GNOME, or on SSH) that last
-    # part quietly does nothing and the new layout is picked up at the next
-    # login, which is exactly right.
-    if [ -x "${AQ_FRAME_GENERATOR}" ] && command -v python3 > /dev/null 2>&1; then
-        if python3 "${AQ_FRAME_GENERATOR}" --quiet --reconfigure; then
-            labwc_done=1
-        else
-            echo "  (The Aquarius Desktop's window buttons could not be moved."
-            echo "   They will be in the right place after your next login.)"
-        fi
+    if [ "${mode}" = "mac" ]; then
+        gnome_layout="close,minimize,maximize:"
+        kde_left="XIA"
+        kde_right=""
+    else
+        gnome_layout=":minimize,maximize,close"
+        kde_left=""
+        kde_right="IAX"
     fi
 
     # --- GNOME ---------------------------------------------------------------
-    if [ "${mode}" = "mac" ]; then
-        gnome_layout="close,minimize,maximize:"
-    else
-        gnome_layout=":minimize,maximize,close"
-    fi
-
     if command -v gsettings > /dev/null 2>&1; then
         if gsettings set org.gnome.desktop.wm.preferences button-layout \
                 "${gnome_layout}" 2> /dev/null; then
-            if [ "${labwc_done}" -eq 1 ]; then
-                echo "  Window buttons moved on both desktops. No logout needed."
-            else
-                echo "  Window buttons moved in GNOME."
-            fi
-            return 0
+            gnome_done=1
         fi
     fi
 
-    echo "  (The window buttons could not be moved in GNOME right now, which is"
-    echo "   normal over SSH. They will be in the right place next time you log"
-    echo "   in at the screen.)"
+    # --- KDE Plasma ----------------------------------------------------------
+    # kwriteconfig6 writes into the person's own ~/.config/kwinrc, which is
+    # exactly right: this is their choice, not the machine's.
+    if command -v "${AQ_KDE_WRITE}" > /dev/null 2>&1; then
+        if "${AQ_KDE_WRITE}" --file kwinrc --group org.kde.kdecoration2 \
+                --key ButtonsOnLeft "${kde_left}" 2> /dev/null \
+            && "${AQ_KDE_WRITE}" --file kwinrc --group org.kde.kdecoration2 \
+                --key ButtonsOnRight "${kde_right}" 2> /dev/null; then
+            kde_done=1
+            # Ask a running KWin to re-read kwinrc. If Plasma is not running
+            # this says nothing and changes nothing, which is correct.
+            if command -v qdbus6 > /dev/null 2>&1; then
+                qdbus6 org.kde.KWin /KWin reconfigure > /dev/null 2>&1 || true
+            elif command -v dbus-send > /dev/null 2>&1; then
+                dbus-send --session --dest=org.kde.KWin /KWin \
+                    org.kde.KWin.reconfigure > /dev/null 2>&1 || true
+            fi
+        fi
+    fi
+
+    if [ "${gnome_done}" -eq 1 ] && [ "${kde_done}" -eq 1 ]; then
+        echo "  Window buttons moved on both desktops. No logout needed."
+        return 0
+    fi
+    if [ "${gnome_done}" -eq 1 ]; then
+        echo "  Window buttons moved in GNOME."
+        return 0
+    fi
+    if [ "${kde_done}" -eq 1 ]; then
+        echo "  Window buttons moved in KDE Plasma."
+        return 0
+    fi
+
+    echo "  (The window buttons could not be moved right now, which is normal"
+    echo "   over SSH. They will be in the right place next time you log in at"
+    echo "   the screen.)"
 }
 
 # -----------------------------------------------------------------------------
@@ -1883,28 +1897,24 @@ apps_remove() {
 #                      drawn by your desktop, inside your session, and this
 #                      command has nothing to do with it.
 #
-# The two login screens:
+# THERE IS ONE LOGIN SCREEN, AND IT IS GDM.
 #
-#   gdm      GNOME's. What AquariusOS starts with. Plain, and completely
-#            reliable. It has an accessibility menu, which the other one does
-#            not yet.
-#   greetd   Ours. The Ice wallpaper, the Aquarius mark, a clock, a password
-#            box, and a choice of desktop — drawn by the Aquarius Shell itself.
+# ⚠️ THIS CHANGED ON 15 SEPTEMBER 2026 AND `aq login use` WENT WITH IT. There
+# used to be two: GDM, and an AquariusOS one of our own — greetd with a greeter
+# drawn by the Aquarius Shell — and `aq login use greetd` / `aq login use gdm`
+# swapped between them. That greeter was EXPERIMENTAL, it was the one command
+# that ever black-screened this computer (2026-09-05), and it went when Royce
+# retired the Aquarius Session in favour of GNOME and KDE Plasma. greetd is not
+# in the image at all any more, so the command could only ever have failed.
 #
-# ⚠️ EXACTLY ONE MAY BE SWITCHED ON. systemd enforces that through a link called
-# display-manager.service, and two login managers both claiming it is one of the
-# classic ways to end up at a black screen with no way in. So this command turns
-# one off and the other on, in that order, and refuses to do half the job.
+# WHAT REPLACED IT: GDM lists BOTH desktops. Choosing between GNOME and KDE
+# Plasma happens at the login screen, per person, and GDM remembers — see
+# docs/restart/desktops.md. That is the choice that used to need a command.
 #
-# THE WAY BACK IS ALWAYS THERE. If the AquariusOS login screen misbehaves:
-#   1. press Ctrl+Alt+F3 for a text login, log in there
-#   2. sudo aq login use gdm
-#   3. sudo systemctl reboot
-# And if the graphical screen fails to start at all, it falls through to a plain
-# text login by itself rather than leaving you stuck — see
-# /usr/libexec/aquarius-greeter.
-AQ_GREETER_LAUNCHER="/usr/libexec/aquarius-greeter"
-AQ_GREETD_CONF="/etc/greetd/config.toml"
+# `aq login status` and `aq login scale` both stay, and both are about GDM.
+#
+# If the graphical login screen ever fails to start at all, Ctrl+Alt+F3 gives a
+# plain text login, which is where `aq login scale off` is typed.
 AQ_GDM_DISPLAY="/usr/libexec/aquarius-gdm-display"
 # The master switch: does the login screen get a copy of your display settings
 # at all? Off unless this file exists, and it is never shipped in an image.
@@ -1912,34 +1922,26 @@ AQ_OPTIN_MARKER="/var/lib/aquarius/gdm-display-optin"
 # The sub-mode, which only means anything while the master switch is on.
 AQ_FRACTIONAL_MARKER="/var/lib/aquarius/gdm-fractional-ok"
 
-# The safety net for the AquariusOS greeter (see /usr/libexec/aquarius-greeter-
-# watchdog). The counter is how many greetd boots in a row failed to draw a
-# greeter; the probation marker records that greetd was only just switched on, so
-# the very first greetd boot after the switch is watched extra closely. Both are
-# under /var/lib so they survive the reboot the switch needs.
-AQ_GREETER_STATE_DIR="/var/lib/aquarius"
-AQ_GREETER_FAILS="${AQ_GREETER_STATE_DIR}/greeter-fails"
-AQ_GREETER_PROBATION="${AQ_GREETER_STATE_DIR}/greeter-probation"
 
 login_usage() {
     cat << 'EOF'
-aq login — which login screen this computer starts with
+aq login — the login screen
 
 USAGE
-    aq login status        Which one is switched on, and is the other ready.
-    aq login use greetd    Switch to the AquariusOS login screen (EXPERIMENTAL —
-                           it warns and asks you to confirm; add --yes to skip
-                           the question). See 'aq login use --help'.
-    aq login use gdm       Switch back to GNOME's.
+    aq login status        Which login screen is switched on, and which
+                           desktops it can offer you.
     aq login scale ...     Is GNOME's login screen given your display settings?
                            Off by default. See 'aq login scale --help'.
 
-Either 'use' command needs an administrator, so put 'sudo' in front of it, and
-neither takes effect until you restart.
+CHOOSING GNOME OR KDE PLASMA
+    That is not a command. AquariusOS ships both desktops and the login screen
+    lists both: click your name, then the small button at the bottom-right of
+    the password box, and pick one. The login screen remembers your choice for
+    next time. See docs/restart/desktops.md.
 
 IF SOMETHING GOES WRONG
     Press Ctrl+Alt+F3 for a plain text login. Log in there and run:
-        sudo aq login use gdm
+        sudo aq login scale off
         sudo systemctl reboot
 EOF
 }
@@ -1983,9 +1985,12 @@ EOF
 #       integer      while on: whole sizes only (the default sub-mode)
 #       fractional   while on: let part sizes through (125%)
 #
-# THE REAL FIX IS NOT HERE. It is our own login screen (greetd + the Aquarius
-# Shell, Part B of docs/restart/login.md), which reads the session's scale
-# itself and does not need anything copied anywhere. That is the R5 job.
+# ⚠️ THE "REAL FIX" THAT WAS PROMISED HERE NO LONGER EXISTS. This paragraph used
+# to say the answer was our own login screen (greetd + the Aquarius Shell),
+# which would read the session's scale itself. That was retired on 2026-09-15
+# (../docs/decision-2026-09-15-two-desktops.md), so the honest position today is
+# the one above: GDM runs at 100%, that is small on a 55" 4K screen, and it is
+# the deliberate trade. Anybody who wants to try otherwise has this switch.
 login_scale_usage() {
     cat << 'EOF'
 aq login scale — is GNOME's login screen given your display settings?
@@ -2166,9 +2171,16 @@ login_scale() {
 }
 
 login_which() {
-    # `systemctl is-enabled` is asked twice rather than reading the
-    # display-manager.service link, because the link is systemd's business and
-    # the question we are actually asking is "which one is switched on".
+    # `systemctl is-enabled` rather than reading the display-manager.service
+    # link, because the link is systemd's business and the question we are
+    # actually asking is "which one is switched on".
+    #
+    # greetd is still ASKED ABOUT even though AquariusOS no longer ships it.
+    # A machine that ran `aq login use greetd` before 2026-09-15 and then took
+    # this image still has the /etc symlink that switched it on, and /etc is
+    # merged rather than replaced by an update. Saying so plainly is far better
+    # than a machine that boots to nothing and a command that pretends all is
+    # well.
     if systemctl is-enabled greetd.service > /dev/null 2>&1; then
         echo greetd
     elif systemctl is-enabled gdm.service > /dev/null 2>&1; then
@@ -2184,258 +2196,85 @@ login_status() {
 
     case "${now}" in
         greetd)
-            echo "This computer starts with the AQUARIUS login screen (greetd)."
-            echo "To go back to GNOME's:  sudo aq login use gdm"
+            echo "⚠️ This computer is still set to start with the OLD AquariusOS"
+            echo "   login screen (greetd), which this version of AquariusOS no"
+            echo "   longer contains. It would start to a text prompt."
+            echo
+            echo "   To fix it:  sudo systemctl mask greetd.service"
+            echo "               sudo systemctl enable gdm.service"
+            echo "               sudo systemctl reboot"
             ;;
         gdm)
             echo "This computer starts with GNOME's login screen (GDM)."
-            echo "To try the AquariusOS one:  sudo aq login use greetd"
+            echo "It is the only login screen AquariusOS ships, and it offers"
+            echo "you a choice of desktop each time you log in."
             ;;
         *)
             echo "NO login screen is switched on. That is not normal — this"
             echo "computer would start to a text prompt."
-            echo "To fix it:  sudo aq login use gdm"
+            echo "To fix it:  sudo systemctl enable gdm.service"
+            echo "            sudo systemctl reboot"
             ;;
     esac
 
+    # The thing a person actually wants to know now: which desktops can I pick?
     echo
-    echo "Is the AquariusOS login screen ready to switch on?"
-    local ready=1
-    if [ -x "${AQ_GREETER_LAUNCHER}" ]; then
-        echo "  yes  ${AQ_GREETER_LAUNCHER} is here"
-    else
-        echo "  NO   ${AQ_GREETER_LAUNCHER} is missing"
-        ready=0
-    fi
-    if [ -r "${AQ_GREETD_CONF}" ]; then
-        echo "  yes  ${AQ_GREETD_CONF} is here"
-    else
-        echo "  NO   ${AQ_GREETD_CONF} is missing"
-        ready=0
-    fi
-    if [ -r /usr/share/aquarius/shell/greeter.qml ]; then
-        echo "  yes  the login screen itself is installed"
-    else
-        echo "  NO   /usr/share/aquarius/shell/greeter.qml is missing."
-        echo "       Switching to greetd would give the plain text login screen."
-        ready=0
-    fi
-
-    if [ "${ready}" -eq 1 ]; then
-        echo
-        echo "Everything it needs is here."
-    fi
-
-    # The safety net, so a person can see it is armed and see the failure count.
-    echo
-    echo "The automatic safety net (aquarius-greeter-watchdog):"
-    if [ -e "${AQ_GREETER_PROBATION}" ]; then
-        echo "  greetd was switched on recently and its first boot is on probation."
-    fi
-    local fails=0
-    if [ -r "${AQ_GREETER_FAILS}" ]; then
-        fails="$(tr -cd '0-9' < "${AQ_GREETER_FAILS}")"
-        fails="${fails:-0}"
-    fi
-    echo "  Greetd boots in a row with no working greeter: ${fails} (it switches"
-    echo "  back to GDM by itself at 2). A successful login resets this to 0."
-}
-
-# -----------------------------------------------------------------------------
-# aq login use greetd — the warning, written once
-# -----------------------------------------------------------------------------
-# ⚠️ THE AQUARIUS GREETER IS EXPERIMENTAL (R6) AND OFF BY DEFAULT. Switching to
-# it is the one command that has, in practice, black-screened this computer —
-# not because the switch is wrong, but because the greeter itself did not draw
-# on 2026-09-05 and the machine sat on a bare labwc desktop for days. So the
-# switch now WARNS, asks you to confirm, and arms an automatic safety net that
-# puts GDM back if the greeter fails twice. Read docs/restart/login.md.
-login_use_greetd_warning() {
-    cat << 'EOF'
-⚠️ The AquariusOS login screen (greetd) is EXPERIMENTAL and off by default.
-
-WHAT IT IS
-    Our own login screen — the Ice wallpaper, the Aquarius mark, a password box
-    drawn by the Aquarius Shell. It looks the part, but it has not been proven
-    on real hardware, and on 2026-09-05 it left this computer on a black screen
-    for days because it started but never drew.
-
-IF IT MISBEHAVES, HERE IS THE WAY BACK
-    1. Press Ctrl+Alt+F3 for a plain text login screen and log in.
-    2. Run:  sudo aq login use gdm
-    3. Run:  sudo systemctl reboot
-
-    If you see a black or empty screen whose only feature is a small menu that
-    says Terminal / Reconfigure / Exit, that IS this experimental greeter having
-    failed to draw. Do the three steps above.
-
-THE SAFETY NET
-    You should not need any of that. If the greeter fails to draw on two greetd
-    boots in a row, this computer switches ITSELF back to GDM and restarts. You
-    cannot get permanently stuck behind it.
-EOF
-}
-
-login_use_usage() {
-    cat << 'EOF'
-aq login use — choose which login screen this computer starts with
-
-    sudo aq login use gdm            GNOME's login screen. The default, plain and
-                                     completely reliable. This is the one to use
-                                     if the other one gives you trouble.
-
-    sudo aq login use greetd         The AquariusOS login screen. EXPERIMENTAL —
-                                     see the warning it prints. It asks you to
-                                     confirm before switching.
-    sudo aq login use greetd --yes   Switch to it without the confirmation
-                                     question (for scripts, or once you are sure).
-
-Neither takes effect until you restart. Either works from a text console
-(Ctrl+Alt+F3) if the graphical screen is not cooperating.
-EOF
-}
-
-login_use() {
-    local wanted="" want_yes=0 show_help=0 arg
-    for arg in "$@"; do
-        case "${arg}" in
-            --yes | -y) want_yes=1 ;;
-            -h | --help | help) show_help=1 ;;
-            greetd | gdm) wanted="${arg}" ;;
-            "") : ;;
-            *)
-                echo "aq: 'aq login use' does not understand '${arg}'." >&2
-                echo "    It takes 'greetd' or 'gdm', and greetd takes --yes." >&2
-                return 1
-                ;;
-        esac
+    echo "Desktops this login screen can offer you:"
+    local found=0 session name
+    for session in /usr/share/wayland-sessions/*.desktop; do
+        [ -r "${session}" ] || continue
+        name="$(sed -n 's/^Name=//p' "${session}" | head -n 1)"
+        echo "  ${name:-$(basename "${session}" .desktop)}   ($(basename "${session}"))"
+        found=$((found + 1))
     done
-
-    if [ "${show_help}" -eq 1 ]; then
-        login_use_usage
-        # ⚠️ The greetd warning is part of `aq login use greetd --help` on
-        # purpose: somebody reading the help before they switch should see the
-        # warning without having to run the command first.
-        if [ "${wanted}" = "greetd" ]; then
-            echo
-            login_use_greetd_warning
-        fi
-        return 0
-    fi
-
-    local turn_off
-    case "${wanted}" in
-        greetd) turn_off="gdm" ;;
-        gdm)    turn_off="greetd" ;;
-        *)
-            echo "aq: 'aq login use' takes either 'greetd' or 'gdm'." >&2
-            echo "    greetd is the AquariusOS login screen; gdm is GNOME's." >&2
-            echo "    Try:  aq login use --help" >&2
-            return 1
-            ;;
-    esac
-
-    # ⚠️ SWITCHING TO THE EXPERIMENTAL GREETER WARNS AND MUST BE CONFIRMED.
-    # The warning always prints. The confirmation is skipped only with --yes.
-    if [ "${wanted}" = "greetd" ]; then
-        echo
-        login_use_greetd_warning
-        echo
-        if [ "${want_yes}" -ne 1 ]; then
-            if [ -t 0 ]; then
-                local reply=""
-                printf 'Type YES (in capitals) to switch to the experimental Aquarius login screen: '
-                read -r reply
-                if [ "${reply}" != "YES" ]; then
-                    echo "Nothing changed. This computer still starts with the login screen it did before."
-                    return 1
-                fi
-            else
-                echo "aq: switching to the experimental Aquarius login screen has to be" >&2
-                echo "    confirmed. Re-run with --yes if you are sure:" >&2
-                echo "        sudo aq login use greetd --yes" >&2
-                return 1
-            fi
-        fi
-    fi
-
-    if [ "$(id -u)" -ne 0 ]; then
-        echo "aq: changing the login screen needs an administrator." >&2
-        echo "    Try:  sudo aq login use ${wanted}" >&2
-        return 1
-    fi
-
-    if [ "${wanted}" = "greetd" ] && [ ! -x "${AQ_GREETER_LAUNCHER}" ]; then
-        echo "aq: ${AQ_GREETER_LAUNCHER} is not on this computer, so there is" >&2
-        echo "    no AquariusOS login screen to switch to. Nothing changed." >&2
-        return 1
-    fi
-
-    # Off first, then on. The other order would leave both switched on for a
-    # moment, and if the second command failed it would leave both switched on
-    # for good — which is the black-screen case.
-    systemctl disable "${turn_off}.service" > /dev/null 2>&1 || true
-    if ! systemctl enable "${wanted}.service"; then
-        echo "aq: could not switch ${wanted} on. Putting ${turn_off} back." >&2
-        systemctl enable "${turn_off}.service" > /dev/null 2>&1 || true
-        return 1
-    fi
-
-    # ⚠️ ARM THE SAFETY NET. Switching TO greetd starts the first greetd boot on
-    # probation and clears any stale failure count, so the automatic switch-back
-    # (aquarius-greeter-watchdog) starts from a clean slate. Switching AWAY to
-    # gdm clears both — there is no greeter to watch any more.
-    install -d -m 0755 "${AQ_GREETER_STATE_DIR}" 2> /dev/null || true
-    if [ "${wanted}" = "greetd" ]; then
-        printf '0\n' > "${AQ_GREETER_FAILS}" 2> /dev/null || true
-        {
-            echo "Written by 'aq login use greetd'."
-            echo "The first greetd boot after switching is watched extra closely by"
-            echo "/usr/libexec/aquarius-greeter-watchdog. If the Aquarius greeter does"
-            echo "not draw a login screen on two greetd boots in a row, this computer"
-            echo "switches back to GDM by itself. This file is removed once the greeter"
-            echo "has drawn successfully once."
-        } > "${AQ_GREETER_PROBATION}" 2> /dev/null || true
+    if [ "${found}" -eq 0 ]; then
+        echo "  NONE. That is a fault in this image — the login screen would"
+        echo "  appear with nothing to log in to."
     else
-        rm -f "${AQ_GREETER_PROBATION}" "${AQ_GREETER_FAILS}" 2> /dev/null || true
-    fi
-
-    echo "Done. This computer will start with ${wanted} from now on."
-    echo
-    if [ "${wanted}" = "greetd" ]; then
-        echo "Restart to see it:  sudo systemctl reboot"
         echo
-        echo "WHAT TO EXPECT"
-        echo "  The Ice wallpaper, a clock, and a card with your name and a"
-        echo "  password box. Enter signs in. The pill underneath says which"
-        echo "  desktop is about to start; the left and right arrow keys change"
-        echo "  it, so GNOME is one keypress away."
-        echo
-        echo "IF IT MISBEHAVES"
-        echo "  There are two nets under you, and you should not have to touch"
-        echo "  either:"
-        echo "    1. If the greeter cannot START, it falls back to a plain text"
-        echo "       login screen on its own rather than leaving you stuck."
-        echo "    2. If it starts but never DRAWS — a black or empty screen, or a"
-        echo "       small Terminal / Reconfigure / Exit menu and nothing else —"
-        echo "       this computer switches itself back to GDM and restarts after"
-        echo "       two such boots in a row."
-        echo
-        echo "  To switch back by hand, from the text login or Ctrl+Alt+F3:"
-        echo "      sudo aq login use gdm"
-        echo "      sudo systemctl reboot"
-    else
-        echo "Restart to see it:  sudo systemctl reboot"
+        echo "To pick one: click your name at the login screen, then the small"
+        echo "button at the bottom-right of the password box. It remembers."
     fi
 }
+
+# -----------------------------------------------------------------------------
+# ⚠️ `aq login use` IS GONE — 2026-09-15
+# -----------------------------------------------------------------------------
+# Three functions used to live here: login_use_greetd_warning, login_use_usage
+# and login_use. They switched this computer between GDM and our own
+# experimental greeter (greetd + the Aquarius Shell), with a warning, a
+# confirmation, and an automatic safety net that put GDM back if the greeter
+# failed to draw twice in a row.
+#
+# All of it went with the Aquarius Session
+# (../docs/decision-2026-09-15-two-desktops.md). greetd is not in the image, the
+# greeter is not in the image, and a command that can only ever fail is worse
+# than no command: it reads as a feature and behaves as a bug.
+#
+# The command is REMOVED rather than kept-and-refusing, on purpose. There is
+# nothing to refuse — a person typing it wanted a login screen that no longer
+# exists, and `aq login --help` now tells them the thing they actually wanted
+# (both desktops are at the login screen already).
+#
+# ⚠️ ONE MACHINE MIGHT STILL BE SET TO greetd: one that ran the old command
+# before this image. `aq login status` detects exactly that and prints the three
+# commands that fix it.
 
 login() {
     case "${1:-}" in
         "" | -h | --help | help) login_usage ;;
         status) login_status ;;
         use)
-            shift
-            login_use "$@"
+            # Retired 2026-09-15. Say what happened and what to do instead,
+            # rather than "I do not understand that".
+            echo "aq: 'aq login use' is gone." >&2
+            echo "    It switched between GDM and an experimental AquariusOS" >&2
+            echo "    login screen that was retired on 15 September 2026." >&2
+            echo "    GDM is the login screen now, and it offers you BOTH" >&2
+            echo "    desktops: click your name, then the small button at the" >&2
+            echo "    bottom-right of the password box." >&2
+            echo "    'aq login status' lists what it can offer." >&2
+            return 1
             ;;
         scale)
             shift
@@ -2443,7 +2282,7 @@ login() {
             ;;
         *)
             echo "aq: '${1}' is not something 'aq login' knows how to do." >&2
-            echo "    It understands: status, use, scale." >&2
+            echo "    It understands: status, scale." >&2
             return 1
             ;;
     esac

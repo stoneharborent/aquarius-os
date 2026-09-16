@@ -880,72 +880,36 @@ aq_file_has /usr/bin/aq 'AQ_RESOLVE_ENTRY=/usr/libexec/aquarius-resolve-entry' \
     "'aq resolve status' can report the entry's name, icon and window class"
 
 # ------------------------------------------------------------------------------
-# And the window fits the screen — the labwc rule
+# ⚠️ RETIRED 2026-09-15 — "and the window fits the screen"
 # ------------------------------------------------------------------------------
-# ⚠️ THE FAULT THIS ENDS, from docs/restart/resolve.md §"The window is bigger
-# than the screen": Resolve sizes its own window and on a 4K display sometimes
-# opened one whose edges, close button included, were off the screen.
+# A check used to live here that read /usr/share/aquarius/labwc/rc.xml as XML
+# and proved two things about the Aquarius Session: that it carried a window
+# rule naming Resolve which ran FitToOutput (and did NOT maximise), and that
+# new windows opened centred. It existed because on a 4K display Resolve
+# sometimes sized its own window so that its edges — close button included —
+# were off the screen. See docs/restart/resolve.md, "The window is bigger than
+# the screen".
 #
-# The fix is a window rule in the Aquarius Desktop's labwc configuration, and it
-# is the ONLY rule in that file that names an application. It runs FitToOutput
-# and NOTHING ELSE. It used to run Maximize as well (008, 2026-09-08), and the
-# bench the same day showed why that was wrong: a maximised labwc window is
-# pinned until somebody un-maximises it ("the window cannot be moved or
-# resized"), and the rule caught Resolve's splash and parked it top-left.
-# Royce's call: a normal window. Centring is not a rule action at all —
-# labwc 0.20.2 has no Center action — it is the global <placement> policy,
-# which is checked here too because Resolve is the window it was added for. It is checked here,
-# in the Resolve step, rather than in the desktop step, because it is a Resolve
-# feature that happens to be written in a desktop file — somebody tidying
-# rc.xml would have no reason to know it mattered.
+# The Aquarius Session is retired (../docs/decision-2026-09-15-two-desktops.md)
+# and labwc is no longer in the image, so there is no rc.xml to read.
 #
-# READ AS XML, not grepped for. A reworded comment, a different indentation or a
-# line break in a different place must not be able to make this pass or fail.
-# The same rule must be in the aquarius-shell repository's copy of rc.xml;
-# build_files/check-labwc-drift.sh is what proves that, in CI.
-say "DaVinci Resolve — the window fits the screen"
-AQ_RC=/usr/share/aquarius/labwc/rc.xml
-if [ ! -r "${AQ_RC}" ]; then
-    bad "${AQ_RC} is missing — the Aquarius Desktop would have no window rules at all"
-else
-    if AQ_RULE="$(python3 - "${AQ_RC}" << 'PY'
-import sys
-import xml.etree.ElementTree as ET
-
-root = ET.parse(sys.argv[1]).getroot()
-for rule in root.findall("./windowRules/windowRule"):
-    if (rule.get("identifier") or "").lower() == "resolve":
-        print(",".join((action.get("name") or "") for action in rule.findall("action")))
-        sys.exit(0)
-sys.exit(1)
-PY
-    )"; then
-        echo "  The rule for Resolve runs: ${AQ_RULE}"
-        case ",${AQ_RULE}," in
-            *,FitToOutput,*) ok "a window bigger than the screen is shrunk to the screen (FitToOutput)" ;;
-            *) bad "the Resolve window rule has no FitToOutput — a window larger than the screen would stay larger than the screen" ;;
-        esac
-        case ",${AQ_RULE}," in
-            *,Maximize,*) bad "the Resolve window rule maximises — that pins the window and parks the splash top-left (bench 2026-09-08); Royce asked for a normal window" ;;
-            *) ok "and it does NOT maximise, so the window can be moved and resized" ;;
-        esac
-    else
-        bad "rc.xml has no <windowRule identifier=\"resolve\"> — Resolve could open with its edges off a 4K screen again"
-    fi
-    AQ_PLACEMENT="$(python3 - "${AQ_RC}" << 'PY'
-import sys
-import xml.etree.ElementTree as ET
-root = ET.parse(sys.argv[1]).getroot()
-node = root.find("./placement/policy")
-print((node.text or "").strip() if node is not None else "")
-PY
-    )"
-    if [ "${AQ_PLACEMENT}" = "center" ]; then
-        ok "new windows open in the middle of the screen (<placement><policy>center) — Resolve and its splash included"
-    else
-        bad "rc.xml's <placement><policy> is '${AQ_PLACEMENT:-unset}', not 'center' — Resolve's splash would open top-left again"
-    fi
-fi
+# ⚠️ THE UNDERLYING FAULT IS NOT FIXED, IT IS UNTESTED ON THE NEW DESKTOPS, and
+# that is worth knowing rather than forgetting:
+#
+#   GNOME (Mutter)  has no per-application window rules at all. If Resolve
+#                   opens oversized on Royce's 55" 4K screen, there is nothing
+#                   in GNOME to correct it — the honest answer would be an
+#                   extension, or Resolve's own window memory (which
+#                   aquarius-resolve-settings already writes).
+#   KDE (KWin)      HAS per-application window rules, and they are stronger
+#                   than labwc's: a KWin rule can force size, position and
+#                   "fit to screen" for a window class. Shipping one as a
+#                   /usr/share/kwin file is a real option.
+#
+# Neither is done here, deliberately: this change is "swap the desktop", not
+# "rebuild the features on it". It is logged as a follow-up in the decision
+# record, and the bench is where it gets answered — open Resolve on the 4K
+# screen on each desktop and see whether it misbehaves at all.
 
 # ------------------------------------------------------------------------------
 # Your drives are in the same places inside

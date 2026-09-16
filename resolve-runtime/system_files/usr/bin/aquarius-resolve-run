@@ -29,7 +29,7 @@ set -uo pipefail
 export QT_QPA_PLATFORM=xcb
 
 # Qt also tries to load a "platform theme" plugin to match the desktop it thinks
-# it is on. The desktop outside is GNOME or the Aquarius Desktop; the plugin for
+# it is on. The desktop outside is GNOME or KDE Plasma; the plugin for
 # either of those is not installed in here, and Qt's complaint about it looks
 # alarming and means nothing. Emptying these stops it looking.
 #

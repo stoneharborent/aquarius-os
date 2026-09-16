@@ -2,7 +2,8 @@
 """Open the real Installer on an invisible desktop, without installing anything.
 
 Run with python3 tests/test-installer-window.py, or append / to test the
-installed image. Requires labwc, GTK 4, libadwaita and dbus-run-session.
+installed image. Requires GTK 4, libadwaita, dbus-run-session and a compositor
+to open onto — tests/aquarius_headless.py picks whichever one this image has.
 The sorter tests cannot catch widget errors: this constructs and maps all four
 pages and exercises progress and completion with the real GTK objects.
 """
@@ -16,6 +17,9 @@ import sys
 import tempfile
 import time
 from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import aquarius_headless as headless  # noqa: E402
 
 
 def check_window(root):
@@ -236,8 +240,10 @@ def main(check=check_window):
         work = Path(temporary)
         runtime = work / "runtime"
         runtime.mkdir(mode=0o700)
-        config = work / "labwc"
+        config = work / "compositor"
         config.mkdir()
+        # labwc, if it is the one that gets used on somebody's own machine,
+        # wants these two files to exist. The others ignore them.
         (config / "rc.xml").write_text("<labwc_config/>\n")
         (config / "autostart").write_text("")
         # No desktop service activation in this private test bus: starting a
@@ -257,27 +263,16 @@ def main(check=check_window):
         env.pop("WAYLAND_DISPLAY", None)
         env.pop("DISPLAY", None)
         with (work / "compositor.log").open("w+") as log:
-            compositor = subprocess.Popen(["labwc", "-C", str(config)], env=env,
-                                          stdout=log, stderr=log)
+            compositor = headless.start(runtime, config, log, env)
+            print("Invisible desktop: %s" % compositor.name)
             try:
-                deadline = time.monotonic() + 10
-                sockets = []
-                while time.monotonic() < deadline and compositor.poll() is None:
-                    sockets = [p for p in runtime.glob("wayland-*") if p.is_socket()]
-                    if sockets:
-                        break
-                    time.sleep(0.05)
-                if not sockets:
-                    log.seek(0)
-                    raise RuntimeError("Invisible desktop failed to start:\n" + log.read())
-                env["WAYLAND_DISPLAY"] = sockets[0].name
+                env["WAYLAND_DISPLAY"] = compositor.wayland_display
                 subprocess.run(["dbus-run-session", "--config-file", str(bus_config),
                                 "--", sys.executable,
                                 str(Path(sys.argv[0]).resolve()), "--worker", str(root)],
-                               env=env, check=True, timeout=30)
+                               env=env, check=True, timeout=60)
             finally:
-                compositor.terminate()
-                compositor.wait(timeout=5)
+                compositor.stop()
 
 
 if __name__ == "__main__":

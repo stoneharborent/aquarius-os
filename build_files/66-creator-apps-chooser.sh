@@ -62,7 +62,6 @@ CHOOSER=/usr/libexec/aquarius-creator-apps
 HELPER=/usr/libexec/aquarius-creator-apps-install
 APP_ENTRY=/usr/share/applications/aquarius-creator-apps.desktop
 OLD_AUTOSTART=/etc/xdg/autostart/aquarius-creator-apps-firstrun.desktop
-LABWC_AUTOSTART=/usr/share/aquarius/labwc/autostart
 FIXTURE=/ctx/tests/creator-apps-catalog.fixture
 
 # ==============================================================================
@@ -218,10 +217,13 @@ else
     ok "it no longer picks one app to open on the person's behalf"
 fi
 # The two desktops AquariusOS ships, and the way out if neither answers.
-aq_file_has "${CHOOSER}" '"qs", "ipc", "call", "search", "toggle"' \
-    "in the Aquarius Session it opens the search palette (the Super+Space one)"
+# (Until 2026-09-15 the first of these was the Aquarius Session's own search
+# palette, `qs ipc call search toggle`. That desktop was retired and Plasma
+# took its place — see ../docs/decision-2026-09-15-two-desktops.md.)
 aq_file_has "${CHOOSER}" '"ShowApplications"' \
     "in GNOME it asks GNOME Shell for the app grid"
+aq_file_has "${CHOOSER}" '"org.kde.krunner"' \
+    "in KDE Plasma it opens KRunner, which lists applications"
 # Again the call and not the name: "Eval" in quotes is a D-Bus method being
 # asked for; Eval in a sentence is the comment saying why we do not ask for it.
 if grep -q '"Eval"' "${CHOOSER}"; then
@@ -276,11 +278,12 @@ if [ -e "${OLD_AUTOSTART}" ]; then
 else
     ok "the old first-login entry for this window is gone"
 fi
-if grep -q 'aquarius-creator-apps --first-run' "${LABWC_AUTOSTART}" 2> /dev/null; then
-    bad "the Aquarius session's autostart still opens this window directly at login — the welcome should be what opens"
-else
-    ok "the Aquarius session's autostart does not open this window directly either"
-fi
+# ⚠️ THERE USED TO BE A SECOND PLACE TO CHECK HERE, AND THAT IS THE GOOD NEWS.
+# The Aquarius Session did not read /etc/xdg/autostart at all — labwc reads
+# exactly one file of its own — so every login-time fact in this operating
+# system had to be written down twice and checked twice. GNOME and KDE Plasma
+# BOTH read /etc/xdg/autostart, so from 2026-09-15 there is one file, one
+# check, and nothing that can drift.
 
 # ==============================================================================
 # 4b. ...but it knows how to BE the welcome's second step

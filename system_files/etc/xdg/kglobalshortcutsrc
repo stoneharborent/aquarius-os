@@ -1,0 +1,76 @@
+# =============================================================================
+# kglobalshortcutsrc — the Mac shortcuts that have to reach KDE Plasma itself
+# =============================================================================
+# PLAIN ENGLISH
+#
+# AquariusOS remaps the keyboard so that Copy is Command-C (Aquarius Keys —
+# docs/restart/aquarius-keys.md). That remap is deliberately BLIND to three key
+# combinations, because they do not belong to the app you are typing in: they
+# belong to the desktop.
+#
+#     Command-Tab       switch between apps
+#     Command-`         switch between windows of the same app
+#     Command-Space     the search box
+#
+# After the remap, the key beside the space bar IS the Super key, so those
+# arrive at the desktop as Super-Tab, Super-` and Super-Space.
+#
+# GNOME already listens for Super-Tab and Super-` out of the box. KDE Plasma
+# does NOT: KWin's factory shortcuts are Alt-Tab and Alt-`, and Meta-Tab is
+# bound to nothing at all. Without this file, Command-Tab does nothing on the
+# Plasma half of AquariusOS while working perfectly on the GNOME half — the
+# exact shape of bug that only shows up on the desktop nobody tested that week.
+#
+# So this file ADDS the Super versions to KWin. It does not take the Alt ones
+# away; both work, which matters for anyone who came from Windows.
+#
+# -----------------------------------------------------------------------------
+# HOW TO READ A LINE IN HERE
+# -----------------------------------------------------------------------------
+# Each line is:
+#
+#     What it does=<what fires it now>,<what fired it from the factory>,<name>
+#
+# and where several keys all fire it, they are separated by a TAB — which KDE
+# writes, and reads, as the two characters \t. They are two real characters in
+# this file, not an invisible one; do not "tidy" them into a space.
+#
+# -----------------------------------------------------------------------------
+# ⚠️ WHY IT IS IN /etc/xdg AND NOT /usr
+# -----------------------------------------------------------------------------
+# KDE reads its settings from a stack of folders and /etc/xdg is the one that
+# means "the defaults this machine ships". A person who changes any of these in
+# System Settings → Shortcuts writes their own copy into their home folder,
+# which sits ON TOP of this one, so their choice wins and survives every update.
+# That is the behaviour we want: this is a default, not a rule.
+#
+# It is the same reasoning as /etc/xdg/mimeapps.list, which is in /etc for
+# exactly the same reason.
+# =============================================================================
+
+[kwin]
+# Command-Tab switches apps, alongside Alt-Tab.
+Walk Through Windows=Alt+Tab\tMeta+Tab,Alt+Tab,Walk Through Windows
+Walk Through Windows (Reverse)=Alt+Shift+Tab\tMeta+Shift+Tab,Alt+Shift+Tab,Walk Through Windows (Reverse)
+
+# Command-` switches between the windows of the app you are already in — the
+# Mac's "cycle windows in this application".
+Walk Through Windows of Current Application=Alt+`\tMeta+`,Alt+`,Walk Through Windows of Current Application
+Walk Through Windows of Current Application (Reverse)=Alt+~\tMeta+~,Alt+~,Walk Through Windows of Current Application (Reverse)
+
+[ksmserver]
+# Control-Command-Q locks the screen — the Mac's lock shortcut. Plasma's own
+# Meta+L and Ctrl+Alt+L are kept, because Super+L is what a Linux user reaches
+# for and because GNOME uses it too, so the same key locks both desktops.
+#
+# ⚠️ COMMAND-L IS NOT THE LOCK AND MUST NOT BE. In Mac mode, Command-L is
+# remapped to Control-L — "jump to the address bar" — before the desktop ever
+# sees it, so a lock on Super+L alone would be unreachable while Mac keys are
+# on. That was a real one-day bug (2026-09-06). Control-Command-Q is not
+# remapped by anything, which is what makes it the reliable one.
+Lock Session=Meta+L\tCtrl+Alt+L\tCtrl+Meta+Q,Meta+L\tCtrl+Alt+L,Lock Session
+
+[org_kde_krunner_desktop]
+# Command-Space opens the search box — the Mac's Spotlight key. Plasma's own
+# Alt+Space and Alt+F2 are kept.
+_launch=Alt+Space\tAlt+F2\tMeta+Space,Alt+Space\tAlt+F2,KRunner

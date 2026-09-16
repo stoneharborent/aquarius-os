@@ -194,7 +194,7 @@ Whatever is in here is copied to the same place on the finished system. To add
 a file to the operating system, put it in the right place under `system_files/`
 — there is no list anywhere to update.
 
-The interesting ones are the three `zz1-aquarius-*.gschema.override` files,
+The interesting ones are the four `zz1-aquarius-*.gschema.override` files,
 which are GNOME's factory settings replaced with ours. Each one has a long
 plain-English header explaining what it does and, more usefully, what it
 deliberately does *not* do.

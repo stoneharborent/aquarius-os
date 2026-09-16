@@ -16,10 +16,14 @@
 #
 # So: the login screen, the portals, XWayland, Flatpak, fonts, containers.
 #
-# ONE THING THAT IS NOT HERE: greetd, the small modern login manager the
-# Aquarius Session will eventually use. That is Phase R2's job, and it arrives
-# with the session it is for. Until then GDM — GNOME's own — is the login
-# screen, and GDM is what the fallback desktop expects anyway.
+# ⚠️ ONE THING THAT IS NOT HERE, AND NEVER WILL BE NOW: greetd. It was going to
+# be the login manager for a branded AquariusOS login screen, drawn by the
+# Aquarius Session. Royce retired that desktop on 2026-09-15
+# (../docs/decision-2026-09-15-two-desktops.md) and greetd went with it.
+#
+# GDM — GNOME's own — is THE login screen, and it lists both desktops this image
+# ships. Choosing between GNOME and KDE Plasma happens there, per person, and
+# GDM remembers. See docs/restart/desktops.md.
 # ==============================================================================
 
 # shellcheck source=build_files/aq-lib.sh
@@ -81,7 +85,7 @@ aq_dnf install fprintd fprintd-pam
 # this, remember this password. Flatpak apps — which is most of what a creator
 # installs — cannot do any of those things without one.
 #
-# There are three packages and they are not alternatives:
+# There are three packages here and they are not alternatives:
 #
 #   xdg-desktop-portal         the doorway itself
 #   xdg-desktop-portal-gnome   the half that draws GNOME's own dialogs, and the
@@ -91,6 +95,16 @@ aq_dnf install fprintd fprintd-pam
 #
 # Leaving out the -gnome one is the classic cause of "OBS records a black
 # screen", because screen capture on Wayland goes through this and nothing else.
+#
+# A FOURTH, xdg-desktop-portal-kde, is installed by step 4b with the rest of KDE
+# Plasma. It is the same doorway with Plasma's dialogs behind it.
+#
+# ⚠️ NOTHING CHOOSES BETWEEN THEM BY HAND, AND THAT IS NEW. AquariusOS used to
+# ship a written rule (/usr/share/xdg-desktop-portal/aquarius-portals.conf)
+# saying which backend to use, because the Aquarius Session was a desktop
+# xdg-desktop-portal had never heard of. GNOME and KDE are two it has shipped
+# rules for since 2021: it reads XDG_CURRENT_DESKTOP and picks. Our file was
+# deleted on 2026-09-15 rather than ported.
 say "Portals (file pickers, screen sharing, printing)"
 aq_dnf install \
     xdg-desktop-portal \
@@ -269,7 +283,7 @@ aq_dnf install \
 #
 # en_US.UTF-8 is the default, not a decision about what language anyone must
 # use. Changing it is `localectl set-locale LANG=...`, or a personal
-# ~/.config/locale.conf, and /usr/bin/aquarius-session honours both.
+# ~/.config/locale.conf, and both desktops honour both.
 say "The language the machine speaks (en_US.UTF-8)"
 aq_dnf install glibc-langpack-en
 

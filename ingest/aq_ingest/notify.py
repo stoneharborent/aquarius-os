@@ -76,7 +76,7 @@ ICON = "aquarius-logo"
 OPEN_ACTION = "open"
 
 #: What that button says. "Show in Files" names the actual application it opens — Files is
-#: the file manager in both the Aquarius Session and the GNOME fallback — which is more
+#: the file manager on GNOME (Dolphin is the one on KDE Plasma) — which is more
 #: use to somebody new to Linux than the generic "Open folder" this used to say.
 OPEN_ACTION_LABEL = "Show in Files"
 

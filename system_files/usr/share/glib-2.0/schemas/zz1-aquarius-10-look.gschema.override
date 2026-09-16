@@ -152,7 +152,8 @@ monospace-font-name='JetBrains Mono 10'
 #                 desktop.sh. If they ever differ, the icons visibly change the
 #                 instant you log in.
 #
-#                 TODO (aquarius-shell, not this repo): when the shell switches
+#                 TODO (Workstream C, since the shell that was going to do this
+#                 was retired on 2026-09-15): when the desktop switches
 #                 the colour scheme to dark it should set this key to
 #                 'Aquarius-Midnight', and back to 'Aquarius-Ice' when it goes
 #                 light. Both themes are already in the image, so that is a
