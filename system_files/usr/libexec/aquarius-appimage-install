@@ -36,7 +36,7 @@
 #
 # This script installs into ONE PERSON'S HOME FOLDER and touches nothing else.
 # Asking for an administrator password to write inside your own home folder
-# would be theatre — and worse than theatre, because on the Aquarius Desktop
+# would be theatre — and worse than theatre, because on a desktop
 # that prompt is the one part of this feature that has actually failed on the
 # bench. So this runs as you, with no pkexec, no sudo, and nothing privileged.
 #

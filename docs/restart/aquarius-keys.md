@@ -1,5 +1,32 @@
 # Aquarius Keys — Mac-style keyboard shortcuts
 
+> ## ⚠️ TWO DESKTOPS NOW — 15 September 2026
+>
+> Everywhere below that says **"the Aquarius Session"** or **"the Aquarius
+> Desktop"**, read **"KDE Plasma"**. That desktop was retired on 2026-09-15 and
+> GNOME and KDE Plasma took its place — see [`desktops.md`](desktops.md).
+>
+> **Nothing about the keyboard itself changed.** The remapper, `mac.yaml`, the
+> Mac/Windows switch, `aq keys`, and the two builds of xremap (one for GNOME,
+> one for everything else) are all exactly as this page describes. Plasma uses
+> the `wlroots` build — the name is about the *protocol* it asks windows with,
+> which KWin speaks and GNOME does not.
+>
+> **What did change, and it is the good news:** the three keys that belong to
+> the desktop rather than to the app now work on BOTH.
+>
+> | Key | GNOME | KDE Plasma |
+> |---|---|---|
+> | **Command-Tab** / **Command-Shift-Tab** | out of the box | added by `/etc/xdg/kglobalshortcutsrc`, beside KWin's own Alt-Tab |
+> | **Command-\`** | out of the box | same |
+> | **Control-Command-Q** (lock) | added by `zz1-aquarius-40-keys.gschema.override` | added by `/etc/xdg/kglobalshortcutsrc` |
+> | **Command-Space** | **not bound** — GNOME already uses it for "switch keyboard layout", and taking that away is Royce's call, not a side effect | opens KRunner |
+>
+> ⚠️ **The lock is Control-Command-Q, not Command-L, and it has to be.** This
+> file remaps Command-L to Control-L ("jump to the address bar", which is what
+> it does on a Mac) before the desktop ever sees it — so a lock on Super+L would
+> silently never fire in Mac mode. `Super+L` still works in Windows mode.
+
 *Written 2026-09-03, for Phase R2's "Aquarius Keys" follow-up. Assumes you have
 never used Linux.*
 

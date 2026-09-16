@@ -370,7 +370,7 @@ def media_root():
     """/run/media/<this person> — the folder every drive appears in.
 
     AQ_MEDIA_ROOT overrides it, and means exactly what it means to the dock
-    (aquarius-shell, components/dock/DockDrives.qml): "the folder drives are
+    (retired 2026-09-15 with the Aquarius Session): "the folder drives are
     mounted into". Nothing on a real machine sets it; it is how a test can watch
     a folder it is allowed to create.
     """

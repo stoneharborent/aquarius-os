@@ -34,8 +34,13 @@
 # it differently, so xremap is compiled with ONE answer built in, chosen with a
 # "feature" flag:
 #
-#   wlroots   the answer labwc understands — this is the Aquarius Session
+#   wlroots   the wlr-foreign-toplevel-management protocol — which KDE Plasma's
+#             KWin implements, along with every other Wayland desktop except one
 #   gnome     the answer GNOME understands (through a small GNOME add-on)
+#
+#   (The name "wlroots" is about the PROTOCOL, not the library. KWin does not
+#   use wlroots and does speak that protocol. GNOME is the odd one out, which is
+#   why there have to be two builds at all.)
 #
 # We tried to have one program carry both. It cannot: xremap's own source says
 # so out loud. In src/client/mod.rs, the function that picks the answer ends

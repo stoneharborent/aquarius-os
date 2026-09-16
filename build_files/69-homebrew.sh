@@ -484,7 +484,7 @@ fi
 #                                      window, an SSH session, a `su -`.
 #   /usr/lib/environment.d/70-aquarius-brew.conf
 #                                      everything started from the DESKTOP —
-#                                      the Aquarius Session and GNOME both run
+#                                      GNOME and KDE Plasma both run
 #                                      their apps under systemd's user manager,
 #                                      which reads this folder at login.
 #

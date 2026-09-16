@@ -199,20 +199,27 @@ fi
 # "which window is focused?". Every desktop answers that differently, so there
 # are two copies of the remapper, each built to ask one desktop:
 #
-#   /usr/bin/xremap-wlroots   for the Aquarius Session (labwc)
+#   /usr/bin/xremap-wlroots   for KDE Plasma, and for any other Wayland desktop
 #   /usr/bin/xremap-gnome     for GNOME
 #
-# The desktop announces itself in XDG_CURRENT_DESKTOP. In the Aquarius Session
-# that is "aquarius-labwc:aquarius:wlroots"; on GNOME it is "GNOME".
+# The desktop announces itself in XDG_CURRENT_DESKTOP. On GNOME that is
+# "GNOME"; on KDE Plasma it is "KDE".
+#
+# ⚠️ WHY PLASMA USES THE "wlroots" BUILD, WHICH SOUNDS WRONG. wlroots is a
+# library KWin does not use. But the NAME of that build is about the QUESTION it
+# knows how to ask — the wlr-foreign-toplevel-management protocol, "tell me
+# about the windows" — and KWin implements that protocol, because it is what
+# every third-party taskbar and window switcher on Wayland speaks. GNOME is the
+# odd one out: it implements nothing of the sort, which is the entire reason
+# there are two builds of this program. (The retired Aquarius Session used this
+# build too, for the same reason.)
 #
 # ⚠️ AND SOMETIMES IT IS EMPTY. A systemd user service only sees the variables
 # that the desktop pushed into the user's systemd manager when it started, and
-# not every desktop remembers to push them. GNOME does. Both halves of the
-# Aquarius Session do now too: /usr/bin/aquarius-session pushes
-# XDG_CURRENT_DESKTOP before it starts labwc, and this image's labwc autostart
-# pushes WAYLAND_DISPLAY once labwc has created one. The aquarius-shell repo's
-# own copy of the session gained the same thing on 2026-09-03 (commit 8822088),
-# so a session run straight from a clone now behaves the same way.
+# not every desktop remembers to push them. GNOME does. KDE Plasma does too —
+# startplasma-wayland imports its environment into the user manager before it
+# starts anything. (This paragraph used to describe the extra work the Aquarius
+# Session needed to do the same thing; that desktop was retired on 2026-09-15.)
 #
 # The three questions below are kept anyway. This service has to work on a
 # desktop nobody has written yet, and an empty variable should degrade to a
@@ -236,10 +243,11 @@ case "${aq_desktop}" in
         #
         # The user manager remembers the last thing it was told, and it is not
         # emptied between logins within one boot. So an account that logged into
-        # GNOME earlier and is now in the Aquarius Session can still have the
-        # word GNOME sitting in its environment. Believing it would run the
-        # GNOME remapper on labwc, where it exits immediately and every shortcut
-        # silently stops working.
+        # GNOME earlier and is now in KDE Plasma can still have the word GNOME
+        # sitting in its environment. Believing it would run the GNOME remapper
+        # on KWin, where it exits immediately and every shortcut silently stops
+        # working. This matters far more now than it used to: AquariusOS ships
+        # two desktops and Royce is deliberately switching between them.
         #
         # GNOME Shell is the thing that would actually be there. Ask.
         if pgrep -x gnome-shell > /dev/null 2>&1; then
@@ -249,12 +257,13 @@ case "${aq_desktop}" in
             aq_binary="/usr/bin/xremap-wlroots"
             say "the environment says '${aq_desktop}', but GNOME Shell is not"
             say "running — so this is not GNOME. Using the wlroots build, which"
-            say "is what the Aquarius Session needs."
+            say "is what KDE Plasma needs."
         fi
         ;;
     ?*)
-        # Anything else that named itself: the Aquarius Session, labwc, niri,
-        # sway, wayfire. All of them speak the wlroots way of asking.
+        # Anything else that named itself: KDE Plasma, and any other Wayland
+        # desktop somebody installs later (sway, niri, wayfire). All of them
+        # speak the wlroots way of asking.
         aq_binary="/usr/bin/xremap-wlroots"
         say "desktop is '${aq_desktop}' — using the wlroots build."
         ;;
@@ -266,7 +275,7 @@ case "${aq_desktop}" in
         else
             aq_binary="/usr/bin/xremap-wlroots"
             say "nothing named the desktop and GNOME Shell is not running —"
-            say "using the wlroots build, which is what the Aquarius Session needs."
+            say "using the wlroots build, which is what KDE Plasma needs."
         fi
         ;;
 esac

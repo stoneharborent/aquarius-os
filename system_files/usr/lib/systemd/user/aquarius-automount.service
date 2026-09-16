@@ -12,7 +12,7 @@
 #
 # It runs in BOTH desktops. The link that switches it on lives at
 #   /usr/lib/systemd/user/graphical-session.target.wants/aquarius-automount.service
-# and graphical-session.target is reached by GNOME and by the Aquarius (labwc)
+# and graphical-session.target is reached by GNOME and by KDE Plasma
 # session alike, so one link covers both. The program itself is the same either
 # way — it talks to udisks2, which does not care which desktop is drawing.
 #

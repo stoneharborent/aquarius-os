@@ -2,6 +2,13 @@
 
 **A Linux desktop built for creators — and a good gaming machine too.**
 
+> **New, 15 September 2026: AquariusOS ships TWO desktops.** GNOME and KDE
+> Plasma, both on every machine, both listed at one login screen. We stopped
+> building a desktop of our own — the Aquarius Session is retired, archived, and
+> not deleted. What that means for a person using the machine:
+> [`docs/restart/desktops.md`](docs/restart/desktops.md). Why:
+> [`docs/decision-2026-09-15-two-desktops.md`](../docs/decision-2026-09-15-two-desktops.md).
+
 This repository is the *recipe* for an operating system. It is not the operating
 system itself: it is a short list of instructions that a robot on GitHub follows
 to build the operating system for us, automatically, every time we change

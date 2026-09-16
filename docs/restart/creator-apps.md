@@ -389,7 +389,7 @@ Both installers report on the same two channels: the human words go into
 > The image now installs `lxqt-policykit` and the session starts it at login
 > through `/usr/libexec/aquarius-polkit-agent`. The reasoning, the alternatives
 > considered, and the guard for the day the shell grows an agent of its own are
-> in [`aquarius-session.md`](aquarius-session.md#asking-for-your-password).
+> in [`aquarius-session.md`](history/aquarius-session.md#asking-for-your-password).
 >
 > The window also tells the two failures apart now: "you said no" and "nothing
 > was able to ask you" are different problems, and only the first is worth

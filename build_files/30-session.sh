@@ -16,10 +16,14 @@
 #
 # So: the login screen, the portals, XWayland, Flatpak, fonts, containers.
 #
-# ONE THING THAT IS NOT HERE: greetd, the small modern login manager the
-# Aquarius Session will eventually use. That is Phase R2's job, and it arrives
-# with the session it is for. Until then GDM — GNOME's own — is the login
-# screen, and GDM is what the fallback desktop expects anyway.
+# ⚠️ ONE THING THAT IS NOT HERE, AND NEVER WILL BE NOW: greetd. It was going to
+# be the login manager for a branded AquariusOS login screen, drawn by the
+# Aquarius Session. Royce retired that desktop on 2026-09-15
+# (../docs/decision-2026-09-15-two-desktops.md) and greetd went with it.
+#
+# GDM — GNOME's own — is THE login screen, and it lists both desktops this image
+# ships. Choosing between GNOME and KDE Plasma happens there, per person, and
+# GDM remembers. See docs/restart/desktops.md.
 # ==============================================================================
 
 # shellcheck source=build_files/aq-lib.sh
@@ -81,7 +85,7 @@ aq_dnf install fprintd fprintd-pam
 # this, remember this password. Flatpak apps — which is most of what a creator
 # installs — cannot do any of those things without one.
 #
-# There are three packages and they are not alternatives:
+# There are three packages here and they are not alternatives:
 #
 #   xdg-desktop-portal         the doorway itself
 #   xdg-desktop-portal-gnome   the half that draws GNOME's own dialogs, and the
@@ -91,6 +95,16 @@ aq_dnf install fprintd fprintd-pam
 #
 # Leaving out the -gnome one is the classic cause of "OBS records a black
 # screen", because screen capture on Wayland goes through this and nothing else.
+#
+# A FOURTH, xdg-desktop-portal-kde, is installed by step 4b with the rest of KDE
+# Plasma. It is the same doorway with Plasma's dialogs behind it.
+#
+# ⚠️ NOTHING CHOOSES BETWEEN THEM BY HAND, AND THAT IS NEW. AquariusOS used to
+# ship a written rule (/usr/share/xdg-desktop-portal/aquarius-portals.conf)
+# saying which backend to use, because the Aquarius Session was a desktop
+# xdg-desktop-portal had never heard of. GNOME and KDE are two it has shipped
+# rules for since 2021: it reads XDG_CURRENT_DESKTOP and picks. Our file was
+# deleted on 2026-09-15 rather than ported.
 say "Portals (file pickers, screen sharing, printing)"
 aq_dnf install \
     xdg-desktop-portal \
@@ -110,6 +124,41 @@ aq_dnf install \
 # It is not optional on a creator machine. Resolve is the reason.
 say "XWayland (for X11-only software, including DaVinci Resolve)"
 aq_dnf install xorg-x11-server-Xwayland
+
+# ------------------------------------------------------------------------------
+# Three small programs that AquariusOS's own features talk to a person through
+# ------------------------------------------------------------------------------
+# ⚠️ THESE MOVED HERE ON 2026-09-15 AND THE REASON MATTERS. They used to be
+# installed by 55-aquarius-session.sh, the step that built our own desktop. That
+# step is gone (the Aquarius Session was retired; see
+# ../docs/decision-2026-09-15-two-desktops.md), and these three are not about a
+# desktop at all — they belong to features that survive on BOTH GNOME and Plasma.
+# Leaving them in a deleted step would have taken working features down with it,
+# silently, because nothing in this repo asked for them by name anywhere else.
+#
+#   libnotify   supplies `notify-send`, the standard way any program on this
+#               machine puts a message in the corner of the screen. Both desktops
+#               show them. It is how a drive announces itself when it mounts
+#               (7f), how the inside-drive question is ASKED with buttons (7d-ii,
+#               which needs libnotify 0.8 or newer for `--action`), how a
+#               finished ZIP extraction reports, how Aquarius Installer says it
+#               is done, and how Resolve says there is an update.
+#   zenity      a plain dialog box from a shell script: a message, a question, a
+#               progress bar. The Resolve launcher and the app launcher use it to
+#               say something went wrong at a moment when there is no window of
+#               ours to say it in.
+#   wlr-randr   reads the monitors. /usr/libexec/aquarius-display-scale asks it
+#               first and falls back to GNOME's own monitors.xml when it gets no
+#               answer — which is what happens on GNOME and on Plasma, because
+#               neither Mutter nor KWin speaks the protocol it uses. It is kept
+#               because that fallback is a FALLBACK: a helper that cannot even
+#               ask is a different failure from one that asked and was refused,
+#               and the Resolve launcher reads its answer.
+say "The three small programs our own features talk through"
+aq_dnf install \
+    libnotify \
+    zenity \
+    wlr-randr
 
 # ------------------------------------------------------------------------------
 # Flatpak and Flathub
@@ -234,7 +283,7 @@ aq_dnf install \
 #
 # en_US.UTF-8 is the default, not a decision about what language anyone must
 # use. Changing it is `localectl set-locale LANG=...`, or a personal
-# ~/.config/locale.conf, and /usr/bin/aquarius-session honours both.
+# ~/.config/locale.conf, and both desktops honour both.
 say "The language the machine speaks (en_US.UTF-8)"
 aq_dnf install glibc-langpack-en
 
@@ -290,6 +339,9 @@ aq_installed \
     xdg-desktop-portal-gnome \
     xdg-desktop-portal-gtk \
     xorg-x11-server-Xwayland \
+    libnotify \
+    zenity \
+    wlr-randr \
     flatpak \
     rsms-inter-fonts \
     jetbrains-mono-fonts \

@@ -1,5 +1,26 @@
 # Desktop identity — the pointer, the icons and the sounds
 
+> ## ⚠️ TWO DESKTOPS NOW — 15 September 2026
+>
+> This page was written when AquariusOS had GNOME plus a desktop of our own. The
+> Aquarius Session was retired on 2026-09-15 and **KDE Plasma** took its place
+> beside GNOME — see [`desktops.md`](desktops.md).
+>
+> **Still true, unchanged:** the cursor theme, the icon themes, the sound theme,
+> the wallpaper and the light/dark pair are all in the image, and on GNOME they
+> are selected by the settings this page describes.
+>
+> **Not true any more:** anything here about the Aquarius Session's own bar,
+> dock, menus or `swaybg` wallpaper program. `/usr/libexec/aquarius-wallpaper`
+> is gone — GNOME swaps the light and dark pictures itself, from
+> `picture-uri` and `picture-uri-dark`, and Plasma has its own wallpaper
+> settings.
+>
+> **Open, and honest about it:** nothing yet selects `Aquarius-Midnight` when a
+> desktop goes dark, and Plasma does not read these GNOME settings at all.
+> Writing one set of design tokens that both desktops read is the next piece of
+> work, not this one.
+
 *Phase R5 polish. Written 2026-09-05.*
 *Updated 2026-09-06: the app icons are now ours, and so is the window frame.
 Everything else stands.*

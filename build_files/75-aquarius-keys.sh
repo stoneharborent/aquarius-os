@@ -227,15 +227,20 @@ aq_file_has "${KEYS_DIR}/mac.yaml" '^ *Super_L: Alt_L$' \
     "mac.yaml makes the Windows key Option"
 aq_file_has "${KEYS_DIR}/mac.yaml" 'ids:0x05ac' \
     "mac.yaml recognises Apple keyboards and leaves them alone"
-# The lock key is Ctrl+Cmd+Q (labwc's C-W-q). Cmd+L was the lock for one day,
+# The lock key is Ctrl+Cmd+Q on BOTH desktops. Cmd+L was the lock for one day,
 # 2026-09-06, and never fired: this file turns Cmd+L into Ctrl+L for the address
-# bar, and labwc never saw it. So the one rule about the lock key is that this
-# file must NOT touch it — a remap of Ctrl+Super+q here would kill the lock
-# again, silently. (xremap spells the chord either way round.)
+# bar, so Super+L never reaches the desktop while Mac keys are on. So the one
+# rule about the lock key is that this file must NOT touch it — a remap of
+# Ctrl+Super+q here would kill the lock again, silently, on both desktops.
+# (xremap spells the chord either way round.)
+#
+# The two halves that make Ctrl+Cmd+Q actually lock something are checked
+# further down: zz1-aquarius-40-keys.gschema.override for GNOME and
+# /etc/xdg/kglobalshortcutsrc for KDE Plasma.
 if grep -qE '^ *(C-Super-q|Super-C-q|C-Super-Q|Super-C-Q) *:' "${KEYS_DIR}/mac.yaml"; then
-    bad "mac.yaml remaps Ctrl+Cmd+Q — that is the lock key, and labwc would never see it"
+    bad "mac.yaml remaps Ctrl+Cmd+Q — that is the lock key, and neither desktop would ever see it"
 else
-    ok "mac.yaml leaves Ctrl+Cmd+Q alone, so the lock key reaches labwc"
+    ok "mac.yaml leaves Ctrl+Cmd+Q alone, so the lock key reaches the desktop"
 fi
 # Note the trailing `( |$)` on the next few: these lines have an explanatory
 # comment after them in mac.yaml, so anchoring at the end of the line would
@@ -273,7 +278,7 @@ fi
 
 # Command-Space, Command-Tab and Command-` must NOT be remapped: they are how
 # the desktop's own search and window switching are reached. A rule for any of
-# them would take the search palette away and nothing would say why.
+# them would take the search away and nothing would say why.
 say "Checking the desktop's own keys are left alone"
 for combo in 'Super-space' 'Super-Tab' 'Super-grave'; do
     if grep -Eq "^[[:space:]]+${combo}:" "${KEYS_DIR}/mac.yaml"; then
@@ -282,6 +287,64 @@ for combo in 'Super-space' 'Super-Tab' 'Super-grave'; do
         ok "${combo} is left for the desktop, as designed"
     fi
 done
+
+# ==============================================================================
+# 4b. ...and the desktop is actually listening for them — on BOTH desktops
+# ==============================================================================
+# ⚠️ THIS SECTION IS NEW ON 2026-09-15 AND IT IS THE HALF THAT USED TO BE
+# SOMEBODY ELSE'S JOB. Until that day, "the desktop answers Command-Tab" was a
+# fact about the Aquarius Session, written in a labwc file this repository
+# owned, and checked by the shell's own drift test. That desktop is retired
+# (../docs/decision-2026-09-15-two-desktops.md) and the same fact is now two
+# facts, one per desktop — which is exactly the sort of thing that goes quietly
+# missing on whichever one nobody used that week.
+#
+# GNOME answers Super-Tab and Super-` from the factory. It answers nothing for
+# the lock in Mac mode, which is what the gschema override fixes.
+# KWin answers Alt-Tab and Alt-` from the factory and nothing for Meta-Tab,
+# which is what the kglobalshortcutsrc adds — without removing the Alt ones.
+say "Both desktops are listening for the Mac keys"
+
+AQ_GNOME_KEYS=/usr/share/glib-2.0/schemas/zz1-aquarius-40-keys.gschema.override
+aq_file_has "${AQ_GNOME_KEYS}" "^screensaver=.*<Control><Super>q" \
+    "GNOME: Control-Command-Q locks the screen (the key that survives Mac mode)"
+aq_file_has "${AQ_GNOME_KEYS}" "^screensaver=.*<Super>l" \
+    "GNOME: and Super+L still locks it too, for anybody in Windows mode"
+# The setting has to be REAL, not just written down. A typo in a schema or a key
+# name makes glib-compile-schemas fail the whole image, which step 5 would have
+# caught — but a key that compiles and is simply never read would not be caught
+# anywhere, so ask gsettings what the finished image actually says.
+if aq_have gsettings; then
+    AQ_LOCK_KEYS="$(gsettings get org.gnome.settings-daemon.plugins.media-keys screensaver 2> /dev/null || echo "")"
+    echo "  GNOME's lock keys in this image: ${AQ_LOCK_KEYS:-(no answer)}"
+    case "${AQ_LOCK_KEYS}" in
+        *"<Control><Super>q"*) ok "GNOME really reports Control-Command-Q as a lock key" ;;
+        *) bad "GNOME reports its lock keys as '${AQ_LOCK_KEYS}' — our override did not take effect" ;;
+    esac
+fi
+
+AQ_KDE_KEYS=/etc/xdg/kglobalshortcutsrc
+if [ ! -r "${AQ_KDE_KEYS}" ]; then
+    bad "${AQ_KDE_KEYS} is missing — on KDE Plasma, Command-Tab would do nothing at all"
+else
+    aq_file_has "${AQ_KDE_KEYS}" '^Walk Through Windows=.*Meta\+Tab' \
+        "KDE: Command-Tab switches apps"
+    aq_file_has "${AQ_KDE_KEYS}" '^Walk Through Windows=Alt\+Tab' \
+        "KDE: and Alt-Tab still does too (it is listed first, so it is not replaced)"
+    aq_file_has "${AQ_KDE_KEYS}" '^Walk Through Windows of Current Application=.*Meta\+`' \
+        "KDE: Command-\` switches between one app's windows"
+    aq_file_has "${AQ_KDE_KEYS}" '^Lock Session=.*Ctrl\+Meta\+Q' \
+        "KDE: Control-Command-Q locks the screen"
+    aq_file_has "${AQ_KDE_KEYS}" '^_launch=.*Meta\+Space' \
+        "KDE: Command-Space opens the search box (KRunner)"
+    # KDE's format is "now,factory,name" and a missing field silently disables
+    # the line. Count the commas rather than trusting the eye.
+    if awk -F= '/^(Walk Through|Lock Session|_launch)/ { n=split($2, parts, ","); if (n != 3) { print "  FAIL " $1 " has " n " fields, not 3"; bad=1 } } END { exit bad }' "${AQ_KDE_KEYS}"; then
+        ok "every shortcut line has all three fields KDE expects"
+    else
+        bad "a shortcut line in ${AQ_KDE_KEYS} is malformed — KDE would ignore it in silence"
+    fi
+fi
 
 # ==============================================================================
 # 5. The service, and the fact that it is switched on

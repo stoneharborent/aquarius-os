@@ -102,8 +102,9 @@ PREV_LOG="${LOG_DIR}/${APP_ID}.previous.log"
 #
 # ⚠️ WHY kdialog IS STILL IN HERE WHEN THE IMAGE DOES NOT SHIP IT.
 # This file arrived from the earlier line of AquariusOS, which had a Qt
-# desktop. This one has two sessions — the Aquarius Desktop and GNOME — and
-# zenity is installed for both (build_files/55-aquarius-session.sh). The
+# desktop. This one has two — GNOME and KDE Plasma — and zenity is installed
+# for both, by build_files/30-session.sh (it moved there on 2026-09-15 when the
+# step that used to install it was deleted). The
 # kdialog branch costs one `command -v` that fails, and it means the file keeps
 # working unchanged if somebody installs kdialog, or if a future session wants
 # it. It is a fallback, not a dependency.

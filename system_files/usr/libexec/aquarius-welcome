@@ -175,7 +175,7 @@ TIPS = [
     (
         "computer-symbolic",
         "GNOME is one arrow key away at login",
-        "If the Aquarius Desktop ever gives you trouble, the login screen can "
+        "AquariusOS ships two desktops, GNOME and KDE Plasma. The login screen can "
         "start a plain GNOME desktop instead. Nothing is lost either way.",
     ),
 ]

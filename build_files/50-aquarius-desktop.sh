@@ -63,15 +63,21 @@
 # DIFFERENT colours, and GTK's CSS has no "only when dark" selector — a
 # stylesheet is loaded or it is not. So the file has to be rewritten on every
 # light/dark flip, which means it has to sit somewhere writable, and on this OS
-# /usr is read-only. /usr/share/aquarius/labwc/generate-theme writes it into
-# ~/.config/gtk-4.0/gtk.css and its gtk-3.0 twin, in BOTH schemes. That program
-# refuses to touch a gtk.css it did not write, so somebody's own GTK
-# customisation is left alone.
+# /usr is read-only.
 #
-# The colours come from the shell's theme/Ice.qml and theme/Midnight.qml, like
-# every other colour in this project. build_files/55-aquarius-session.sh
-# generates both schemes and reads the result back, so a rule that goes missing
-# fails the build.
+# ⚠️ THE PROGRAM THAT USED TO WRITE IT IS GONE (2026-09-15).
+# /usr/share/aquarius/labwc/generate-theme read the shell's theme/Ice.qml or
+# theme/Midnight.qml and wrote ~/.config/gtk-4.0/gtk.css out of it, in both
+# schemes, and 55-aquarius-session.sh read the result back. All three of those
+# went with the Aquarius Session
+# (../docs/decision-2026-09-15-two-desktops.md).
+#
+# What replaces it is each desktop's own machinery, which is better at this than
+# we were: GNOME's libadwaita already follows the accent colour and the
+# light/dark flip, and on KDE Plasma `kde-gtk-config` (step 4b) tells GTK apps
+# to use the Breeze theme and keeps them in step when Plasma flips. Writing an
+# Aquarius colour scheme that both of those read from our own tokens is
+# Workstream C, not this step.
 #
 # EXCEPTION 1 — THE APP ICONS.
 # This list used to say "no icon theme" as well, and now AquariusOS does ship
@@ -245,9 +251,12 @@ fi
 #         (see the posture note at the top of this file).
 #
 #         So GDM stays a clean, correctly-sized, light GNOME login screen with
-#         our logo on it — and the REAL branded login screen is a different
-#         thing entirely: our own greeter, drawn by the Aquarius Shell, shipped
-#         alongside greetd. That is Part B, in docs/restart/login.md.
+#         our logo on it — and, since 2026-09-15, that is the WHOLE story. There
+#         used to be a "Part B" here: our own branded greeter, drawn by the
+#         Aquarius Shell on top of greetd. It went with that shell. GDM is the
+#         one login screen, it lists both desktops, and it is the thing to brand
+#         if branding it is ever worth the treadmill. See
+#         docs/restart/login.md and docs/restart/desktops.md.
 #
 # THE SIZE PROBLEM, AND WHY WE STOPPED TRYING TO FIX IT HERE
 #   GDM had no idea the bench monitor runs at 125%, so it drew everything at
@@ -841,7 +850,7 @@ fi
 # ==============================================================================
 # 5. The GNOME defaults
 # ==============================================================================
-# The three .gschema.override files copied in at the top of this script are what
+# The four .gschema.override files copied in at the top of this script are what
 # make a brand-new account come up as Ice-light AquariusOS instead of stock
 # Fedora. Read the long header inside zz1-aquarius-10-look.gschema.override for
 # what an override file is and why it is only a default that a user always beats.

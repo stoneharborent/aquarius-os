@@ -255,6 +255,7 @@ on:
       #     aquarius-rfkill.service, switched on for the Aquarius session only
       #     (GNOME runs its own copy, and two would fight over one bus name),
       #     plus build_files/78-rfkill.sh and the read-back below.
+      #     (Both retired 2026-09-15 with the Aquarius Session.)
       #   * Super+Tab / Super+Shift+Tab were in the aquarius-shell repository's
       #     rc.xml and had never been copied into the image's own copy — the
       #     same drift that lost the right-click menu last pass.
@@ -312,7 +313,7 @@ on:
       # menu's Lock Screen row, dim/lock/screen-off at 5/10/15 minutes), and
       # this image's half of it: /etc/pam.d/aquarius-lock, the service that
       # locks the screen before the machine sleeps, wlopm for turning the
-      # monitor off, and build_files/57-lock-screen.sh, which reads every one of
+      # monitor off, and build_files/57-lock-screen.sh (retired 2026-09-15), which reads every one of
       # those back. AQUARIUS_SHELL_REF moves to afd26b9.
       #
       # ⚠️ The check worth watching in this run is the one that proves the two
@@ -397,35 +398,6 @@ jobs:
 
       - name: Check the Justfile is valid
         run: just check
-
-      # ------------------------------------------------------------------------
-      # Logging out has to leave the machine clean. This runs BEFORE the build
-      # because it takes two seconds and the build takes twenty minutes, and
-      # there is no reason to spend the twenty minutes to find out that the
-      # logout clean-up has a list wrong.
-      #
-      # The same test runs again INSIDE the image later, against the installed
-      # copies, which is the check that actually counts. This one is the fast
-      # warning. (Why it exists at all: the bench bug of 2026-09-04 — logging
-      # out of Aquarius to go to GNOME bounced off the login screen two or three
-      # times, because the session left its settings and its background programs
-      # behind. See docs/restart/aquarius-session.md.)
-      # ------------------------------------------------------------------------
-      - name: Check logging out leaves the machine clean
-        run: ./tests/test-session-teardown.sh
-
-      # ------------------------------------------------------------------------
-      # The login screen can only be given a size it can draw
-      # ------------------------------------------------------------------------
-      # ⚠️ THIS IS THE FASTEST WARNING FOR THE WORST FAILURE THIS PROJECT HAS
-      # HAD. 2026-09-05: the bench booted to a black screen with a mouse pointer
-      # and no login screen, because AquariusOS had copied a display arrangement
-      # asking for 125% to a login screen that drew nothing rather than round it.
-      # A machine nobody can log in to is not a bug you find by looking at a
-      # build log, so the rule is checked here, before anything is built, and
-      # again inside the finished image further down.
-      #
-      # The first fixture in this test is Royce's own monitor.
       - name: Check the login screen is only given a size it can draw
         run: ./tests/test-gdm-scale-sanitize.sh
 
@@ -445,129 +417,8 @@ jobs:
       # it is not.
       - name: Check the login-screen guard actually fires
         run: ./tests/test-gdm-guard.sh
-
-      # The other login-screen net: the one that catches OUR own greeter never
-      # drawing (the 2026-09-05 saga — greetd was switched on, its greeter never
-      # rendered, and the marker persisted across every reboot). This runs the
-      # watchdog against fake system commands, both branches: a greeter that
-      # comes up resets the counter and it never reverts; two failed greetd boots
-      # in a row switch the machine back to GDM.
-      - name: Check the greeter watchdog reverts to GDM when the greeter never draws
-        run: ./tests/test-greeter-watchdog.sh
-
-      # ------------------------------------------------------------------------
-      # The boot animation is actually seen, and always goes away again
-      # ------------------------------------------------------------------------
-      # ⚠️ THE BENCH FAULT OF 8 SEPTEMBER 2026, and Royce's directive with it:
-      # "I want the experience to be like booting up a Mac. No commands,
-      # terminals or text during boot." The first boot that reached our own
-      # login screen showed no animation at all — black, then three seconds of
-      # text console, then the login screen. Two causes, and these are the two
-      # tests for them.
-      #
-      # The first: the login screen was held back by a flat `sleep 3.5` that
-      # started a whole second after the animation did, so it was measuring the
-      # wrong moment. It now asks systemd when the animation really appeared.
-      # This runs that arithmetic against a stand-in clock — including the case
-      # where systemd has no answer, where "no answer" must never mean "do not
-      # wait at all".
       - name: Check the login screen waits the right amount for the boot animation
         run: ./tests/test-boot-hold.sh
-
-      # The second: our greetd.service now says Conflicts=plymouth-quit.service,
-      # which stops Fedora's "take the animation away" service running at all on
-      # a greetd boot. That is what lets the animation stay up until the login
-      # screen can appear over it — and it means exactly ONE program is now
-      # responsible for ever taking it down. If that program failed, the machine
-      # would sit on a still picture with no way in, which is the worst outcome
-      # this repository can produce. So it is tested against a stand-in plymouth
-      # that writes down every request, including the case where the login
-      # screen never draws at all.
-      - name: Check the boot animation is always handed over, and always goes away
-        run: ./tests/test-plymouth-release.sh
-
-      # ------------------------------------------------------------------------
-      # The wallpaper follows light and dark
-      # ------------------------------------------------------------------------
-      # ⚠️ THE BENCH FAULT OF 8 SEPTEMBER 2026, and the next thing on screen
-      # after the boot animation above. Royce flipped the machine to dark: the
-      # bar, the dock and the menus all went navy, and the picture behind them
-      # stayed the pale Ice "Pour". Both pictures ship; only one was ever shown,
-      # because the session's autostart file started `swaybg` ONCE at login,
-      # naming the Ice file, and nothing ever ran it again.
-      #
-      # /usr/libexec/aquarius-wallpaper is the fix, and it is the kind of program
-      # that has to be tested rather than read. It runs at every login and at
-      # every flip, BEFORE there is a desktop to show an error on, and three of
-      # the things it does are invisible when they go wrong:
-      #
-      #   * it must stop only the swaybg IT started — the lazy version of this
-      #     program is `pkill swaybg`, which works perfectly until the day
-      #     somebody is running a swaybg of their own for a second screen;
-      #   * it must REPLACE rather than pile up, or a machine grows one more
-      #     wallpaper per flip, all fighting over the same screen;
-      #   * it must never exit non-zero, because a missing picture is decoration
-      #     failing and decoration must not be able to take a login down.
-      #
-      # The test runs it for real against a stand-in swaybg that writes down
-      # every argument, and a stand-in portal answer, so none of that needs a
-      # screen. Before the build, because it takes a second; the build itself
-      # then reads the finished program back out of the image
-      # (build_files/55-aquarius-session.sh, "The wallpaper follows light and
-      # dark").
-      - name: Check the wallpaper follows the light and dark flip
-        run: ./tests/test-wallpaper.sh
-
-      # ------------------------------------------------------------------------
-      # The USB4 / Thunderbolt rescue actually retries, and leaves working
-      # hardware alone
-      # ------------------------------------------------------------------------
-      # ⚠️ THE BENCH FAULT OF 7 SEPTEMBER 2026. Royce's external drive stopped
-      # being discoverable. Nothing was wrong with the drive, the dock, the
-      # cable or the auto-mounting machinery: the chip that runs the fast USB-C
-      # sockets did not get its driver —
-      #
-      #     thunderbolt 0000:70:00.0: probe with driver thunderbolt failed with error -110
-      #
-      # — so everything plugged into those sockets was invisible to the whole
-      # computer. /usr/libexec/aquarius-usb4-rescue asks the kernel to try
-      # again.
-      #
-      # This runs it against a fake set of kernel files, on both sides: it must
-      # RETRY a chip with no driver (bind, reset, bind) and must LEAVE ALONE
-      # every chip that already has one — because resetting a working USB4
-      # controller would take out somebody's dock, screen and drive at once, in
-      # the name of fixing them. Before the build, because it takes a second.
-      - name: Check the USB4 rescue retries, and leaves working chips alone
-        run: ./tests/test-usb4-rescue.sh
-
-      # ------------------------------------------------------------------------
-      # A drive plugged in really does get mounted
-      # ------------------------------------------------------------------------
-      # ⚠️ THE BENCH FAULT OF 8 SEPTEMBER 2026. Royce's drives appeared in the
-      # Files app but never in the dock. /usr/libexec/aquarius-automount had
-      # crashed on EVERY mount since it shipped — one line built udisks2's
-      # argument the wrong way round and PyGObject raised `KeyError: 0` before
-      # anything reached D-Bus. The drives in /run/media had been mounted by
-      # Files, not by us.
-      #
-      # The build's only checks were `py_compile` and "can Python import gi".
-      # Both passed for five days: the broken line was valid Python, and nothing
-      # in CI ever called mount(). This does, against a fake bus, so the value is
-      # genuinely built by PyGObject and its type string can be read back.
-      #
-      # It needs PyGObject, which the finished image always has and a build
-      # runner may not. If it cannot be installed here the step says so and
-      # stands aside — the same test runs again INSIDE the finished image
-      # (build_files/76-automount.sh), where python3-gobject is guaranteed, and
-      # that run is the one that can fail the build. This one is the fast
-      # warning. Before the build, because it takes a second.
-      #
-      # ⚠️ SINCE 2026-09-09 THIS TEST ALSO COVERS MAC DRIVES (APFS), which are
-      # the one kind udisks2 cannot mount at all — the agent runs apfs-fuse
-      # itself, read-only, as the person. None of that can be exercised on a
-      # build machine (no Mac drive, no FUSE, no root), so the test drives it
-      # against three CAPTURED apfsutil listings kept beside it: an ordinary
       # external drive, a Mac's internal disk with its five volumes, and a
       # FileVault drive. What it proves is the part a person cannot check by
       # reading: the exact apfs-fuse command line (read-only, this person's uid
@@ -1428,6 +1279,11 @@ jobs:
             gnome-shell-extension-dash-to-dock gnome-shell-extension-appindicator \
             gnome-shell-extension-caffeine gnome-shell-extension-gsconnect \
             xdg-desktop-portal-gnome xorg-x11-server-Xwayland flatpak \
+            plasma-desktop plasma-workspace kwin plasma-systemsettings \
+            kscreen plasma-nm plasma-pa bluedevil powerdevil \
+            dolphin konsole spectacle gwenview okular \
+            xdg-desktop-portal-kde breeze-gtk kde-gtk-config breeze-icon-theme \
+            libnotify zenity wlr-randr \
             podman toolbox distrobox \
             langpacks-en langpacks-core-en \
             rsms-inter-fonts jetbrains-mono-fonts
@@ -1603,209 +1459,6 @@ jobs:
           podman run --rm --pull=never -i \
             --entrypoint /usr/bin/bash \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-pam.sh
-
-      # ------------------------------------------------------------------------
-      # THE LOCK SCREEN, READ BACK OUT OF THE FINISHED IMAGE
-      # ------------------------------------------------------------------------
-      # build_files/57-lock-screen.sh already checks all of this DURING the
-      # build. This asks the same questions of the finished image, for the one
-      # reason that matters here: the file that lets somebody back into their
-      # own computer lives in /etc, and /etc is the part of a bootc image that
-      # later steps, package installs and post-processing can still change. A
-      # thing that was right in the middle of the build is not automatically
-      # right at the end of it.
-      #
-      # ⚠️ WHY EACH OF THESE IS HERE
-      #
-      #   the pam.d file        without it nobody can unlock the machine, and
-      #                         the failure is silent until somebody tries.
-      #   what it says          `auth include login` is the whole of it. A file
-      #                         that survived but lost its line is the same
-      #                         fault wearing a disguise.
-      #   unix_chkpwd           the one privileged step in the whole chain, and
-      #                         it is Fedora's, not ours. Nothing of ours may be
-      #                         setuid; this one must be.
-      #   the QML               Super+L calls a target in a file. No file, no
-      #                         target, no lock.
-      #   the two names agree   the shell asks PAM for "aquarius-lock" and this
-      #                         image installs that name. A rename on one side
-      #                         alone locks somebody out of their computer.
-      #   the key binding       read out of the installed rc.xml, as XML, not as
-      #                         a string search.
-      #   the sleep service     a laptop lid closing has to lock the screen.
-      - name: Check the lock screen can actually let somebody back in
-        run: |
-          set -euo pipefail
-          cat > /tmp/verify-lock.sh <<'SCRIPT'
-          set -u
-          fails=0
-          ok()  { echo "  OK   $*"; }
-          bad() { echo "  FAIL $*"; fails=1; }
-
-          echo "== the rules that let the lock screen ask 'is this really you' =="
-          if [ -r /etc/pam.d/aquarius-lock ]; then
-            ok "/etc/pam.d/aquarius-lock is here"
-            echo "       $(stat -c '%A %U:%G' /etc/pam.d/aquarius-lock)"
-          else
-            bad "/etc/pam.d/aquarius-lock is MISSING — nobody could unlock this machine"
-          fi
-          if grep -qE '^auth[[:space:]]+include[[:space:]]+login$' /etc/pam.d/aquarius-lock 2>/dev/null; then
-            ok "it inherits this machine's ordinary login rules"
-          else
-            bad "/etc/pam.d/aquarius-lock no longer says 'auth include login'"
-          fi
-          if grep -qE '^[[:space:]]*(account|password|session)[[:space:]]' /etc/pam.d/aquarius-lock 2>/dev/null; then
-            bad "/etc/pam.d/aquarius-lock declares more than the auth question"
-          else
-            ok "it declares only the auth question"
-          fi
-          if [ -r /etc/pam.d/login ]; then
-            ok "/etc/pam.d/login is here for it to include"
-          else
-            bad "/etc/pam.d/login is missing, so 'include login' resolves to nothing"
-          fi
-
-          echo "== the one privileged step, and it is Fedora's =="
-          if [ -u /usr/bin/unix_chkpwd ]; then
-            ok "/usr/bin/unix_chkpwd is setuid — the only thing here allowed to read /etc/shadow"
-          else
-            bad "/usr/bin/unix_chkpwd is missing or not setuid — a correct password would be rejected"
-          fi
-          for f in /usr/libexec/aquarius-lock-on-sleep /usr/bin/qs /usr/bin/quickshell; do
-            if [ -u "${f}" ] || [ -g "${f}" ]; then
-              bad "${f} is setuid or setgid. Nothing AquariusOS ships in this path may be."
-            else
-              ok "${f} has no special powers"
-            fi
-          done
-
-          echo "== the lock screen's own files =="
-          if [ ! -s /usr/share/aquarius/shell/shell.qml ]; then
-            echo "  NOTE this image has no Aquarius Shell, so there is no lock screen to check."
-          else
-            for f in qmldir LockState.qml LockLayer.qml LockSurface.qml LockCard.qml \
-                     LockField.qml LockVeil.qml LockBlur.qml LockIdle.qml lock.qml; do
-              if [ -s "/usr/share/aquarius/shell/lock/${f}" ]; then ok "lock/${f}"
-              else bad "/usr/share/aquarius/shell/lock/${f} is missing"; fi
-            done
-
-            # THE CONTRACT BETWEEN TWO REPOSITORIES, IN ONE WORD.
-            if grep -q 'config: "aquarius-lock"' /usr/share/aquarius/shell/lock/LockState.qml; then
-              ok "the shell asks PAM for exactly the rules this image installs"
-            else
-              bad "the shell no longer asks for the 'aquarius-lock' rules. It and /etc/pam.d/aquarius-lock have to name the same thing or nobody gets in."
-            fi
-            if grep -q 'target: "lock"' /usr/share/aquarius/shell/lock/LockLayer.qml; then
-              ok "the shell answers to the IPC target Super+L calls"
-            else
-              bad "the shell no longer declares the IPC target \"lock\" — Super+L would do nothing"
-            fi
-
-            # THE PASSWORD IS NEVER CHECKED IN QML. Said here as well as in the
-            # shell's own tests, because this is the copy that ships.
-            if grep -rlE '(crypt|getspnam|/etc/shadow)' /usr/share/aquarius/shell/lock/ > /dev/null 2>&1; then
-              bad "something in the shipped lock/ looks like it checks a password itself"
-            else
-              ok "nothing in the shipped lock/ reads a password file"
-            fi
-
-            if [ -d /usr/lib64/qt6/qml/QtQuick/Effects ]; then
-              ok "QtQuick.Effects is here, so the veil gets its real blur"
-            else
-              bad "QtQuick.Effects is missing — the veil would fall back to the plain wallpaper"
-            fi
-          fi
-
-          echo "== Super+L =="
-          if python3 - /usr/share/aquarius/labwc/rc.xml <<'PY'
-          import sys, xml.etree.ElementTree as ET
-          for kb in ET.parse(sys.argv[1]).getroot().iter('keybind'):
-              if kb.get('key') != 'W-l':
-                  continue
-              for a in kb:
-                  if a.get('name') == 'Execute' and a.get('command') == 'qs ipc call lock lock':
-                      sys.exit(0)
-              sys.exit(1)
-          sys.exit(1)
-          PY
-          then
-            ok "Super+L runs 'qs ipc call lock lock'"
-          else
-            bad "/usr/share/aquarius/labwc/rc.xml does not bind Super+L to the lock screen"
-          fi
-
-          echo "== locking before the machine sleeps =="
-          if [ -r /usr/lib/systemd/system/aquarius-lock-on-sleep.service ]; then
-            ok "aquarius-lock-on-sleep.service is here"
-          else
-            bad "aquarius-lock-on-sleep.service is missing — a closed laptop lid would leave the desktop unlocked"
-          fi
-          for line in 'Before=sleep.target' 'WantedBy=sleep.target' 'Type=oneshot'; do
-            if grep -qxF "${line}" /usr/lib/systemd/system/aquarius-lock-on-sleep.service 2>/dev/null; then
-              ok "the service says ${line}"
-            else
-              bad "the service no longer says ${line}"
-            fi
-          done
-          if [ -L /usr/lib/systemd/system/sleep.target.wants/aquarius-lock-on-sleep.service ]; then
-            ok "it is switched on, from /usr, so an update cannot lose it"
-          else
-            bad "sleep.target.wants/aquarius-lock-on-sleep.service is missing — the service would never run"
-          fi
-          if [ -x /usr/libexec/aquarius-lock-on-sleep ]; then
-            ok "/usr/libexec/aquarius-lock-on-sleep is runnable"
-          else
-            bad "/usr/libexec/aquarius-lock-on-sleep is missing or not executable"
-          fi
-
-          echo "== turning the monitor off =="
-          if command -v wlopm > /dev/null 2>&1; then
-            ok "wlopm is on the path"
-          else
-            bad "wlopm is missing — the screen would never turn off after fifteen minutes"
-          fi
-
-          if [ "${fails}" -ne 0 ]; then
-            echo "::error::The lock screen is not complete in this image. Read the FAIL lines: some of them mean nobody could unlock the machine."
-            exit 1
-          fi
-          echo "All lock screen checks passed."
-          SCRIPT
-          podman run --rm --pull=never -i \
-            --entrypoint /usr/bin/bash \
-            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-lock.sh
-
-      # ------------------------------------------------------------------------
-      # THE FIRMWARE CHECK — added 2026-09-05, after the bench had no Wi-Fi
-      # ------------------------------------------------------------------------
-      # A Wi-Fi chip is a small computer with no program in it. Linux hands it
-      # one at boot out of /usr/lib/firmware. If the file for that exact chip is
-      # not there, the driver loads, finds nothing, and gives up — and GNOME
-      # then says "No Wi-Fi Adapter Found", which reads as broken hardware.
-      #
-      # Royce's bench reported exactly that on 5 September 2026, on a board
-      # whose radio is a MediaTek MT7925.
-      #
-      # ⚠️ READ THIS BEFORE BLAMING THE FIRMWARE AGAIN. The first build of this
-      # check proved the MediaTek firmware was ALREADY in the image: the Fedora
-      # bootc base carries thirteen vendor firmware packages as weak
-      # dependencies of `linux-firmware`, mt7xxx among them. So missing
-      # firmware was NOT the cause of that bench fault, and this step exists to
-      # keep it that way rather than to have fixed it.
-      #
-      # What it does do, in three parts:
-      #   1. `rpm -q` every firmware package, so the day a weak dependency
-      #      quietly stops arriving the build goes red instead of the machine.
-      #   2. Count the blobs actually on disk, because "the package is in and
-      #      the shelf is empty" looks identical from the package database.
-      #   3. Check the kernel DRIVERS as well. Firmware alone is useless, and a
-      #      missing driver produces the very same "No Wi-Fi Adapter Found".
-      #      This is the half that moves when 58-kernel-pin.sh swaps the
-      #      kernel, so it can only be checked here, on the finished image.
-      #
-      # Runs on BOTH images.
-      #
-      # Plain-language guide: docs/restart/hardware.md
       - name: Check the Wi-Fi, Bluetooth and graphics firmware is really in there
         run: |
           set -euo pipefail
@@ -1958,7 +1611,7 @@ jobs:
           echo "== our settings files =="
           ls -l "${SCHEMAS}"/zz1-aquarius-* || echo "(none!)"
 
-          for f in zz1-aquarius-10-look zz1-aquarius-20-shell zz1-aquarius-30-dash-to-dock; do
+          for f in zz1-aquarius-10-look zz1-aquarius-20-shell zz1-aquarius-30-dash-to-dock zz1-aquarius-40-keys; do
             if [ -r "${SCHEMAS}/${f}.gschema.override" ]; then ok "${f} is installed"
             else bad "${SCHEMAS}/${f}.gschema.override is missing"; fi
           done
@@ -2744,27 +2397,6 @@ jobs:
               set -e
               bash /tmp/t/tests/test-gdm-guard.sh /usr/libexec/aquarius-gdm-guard
             '
-
-      # The greeter watchdog, run against the copy actually installed in the
-      # finished image, exactly as the guard test above is. Same reason: the net
-      # that rescues a machine stuck behind our experimental greeter must be
-      # proven to fire in the thing that ships, not only in the repository.
-      - name: Check the greeter watchdog fires in the finished image
-        run: |
-          set -euo pipefail
-          podman run --rm --pull=never \
-            -v "${GITHUB_WORKSPACE}/tests/test-greeter-watchdog.sh:/tmp/t/tests/test-greeter-watchdog.sh:ro" \
-            --entrypoint /usr/bin/bash \
-            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" -c '
-              set -e
-              bash /tmp/t/tests/test-greeter-watchdog.sh /usr/libexec/aquarius-greeter-watchdog
-            '
-
-      # The USB4 rescue, run against the copy actually installed in the finished
-      # image, exactly as the two tests above are. Same reason: a program that
-      # is proved to work in the repository and arrives broken (or does not
-      # arrive at all) on Royce's machine has been proved nothing about. Same
-      # test file, given the installed path, so the two can never drift.
       - name: Check the USB4 rescue in the finished image
         run: |
           set -euo pipefail
@@ -2830,6 +2462,7 @@ jobs:
           set -euo pipefail
           podman run --rm --pull=never \
             -v "${GITHUB_WORKSPACE}/tests/test-installer-window.py:/tmp/test-installer-window.py:ro" \
+            -v "${GITHUB_WORKSPACE}/tests/aquarius_headless.py:/tmp/aquarius_headless.py:ro" \
             --entrypoint /usr/bin/python3 \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" /tmp/test-installer-window.py /
 
@@ -2838,6 +2471,7 @@ jobs:
           set -euo pipefail
           podman run --rm --pull=never \
             -v "${GITHUB_WORKSPACE}/tests/test-installer-window.py:/tmp/test-installer-window.py:ro" \
+            -v "${GITHUB_WORKSPACE}/tests/aquarius_headless.py:/tmp/aquarius_headless.py:ro" \
             -v "${GITHUB_WORKSPACE}/tests/test-resolve-done-window.py:/tmp/test-resolve-done-window.py:ro" \
             --entrypoint /usr/bin/python3 \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" /tmp/test-resolve-done-window.py /
@@ -2847,11 +2481,13 @@ jobs:
           set -euo pipefail
           podman run --rm --pull=never \
             -v "${GITHUB_WORKSPACE}/tests/test-installer-window.py:/tmp/test-installer-window.py:ro" \
+            -v "${GITHUB_WORKSPACE}/tests/aquarius_headless.py:/tmp/aquarius_headless.py:ro" \
             -v "${GITHUB_WORKSPACE}/tests/test-resolve-settings.py:/tmp/test-resolve-settings.py:ro" \
             --entrypoint /usr/bin/python3 \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" /tmp/test-resolve-settings.py /
           podman run --rm --pull=never \
             -v "${GITHUB_WORKSPACE}/tests/test-resolve-window.py:/tmp/test-resolve-window.py:ro" \
+            -v "${GITHUB_WORKSPACE}/tests/aquarius_headless.py:/tmp/aquarius_headless.py:ro" \
             --entrypoint /usr/bin/python3 \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" /tmp/test-resolve-window.py /
 
@@ -2894,304 +2530,6 @@ jobs:
               set -e
               /usr/libexec/aquarius-installer --dry-run
             '
-
-      # Part B of the same photograph: our OWN login screen, drawn by the
-      # Aquarius Shell on top of greetd. It ships fully configured and SWITCHED
-      # OFF — Royce turns it on with one command once he has seen it work — so
-      # this step checks two different things at once: that every piece of it is
-      # in the image, and that none of it has been switched on by accident.
-      #
-      # ⚠️ THE "SWITCHED OFF" HALF IS NOT PAPERWORK. Two login managers both
-      # enabled is a black screen with no way in, and a build that shipped that
-      # would be a build that bricks the bench.
-      - name: Check the AquariusOS login screen is ready and switched off
-        run: |
-          set -euo pipefail
-          cat > /tmp/verify-greeter.sh <<'SCRIPT'
-          set -u
-          fails=0
-          ok()  { echo "  OK   $*"; }
-          bad() { echo "  FAIL $*"; fails=1; }
-
-          echo "== exactly one login manager is switched on =="
-          if systemctl is-enabled gdm.service > /dev/null 2>&1; then
-            ok "GDM is switched on (this image still boots to GNOME's login screen)"
-          else
-            bad "GDM is not switched on — this image would boot to a text prompt"
-          fi
-          if systemctl is-enabled greetd.service > /dev/null 2>&1; then
-            bad "greetd is switched on TOO. Two login managers is a black screen with no way in."
-          else
-            ok "greetd is installed and switched off, as intended"
-          fi
-
-          echo "== greetd is configured, and configured for OUR greeter =="
-          if [ -r /etc/greetd/config.toml ]; then
-            ok "/etc/greetd/config.toml exists"
-          else
-            bad "/etc/greetd/config.toml is missing"
-          fi
-          # It has to PARSE. A broken TOML file here is a login screen that
-          # never appears, with the reason in a log nobody can reach because
-          # they cannot log in.
-          if python3 -c "import tomllib; tomllib.load(open('/etc/greetd/config.toml','rb'))" 2>/dev/null; then
-            ok "it is valid TOML"
-          else
-            bad "/etc/greetd/config.toml does not parse"
-          fi
-          if grep -q '^command = "/usr/libexec/aquarius-greeter"$' /etc/greetd/config.toml; then
-            ok "it runs the AquariusOS login screen"
-          else
-            bad "greetd is not pointed at /usr/libexec/aquarius-greeter"
-          fi
-          # Fedora's greetd package creates a user called "greetd". Almost every
-          # guide on the internet says "greeter", which is Arch's name for it,
-          # and the wrong name here is a login screen that never starts.
-          if grep -q '^user = "greetd"$' /etc/greetd/config.toml; then
-            ok "it runs as 'greetd' — the user Fedora's package actually creates"
-          else
-            bad "greetd's config names a user other than 'greetd'"
-          fi
-          if getent passwd greetd > /dev/null 2>&1; then
-            ok "that user exists in this image"
-          else
-            bad "there is no 'greetd' user — the login screen could not start as it"
-          fi
-
-          echo "== the login screen's own pieces =="
-          for f in /usr/libexec/aquarius-greeter \
-                   /usr/libexec/aquarius-greeter-shell \
-                   /usr/libexec/aquarius-greeter-info; do
-            if [ -x "$f" ]; then ok "$(basename "$f") is installed and executable"
-            else bad "$f is missing or not executable"; fi
-          done
-          for f in /usr/libexec/aquarius-greeter /usr/libexec/aquarius-greeter-shell; do
-            if bash -n "$f" 2>/dev/null; then ok "$(basename "$f") is valid shell"
-            else bad "$f does not parse as shell"; fi
-          done
-
-          # Run the account-and-desktop lister for real. There are no ordinary
-          # user accounts in a build container, so an empty people list is the
-          # correct answer — but there ARE two session files, and the Aquarius
-          # Desktop must be one of them and must be first, because the login
-          # screen shows the first one as the default.
-          echo "  ---- what it says about this image ----"
-          /usr/libexec/aquarius-greeter-info --desktops | sed 's/^/       /'
-          if python3 - <<'PY'
-          import json, subprocess, sys
-          done = subprocess.run(["/usr/libexec/aquarius-greeter-info"],
-                                capture_output=True, text=True)
-          if done.returncode != 0:
-              print("  FAIL it exited %d: %s" % (done.returncode, done.stderr.strip()))
-              sys.exit(1)
-          data = json.loads(done.stdout)
-          names = [d["id"] for d in data["desktops"]]
-          if "aquarius" not in names:
-              print("  FAIL the Aquarius Desktop is not in the list: %s" % names)
-              sys.exit(1)
-          if names[0] != "aquarius":
-              print("  FAIL the Aquarius Desktop is not first, so it would not be "
-                    "the default: %s" % names)
-              sys.exit(1)
-          if "gnome" not in " ".join(names).lower():
-              print("  FAIL GNOME is not offered as an alternative: %s" % names)
-              sys.exit(1)
-          print("  OK   it offers %s, Aquarius Desktop first" % names)
-          sys.exit(0)
-          PY
-          then :; else bad "the account-and-desktop lister did not answer the way the login screen needs"; fi
-
-          echo "== the login screen's window manager configuration =="
-          if [ -r /usr/share/aquarius/greeter-labwc/rc.xml ]; then
-            ok "/usr/share/aquarius/greeter-labwc/rc.xml is installed"
-          else
-            bad "/usr/share/aquarius/greeter-labwc/rc.xml is missing"
-          fi
-          if python3 -c "import xml.etree.ElementTree as e; e.parse('/usr/share/aquarius/greeter-labwc/rc.xml')" 2>/dev/null; then
-            ok "it is well-formed XML (labwc ignores a broken one in silence)"
-          else
-            bad "the login screen's rc.xml is not valid XML"
-          fi
-          # No default key bindings on a login screen: there is one window and
-          # it must not be closable by Alt+F4.
-          #
-          # ⚠️ ASKED BY PARSING THE XML, NOT BY grep. The first version of this
-          # check grepped for "<default />" and failed on 2026-09-04 against the
-          # COMMENT in that file explaining why there is no <default /> in it.
-          # A check that fails on its own explanation teaches people to delete
-          # the explanation, so this one asks the document instead of the text.
-          if python3 - <<'PY'
-          import sys, xml.etree.ElementTree as ET
-          tree = ET.parse('/usr/share/aquarius/greeter-labwc/rc.xml')
-          found = [e.tag for e in tree.iter() if e.tag == 'default']
-          if found:
-              print("  FAIL rc.xml has a <default /> element — labwc's own key")
-              print("       bindings would be loaded, and Alt+F4 would close the")
-              print("       login screen.")
-              sys.exit(1)
-          print("  OK   it loads no default key bindings")
-          sys.exit(0)
-          PY
-          then :; else bad "the login screen's window manager loads labwc's default key bindings"; fi
-
-          echo "== the login screen itself =="
-          # The ENTRY file lives at the shell root (beside shell.qml), not in
-          # greeter/, so Quickshell's config folder is the whole shell and the
-          # greeter's ../theme and ../components/bar imports resolve. Moved
-          # 2026-09-07; before that the login screen failed with "LogoMark is
-          # not a type" and the machine fell back to GDM.
-          if [ -s /usr/share/aquarius/shell/greeter.qml ]; then
-            ok "greeter.qml (the entry, at the shell root)"
-          else
-            bad "/usr/share/aquarius/shell/greeter.qml is missing — the login screen would not start"
-          fi
-          GREETER_DIR=/usr/share/aquarius/shell/greeter
-          for f in qmldir GreeterState.qml GreeterWindow.qml \
-                   GreeterCard.qml GreeterField.qml GreeterAvatar.qml \
-                   GreeterStepArrow.qml GreeterDesktopPill.qml; do
-            if [ -s "${GREETER_DIR}/${f}" ]; then ok "${f}"
-            else bad "${GREETER_DIR}/${f} is missing — the login screen would not draw"; fi
-          done
-          # The singleton has to be declared or the whole thing fails to load
-          # with a message that does not mention qmldir.
-          if grep -q '^singleton GreeterState ' "${GREETER_DIR}/qmldir"; then
-            ok "GreeterState is declared a singleton"
-          else
-            bad "${GREETER_DIR}/qmldir does not declare GreeterState"
-          fi
-          # And the path the QML calls has to be the path the image installed.
-          if grep -q '/usr/libexec/aquarius-greeter-info' "${GREETER_DIR}/GreeterState.qml"; then
-            ok "the login screen calls the helper at the path this image installs it to"
-          else
-            bad "the login screen and the image disagree about where the account lister lives"
-          fi
-
-          echo "== the Quickshell in this image can talk to greetd =="
-          # Without SERVICE_GREETD the greeter's very first import fails, the
-          # file refuses to load, and greetd shows a black screen. The build
-          # stage records which features were compiled in.
-          if grep -q 'SERVICE_GREETD=ON' /usr/share/aquarius/quickshell-build.txt; then
-            ok "Quickshell was built with the greetd service in it"
-          else
-            bad "Quickshell was built WITHOUT SERVICE_GREETD — the login screen could never load"
-            sed 's/^/       /' /usr/share/aquarius/quickshell-build.txt || true
-          fi
-
-          echo "== the switch, and the way back =="
-          if bash -n /usr/bin/aq 2>/dev/null; then ok "aq is valid shell"
-          else bad "/usr/bin/aq does not parse as shell"; fi
-          if /usr/bin/aq login --help > /dev/null 2>&1; then
-            ok "'aq login --help' works"
-          else
-            bad "'aq login' is not there — there would be no supported way to switch or switch back"
-          fi
-          echo "  ---- what 'aq login status' says about this image ----"
-          /usr/bin/aq login status 2>&1 | sed 's/^/       /' || true
-          if /usr/bin/aq login status 2>/dev/null | grep -qi "GNOME's login screen"; then
-            ok "it agrees that this image boots to GDM"
-          else
-            bad "'aq login status' does not report GDM as the login screen"
-          fi
-
-          echo "== the greeter safety net is present, armed, and warns before switching =="
-          # ⚠️ THE LOAD-BEARING RULE FROM 2026-09-05. `aq login use greetd`
-          # trapped the bench on a black screen for days; nothing can be allowed
-          # to get permanently stuck behind the experimental greeter again.
-          if [ -x /usr/libexec/aquarius-greeter-watchdog ]; then
-            ok "the greeter watchdog is installed and executable"
-          else
-            bad "/usr/libexec/aquarius-greeter-watchdog is missing — a broken greeter could trap the machine"
-          fi
-          if bash -n /usr/libexec/aquarius-greeter-watchdog 2>/dev/null; then
-            ok "the greeter watchdog is valid shell"
-          else
-            bad "the greeter watchdog does not parse as shell"
-          fi
-          if [ -r /usr/lib/systemd/system/aquarius-greeter-watchdog.service ]; then
-            ok "the greeter watchdog's service file is in the image"
-          else
-            bad "aquarius-greeter-watchdog.service is missing — the watchdog would never run"
-          fi
-          # It MUST be switched on — the very first greetd boot is the one that
-          # trapped the bench — and switched on the /usr way, never through /etc.
-          # ⚠️ Verified by the symlink in the image, NOT by `systemctl is-enabled`:
-          # this project enables its own units with a /usr/lib .wants symlink (see
-          # aq-lib.sh — /etc enablement is forbidden for our units), and
-          # `systemctl is-enabled` does not report a /usr-only .wants link as
-          # "enabled" inside the offline build container. The symlink IS the
-          # enablement, the same way aquarius-gdm-guard ships enabled.
-          if [ -L /usr/lib/systemd/system/graphical.target.wants/aquarius-greeter-watchdog.service ]; then
-            ok "the greeter watchdog is switched on the /usr way (a symlink in the image, not through /etc)"
-          else
-            bad "the greeter watchdog is not switched on through /usr — it would never fire (see aq-lib.sh)"
-          fi
-          # And nothing switched it on through /etc, which our units must never be.
-          if [ -e /etc/systemd/system/graphical.target.wants/aquarius-greeter-watchdog.service ]; then
-            bad "the greeter watchdog is switched on through /etc — our units must be switched on through /usr only (aq-lib.sh)"
-          else
-            ok "it is not switched on through /etc (correct — our units use /usr)"
-          fi
-          # No safety-net STATE may be baked into the image: the counter and the
-          # probation marker belong to the machine, written at runtime under /var.
-          if [ -e /var/lib/aquarius/greeter-fails ] || [ -e /var/lib/aquarius/greeter-probation ]; then
-            bad "a greeter safety-net state file is baked into the image — it belongs on the machine, under /var"
-          else
-            ok "no greeter safety-net state is baked into the image (correct)"
-          fi
-          # 'aq login use greetd --help' MUST carry the experimental warning, so a
-          # person reads it before they switch, not after they are black-screened.
-          if /usr/bin/aq login use greetd --help 2>&1 | grep -qi "EXPERIMENTAL"; then
-            ok "'aq login use greetd --help' warns that the greeter is experimental"
-          else
-            bad "'aq login use greetd --help' does not carry the experimental warning"
-          fi
-          if /usr/bin/aq login use greetd --help 2>&1 | grep -q "Terminal / Reconfigure / Exit"; then
-            ok "the help names the exact black-screen symptom (the labwc root menu)"
-          else
-            bad "the greetd help does not describe the black-screen symptom"
-          fi
-          # And the confirmation gate must actually refuse to switch without a
-          # confirmation. With no terminal and no --yes it must NOT switch — this
-          # runs it with stdin closed and checks it declined.
-          if /usr/bin/aq login use greetd < /dev/null > /tmp/greetd-noyes.txt 2>&1; then
-            bad "'aq login use greetd' switched with no confirmation and no --yes"
-            sed 's/^/       /' /tmp/greetd-noyes.txt
-          elif grep -q -- "--yes" /tmp/greetd-noyes.txt; then
-            ok "'aq login use greetd' refuses without confirmation and points at --yes"
-          else
-            bad "'aq login use greetd' failed but not for the confirmation reason"
-            sed 's/^/       /' /tmp/greetd-noyes.txt
-          fi
-          # ⚠️ AND IT MUST NOT HAVE ACTUALLY SWITCHED. The refuse path above runs
-          # as root in the container; prove greetd is still switched off after it.
-          if systemctl is-enabled greetd.service > /dev/null 2>&1; then
-            bad "the refused switch enabled greetd anyway — the confirmation gate is not gating"
-          else
-            ok "after the refused switch, greetd is still switched off"
-          fi
-
-          if [ "$fails" -ne 0 ]; then
-            echo "::error::The AquariusOS login screen is not correctly set up in this image."
-            exit 1
-          fi
-          echo "All AquariusOS login screen checks passed."
-          SCRIPT
-          podman run --rm --pull=never -i \
-            --entrypoint /usr/bin/bash \
-            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-greeter.sh
-
-      # ------------------------------------------------------------------------
-      # THE BOOT PATH
-      # ------------------------------------------------------------------------
-      # Everything a person sees before the login screen: the boot menu, the
-      # splash screen, and the text banner over a text login prompt.
-      #
-      # The splash is the one piece of branding in the whole image that CANNOT be
-      # checked by looking at files on disk alone. A copy of it is baked into the
-      # boot ramdisk (initramfs.img), and it is that copy the machine actually
-      # uses. Change the theme, forget to rebuild the ramdisk, and the machine
-      # shows Fedora's splash forever while every file on disk looks perfect.
-      # So the last part of this step opens the ramdisk and reads what is inside.
       - name: Check the boot screen says AquariusOS
         run: |
           set -euo pipefail
@@ -3673,6 +3011,193 @@ jobs:
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-remount.sh
 
       # ------------------------------------------------------------------------
+      # BOTH DESKTOPS, IN THE FINISHED IMAGE
+      # ------------------------------------------------------------------------
+      # ⚠️ WHAT THIS STEP USED TO BE. Until 15 September 2026 this was "Check
+      # the Aquarius Desktop is really in there": eight hundred lines that ran
+      # labwc and Quickshell inside the finished image and read what they said,
+      # because two of the three parts of our own desktop were COMPILED during
+      # the build and a compiled part that goes wrong does not announce itself.
+      # `qs --version` in particular was the exact thing that failed on the
+      # bench on 2026-09-02 and left an empty desktop.
+      #
+      # Royce retired that desktop (../docs/decision-2026-09-15-two-desktops.md).
+      # Nothing is compiled any more: GNOME and KDE Plasma are Fedora packages,
+      # read back by name in steps 4 and 4b of the build itself. So what is left
+      # to prove HERE, on the finished image, is the small set of facts those
+      # two steps cannot see from inside themselves — chiefly that the login
+      # screen really ends up offering both, and that neither desktop has
+      # smuggled in a second login screen or a second app store.
+      - name: Check both desktops are really in there
+        run: |
+          set -euo pipefail
+          cat > /tmp/verify-desktops.sh <<'SCRIPT'
+          set -u
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+
+          echo "== the login screen offers both desktops =="
+          # This is the whole feature in one check. GDM builds its session list
+          # from this folder and nothing else; a missing file here is a login
+          # screen that looks completely normal and silently has one desktop.
+          ls -l /usr/share/wayland-sessions/ || true
+          for s in gnome plasma; do
+            f="/usr/share/wayland-sessions/${s}.desktop"
+            if [ -r "${f}" ]; then
+              ok "${s}.desktop — $(sed -n 's/^Name=//p' "${f}" | head -n 1)"
+              # A session file names the command that starts it. If that command
+              # is not in the image, the entry is in the menu and picking it
+              # drops you straight back to the login screen with no message.
+              exec_line="$(sed -n 's/^Exec=//p' "${f}" | head -n 1)"
+              prog="${exec_line%% *}"
+              case "${prog}" in
+                /*) [ -x "${prog}" ] && ok "  and ${prog} is runnable" || bad "  but ${prog} is not runnable" ;;
+                *)  command -v "${prog}" > /dev/null 2>&1 \
+                      && ok "  and ${prog} is on the path" \
+                      || bad "  but ${prog} is not in this image" ;;
+              esac
+            else
+              bad "${f} is missing — the login screen would not offer that desktop"
+            fi
+          done
+
+          echo "== and it offers nothing that no longer exists =="
+          # The retired Aquarius Session. A leftover file would be a third
+          # choice that fails the moment somebody picks it.
+          if [ -e /usr/share/wayland-sessions/aquarius.desktop ]; then
+            bad "the retired Aquarius Session is still offered at the login screen"
+          else
+            ok "the retired Aquarius Session is not offered"
+          fi
+          for gone in /usr/bin/labwc /usr/bin/qs /usr/bin/quickshell \
+                      /usr/bin/aquarius-session /usr/share/aquarius/labwc \
+                      /usr/share/aquarius/shell /usr/libexec/aquarius-greeter; do
+            if [ -e "${gone}" ]; then
+              bad "${gone} is still in the image — the shell removal is incomplete"
+            else
+              ok "${gone} is gone"
+            fi
+          done
+
+          echo "== exactly one login screen, and it is GDM =="
+          if systemctl is-enabled gdm.service > /dev/null 2>&1; then
+            ok "GDM is switched on"
+          else
+            bad "GDM is NOT switched on — this machine would boot to a text prompt"
+          fi
+          for other in sddm greetd lightdm; do
+            if rpm -q "${other}" > /dev/null 2>&1; then
+              bad "${other} is installed. AquariusOS has one login screen; two fight over the display."
+            else
+              ok "${other} is not in the image"
+            fi
+          done
+          echo "       default target: $(systemctl get-default 2>/dev/null || echo unknown)"
+
+          echo "== one app store, not two =="
+          # 65-installer.sh hides the older chooser so there is one visible
+          # app-store icon. A KDE Discover would put a second one back.
+          if rpm -qa 'plasma-discover*' | grep -q .; then
+            bad "plasma-discover is installed — a second app store beside Aquarius Installer"
+            rpm -qa 'plasma-discover*' | sed 's/^/       /'
+          else
+            ok "no Discover — Aquarius Installer is the app store"
+          fi
+
+          echo "== one welcome, not two =="
+          if rpm -q plasma-welcome > /dev/null 2>&1; then
+            bad "plasma-welcome is installed — two welcome windows at a first login"
+          else
+            ok "no plasma-welcome — the AquariusOS welcome is the only one"
+          fi
+
+          echo "== the two things that start a desktop =="
+          for prog in gnome-shell startplasma-wayland kwin_wayland plasmashell mutter; do
+            if command -v "${prog}" > /dev/null 2>&1; then
+              ok "${prog}"
+            else
+              bad "${prog} is missing"
+            fi
+          done
+          echo "       GNOME: $(gnome-shell --version 2>&1 | head -n 1)"
+          echo "       Plasma: $(plasmashell --version 2>&1 | head -n 1)"
+
+          echo "== a portal backend for each =="
+          # Nothing chooses between them by hand any more: xdg-desktop-portal
+          # reads XDG_CURRENT_DESKTOP and picks. Both have to BE there.
+          for pkg in xdg-desktop-portal xdg-desktop-portal-gnome xdg-desktop-portal-gtk xdg-desktop-portal-kde; do
+            rpm -q "${pkg}" > /dev/null 2>&1 && ok "${pkg}" || bad "${pkg} is missing"
+          done
+          # And OUR written rule must be gone, or it would override the shipped
+          # ones and send Plasma to GNOME's file picker.
+          if [ -e /usr/share/xdg-desktop-portal/aquarius-portals.conf ]; then
+            bad "aquarius-portals.conf is still here — it would override each desktop's own portal rule"
+          else
+            ok "no hand-written portal rule of ours (each desktop uses its own)"
+          fi
+
+          echo "== a brand-new account is given a desktop to start in =="
+          T=/usr/share/accountsservice/user-templates/standard
+          if [ -r "${T}" ]; then
+            sed 's/^/       /' "${T}"
+            want="$(sed -n 's/^Session=//p' "${T}" | head -n 1)"
+            if [ -n "${want}" ] && [ -r "/usr/share/wayland-sessions/${want}.desktop" ]; then
+              ok "new accounts start in '${want}', and that session exists"
+            else
+              bad "the template names '${want:-nothing}', which is not a session in this image"
+            fi
+          else
+            bad "${T} is missing — a brand-new account would be sent to whatever GDM guessed"
+          fi
+
+          echo "== GTK apps have something to follow on Plasma =="
+          # Aquarius Installer, the Updater, the welcome and the chooser are all
+          # GTK 4. On Plasma they need a theme and something to select it.
+          for d in /usr/share/themes/Breeze /usr/share/themes/Breeze-Dark \
+                   /usr/share/icons/breeze /usr/share/icons/breeze-dark; do
+            [ -d "${d}" ] && ok "${d}" || bad "${d} is missing"
+          done
+          rpm -q kde-gtk-config > /dev/null 2>&1 \
+            && ok "kde-gtk-config is here — something actually selects that theme" \
+            || bad "kde-gtk-config is missing — the Breeze GTK theme would be on disk and never used"
+
+          echo "== the Mac keys reach BOTH desktops =="
+          # The bug shape this guards against: a key that works on the desktop
+          # you tested and does nothing on the other one.
+          if [ -r /etc/xdg/kglobalshortcutsrc ]; then
+            ok "/etc/xdg/kglobalshortcutsrc is here"
+            grep -E '^(Walk Through Windows=|Lock Session=|_launch=)' /etc/xdg/kglobalshortcutsrc | sed 's/^/       /'
+            grep -q 'Meta+Tab' /etc/xdg/kglobalshortcutsrc \
+              && ok "KDE: Command-Tab switches apps" \
+              || bad "KDE: Command-Tab is not bound — it would do nothing on Plasma"
+            grep -q 'Ctrl+Meta+Q' /etc/xdg/kglobalshortcutsrc \
+              && ok "KDE: Control-Command-Q locks the screen" \
+              || bad "KDE: Control-Command-Q is not bound"
+          else
+            bad "/etc/xdg/kglobalshortcutsrc is missing — Command-Tab would do nothing on Plasma"
+          fi
+          if command -v gsettings > /dev/null 2>&1; then
+            lock="$(gsettings get org.gnome.settings-daemon.plugins.media-keys screensaver 2>/dev/null || echo '')"
+            echo "       GNOME lock keys: ${lock}"
+            case "${lock}" in
+              *"<Control><Super>q"*) ok "GNOME: Control-Command-Q locks the screen" ;;
+              *) bad "GNOME: Control-Command-Q is not a lock key — and Cmd+L is remapped, so Mac mode would have no reachable lock" ;;
+            esac
+          fi
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::Something is wrong with one of the two desktops. Scroll up for the FAIL lines. See docs/restart/desktops.md."
+            exit 1
+          fi
+          echo "All two-desktop checks passed."
+          SCRIPT
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-desktops.sh
+
+
+      # ------------------------------------------------------------------------
       # THE "NO STRAY NAMES" AUDIT
       # ------------------------------------------------------------------------
       # Royce's instruction was "anything that still says Bazzite should say
@@ -3703,813 +3228,6 @@ jobs:
       #            AquariusOS really is Fedora underneath, and pretending
       #            otherwise breaks package installation and security scanning.
       #            The allowed places are listed, with a reason each, below.
-      # ------------------------------------------------------------------------
-      # The Aquarius Desktop
-      # ------------------------------------------------------------------------
-      # Phase R2 added a SECOND desktop beside GNOME: our own shell, on the
-      # labwc window manager. Two of its three parts are compiled during the
-      # build rather than installed from Fedora, and a compiled part that goes
-      # wrong does not announce itself — it produces an image that builds, that
-      # publishes, and that drops a person straight back to the login screen the
-      # moment they pick "Aquarius Desktop".
-      #
-      # So this step RUNS both programs inside the finished image and reads what
-      # they say. `qs --version` in particular is the exact thing that failed on
-      # the bench on 2026-09-02, when a Quickshell built against a different Qt
-      # died on its first instruction and left an empty desktop for eighteen
-      # minutes with nothing in any log.
-      - name: Check the Aquarius Desktop is really in there
-        run: |
-          set -euo pipefail
-
-          # The commit the image is supposed to have baked in, read from the one
-          # place versions live, and handed to the checker so it can compare.
-          # shellcheck disable=SC1091
-          EXPECT_SHELL_REF="$(grep -E '^AQUARIUS_SHELL_REF=' aquarius-os.env | cut -d'"' -f2)"
-          echo "expecting aquarius-shell ${EXPECT_SHELL_REF}"
-
-          cat > /tmp/verify-session.sh <<'SCRIPT'
-          set -u
-          fails=0
-          ok()  { echo "  OK   $*"; }
-          bad() { echo "  FAIL $*"; fails=1; }
-
-          echo "== the window manager =="
-          if [ -x /usr/bin/labwc ]; then ok "labwc is installed"; else bad "labwc is missing"; fi
-          LABWC_SAYS="$(/usr/bin/labwc --version 2>&1 || true)"
-          echo "       ${LABWC_SAYS}"
-          case "${LABWC_SAYS}" in
-            *0.20.*|*0.2[1-9].*|*0.[3-9][0-9].*)
-              ok "labwc is 0.20 or newer — the release with HDR and colour management" ;;
-            *)
-              bad "labwc reports '${LABWC_SAYS}'. Fedora 44's own 0.9.6 is NOT good enough: no HDR, no colour management, and that is the whole reason this project uses labwc." ;;
-          esac
-          # labwc lists its optional features in that same line with a + or a -.
-          # XWayland must never be a minus: it is what runs X11-only software,
-          # and on a creator machine that means DaVinci Resolve. This went wrong
-          # once (2026-09-03) and the build printed one warning and carried on.
-          case "${LABWC_SAYS}" in
-            *+xwayland*) ok "labwc can run X11 software (DaVinci Resolve needs this)" ;;
-            *) bad "labwc was built WITHOUT XWayland — DaVinci Resolve and every other X11-only program would not start. Its report: ${LABWC_SAYS}" ;;
-          esac
-
-          echo "== the shell runtime =="
-          # qs is a symlink to quickshell; -e follows it, -L does not.
-          if [ -e /usr/bin/qs ] || [ -L /usr/bin/qs ]; then ok "the qs command is installed"; else bad "qs is missing"; fi
-          QS_STATUS=0
-          # A build container has no runtime directory and no screen. Give Qt
-          # both, so that what this measures is the program and not the box.
-          export XDG_RUNTIME_DIR=/tmp/aq-verify-runtime
-          mkdir -p "${XDG_RUNTIME_DIR}"; chmod 0700 "${XDG_RUNTIME_DIR}"
-          export QT_QPA_PLATFORM=offscreen
-          QS_SAYS="$(/usr/bin/qs --version 2>&1)" || QS_STATUS=$?
-          echo "       ${QS_SAYS}"
-          if [ "${QS_STATUS}" -ne 0 ]; then
-            bad "qs cannot start (exit ${QS_STATUS}). If that message says 'undefined symbol', Quickshell and Qt in this image do not match and the desktop would never draw a bar."
-          else
-            ok "qs starts"
-            case "${QS_SAYS}" in
-              *0.3*) ok "Quickshell is 0.3.x" ;;
-              *) bad "Quickshell reports '${QS_SAYS}' — expected 0.3.x. 0.2.1 has no Networking or Bluetooth module and the shell imports both." ;;
-            esac
-          fi
-          echo "       built as: $(cat /usr/share/aquarius/quickshell-build.txt 2>/dev/null | tr '\n' ' ')"
-
-          echo "== the shell that was baked in =="
-          # A missing shell is a WARNING, not a failure. The shell lives in a
-          # separate repository and a container build has no GitHub account, so
-          # if that repository is private the image is finished without it. What
-          # ships is then a working desktop with no bar, which says so on screen.
-          # Everything else in this step still has to be right.
-          sed 's/^/       /' /usr/share/aquarius/shell-build.txt 2>/dev/null || \
-            bad "there is no /usr/share/aquarius/shell-build.txt — the shell stage did not run at all"
-          if [ -s /usr/share/aquarius/shell/shell.qml ]; then
-            ok "the shell is installed"
-            GOT_REF="$(grep -E '^commit=' /usr/share/aquarius/shell-build.txt 2>/dev/null | cut -d= -f2)"
-            if [ "${GOT_REF}" = "${EXPECT_SHELL_REF}" ]; then
-              ok "it is the pinned commit"
-            else
-              bad "the image contains shell commit '${GOT_REF}' but aquarius-os.env pins '${EXPECT_SHELL_REF}'"
-            fi
-            for f in theme/Ice.qml theme/Midnight.qml components/bar/TopBar.qml \
-                     components/dock/Dock.qml components/search/FlowSearch.qml \
-                     components/notifications/NotificationLayer.qml \
-                     components/switcher/AppSwitcher.qml \
-                     components/switcher/SwitcherModel.qml \
-                     components/switcher/switcher-keys.js \
-                     services/KeyProfile.qml services/AppIdentity.qml; do
-              if [ -s "/usr/share/aquarius/shell/${f}" ]; then ok "${f}"; else bad "${f} is missing"; fi
-            done
-            for junk in harness tests .git .github; do
-              if [ -e "/usr/share/aquarius/shell/${junk}" ]; then
-                bad "${junk}/ was shipped inside the operating system and should not have been"
-              else
-                ok "${junk}/ was correctly left out of the image"
-              fi
-            done
-            echo "== every Quickshell module the shell imports =="
-            # Quickshell compiles its QML modules INTO the program rather than
-            # installing folders for them, so there is nothing on disk to look
-            # for. What there is, is the build's own record of which features it
-            # compiled. The mapping from an import line to a feature name lives
-            # in build_files/55-aquarius-session.sh and is checked there in full;
-            # this repeats the two that are new in 0.3 and would silently remove
-            # the Wi-Fi and Bluetooth tiles if they ever went missing.
-            FEATURES="$(grep -E '^features=' /usr/share/aquarius/quickshell-build.txt 2>/dev/null | cut -d= -f2-)"
-            echo "       ${FEATURES}"
-            for pair in "Quickshell.Networking:NETWORK" "Quickshell.Bluetooth:BLUETOOTH" \
-                        "Quickshell.Services.Notifications:SERVICE_NOTIFICATIONS" \
-                        "Quickshell.Services.Pipewire:SERVICE_PIPEWIRE" \
-                        "Quickshell.Services.SystemTray:SERVICE_STATUS_NOTIFIER" \
-                        "Quickshell.Services.UPower:SERVICE_UPOWER" \
-                        "Quickshell.Wayland:WAYLAND"; do
-              imp="${pair%%:*}"; feat="${pair##*:}"
-              if ! grep -rqE "^import ${imp}\$" /usr/share/aquarius/shell 2>/dev/null; then
-                continue
-              fi
-              if printf '%s' "${FEATURES}" | grep -q "${feat}=ON"; then
-                ok "${imp} (built in as ${feat})"
-              else
-                bad "${imp} is imported by the shell but Quickshell was built without ${feat}"
-              fi
-            done
-          else
-            echo "::warning::This image has no Aquarius Shell — /usr/share/aquarius/shell-build.txt says why. The Aquarius Desktop starts and explains itself on screen. Make the shell repository public and rebuild to bake it in."
-            echo "  NOTE the Aquarius Shell is not in this image. Everything else"
-            echo "       about the Aquarius Desktop is, and the session tells the"
-            echo "       person what is going on rather than showing a blank screen."
-            # The one thing that must still be true: the image has to KNOW it is
-            # missing, so the session can say so.
-            if grep -q '^status=unavailable$' /usr/share/aquarius/shell-build.txt 2>/dev/null; then
-              ok "the image records why the shell is absent"
-            else
-              bad "the shell is absent and the image does not say why — the session would show a blank screen with no explanation"
-            fi
-          fi
-
-          echo "== the login screen entry =="
-          ENTRY=/usr/share/wayland-sessions/aquarius.desktop
-          if [ -r "${ENTRY}" ]; then
-            ok "${ENTRY} exists"; sed 's/^/       /' "${ENTRY}"
-          else
-            bad "${ENTRY} is missing — nothing would appear at the login screen"
-          fi
-          grep -q '^Name=Aquarius Desktop$'        "${ENTRY}" && ok "it is called 'Aquarius Desktop'"       || bad "wrong Name="
-          grep -q '^DesktopNames=Aquarius$'        "${ENTRY}" && ok "it names the desktop 'Aquarius'"        || bad "wrong DesktopNames="
-          EXEC="$(grep -E '^Exec=' "${ENTRY}" | cut -d= -f2-)"
-          if [ -x "${EXEC}" ]; then ok "its Exec target ${EXEC} exists and is executable"
-          else bad "its Exec target '${EXEC}' is missing or not executable — picking the session would do nothing"; fi
-
-          # GNOME must still be there. A desktop that REPLACES the fallback
-          # rather than sitting beside it is the one thing the design forbids.
-          if [ -r /usr/share/wayland-sessions/gnome.desktop ]; then
-            ok "the GNOME session is still there to fall back to"
-          else
-            bad "GNOME's session entry has gone — the fallback is gone"
-          fi
-
-          echo "== the scripts a login depends on =="
-          for s in /usr/bin/aquarius-session /usr/libexec/aquarius-shell-start; do
-            if bash -n "${s}" 2>/tmp/synerr; then ok "${s} is valid shell script"
-            else bad "${s} has a syntax error: $(cat /tmp/synerr)"; fi
-          done
-
-          # ⚠️ THE 2026-09-03 LOCALE FIX. Running the shell by hand on the bench
-          # printed 'Detected locale "C" ... which is not UTF-8'. Three things
-          # have to be true for that to stay fixed, and each fails separately:
-          # the locale data is installed, the system says which locale to use,
-          # and the session launcher actually exports it.
-          echo "== the language the machine speaks =="
-          if rpm -q glibc-langpack-en > /dev/null 2>&1; then
-            ok "glibc-langpack-en $(rpm -q --queryformat '%{VERSION}-%{RELEASE}' glibc-langpack-en)"
-          else
-            bad "glibc-langpack-en is NOT installed — en_US.UTF-8 would not exist on this machine"
-          fi
-
-          if [ -r /etc/locale.conf ]; then
-            ok "/etc/locale.conf exists"
-            echo "       $(tr '\n' ' ' < /etc/locale.conf)"
-            grep -q '^LANG=en_US\.UTF-8$' /etc/locale.conf \
-              && ok "it sets LANG=en_US.UTF-8" \
-              || bad "it does not set LANG=en_US.UTF-8 — every program falls back to the 7-bit C locale"
-          else
-            bad "/etc/locale.conf is missing — nothing tells a login which language to use"
-          fi
-
-          # glibc spells it "en_US.utf8" in this list and "en_US.UTF-8" in a
-          # config file. Same locale, two spellings.
-          if locale -a 2>/dev/null | grep -qix 'en_US.utf8'; then
-            ok "the en_US.UTF-8 locale is really generated"
-          else
-            bad "en_US.UTF-8 is named in /etc/locale.conf but was never generated"
-          fi
-
-          # And the launcher has to hand it on. A locale the session does not
-          # export is a locale the shell never sees.
-          grep -q 'export LANG=' /usr/bin/aquarius-session \
-            && ok "aquarius-session exports LANG" \
-            || bad "aquarius-session does not export LANG — the shell would start in the C locale"
-          # The launcher no longer types out the list of variables it hands to
-          # systemd — since the logout fix of 2026-09-04 it hands over
-          # AQ_SESSION_ENV_PUSH from /usr/libexec/aquarius-session-lib, so that
-          # the SAME list is what gets removed again at logout. So the question
-          # "does LANG get handed on?" is now asked of the library.
-          # (An earlier version of this check read the launcher line by line and
-          # missed a backslash continuation, which failed a build on 2026-09-04
-          # with the launcher perfectly correct. Reading one plain list is the
-          # cure for that whole class of mistake.)
-          AQ_PUSHED="$(grep '^AQ_SESSION_ENV_PUSH=' /usr/libexec/aquarius-session-lib \
-                       | cut -d'"' -f2 || true)"
-          echo "       the session hands over: ${AQ_PUSHED}"
-          case " ${AQ_PUSHED} " in
-            *" LANG "*)
-              ok "it also hands LANG to systemd and D-Bus (for portals started later)" ;;
-            *)
-              bad "LANG is not pushed to systemd/D-Bus — a portal started later would use the C locale" ;;
-          esac
-          grep -q 'aq_push_env \${\?AQ_SESSION_ENV_PUSH' /usr/bin/aquarius-session \
-            && ok "and the launcher really uses that list rather than a copy of it" \
-            || bad "the launcher does not use AQ_SESSION_ENV_PUSH — the start-up list and the logout list can drift apart"
-
-          echo "== the window manager's configuration =="
-          # SIX files. menu.xml joined on the morning of 2026-09-06 — see the
-          # desktop right-click block just below for what happens without it —
-          # and generate-theme that evening, which is the program that writes
-          # labwc's colours out of the shell's palette and is what stops labwc
-          # drawing that menu and every title bar in its own default grey.
-          for f in rc.xml menu.xml generate-theme autostart shutdown environment; do
-            if [ -s "/usr/share/aquarius/labwc/${f}" ]; then ok "labwc/${f}"; else bad "labwc/${f} is missing"; fi
-          done
-          # The corrected form of the summon command. Passing a configuration
-          # name here is the mistake the bench caught on 2026-09-01: qs would
-          # read it as the IPC target name and silently do nothing.
-          if grep -q 'command="qs ipc call search toggle"' /usr/share/aquarius/labwc/rc.xml; then
-            ok "Super+Space summons the search palette, in the corrected form"
-          else
-            bad "the Super+Space binding is not the corrected 'qs ipc call search toggle'"
-          fi
-          grep -q '<action name="Exit" />' /usr/share/aquarius/labwc/rc.xml \
-            && ok "Super+Shift+E leaves the session" || bad "there is no way to leave the session by keyboard"
-
-          # ================================================================
-          # THE APP SWITCHER (2026-09-06)
-          # ================================================================
-          # Hold Command, tap Tab, let go. Five bindings drive it, and BOTH
-          # keyboard profiles are bound at once on purpose:
-          #
-          #   Mac style      Aquarius Keys swaps the two keys beside the space
-          #                  bar, so Command+Tab arrives at labwc as W-Tab.
-          #   Windows style  nothing is swapped and the remapper does not even
-          #                  run, so Alt+Tab arrives as A-Tab.
-          #
-          # Binding both means `aq keys mac` / `aq keys windows` never has to
-          # rebind anything. Only what the panel LISTS changes, and the shell
-          # reads that from ~/.config/aquarius/keys.conf itself.
-          #
-          # These used to be labwc's own NextWindow and PreviousWindow. They now
-          # send an IPC message to the shell, which draws its own panel — one
-          # that can group five windows of an editor into one application icon,
-          # which labwc's list cannot.
-          echo "== the app switcher's keys =="
-          for kb in W-Tab:next W-S-Tab:prev W-grave:cycle A-Tab:next A-S-Tab:prev; do
-            key="${kb%%:*}"
-            fn="${kb##*:}"
-            grep -q "<keybind key=\"${key}\">" /usr/share/aquarius/labwc/rc.xml \
-              && ok "${key} is bound" \
-              || bad "rc.xml has no ${key} binding — that key would do nothing in the Aquarius Desktop"
-            grep -q "command=\"qs ipc call switcher ${fn}\"" /usr/share/aquarius/labwc/rc.xml \
-              && ok "and something calls 'switcher ${fn}'" \
-              || bad "rc.xml never calls 'qs ipc call switcher ${fn}' — ${key} is bound to nothing useful"
-          done
-
-          # labwc's own switcher, off. If a stray NextWindow binding ever came
-          # back, two switchers would draw at once, which is a very confusing
-          # thing to debug from a photograph of a screen.
-          # Read as XML rather than grepped for, so that a reworded comment or a
-          # different indentation cannot make this pass or fail by accident.
-          if python3 -c "import sys, xml.etree.ElementTree as ET; osd = ET.parse('/usr/share/aquarius/labwc/rc.xml').getroot().find('./windowSwitcher/osd'); sys.exit(0 if osd is not None and (osd.get('show') or '').lower() in ('no', 'false') else 1)"; then
-            ok "labwc's own window switcher is switched off"
-          else
-            bad "rc.xml does not carry <windowSwitcher><osd show=\"no\" /> — labwc could draw a second switcher beside ours"
-          fi
-
-          # ⚠️ THE ONE BINDING THAT MUST NEVER EXIST. labwc does not forward the
-          # release of a key whose press it swallowed, and the shell seeing the
-          # release of Command is the entire mechanism by which the switcher
-          # knows you let go. Binding a bare modifier here would swallow the
-          # press, and the panel would go up and never commit.
-          if grep -qE 'key="(Super_L|Super_R|Alt_L|Alt_R)"' /usr/share/aquarius/labwc/rc.xml; then
-            bad "rc.xml binds a bare modifier key — that would stop the app switcher ever committing (see the shell's docs/app-switcher.md)"
-          else
-            ok "the bare modifier keys are left unbound, as the switcher needs"
-          fi
-
-          # ⚠️ THE 2026-09-06 BENCH PHOTOGRAPH: right-clicking the wallpaper
-          # opened labwc's OWN menu — Terminal, Reconfigure, Exit. The shell
-          # repository had grown a menu.xml and a Root mousebind and this image,
-          # which keeps its own copies of the labwc files, had neither.
-          #
-          # labwc's defaults already point a desktop right-click at a menu called
-          # root-menu; nothing declared one, so labwc drew its built-in fallback.
-          # menu.xml is the fix and rc.xml's binding makes it explicit, so both
-          # are read out of the finished image here.
-          echo "== right-clicking the desktop =="
-          grep -q 'id="root-menu"' /usr/share/aquarius/labwc/menu.xml \
-            && ok "menu.xml declares the root-menu" \
-            || bad "menu.xml has no menu with id=\"root-menu\" — labwc would fall back to its own built-in menu"
-          grep -q '<action name="ShowMenu" menu="root-menu" />' /usr/share/aquarius/labwc/rc.xml \
-            && ok "a right-click on the desktop opens it" \
-            || bad "rc.xml does not bind the desktop right-click to root-menu — this is the bench bug of 2026-09-06 exactly"
-          # A <mouse> section REPLACES labwc's mouse behaviour rather than adding
-          # to it. Without <default /> inside it, the menu would work and window
-          # dragging, edge-resize and click-to-focus would all stop. Read the
-          # <mouse> section on its own: the <default /> in <keyboard> is a
-          # different thing and would make a whole-file grep pass over a broken
-          # mouse.
-          # The section is found by looking for a line that is nothing but the
-          # tag; rc.xml writes those tags on lines of their own for exactly this.
-          if sed -n '/^ *<mouse>$/,/^ *<\/mouse>$/p' /usr/share/aquarius/labwc/rc.xml | grep -q '<default />'; then
-            ok "the <mouse> section keeps labwc's own bindings (dragging, resizing, click to focus)"
-          else
-            bad "rc.xml's <mouse> section has no <default /> — the right-click menu would have cost us window dragging and resizing"
-          fi
-          # Every Settings command in the menu has to carry the GNOME prefix, or
-          # that menu item is drawn and does nothing. Counted, so a third Settings
-          # item added without it fails the build. Why the prefix exists at all:
-          # the Settings block further down.
-          #
-          # ⚠️ Count the <command> lines, not every mention: menu.xml's header
-          # comment explains the prefix and names gnome-control-center six times.
-          # Counting those failed a correct file on 2026-09-06.
-          CC_TOTAL="$(grep -c '<command>.*gnome-control-center' /usr/share/aquarius/labwc/menu.xml || true)"
-          CC_FIXED="$(grep -c '<command>env XDG_CURRENT_DESKTOP=GNOME gnome-control-center' /usr/share/aquarius/labwc/menu.xml || true)"
-          echo "       ${CC_FIXED} of ${CC_TOTAL} Settings commands carry the GNOME prefix"
-          if [ "${CC_TOTAL}" -ge 2 ] && [ "${CC_FIXED}" -eq "${CC_TOTAL}" ]; then
-            ok "every Settings item in the desktop menu says 'env XDG_CURRENT_DESKTOP=GNOME' first"
-          else
-            bad "a gnome-control-center command in menu.xml has no 'env XDG_CURRENT_DESKTOP=GNOME' prefix — that menu item would do nothing"
-          fi
-
-          # ----------------------------------------------------------------
-          # THE LOOK OF THAT MENU, AND OF EVERY WINDOW TITLE BAR
-          # ----------------------------------------------------------------
-          # ⚠️ THIS IS NOT A FILE CHECK ANY MORE, AND THAT IS THE POINT.
-          #
-          # On the morning of 2026-09-06 the colours were in a hand-written file
-          # called themerc-override, a second copy of the shell's Ice palette.
-          # That file is gone. It could hold only ONE theme, so a dark desktop
-          # had light title bars, and only ONE size, so AQ_UI_SCALE grew the
-          # shell and reached nothing labwc drew.
-          #
-          # /usr/share/aquarius/labwc/generate-theme replaced it: it reads the
-          # shell's theme/Ice.qml or theme/Midnight.qml and writes labwc's files
-          # out. So there is no shipped file left whose contents mean anything —
-          # what has to be checked is what the PROGRAM produces.
-          #
-          # This runs it four times inside the finished image (Ice and Midnight,
-          # at 1x and at 1.25x) and reads the results back BY CONTENT, which is
-          # this project's rule since 2026-08-31 and is why nothing here looks
-          # at a timestamp.
-          echo "== and it looks like Aquarius rather than Openbox =="
-
-          # ⚠️ NO SHELL MEANS NO PALETTE, AND THAT IS NOT A FAILURE HERE.
-          # This repository's standing rule is that an image built while the
-          # shell repository is private is finished WITHOUT the shell: the
-          # window manager, the wallpaper and the keyboard all still work, there
-          # is simply no bar. The colours labwc draws with are read out of the
-          # shell's theme/Ice.qml, so in that case there is nothing to build a
-          # window frame from either, and the title bars stay labwc's own grey.
-          # Say so and move on, the same way build_files/55-aquarius-session.sh
-          # does — a cosmetic layer must not be what stops an image publishing.
-          FRAME_OUT="$(mktemp -d)"
-          FRAME_OK=1
-          if [ ! -r /usr/share/aquarius/shell/theme/Ice.qml ]; then
-            echo "       no shell palette in this image, so there is no window"
-            echo "       frame to check. See the shell section above for why."
-            FRAME_OK=0
-          fi
-          for case in "ice 1" "ice 1.25" "midnight 1" "midnight 1.25"; do
-            [ "${FRAME_OK}" -eq 1 ] || break
-            # shellcheck disable=SC2086
-            set -- ${case}
-            if python3 /usr/share/aquarius/labwc/generate-theme --quiet \
-                 --scheme "$1" --scale "$2" --buttons mac \
-                 --config-out "${FRAME_OUT}/$1-$2/config" \
-                 --theme-out "${FRAME_OUT}/$1-$2/theme" \
-                 --gtk-out "${FRAME_OUT}/$1-$2/gtk"; then
-              ok "the $1 window frame builds at $2x"
-            else
-              bad "generate-theme failed for $1 at $2x — an installed machine would fall back to labwc's own Openbox grey, which is the bench note of 2026-09-06"
-              FRAME_OK=0
-            fi
-          done
-
-          frame_is() {
-            # $1 = ice-1 / midnight-1 / …, $2 = setting, $3 = value, $4 = why
-            if grep -qxF "$2: $3" "${FRAME_OUT}/$1/config/themerc-override"; then
-              ok "$1: $2 is $3 — $4"
-            else
-              bad "$1: $2 should be '$3' ($4), and is: $(grep -E "^$2:" "${FRAME_OUT}/$1/config/themerc-override" || echo '(missing)')"
-            fi
-          }
-
-          if [ "${FRAME_OK}" -eq 1 ]; then
-            # Section 3 of the window-frame design sheet — the frame, in Ice.
-            frame_is ice-1 window.active.title.bg.color "#F0F6FC" "the focused title bar is the same colour as the top bar"
-            frame_is ice-1 window.inactive.title.bg.color "#E4EDF6" "an unfocused one steps a rung down the surface ladder"
-            frame_is ice-1 window.active.label.text.color "#16273A" "the focused window's title is the primary ink"
-            frame_is ice-1 window.inactive.label.text.color "#7C90A4" "an unfocused title is the muted ink"
-            frame_is ice-1 window.active.border.color "#16273A2E" "the focused border is the strong hairline"
-            frame_is ice-1 window.inactive.border.color "#16273A1A" "an unfocused border is the plain one"
-            frame_is ice-1 window.label.text.justify "Center" "the title is centred"
-            frame_is ice-1 border.width "1" "one pixel, like every other rule on screen"
-
-            # Section 4 — the buttons. THE TITLE BAR'S HEIGHT IS NOT A SETTING
-            # in labwc 0.20: titlebar.height was removed, and the height is
-            # max(font height, button height) + 2 x padding. So these two lines
-            # ARE the 38px title bar: 20 + 9 + 9.
-            frame_is ice-1 window.button.width "20" "a window button's disc is 20 across"
-            frame_is ice-1 window.button.height "20" "and 20 tall"
-            frame_is ice-1 window.button.spacing "8" "with 8 between two discs"
-            frame_is ice-1 window.titlebar.padding.width "12" "and 12 from the window's edge"
-            frame_is ice-1 window.titlebar.padding.height "9" "which makes the title bar 20 + 9 + 9 = 38 tall"
-
-            # Section 5 — the desktop right-click menu, which is the surface the
-            # whole 2026-09-06 pass started from.
-            frame_is ice-1 menu.items.bg.color "#F7FBFE" "the desktop menu is drawn on our card colour"
-            frame_is ice-1 menu.items.text.color "#16273A" "with our ink"
-            frame_is ice-1 menu.items.active.bg.color "#2C8FC429" "and the row under the pointer lit with a wash of the accent"
-            frame_is ice-1 menu.width.min "240" "one fixed width, like the shell's own menu"
-            frame_is ice-1 menu.width.max "240" "min and max together is how labwc fixes a width"
-
-            # THE MIDNIGHT COLUMN. This is the whole reason the hand-written
-            # file had to go: before this there was no Midnight at all, and a
-            # dark desktop kept light title bars.
-            frame_is midnight-1 window.active.title.bg.color "#152033" "on a dark desktop the title bar is Midnight's panel navy"
-            frame_is midnight-1 window.inactive.title.bg.color "#1B2940" "and an unfocused one steps down the same way"
-            frame_is midnight-1 window.active.label.text.color "#DCE9F4" "the title is Midnight's ice-blue ink"
-            frame_is midnight-1 window.inactive.label.text.color "#5C6E82" "and an unfocused title its muted ink"
-            frame_is midnight-1 window.active.border.color "#DCF3FF29" "Midnight's hairlines are tinted ice blue, not white"
-            frame_is midnight-1 window.inactive.border.color "#DCF3FF14" "the quieter of the two"
-            frame_is midnight-1 menu.items.bg.color "#121C2E" "the dark menu card"
-            frame_is midnight-1 menu.items.text.color "#DCE9F4" "its ice-blue text"
-            frame_is midnight-1 menu.items.active.bg.color "#00BFFF1F" "and its accent wash at 12%, because Midnight's blue is brighter"
-
-            # THE SIZE KNOB REACHES labwc NOW, which it never did before.
-            frame_is ice-1.25 window.button.width "25" "a 20px button is 25px at 1.25x"
-            frame_is ice-1.25 menu.items.padding.x "20" "and the menu's padding grows with it"
-
-            # rc.xml's half of the look: the corner radius, the fonts and which
-            # side the buttons sit on. labwc has no themerc key for any of them.
-            grep -q '<cornerRadius>12</cornerRadius>' "${FRAME_OUT}/ice-1/config/rc.xml" \
-              && ok "a window's top corners are rounded by 12, matching libadwaita's fixed 12" \
-              || bad "the generated rc.xml does not set cornerRadius to 12 — our frame and a GTK window's own rounding would disagree by a few pixels"
-            grep -q '<cornerRadius>15</cornerRadius>' "${FRAME_OUT}/ice-1.25/config/rc.xml" \
-              && ok "and that follows AQ_UI_SCALE too" \
-              || bad "cornerRadius does not scale"
-            grep -q '<layout>close,iconify,max:</layout>' "${FRAME_OUT}/ice-1/config/rc.xml" \
-              && ok "Mac style puts close, minimise and maximise on the LEFT, close outermost" \
-              || bad "the generated rc.xml has no Mac titlebar layout — 'aq keys mac' would move the buttons in GNOME and not on our own desktop"
-            grep -q '<name>Aquarius</name>' "${FRAME_OUT}/ice-1/config/rc.xml" \
-              && ok "rc.xml names the theme labwc looks the button pictures up under" \
-              || bad "rc.xml does not name a theme — labwc would find no button pictures and fall back to bare built-in glyphs"
-            grep -q '<weight>medium</weight>' "${FRAME_OUT}/ice-1/config/rc.xml" \
-              && ok "a window's title is drawn at weight medium (Pango 500), as the design asks" \
-              || bad "the window title is not set to weight medium — labwc takes a word here, not a number"
-            grep -q '<font place="MenuItem">' "${FRAME_OUT}/ice-1/config/rc.xml" \
-              && ok "and everything labwc draws is drawn in the shell's own typeface" \
-              || bad "the generated rc.xml has no <font place=\"MenuItem\"> — labwc would draw the desktop menu in whatever \"sans\" resolves to, next to a shell drawn in Inter"
-
-            # The other half of `aq keys`: the buttons on the right.
-            if python3 /usr/share/aquarius/labwc/generate-theme --quiet \
-                 --scheme ice --scale 1 --buttons windows \
-                 --config-out "${FRAME_OUT}/win/config" \
-                 --theme-out "${FRAME_OUT}/win/theme" \
-                 --gtk-out "${FRAME_OUT}/win/gtk"; then
-              grep -q '<layout>:iconify,max,close</layout>' "${FRAME_OUT}/win/config/rc.xml" \
-                && ok "Windows style puts minimise, maximise and close on the RIGHT, close outermost" \
-                || bad "the Windows titlebar layout is wrong — 'aq keys windows' would move the buttons in GNOME and not on our own desktop"
-            else
-              bad "generate-theme failed for the Windows button layout"
-            fi
-
-            # THE BUTTON PICTURES. labwc looks these up BY EXACT NAME, in a
-            # theme folder rather than beside its settings. A missing one is not
-            # an error anywhere: labwc draws a bare built-in glyph with no disc
-            # behind it, and one button quietly stops matching the other two.
-            MISSING=""
-            for case in ice-1 ice-1.25 midnight-1 midnight-1.25; do
-              for b in close iconify max max_toggled; do
-                for s in "" "_hover"; do
-                  for f in active inactive; do
-                    [ -s "${FRAME_OUT}/${case}/theme/${b}${s}-${f}.svg" ] \
-                      || MISSING="${MISSING} ${case}/${b}${s}-${f}.svg"
-                  done
-                done
-              done
-            done
-            if [ -z "${MISSING}" ]; then
-              ok "all 16 window button pictures exist for both themes, at 1x and at 1.25x"
-            else
-              bad "these window button pictures were not drawn:${MISSING}"
-            fi
-
-            # Read two of them by content, because a picture that exists and is
-            # the wrong colour is the failure a file-exists check cannot see.
-            grep -q '#C8463B' "${FRAME_OUT}/ice-1/theme/close_hover-active.svg" \
-              && ok "the close button goes to the Ice danger red under the pointer" \
-              || bad "the Ice close button does not turn red on hover"
-            grep -q '#E07B7B' "${FRAME_OUT}/midnight-1/theme/close_hover-active.svg" \
-              && ok "and to Midnight's own softer red on a dark desktop" \
-              || bad "the Midnight close button does not turn red on hover"
-            grep -q 'opacity="0.450"' "${FRAME_OUT}/ice-1/theme/close-inactive.svg" \
-              && ok "and a window you are not in draws its whole button at 45%" \
-              || bad "an unfocused window's buttons are not faded"
-
-            # THE ONE EXCEPTION TO THE NO-GTK-THEME POSTURE: the chrome of a
-            # GTK window, and only the chrome. GNOME's own applications draw
-            # their own title bar, so the labwc frame checked above never
-            # appears on Files, Settings, Ptyxis or Text Editor (bench,
-            # 2026-09-07). This stylesheet is the only thing that reaches them.
-            #
-            # Since 2026-09-07 it is written in BOTH schemes. Two checks that
-            # used to be here are gone on purpose: the one that insisted Ice
-            # write no file, and the one that counted the rules and allowed
-            # exactly two. Both are now wrong.
-            for GTK_CASE in \
-              "ice #EAF1F8 #F0F6FC #C8463B 0.100 0.160" \
-              "midnight #0B1220 #152033 #E07B7B 0.120 0.180"
-            do
-              # shellcheck disable=SC2086
-              set -- ${GTK_CASE}
-              GTK_SCHEME="$1"; GTK_BG="$2"; GTK_PANEL="$3"
-              GTK_DANGER="$4"; GTK_IDLE="$5"; GTK_HOVER="$6"
-              GTK_CSS="${FRAME_OUT}/${GTK_SCHEME}-1/gtk/gtk-4.0/gtk.css"
-              GTK_CSS3="${FRAME_OUT}/${GTK_SCHEME}-1/gtk/gtk-3.0/gtk.css"
-
-              grep -qF "window { background-color: ${GTK_BG}; }" "${GTK_CSS}" \
-                && ok "${GTK_SCHEME}: GTK window backgrounds are the palette's ground (${GTK_BG})" \
-                || bad "${GTK_SCHEME}: the GTK stylesheet does not set the window background — a Files window would match nothing around it"
-              grep -qF "headerbar { background-color: ${GTK_PANEL}; }" "${GTK_CSS}" \
-                && ok "${GTK_SCHEME}: and their header bars are the panel colour (${GTK_PANEL})" \
-                || bad "${GTK_SCHEME}: the GTK stylesheet does not set the header-bar colour"
-              grep -qF "windowcontrols > button > image {" "${GTK_CSS}" \
-                && grep -qF ", ${GTK_IDLE});" "${GTK_CSS}" \
-                && ok "${GTK_SCHEME}: the three window buttons get their round disc at rest" \
-                || bad "${GTK_SCHEME}: the GTK stylesheet does not redraw the window buttons as discs"
-              grep -qF "windowcontrols > button:hover > image {" "${GTK_CSS}" \
-                && grep -qF ", ${GTK_HOVER});" "${GTK_CSS}" \
-                && ok "${GTK_SCHEME}: and the disc deepens under the pointer" \
-                || bad "${GTK_SCHEME}: the GTK stylesheet does not deepen the disc on hover"
-              grep -qF "windowcontrols > button.close:hover > image {" "${GTK_CSS}" \
-                && grep -qF "background-color: ${GTK_DANGER};" "${GTK_CSS}" \
-                && ok "${GTK_SCHEME}: and close, and only close, goes the danger red (${GTK_DANGER})" \
-                || bad "${GTK_SCHEME}: the GTK stylesheet does not turn the close button red"
-              grep -qF "windowcontrols > button:backdrop {" "${GTK_CSS}" \
-                && grep -qF "opacity: 0.45;" "${GTK_CSS}" \
-                && ok "${GTK_SCHEME}: and every button fades to 45% on a window you are not in" \
-                || bad "${GTK_SCHEME}: the GTK stylesheet does not fade the buttons on an unfocused window"
-              grep -qF "window { background-color: ${GTK_BG}; }" "${GTK_CSS3}" \
-                && grep -qF "headerbar button.titlebutton {" "${GTK_CSS3}" \
-                && grep -qF "headerbar button.titlebutton.close:hover {" "${GTK_CSS3}" \
-                && ok "${GTK_SCHEME}: older GTK 3 applications get the same colours and buttons" \
-                || bad "${GTK_SCHEME}: the gtk-3.0 twin is missing or wrong"
-            done
-          fi
-          rm -rf "${FRAME_OUT}"
-
-          # ⚠️ THE OTHER 2026-09-06 BENCH BUG: the dock's Settings icon did
-          # nothing. gnome-control-center reads XDG_CURRENT_DESKTOP at start-up
-          # (shell/cc-application.c, is_supported_desktop()) and unless a
-          # colon-separated part of it is "GNOME" or "Unity" it prints
-          # "Running gnome-control-center is only supported under GNOME and
-          # Unity, exiting" and exits 1. Our session says "Aquarius:wlroots",
-          # and that line has to stay as it is because the portals choose their
-          # back end from it. So the fix is per launch, and for the dock icon it
-          # has to live in the Exec= line itself: the dock runs the .desktop
-          # file's command as written, with nowhere to put a variable in
-          # between. build_files/55-aquarius-session.sh makes the edit; this
-          # reads it back out of the finished image, which is the check that
-          # would also catch a later package upgrade quietly restoring Fedora's
-          # stock file.
-          echo "== the Settings app can actually open =="
-          CCD=/usr/share/applications/org.gnome.Settings.desktop
-          if [ -r "${CCD}" ]; then
-            grep -E '^Exec=' "${CCD}" | sed 's/^/       /'
-            grep -Eq '^Exec=env XDG_CURRENT_DESKTOP=GNOME .*gnome-control-center' "${CCD}" \
-              && ok "the Settings menu entry launches it with XDG_CURRENT_DESKTOP=GNOME" \
-              || bad "${CCD} does not set XDG_CURRENT_DESKTOP=GNOME — the dock's Settings icon would do nothing at all"
-            grep -Eq '^Exec=(/usr/bin/)?gnome-control-center' "${CCD}" \
-              && bad "${CCD} still has an Exec= line without the prefix — that way of opening Settings would still do nothing" \
-              || ok "no Exec= line in the Settings menu entry was missed"
-          else
-            bad "${CCD} is missing — the dock pins org.gnome.Settings.desktop and the icon would be dead"
-          fi
-          CCS=/usr/share/dbus-1/services/org.gnome.Settings.service
-          if [ -r "${CCS}" ]; then
-            grep -E '^Exec=' "${CCS}" | sed 's/^/       /'
-            grep -Eq '^Exec=/usr/bin/env XDG_CURRENT_DESKTOP=GNOME /usr/bin/gnome-control-center' "${CCS}" \
-              && ok "D-Bus starts Settings with XDG_CURRENT_DESKTOP=GNOME too" \
-              || bad "${CCS} does not set XDG_CURRENT_DESKTOP=GNOME — a D-Bus-activated Settings would exit at once"
-            grep -Eq '^Exec=(/usr/bin/)?gnome-control-center' "${CCS}" \
-              && bad "${CCS} still has an Exec= line without the prefix" \
-              || ok "no Exec= line in the Settings D-Bus service file was missed"
-          else
-            echo "       note: ${CCS} is not in this image; nothing to check there"
-          fi
-
-          echo "== portals =="
-          PC=/usr/share/xdg-desktop-portal/aquarius-portals.conf
-          if [ -r "${PC}" ]; then ok "${PC} exists"; else bad "${PC} is missing — screen recording would silently do nothing"; fi
-          grep -q '^default=gtk$' "${PC}" && ok "default back end is gtk" || bad "default back end is not gtk"
-          grep -q '^org.freedesktop.impl.portal.ScreenCast=wlr$'  "${PC}" && ok "screen recording goes to the wlroots back end" || bad "ScreenCast is not wlr"
-          grep -q '^org.freedesktop.impl.portal.Screenshot=wlr$'  "${PC}" && ok "screenshots go to the wlroots back end"       || bad "Screenshot is not wlr"
-          grep -q '^org.freedesktop.impl.portal.Settings=gtk$'    "${PC}" && ok "light/dark follows the system setting"        || bad "Settings is not gtk"
-          grep -q '^chooser_type=simple$' /etc/xdg/xdg-desktop-portal-wlr/config \
-            && ok "screen recording asks which screen rather than guessing" || bad "no chooser configured for screen recording"
-
-          # ⚠️ THE 2026-09-04 LOGOUT FIX. Logging out of the Aquarius Desktop to
-          # go to GNOME bounced off the login screen two or three times, because
-          # the session left its settings on the user's systemd noticeboard and
-          # left its background programs running. Everything below reads the
-          # finished image to prove the fix is actually in it. The behaviour
-          # itself is tested by tests/test-session-teardown.sh, which runs during
-          # the build against these same installed files.
-          echo "== logging out leaves the machine clean =="
-          LIB=/usr/libexec/aquarius-session-lib
-          if [ -r "${LIB}" ]; then ok "${LIB} is installed"
-          else bad "${LIB} is missing — nobody could log in to the Aquarius Desktop at all, because the launcher refuses to start without it"; fi
-
-          if [ -x /usr/libexec/aquarius-session-portals ]; then
-            ok "/usr/libexec/aquarius-session-portals is installed and executable"
-          else
-            bad "/usr/libexec/aquarius-session-portals is missing or not executable — arriving here from GNOME would leave GNOME's portals in charge and OBS would show no screens"
-          fi
-
-          # The launcher must stay alive long enough to clean up. `exec labwc`
-          # replaced the launcher with the window manager, which is exactly why
-          # nothing was ever cleaned up.
-          grep -qE '^exec labwc' /usr/bin/aquarius-session \
-            && bad "the launcher still uses 'exec labwc' — nothing would be left alive to clean up after the session" \
-            || ok "the launcher outlives the window manager, so it can clean up after it"
-          grep -q "^trap 'aq_session_teardown' EXIT" /usr/bin/aquarius-session \
-            && ok "the clean-up is armed with a trap, so it runs even if the desktop crashes" \
-            || bad "the launcher does not trap EXIT — a crash would skip the clean-up entirely"
-          # And the other direction: a session that was force-killed never ran
-          # its clean-up, and GNOME never cleans up on the way out at all, so
-          # logging IN has to defend itself too.
-          grep -q '^aq_session_env_reset$' /usr/bin/aquarius-session \
-            && ok "logging in clears the last desktop's screen before naming ours" \
-            || bad "the launcher does not clear the previous desktop's screen — arriving after a force-killed session would inherit a dead one"
-
-          # The list of settings that get removed again. WAYLAND_DISPLAY and
-          # XDG_CURRENT_DESKTOP are the two that broke GNOME: one names a screen
-          # that no longer exists, the other tells the portal system to load the
-          # Aquarius configuration in the middle of a GNOME session.
-          UNSETS="$(grep '^AQ_SESSION_ENV_COMPOSITOR=' "${LIB}" | cut -d'"' -f2) $(grep '^AQ_SESSION_ENV_PUSH=' "${LIB}" | cut -d'"' -f2)"
-          # ⚠️ This is everything the session SETS, which is not quite the same
-          # as everything it removes: LANG is deliberately kept (it is the
-          # person's language, not this desktop's — checked two blocks down).
-          # Labelling this "removed at logout" would be a lie in a checks list,
-          # which is the worst place to keep one.
-          echo "       set by the session: ${UNSETS}"
-          echo "       (all of those are removed again at logout except LANG)"
-          for v in WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE XDG_SESSION_DESKTOP QS_CONFIG_PATH QT_QPA_PLATFORM; do
-            case " ${UNSETS} " in
-              *" ${v} "*) ok "${v} is on the list to be forgotten at logout" ;;
-              *) bad "${v} is not on the logout list — it would be inherited by the next desktop" ;;
-            esac
-          done
-          grep -q 'systemctl --user unset-environment' "${LIB}" \
-            && ok "the clean-up really tells systemd to forget them" \
-            || bad "nothing calls 'systemctl --user unset-environment' — this is the bug of 2026-09-04 exactly"
-          grep -q '^AQ_SESSION_ENV_KEEP="LANG"$' "${LIB}" \
-            && ok "LANG is deliberately kept (it is the person's language, not this desktop's)" \
-            || bad "the keep-list is not just LANG — check the reasoning in ${LIB}"
-
-          # The portals. Stopping them is what makes the NEXT desktop's portals
-          # read the next desktop's configuration, in both directions.
-          for u in xdg-desktop-portal.service xdg-desktop-portal-wlr.service xdg-desktop-portal-gtk.service; do
-            grep -q "${u}" "${LIB}" && ok "${u} is stopped when the session changes" \
-              || bad "${u} is not handled — it would answer the next desktop with this one's back end"
-          done
-          grep -q 'aquarius-session-portals' /usr/share/aquarius/labwc/autostart \
-            && ok "logging IN takes the portals back from whichever desktop had them last" \
-            || bad "the autostart file does not refresh the portals — arriving from GNOME, screen recording would silently show no screens"
-
-          # And every service of ours that starts with the desktop has to stop
-          # with it. Without PartOf= a service started at login keeps running
-          # after logout, which is the other half of the same bug.
-          for unit in /usr/lib/systemd/user/aquarius-*.service /usr/lib/systemd/user/aq-*.service; do
-            [ -r "${unit}" ] || continue
-            grep -qE '^WantedBy=.*graphical-session\.target' "${unit}" || continue
-            if grep -qE '^PartOf=.*graphical-session\.target' "${unit}"; then
-              ok "$(basename "${unit}") stops when the desktop does"
-            else
-              bad "$(basename "${unit}") starts with the graphical session but is not PartOf it — it would outlive the logout and get in the next desktop's way"
-            fi
-          done
-
-          echo "== packages the session needs =="
-          for pkg in greetd greetd-selinux tuigreet xdg-desktop-portal-wlr \
-                     swaybg slurp wlr-randr brightnessctl zenity \
-                     qt6-qtbase qt6-qtdeclarative qt6-qtwayland qt6-qtsvg \
-                     wlroots libsfdo; do
-            if rpm -q "${pkg}" > /dev/null 2>&1; then
-              ok "${pkg} $(rpm -q --queryformat '%{VERSION}-%{RELEASE}' "${pkg}")"
-            else
-              bad "${pkg} is NOT installed"
-            fi
-          done
-
-          echo "== which login manager is switched on =="
-          if systemctl is-enabled gdm.service > /dev/null 2>&1; then
-            ok "GDM is switched on"
-          else
-            bad "GDM is not switched on — nothing would draw a login screen"
-          fi
-          if systemctl is-enabled greetd.service > /dev/null 2>&1; then
-            bad "greetd is switched on too. Two login managers is a black screen; greetd ships switched OFF on purpose."
-          else
-            ok "greetd is installed but switched off, as intended"
-          fi
-
-          echo "== the thing that asks you for your password =="
-          # ⚠️ THE 2026-09-04 BENCH FAULT. Pressing Install in the creator-apps
-          # window failed with "Error creating textual authentication agent …
-          # /dev/tty", because this session had no polkit authentication agent.
-          # Four things have to be true, and each of them was true on its own
-          # while the feature was still broken, which is why all four are here.
-          for pkg in lxqt-policykit polkit-qt6-1; do
-            if rpm -q "${pkg}" > /dev/null 2>&1; then
-              ok "${pkg} $(rpm -q --queryformat '%{VERSION}-%{RELEASE}' "${pkg}")"
-            else
-              bad "${pkg} is NOT installed — nothing in the Aquarius Session could ask for a password"
-            fi
-          done
-          if [ -x /usr/libexec/lxqt-policykit-agent ]; then
-            ok "the agent binary is at /usr/libexec/lxqt-policykit-agent"
-          else
-            bad "/usr/libexec/lxqt-policykit-agent is missing"
-          fi
-          if [ -x /usr/libexec/aquarius-polkit-agent ]; then
-            ok "aquarius-polkit-agent is present and runnable"
-          else
-            bad "/usr/libexec/aquarius-polkit-agent is missing or not runnable"
-          fi
-          if bash -n /usr/libexec/aquarius-polkit-agent 2>/tmp/pk-syn.txt; then
-            ok "aquarius-polkit-agent is valid shell"
-          else
-            bad "aquarius-polkit-agent has a syntax error"; cat /tmp/pk-syn.txt
-          fi
-          # Run it. --which is the question that matters: can the helper FIND an
-          # agent on this image? A package being installed does not answer that,
-          # because the helper looks for a path, not a package name.
-          if /usr/libexec/aquarius-polkit-agent --which > /tmp/pk-which.txt 2>&1; then
-            ok "the helper finds an agent: $(cat /tmp/pk-which.txt)"
-          else
-            bad "the helper cannot find any authentication agent on this image"; cat /tmp/pk-which.txt
-          fi
-          # And the session has to start it, or all of the above is a package
-          # nobody runs. labwc reads exactly one file and this is it.
-          if grep -q 'aquarius-polkit-agent' /usr/share/aquarius/labwc/autostart; then
-            ok "the Aquarius session's autostart starts the agent at login"
-          else
-            bad "the session never starts the agent — this is the bench fault, back again"
-          fi
-          # GNOME has an agent of its own inside GNOME Shell. The package's own
-          # autostart entry must be switched off, or GNOME starts a second one
-          # and which agent you get is decided by timing.
-          PKA=/etc/xdg/autostart/lxqt-policykit-agent.desktop
-          if [ ! -e "${PKA}" ]; then
-            ok "the agent ships no autostart entry of its own"
-          elif grep -q '^Hidden=true$' "${PKA}"; then
-            ok "the agent's own autostart entry is switched off, so GNOME keeps its own agent"
-          else
-            bad "${PKA} is still active — GNOME would start a second agent"
-          fi
-
-          echo "== no library is missing on the finished image =="
-          for b in /usr/bin/labwc /usr/bin/quickshell; do
-            [ -e "${b}" ] || continue
-            if ldd "${b}" 2>&1 | grep -q 'not found'; then
-              bad "${b} is missing libraries:"; ldd "${b}" | grep 'not found' | sed 's/^/       /'
-            else
-              ok "${b} — every library resolves"
-            fi
-          done
-
-          if [ "$fails" -ne 0 ]; then
-            echo "::error::The Aquarius Desktop in this image is broken. Do not publish it."
-            exit 1
-          fi
-          echo "All Aquarius Desktop checks passed."
-          SCRIPT
-          podman run --rm --pull=never -i \
-            -e EXPECT_SHELL_REF="${EXPECT_SHELL_REF}" \
-            --entrypoint /usr/bin/bash \
-            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-session.sh
-
       - name: Check nothing still says Bazzite or Fedora
         run: |
           set -euo pipefail
@@ -5057,24 +3775,30 @@ jobs:
           check "'aq keys status' reports the keyboards" 'Keyboards :'                  /usr/bin/aq
 
           echo "== how big things are on the screen =="
-          # labwc starts every monitor at 100%. On a 55" 4K bench monitor that
-          # made the whole desktop tiny, while GNOME had been running the same
-          # screen at 125% for weeks. See docs/restart/aquarius-display.md.
+          # ⚠️ THIS FEATURE CHANGED SHAPE ON 2026-09-15. It existed because the
+          # Aquarius Session started every monitor at 100%: on a 55" 4K bench
+          # monitor the whole desktop was tiny, while GNOME had been running the
+          # same screen at 125% for weeks. That session is retired, and BOTH
+          # desktops now do their own scaling — GNOME in Settings → Displays,
+          # KDE Plasma in System Settings → Display Configuration (kscreen).
+          #
+          # The helper is KEPT, and not as a leftover: `aq display scale` writes
+          # the number that /usr/libexec/aquarius-resolve-launch reads to size
+          # DaVinci Resolve, which is an X11 program and is sized by nothing
+          # else. See docs/restart/aquarius-display.md.
           if [ -x /usr/libexec/aquarius-display-scale ]; then
             ok "the display-scale helper is installed"
           else
-            bad "/usr/libexec/aquarius-display-scale is missing — every screen would stay at 100%"
+            bad "/usr/libexec/aquarius-display-scale is missing — 'aq display scale' and Resolve's sizing would both break"
           fi
           if command -v wlr-randr > /dev/null 2>&1; then
-            ok "wlr-randr is installed (the only way to apply a scale here)"
+            ok "wlr-randr is installed (how the helper asks what is plugged in)"
           else
-            bad "wlr-randr is missing — the right scale could be worked out and never applied"
+            bad "wlr-randr is missing — the helper could not even ask about the monitors"
           fi
-          check "the window manager sets the size at login" 'aquarius-display-scale' \
-            /usr/share/aquarius/labwc/autostart
-          check "the launcher passes the bar's own size knob" 'AQ_UI_SCALE' \
-            /usr/bin/aquarius-session
           check "'aq display' is in the command" 'aq display scale' /usr/bin/aq
+          check "the Resolve launcher reads its answer" 'aquarius-display-scale' \
+            /usr/libexec/aquarius-resolve-launch
           if [ -L "${WANTS}" ] && [ -e "${WANTS}" ]; then
             ok "switched on by default — ${WANTS} -> $(readlink "${WANTS}")"
           else
@@ -5613,11 +4337,14 @@ jobs:
           else
             ok "it no longer picks a single app to open"
           fi
-          if grep -q '"qs", "ipc", "call", "search", "toggle"' "${CHOOSER}" \
+          # Two desktops, two routes. (Until 2026-09-15 the first of these was
+          # the Aquarius Session's own search palette, `qs ipc call search
+          # toggle`; Plasma's KRunner took its place.)
+          if grep -q '"org.kde.krunner"' "${CHOOSER}" \
              && grep -q '"ShowApplications"' "${CHOOSER}"; then
-            ok "'Open apps' knows both desktops: the Aquarius palette and GNOME's app grid"
+            ok "'Open apps' knows both desktops: KDE's KRunner and GNOME's app grid"
           else
-            bad "'Open apps' is missing one of its two routes (qs ipc / org.gnome.Shell.ShowApplications)"
+            bad "'Open apps' is missing one of its two routes (org.kde.krunner / org.gnome.Shell.ShowApplications)"
           fi
 
           # ------------------------------------------------------------------
@@ -5833,23 +4560,18 @@ jobs:
             else bad "  dock: ${fav} is pinned but is not in this image"; fi
           done < /tmp/fav.txt
 
-          # The Aquarius Desktop's own dock. Its list may name the Flatpak apps,
-          # because that dock skips a name it cannot find instead of drawing a
-          # dead square.
-          DOCK=/etc/skel/.config/aquarius-shell/dock.json
-          if [ -r "${DOCK}" ]; then
-            if python3 -c "import json,sys; d=json.load(open('${DOCK}')); assert isinstance(d.get('pinned'), list) and d['pinned']" 2>/tmp/dock.txt; then
-              ok "the Aquarius dock's default list is valid JSON: $(python3 -c "import json;print(', '.join(json.load(open('${DOCK}'))['pinned']))")"
-            else
-              bad "${DOCK} is not readable as the dock expects"; sed 's/^/       /' /tmp/dock.txt
-            fi
-            if grep -q 'aquarius-editor.desktop' "${DOCK}" && grep -q 'aquarius-writer.desktop' "${DOCK}"; then
-              ok "the Aquarius dock pins both Aquarius apps"
-            else
-              bad "the Aquarius dock does not pin the Aquarius apps"
-            fi
+          # ⚠️ THERE WAS A SECOND DOCK HERE UNTIL 2026-09-15. The Aquarius
+          # Session shipped its own dock with its own default list, at
+          # /etc/skel/.config/aquarius-shell/dock.json, and this block checked
+          # it too. That desktop was retired
+          # (../docs/decision-2026-09-15-two-desktops.md) and the file is gone.
+          # GNOME's dock is Dash to Dock, whose list is the favourite-apps
+          # setting checked just above; KDE Plasma's task manager keeps its own
+          # list per person and there is nothing of ours to check.
+          if [ -e /etc/skel/.config/aquarius-shell/dock.json ]; then
+            bad "/etc/skel/.config/aquarius-shell/dock.json is still here — it belonged to the retired Aquarius Session"
           else
-            bad "${DOCK} is missing — a new account would get the shell's built-in default instead of ours"
+            ok "no leftover dock list from the retired Aquarius Session"
           fi
 
           # ====================================================================
@@ -5956,9 +4678,10 @@ jobs:
       #   * Mac must still be the preselected answer. Four things in this OS
       #     have to agree that Mac is the default and this is the one a person
       #     SEES.
-      #   * Exactly ONE thing may open at login, and both sessions must open the
-      #     SAME thing. GNOME reads /etc/xdg/autostart; labwc reads one file and
-      #     never that folder — so the fact is written down twice and can drift.
+      #   * Exactly ONE thing may open at login. ⚠️ This used to be TWO checks:
+      #     the retired Aquarius Session did not read /etc/xdg/autostart at all,
+      #     so the same fact was written down twice and could drift. GNOME and
+      #     KDE Plasma both read that folder, so there is one file now.
       - name: Check the welcome flow in the finished image
         run: |
           set -euo pipefail
@@ -5972,7 +4695,6 @@ jobs:
           CHOOSER=/usr/libexec/aquarius-creator-apps
           AUTOSTART=/etc/xdg/autostart/aquarius-welcome-firstrun.desktop
           OLD=/etc/xdg/autostart/aquarius-creator-apps-firstrun.desktop
-          LABWC=/usr/share/aquarius/labwc/autostart
 
           echo "== the welcome is in the image =="
           if [ -x "${WELCOME}" ]; then ok "${WELCOME} is here and runnable"
@@ -6035,28 +4757,33 @@ jobs:
           fi
 
           echo
-          echo "== exactly one thing opens at login, and both sessions open it =="
+          echo "== exactly one thing opens at login, and both desktops read it =="
           if [ -e "${OLD}" ]; then
             bad "${OLD} is still here — the creator-apps window would open twice at a first login"
           else
             ok "the old creator-apps first-login entry is gone"
           fi
-          if grep -q 'aquarius-creator-apps --first-run' "${LABWC}" 2>/dev/null; then
-            bad "the Aquarius session still opens the creator-apps window directly at login"
+          if [ -e /usr/share/aquarius/labwc/autostart ]; then
+            bad "the retired Aquarius Session's autostart file is still in the image"
           else
-            ok "the Aquarius session does not open it directly either"
+            ok "no second autostart file from the retired Aquarius Session"
           fi
           if [ -r "${AUTOSTART}" ]; then
             ok "the welcome's first-login entry is here"
-            GNOME_CMD="$(sed -n 's/^Exec=//p' "${AUTOSTART}" | head -n 1)"
-            echo "       GNOME runs: ${GNOME_CMD}"
-            if grep -qF "${GNOME_CMD}" "${LABWC}"; then
-              ok "and the Aquarius session runs exactly the same command"
-            else
-              bad "the two sessions run different commands at login"
-            fi
+            CMD="$(sed -n 's/^Exec=//p' "${AUTOSTART}" | head -n 1)"
+            echo "       it runs: ${CMD}"
+            # /etc/xdg/autostart is the shared freedesktop folder. GNOME reads
+            # it and so does KDE Plasma, so one file covers both desktops — the
+            # write-it-twice problem is simply gone.
+            for s in gnome plasma; do
+              if [ -r "/usr/share/wayland-sessions/${s}.desktop" ]; then
+                ok "  ${s} is in this image, and reads /etc/xdg/autostart"
+              else
+                bad "  ${s} is missing, so the welcome would only open on one desktop"
+              fi
+            done
           else
-            bad "${AUTOSTART} is missing — a first GNOME login would show no welcome at all"
+            bad "${AUTOSTART} is missing — a first login would show no welcome at all"
           fi
           # Guarded, because desktop-file-validate is a build-time tool that the
           # image is not obliged to keep. Its absence is not a fault in the
@@ -6621,38 +5348,33 @@ jobs:
           done
 
           echo "== and that Resolve's window fits the screen =="
-          # ⚠️ The fault this ends: Resolve sizes its own window and on a 4K
-          # display sometimes opened one whose edges — close button included —
-          # were off the screen. The Aquarius Desktop's labwc configuration has
-          # one window rule, and Resolve is the only application it names.
+          # ⚠️ THIS CHECK IS RETIRED AND THE FAULT IS NOT FIXED — say so rather
+          # than let it disappear. Resolve sizes its own window and on a 4K
+          # display sometimes opened one whose edges, close button included,
+          # were off the screen. The answer was one window rule in the Aquarius
+          # Session's labwc configuration (FitToOutput, and a global "open in
+          # the middle" placement), read back here as XML.
           #
-          # Read as XML, so a reworded comment or a different indentation cannot
-          # make this pass or fail by accident. The identical rule has to be in
-          # the aquarius-shell repository's copy of rc.xml too — that is what
-          # the shell_tests job's drift check proves.
+          # That desktop was retired on 2026-09-15
+          # (../docs/decision-2026-09-15-two-desktops.md), so there is no rc.xml
+          # to read. What is true on the two desktops that replaced it:
           #
-          # Written as `python3 -c` on one line rather than as a heredoc: this
-          # whole check is ALREADY inside a heredoc (the SCRIPT block above),
-          # and a nested one would need its terminator at the very start of a
-          # line, which this file's indentation cannot give it.
-          RULE="$(python3 -c 'import sys, xml.etree.ElementTree as ET; rules = ET.parse(sys.argv[1]).getroot().findall("./windowRules/windowRule"); mine = [r for r in rules if (r.get("identifier") or "").lower() == "resolve"]; print(",".join((a.get("name") or "") for a in mine[0].findall("action")) if mine else "")' /usr/share/aquarius/labwc/rc.xml || true)"
-          echo "       the rule for Resolve runs: ${RULE:-(none)}"
-          case ",${RULE}," in
-            *,FitToOutput,*) ok "a window bigger than the screen is shrunk to the screen" ;;
-            *) bad "rc.xml's Resolve window rule has no FitToOutput — Resolve could open larger than the display again" ;;
-          esac
-          # No Maximize, since the bench of 2026-09-08: a maximised labwc window is
-          # pinned and the rule was parking Resolve's splash top-left. Royce asked
-          # for a normal window; centring is the global <placement> policy.
-          case ",${RULE}," in
-            *,Maximize,*) bad "rc.xml's Resolve window rule maximises again — that pins the window and parks the splash top-left; Royce asked for a normal window" ;;
-            *) ok "and it does not maximise, so the window can be moved and resized" ;;
-          esac
-          PLACEMENT="$(python3 -c 'import sys, xml.etree.ElementTree as ET; n = ET.parse(sys.argv[1]).getroot().find("./placement/policy"); print((n.text or "").strip() if n is not None else "")' /usr/share/aquarius/labwc/rc.xml || true)"
-          if [ "${PLACEMENT}" = "center" ]; then
-            ok "new windows open in the middle of the screen (placement policy center)"
+          #   GNOME (Mutter)  has no per-application window rules at all.
+          #   KDE (KWin)      has them, and they are stronger than labwc's.
+          #
+          # Neither is done yet. It is a bench question first — open Resolve on
+          # the 4K screen on each desktop and see whether it misbehaves at all —
+          # and a follow-up in the decision record. What DOES still ship is
+          # Resolve's own window memory, which is checked elsewhere in this job.
+          if [ -e /usr/share/aquarius/labwc/rc.xml ]; then
+            bad "a labwc rc.xml is still in the image — the shell removal is incomplete"
           else
-            bad "rc.xml's placement policy is '${PLACEMENT:-unset}', not center — Resolve's splash would open top-left again"
+            ok "no labwc window rule (retired with the Aquarius Session; see the note above)"
+          fi
+          if [ -x /usr/libexec/aquarius-resolve-settings ]; then
+            ok "Resolve's own window memory is still here, which is what sizes it now"
+          else
+            bad "/usr/libexec/aquarius-resolve-settings is missing — nothing would remember Resolve's window"
           fi
 
           echo "== and that your drives are in the same places inside =="
@@ -7493,176 +6215,6 @@ jobs:
           podman run --rm --pull=never -i \
             --entrypoint /usr/bin/bash \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-r6.sh
-
-      - name: Check the Settings app can see Bluetooth in the Aquarius Desktop
-        run: |
-          set -euo pipefail
-          cat > /tmp/verify-rfkill.sh <<'SCRIPT'
-          set -u
-          fails=0
-          ok()  { echo "  OK   $*"; }
-          bad() { echo "  FAIL $*"; fails=1; }
-
-          # ⚠️ THE BENCH BUG OF 6 SEPTEMBER 2026. In the Aquarius Desktop, the
-          # arrow beside the Bluetooth tile in Quick Settings opens GNOME's
-          # Settings on its Bluetooth page, and that page said "No Bluetooth
-          # Found" while a Bluetooth mouse was working on the same machine.
-          #
-          # The page does not ask Bluetooth anything. gnome-control-center's
-          # panels/bluetooth/cc-bluetooth-panel.c reads one true/false value,
-          # BluetoothHasAirplaneMode, from the bus service
-          # org.gnome.SettingsDaemon.Rfkill — and draws the "no devices" screen
-          # when it is false. That service is /usr/libexec/gsd-rfkill, which
-          # ships with gnome-settings-daemon and which GNOME's session starts.
-          # Ours did not, so nothing published the value and the page was blind.
-          #
-          # The fix is aquarius-rfkill.service: the same helper, started in our
-          # session only. Everything below is read out of the FINISHED IMAGE.
-          HELPER=/usr/libexec/gsd-rfkill
-          UNIT=/usr/lib/systemd/user/aquarius-rfkill.service
-          LINK=/usr/lib/systemd/user/labwc-session.target.wants/aquarius-rfkill.service
-          GNOME_UNIT=/usr/lib/systemd/user/org.gnome.SettingsDaemon.Rfkill.service
-
-          echo "== the helper the Settings page reads Bluetooth from =="
-          rpm -q gnome-settings-daemon > /dev/null 2>&1 \
-            && ok "gnome-settings-daemon $(rpm -q --queryformat '%{VERSION}-%{RELEASE}' gnome-settings-daemon)" \
-            || bad "gnome-settings-daemon is NOT installed — the helper comes in that package"
-          if [ -x "${HELPER}" ]; then ok "${HELPER} is present and runnable"
-          else bad "${HELPER} is missing — the Bluetooth page would say 'No Bluetooth Found'"; fi
-
-          echo "== our service, which starts it in the Aquarius session =="
-          if [ -r "${UNIT}" ]; then ok "the service file is installed"
-          else bad "${UNIT} is missing — nothing would start the helper"; fi
-          grep -q '^ExecStart=/usr/libexec/gsd-rfkill$' "${UNIT}" && ok "it runs the rfkill helper" || bad "the service does not run /usr/libexec/gsd-rfkill"
-          grep -q '^BusName=org\.gnome\.SettingsDaemon\.Rfkill$' "${UNIT}" && ok "it takes the bus name the Settings app looks for" || bad "the service declares no BusName"
-          grep -q '^Type=dbus$' "${UNIT}" && ok "it is 'ready' when that name is taken" || bad "the service is not Type=dbus"
-          grep -q '^PartOf=graphical-session\.target$' "${UNIT}" && ok "it stops when the desktop does" || bad "the service is not PartOf=graphical-session.target"
-          grep -q '^ConditionUser=!@system$' "${UNIT}" && ok "the login screen does not run it" || bad "the service is missing ConditionUser=!@system"
-
-          # ⚠️ THE SCOPE LINE. GNOME reaches graphical-session.target too, and
-          # GNOME already runs its own copy of this helper. Two copies would race
-          # for one bus name and one would lose, differently on each boot. So the
-          # service hangs off labwc-session.target — which only our session
-          # starts — and must never hang off the both-desktops one.
-          grep -q '^WantedBy=labwc-session\.target$' "${UNIT}" \
-            && ok "it is switched on for the Aquarius session" \
-            || bad "the service is not WantedBy=labwc-session.target"
-          if grep -qE '^(WantedBy|RequiredBy)=.*graphical-session\.target' "${UNIT}"; then
-            bad "the service asks to start with ANY graphical session, GNOME included — two copies would fight over org.gnome.SettingsDaemon.Rfkill"
-          else
-            ok "it does NOT start in GNOME, where a second copy would fight the first"
-          fi
-          [ -r /usr/lib/systemd/user/labwc-session.target ] \
-            && ok "labwc-session.target is in the image for it to hang off" \
-            || bad "labwc-session.target is missing — the service would never start"
-
-          echo "== the link that switches it on =="
-          if [ -L "${LINK}" ] && [ -e "${LINK}" ]; then
-            ok "switched on from /usr (an update always restores it): $(readlink "${LINK}")"
-          else
-            bad "${LINK} is missing or dangling — the service would never start"
-          fi
-          if [ -e /etc/systemd/user/labwc-session.target.wants/aquarius-rfkill.service ]; then
-            bad "it is ALSO switched on through /etc — an update could lose that"
-          else ok "nothing switches it on through /etc"; fi
-          if [ -e /usr/lib/systemd/user/graphical-session.target.wants/aquarius-rfkill.service ] \
-             || [ -e /etc/systemd/user/graphical-session.target.wants/aquarius-rfkill.service ]; then
-            bad "it is linked into graphical-session.target.wants — that starts it in GNOME too"
-          else ok "it is not linked into the both-desktops target"; fi
-
-          echo "== GNOME's own service for the same helper, for comparison =="
-          # Printed rather than asserted, so a future Fedora changing it is
-          # visible in a build log instead of on a bench. RefuseManualStart=true
-          # is why we ship a service of our own rather than starting GNOME's.
-          if [ -r "${GNOME_UNIT}" ]; then
-            ok "${GNOME_UNIT} is in the image"
-            sed 's/^/       /' "${GNOME_UNIT}"
-            grep -q '^RefuseManualStart=true$' "${GNOME_UNIT}" \
-              && ok "it refuses a manual start — hence our own service file" \
-              || echo "  note GNOME's unit no longer refuses a manual start; ours is still right, but worth a look"
-            if grep -q '^Environment=' "${GNOME_UNIT}"; then
-              echo "  note ⚠️ GNOME's unit now sets an environment variable — check whether ours needs it:"
-              grep '^Environment=' "${GNOME_UNIT}" | sed 's/^/       /'
-            else
-              ok "it sets no Environment= — nothing of that kind for ours to mirror"
-            fi
-          else
-            echo "  note ${GNOME_UNIT} is not in this image; ours does not depend on it"
-          fi
-          # None of GNOME's session gating may be in ours: Requisite= means
-          # "refuse to start unless that target is up", and those targets do not
-          # exist in our session. Read only the SETTING lines — our unit's header
-          # names all of these on purpose, to explain why they are absent.
-          grep -vE '^[[:space:]]*(#|$)' "${UNIT}" > /tmp/rf-settings.txt
-          gating=0
-          for line in 'Requisite=' 'ExecStopPost=' 'RefuseManualStart=' 'RefuseManualStop=' 'gnome-session'; do
-            if grep -qF "${line}" /tmp/rf-settings.txt; then
-              bad "ours has a live '${line}' setting copied from GNOME's unit — it would refuse to start in our session"
-              gating=1
-            fi
-          done
-          [ "${gating}" -eq 0 ] && ok "ours carries none of GNOME's session gating"
-
-          echo "== /dev/rfkill has to be writable by the person at the screen =="
-          # Reading the switch list is enough to DETECT Bluetooth (/dev/rfkill is
-          # world-readable), but switching aeroplane mode needs to write to it.
-          # systemd's 70-uaccess.rules tags rfkill devices 'uaccess', which gives
-          # read and write to whoever is logged in at the screen.
-          grep -rhE '^[^#]*rfkill' /usr/lib/udev/rules.d /etc/udev/rules.d 2>/dev/null | sed 's/^/       /' || true
-          if grep -rhE '^[^#]*KERNEL=="rfkill"' /usr/lib/udev/rules.d /etc/udev/rules.d 2>/dev/null | grep -q 'uaccess'; then
-            ok "a udev rule tags rfkill 'uaccess' — aeroplane mode can be switched, not only read"
-          else
-            bad "no udev rule tags rfkill 'uaccess' — Bluetooth would still be detected, but the aeroplane-mode switch would not move"
-          fi
-
-          if [ "$fails" -ne 0 ]; then
-            echo "::error::The Settings app would not see Bluetooth in the Aquarius Desktop. See docs/restart/aquarius-session.md."
-            exit 1
-          fi
-          echo "All Bluetooth-in-Settings checks passed."
-          SCRIPT
-          podman run --rm --pull=never -i \
-            --entrypoint /usr/bin/bash \
-            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-rfkill.sh
-
-      # ------------------------------------------------------------------------
-      # PUBLISHING
-      # ------------------------------------------------------------------------
-      # ⚠️ EVERY STEP FROM HERE DOWN ONLY RUNS ON THE REAL LINE — which is
-      # `main` after the 4 September 2026 branch rename, and was
-      # `restart/fedora-bootc` before it. Both are named, so this file is
-      # correct on either side of that rename.
-      #
-      # Side branches (`restart/aquarius-keys`, `restart/r3-apps` and any
-      # future one) build the
-      # image and run every check above, and then stop. They must not publish,
-      # because publishing means pushing to the `aquarius-os:latest` tags
-      # that real machines update from — so a half-finished side branch would
-      # overwrite the working image on the bench PC with its own work in
-      # progress. Building and checking is the whole value of running CI on a
-      # side branch; publishing from one is only a way to break something.
-      #
-      # Fable removes these `if:` lines when a side branch is merged back.
-
-      # ------------------------------------------------------------------------
-      # THE SAFETY CATCH — do not publish over history that was never saved
-      # ------------------------------------------------------------------------
-      # `aquarius-os:latest` and `aquarius-os-nvidia:latest` used to be the
-      # older, Bazzite-based operating system. From 4 September 2026 they are
-      # this one. The moment this workflow publishes, the older image stops
-      # being findable by name — so before that ever happens, all six Bazzite
-      # images must have been copied to a permanent `bazzite-final` tag.
-      #
-      # That copying is a separate workflow ("Archive the Bazzite image tags"),
-      # run once, by hand. This step is what makes forgetting it impossible: it
-      # simply asks the registry whether the archive exists, and stops the run
-      # if it does not. Nothing has been pushed at this point, so stopping here
-      # costs a build and breaks nothing.
-      #
-      # Once the archive exists this step is six quick questions to the registry
-      # and always passes. It stays in the file because the archive is the only
-      # copy of a year's work, and a check that has already saved you once is
-      # not worth deleting.
       - name: Check the Bazzite images were archived first
         if: github.ref_name == 'main' || github.ref_name == 'restart/fedora-bootc'
         env:
@@ -7784,289 +6336,22 @@ jobs:
           echo '```' >> "${GITHUB_STEP_SUMMARY}"
           echo "sudo bootc switch ${IMAGE_REGISTRY}/${IMAGE_NAME}:latest" >> "${GITHUB_STEP_SUMMARY}"
           echo '```' >> "${GITHUB_STEP_SUMMARY}"
-
-  # ============================================================================
-  # The Aquarius Shell's own checks
-  # ============================================================================
-  # The shell lives in its own repository (github.com/stoneharborent/aquarius-shell)
-  # and the image bakes in one exact commit of it, named in aquarius-os.env.
+  # ⚠️ A WHOLE JOB USED TO LIVE HERE AND IT IS GONE — 15 September 2026.
   #
-  # That repository has a test suite, and it is worth running HERE rather than
-  # only there, for one reason: it is this repository that decides which commit
-  # of the shell ships. Bumping AQUARIUS_SHELL_REF to something broken should
-  # fail the AquariusOS build, not surprise somebody at the login screen.
+  # `shell_tests` ("The Aquarius Shell's own checks") cloned the aquarius-shell
+  # repository at the exact commit this image pinned, ran that repository's own
+  # test suite against it, and then ran build_files/check-labwc-drift.sh to
+  # prove the four labwc files existed identically in both repositories. It also
+  # carried a `grep` shim, because the shell's tests used `printf | grep -q`
+  # under `set -o pipefail` and that combination reports a match as a failure
+  # (the trap written up at length in build_files/aq-lib.sh).
   #
-  # What the shell's own script can check without a Linux desktop: that every
-  # QML file's brackets balance, that no compositor-specific import has crept in
-  # (the standardised-protocols law, enforced instead of trusted), that no
-  # component contains a raw colour, that the two themes declare the same set of
-  # colour roles, that nothing points at a path on somebody's laptop, and — the
-  # only part that RUNS code — about seventy assertions about the search
-  # palette's fuzzy matcher and calculator.
-  #
-  # What it cannot check is whether the QML is CORRECT. That needs qmllint with
-  # the matching Quickshell installed, and the matching Quickshell is the one
-  # compiled inside the image above — it does not exist as a package anywhere.
-  # Running qmllint against Fedora's 0.2.1 package would report every use of
-  # Quickshell.Networking and Quickshell.Bluetooth as an unknown module and fail
-  # for the wrong reason. So this job is honest about its size: it is the cheap
-  # gate. The real one is the bench.
-  #
-  # It runs in parallel with the image build and does not block it — a shell
-  # whose structure is wrong should be visible immediately, but the image build
-  # is thirty minutes and there is no sense in queueing behind a shell script.
-  shell_tests:
-    name: The Aquarius Shell's own checks
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
+  # Royce retired the Aquarius Session and asked for GNOME and KDE Plasma
+  # instead (../docs/decision-2026-09-15-two-desktops.md). This image pins no
+  # shell commit, ships no labwc files, and has nothing to drift against. The
+  # shell repository is tagged `aquarius-session-final` and keeps its own tests
+  # for anybody who ever goes back to it.
 
-    steps:
-      - name: Check out this repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Work out which commit of the shell this image ships
-        id: pin
-        run: |
-          set -euo pipefail
-          REPO="$(grep -E '^AQUARIUS_SHELL_REPO=' aquarius-os.env | cut -d'"' -f2)"
-          REF="$(grep -E '^AQUARIUS_SHELL_REF=' aquarius-os.env | cut -d'"' -f2)"
-          if [ -z "${REPO}" ] || [ -z "${REF}" ]; then
-            echo "::error::aquarius-os.env does not name the shell repository and commit."
-            exit 1
-          fi
-          echo "repo=${REPO}" >> "${GITHUB_OUTPUT}"
-          echo "ref=${REF}" >> "${GITHUB_OUTPUT}"
-          echo "shell: ${REPO} @ ${REF}"
-
-      # ⚠️ This can legitimately fail to find anything, and that is not an error.
-      #
-      # A GitHub Actions run can read THIS repository and no other. If
-      # aquarius-shell is private, this job cannot fetch it — and neither can
-      # the image build, which is why the image ships without the shell and says
-      # so on screen. Both halves have to behave the same way, so this reports a
-      # warning and stops rather than failing the run for something nobody can
-      # fix from inside this repository.
-      #
-      # The fix is one click: make github.com/stoneharborent/aquarius-shell
-      # public. Then this job runs the shell's real tests on every push, and the
-      # image bakes the shell in, with no file here changing.
-      - name: Fetch the shell at that exact commit
-        id: fetch
-        run: |
-          set -uo pipefail
-          export GIT_TERMINAL_PROMPT=0
-          if ! git clone "${{ steps.pin.outputs.repo }}" aquarius-shell 2>&1; then
-            echo "::warning::Could not read ${{ steps.pin.outputs.repo }} — it is private, so this job and the image build both go without the shell. Make it public to turn this on."
-            echo "available=no" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-          cd aquarius-shell
-          git checkout --detach "${{ steps.pin.outputs.ref }}"
-          GOT="$(git rev-parse HEAD)"
-          if [ "${GOT}" != "${{ steps.pin.outputs.ref }}" ]; then
-            echo "::error::asked for ${{ steps.pin.outputs.ref }} and got ${GOT}"
-            exit 1
-          fi
-          git log -1 --format='%h %ad %s' --date=short
-          echo "available=yes" >> "${GITHUB_OUTPUT}"
-
-      - name: Install what the checks need
-        if: steps.fetch.outputs.available == 'yes'
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y shellcheck
-          python3 -m pip install --user pyyaml
-
-      # ⚠️ WHY THERE IS A FAKE `grep` IN FRONT OF THIS
-      #
-      # The shell's suite runs with `set -o pipefail` and asks most of its
-      # questions like this:
-      #
-      #     printf '%s' "${the_whole_file}" | grep -q 'the thing'
-      #
-      # `grep -q` stops reading the moment it finds the thing and closes the
-      # pipe. bash's `printf` hands its text over in 4 KB pieces, so it can
-      # still have pieces left when the pipe closes — and then `printf` fails
-      # with "write error: Broken pipe". Under `pipefail` a failure ANYWHERE in
-      # the pipeline fails the whole pipeline, so the test is recorded as a
-      # FAIL even though grep found exactly what it was looking for.
-      #
-      # It is a race, so it is different every run. Build 9 (2026-09-14) hit it
-      # twice in one section and reported that the app switcher does not handle
-      # Qt.Key_Meta or Qt.Key_Super_R being released — both of which are plainly
-      # there, in AppSwitcher.qml, at the pinned commit, right next to the two
-      # keys the same loop said were fine.
-      #
-      # The real repair belongs in aquarius-shell (a here-string, `grep -q ...
-      # <<< "${code}"`, cannot break). We do not write in that repository, and
-      # we must not have this image's CI reporting invented failures in the
-      # meantime, so this step puts a tiny stand-in for `grep` at the front of
-      # PATH which reads ALL of its input before handing it to the real grep.
-      # Nothing can then be left to write, so the pipe can never break. The
-      # stand-in changes nothing else: same arguments, same output, same exit
-      # status, and it steps aside entirely when grep is reading files rather
-      # than a pipe.
-      - name: Make the shell's `printf | grep -q` checks race-free
-        if: steps.fetch.outputs.available == 'yes'
-        run: |
-          set -euo pipefail
-          mkdir -p "${RUNNER_TEMP}/grep-shim"
-          # The ten leading spaces are this file's indentation, not the
-          # script's; sed takes them off so the '#!' line starts the file.
-          sed 's/^          //' > "${RUNNER_TEMP}/grep-shim/grep" <<'SHIM'
-          #!/usr/bin/env bash
-          # A stand-in for grep that never lets the program feeding it get a
-          # "Broken pipe". See the note beside this step in build.yml.
-          if [ -p /dev/stdin ]; then
-              shim_input="$(cat)"          # drain the writer completely
-              printf '%s' "${shim_input}" 2>/dev/null | /usr/bin/grep "$@"
-              exit $?
-          fi
-          exec /usr/bin/grep "$@"
-          SHIM
-          chmod +x "${RUNNER_TEMP}/grep-shim/grep"
-          bash -n "${RUNNER_TEMP}/grep-shim/grep"
-          # Prove it before trusting it: the real thing still answers the same.
-          printf 'alpha\nbeta\n' | "${RUNNER_TEMP}/grep-shim/grep" -q beta
-          printf 'alpha\nbeta\n' | "${RUNNER_TEMP}/grep-shim/grep" -qF alpha
-          if printf 'alpha\n' | "${RUNNER_TEMP}/grep-shim/grep" -q zulu; then
-            echo "::error::the grep stand-in says it found something that is not there"
-            exit 1
-          fi
-          echo "the grep stand-in behaves like grep"
-
-      - name: Run the shell's own checks
-        if: steps.fetch.outputs.available == 'yes'
-        working-directory: aquarius-shell
-        run: |
-          set -euo pipefail
-          PATH="${RUNNER_TEMP}/grep-shim:${PATH}"
-          export PATH
-          ./tests/test-shell.sh
-
-      # ------------------------------------------------------------------------
-      # ⚠️ CHANGE ONE, CHANGE BOTH — and this is what makes that true
-      # ------------------------------------------------------------------------
-      # The window manager's configuration folder exists twice: once in the
-      # shell repository under session/labwc/, and once in this repository under
-      # system_files/usr/share/aquarius/labwc/. The copy here is what ships on a
-      # real machine. Nothing copies one onto the other — on purpose, because
-      # our copies carry OS-only corrections — so the two are kept in step by
-      # hand.
-      #
-      # THAT FAILED TWICE IN ONE DAY, 6 September 2026. In the morning the shell
-      # had grown a menu.xml and a right-click binding this image never got, so
-      # right-clicking the desktop showed labwc's own built-in menu. That
-      # afternoon, while fixing it, we found the shell had also grown Super+Tab
-      # and Super+Shift+Tab that this image never got either. Both times the
-      # build was then taught to look for that one thing by name, which does not
-      # help with whatever the shell adds next.
-      #
-      # So this compares the files themselves. Comments are ignored — each copy
-      # is written for its own reader — and everything the program acts on has to
-      # match.
-      #
-      # ⚠️ ONE OF THEM IS NOT A FILE ANY MORE. Since 2026-09-06 labwc's colours
-      # are not written by hand in either repository: generate-theme reads the
-      # shell's palette and writes them. Comparing two programs line by line
-      # would be a weak check, so the script RUNS BOTH — Ice and Midnight, at 1x
-      # and 1.25x — and compares what they produce, which is the thing that
-      # actually reaches a screen.
-      #
-      # It is a script in this repository rather than lines in this file
-      # so that a person can run exactly what CI runs, against a clone of the
-      # shell, before pushing:
-      #
-      #     ./build_files/check-labwc-drift.sh /path/to/a/clone/of/aquarius-shell
-      #
-      # It needs python3 and nothing else, and that is already on the runner.
-      - name: The image's labwc files still match the shell's
-        if: steps.fetch.outputs.available == 'yes'
-        run: ./build_files/check-labwc-drift.sh aquarius-shell
-
-      # The two things this repository needs to be true about the shell, which
-      # the shell's own tests have no reason to check because they are about how
-      # the OPERATING SYSTEM installs it.
-      - name: Check the shell still looks the way the image expects
-        if: steps.fetch.outputs.available == 'yes'
-        working-directory: aquarius-shell
-        run: |
-          set -euo pipefail
-          fails=0
-
-          echo "== the folders build_files/stage-aquarius-shell.sh copies =="
-          for part in shell.qml components services theme assets; do
-            if [ -e "${part}" ]; then
-              echo "  OK   ${part}"
-            else
-              echo "  FAIL ${part} is gone — the image build copies it by name and would ship a broken shell"
-              fails=1
-            fi
-          done
-
-          echo "== the summon command the labwc key binding sends =="
-          # Both repositories have to agree on this exact string. They were out
-          # of step once already: the OS-side binding passed a configuration name
-          # that qs reads as an IPC target, and Super+Space would have silently
-          # done nothing. If the shell ever renames the target or the function,
-          # this fails here rather than on somebody's desk.
-          if grep -rq 'search' --include='*.qml' components/search/FlowSearch.qml \
-             && grep -q 'IpcHandler' components/search/FlowSearch.qml; then
-            echo "  OK   the search palette still declares an IPC handler"
-          else
-            echo "  FAIL components/search/FlowSearch.qml no longer declares an IpcHandler — Super+Space would do nothing"
-            fails=1
-          fi
-
-          echo "== the app switcher's IPC contract =="
-          # Five keybinds in this repository's rc.xml call `qs ipc call switcher
-          # <function>`, and Quickshell says nothing at all when a call names a
-          # function that is not there — the key would simply do nothing. So
-          # every function the OS-side bindings can send is checked by name
-          # against the shell at the pinned commit.
-          for fn in next prev cycle go cancel; do
-            if grep -qE "function ${fn}\(\)" components/switcher/AppSwitcher.qml; then
-              echo "  OK   the switcher answers '${fn}'"
-            else
-              echo "  FAIL components/switcher/AppSwitcher.qml has no IpcHandler function ${fn}() — a key in this image's rc.xml would do nothing"
-              fails=1
-            fi
-          done
-          if grep -q 'target: "switcher"' components/switcher/AppSwitcher.qml; then
-            echo "  OK   its IPC handler is still called 'switcher'"
-          else
-            echo "  FAIL components/switcher/AppSwitcher.qml no longer declares target: \"switcher\" — every Tab binding in this image would do nothing"
-            fails=1
-          fi
-          # The switcher reads the Mac-or-Windows answer that `aq keys` writes,
-          # from the path THIS repository puts it at. If the shell ever looked
-          # somewhere else, the panel would silently list applications forever.
-          if grep -q 'aquarius/keys.conf' services/KeyProfile.qml; then
-            echo "  OK   it reads ~/.config/aquarius/keys.conf, which is where aq keys writes"
-          else
-            echo "  FAIL services/KeyProfile.qml does not read aquarius/keys.conf — 'aq keys windows' would not reach the switcher"
-            fails=1
-          fi
-
-          echo "== the size knob the session sets =="
-          # /usr/bin/aquarius-session exports AQ_UI_SCALE from the person's
-          # display.conf, and the shell is the only thing that reads it. If the
-          # shell ever stops reading it, the OS would keep exporting a variable
-          # into a void and `aq display ui` would silently do nothing.
-          if grep -q 'AQ_UI_SCALE' theme/Theme.qml; then
-            echo "  OK   theme/Theme.qml still reads AQ_UI_SCALE"
-          else
-            echo "  FAIL theme/Theme.qml no longer reads AQ_UI_SCALE — 'aq display ui' would do nothing at all"
-            fails=1
-          fi
-
-          if [ "${fails}" -ne 0 ]; then
-            echo "::error::The shell no longer matches what the AquariusOS image build expects of it."
-            exit 1
-          fi
-          echo "The shell matches what the image build expects."
 
   # ============================================================================
   # The names have not slipped back

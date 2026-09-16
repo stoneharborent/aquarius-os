@@ -47,10 +47,12 @@
 #     system disagreeing with itself on its own first screen, and no screenshot
 #     would catch it because both cards look fine.
 #
-#   * The old first-login entries are GONE, and the two new ones exist AND RUN
-#     THE SAME COMMAND. GNOME reads /etc/xdg/autostart; labwc reads exactly one
-#     file and never that folder. So the same fact is written down twice, and
-#     two copies of a fact is two chances for them to drift.
+#   * The old first-login entry is GONE and the new one exists. ⚠️ This used to
+#     be a check on TWO files: GNOME reads /etc/xdg/autostart and the retired
+#     Aquarius Session read exactly one file of its own and never that folder,
+#     so the same fact was written down twice and could drift. GNOME and KDE
+#     Plasma both read /etc/xdg/autostart, so since 2026-09-15 there is one
+#     file and one check.
 # ==============================================================================
 
 set -euo pipefail
@@ -63,7 +65,6 @@ CHOOSER=/usr/libexec/aquarius-creator-apps
 APP_ENTRY=/usr/share/applications/aquarius-welcome.desktop
 AUTOSTART=/etc/xdg/autostart/aquarius-welcome-firstrun.desktop
 OLD_AUTOSTART=/etc/xdg/autostart/aquarius-creator-apps-firstrun.desktop
-LABWC_AUTOSTART=/usr/share/aquarius/labwc/autostart
 AQ=/usr/bin/aq
 
 # ==============================================================================
@@ -289,25 +290,30 @@ aq_file_has "${AUTOSTART}" '^X-GNOME-Autostart-Delay=10$' \
     "and waits ten seconds so the desktop has settled"
 
 # ==============================================================================
-# 6. The Aquarius session has to be told separately
+# 6. One autostart file, and BOTH desktops read it
 # ==============================================================================
-# ⚠️ labwc DOES NOT READ /etc/xdg/autostart. It reads exactly one file, the
-# `autostart` next to its rc.xml, and that is deliberate — it is what keeps a
-# dozen GNOME background programs out of the Aquarius session.
+# ⚠️ THIS SECTION USED TO BE THE HARD ONE, AND IT IS NOW THE EASY ONE.
 #
-# The cost of that decision is this: anything that must run at login in BOTH
-# sessions is written down twice, and this check is what stops the two copies
-# drifting apart silently. It is the sort of fault that shows up only on the one
-# session nobody tested.
-say "Both sessions open the welcome, and they run the same command"
-aq_file_has "${LABWC_AUTOSTART}" 'aquarius-welcome --first-run' \
-    "the Aquarius session's autostart opens the welcome on a first login"
-
+# The retired Aquarius Session did not read /etc/xdg/autostart. labwc reads
+# exactly one file, the `autostart` beside its rc.xml, and that was deliberate —
+# it is what kept a dozen GNOME background programs out of our session. The cost
+# was that anything which had to run at login in BOTH sessions was written down
+# twice, and a check had to prove the two copies still said the same thing. It
+# is the sort of fault that shows up only on the one session nobody tested.
+#
+# GNOME and KDE Plasma BOTH read /etc/xdg/autostart — it is the shared
+# freedesktop standard both have implemented for years. So the welcome opens at
+# a first login on either desktop from the single file checked above, there is
+# no second copy, and there is nothing left to drift.
+say "One first-login entry, read by both desktops"
 GNOME_CMD="$(sed -n 's/^Exec=//p' "${AUTOSTART}" | head -n 1)"
-if grep -qF "${GNOME_CMD}" "${LABWC_AUTOSTART}"; then
-    ok "both sessions run exactly the same command: ${GNOME_CMD}"
+echo "  ${AUTOSTART} runs: ${GNOME_CMD}"
+if [ -d /usr/share/wayland-sessions ] \
+    && [ -r /usr/share/wayland-sessions/gnome.desktop ] \
+    && [ -r /usr/share/wayland-sessions/plasma.desktop ]; then
+    ok "both desktops are in this image, and both read /etc/xdg/autostart"
 else
-    bad "GNOME runs '${GNOME_CMD}' and the Aquarius session runs something else"
+    bad "one of the two desktops is missing from /usr/share/wayland-sessions — the welcome would only open on the one that is there"
 fi
 
 # ==============================================================================
@@ -321,11 +327,6 @@ if [ -e "${OLD_AUTOSTART}" ]; then
     bad "${OLD_AUTOSTART} is still here — the chooser would open twice at a first login"
 else
     ok "the chooser's own first-login entry is gone"
-fi
-if grep -q 'aquarius-creator-apps --first-run' "${LABWC_AUTOSTART}" 2> /dev/null; then
-    bad "the Aquarius session's autostart still opens the chooser directly at login"
-else
-    ok "the Aquarius session's autostart does not open the chooser directly either"
 fi
 
 # But the chooser is still an ordinary app, and must stay one: this whole change

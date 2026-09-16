@@ -1,5 +1,7 @@
 # Why the Aquarius greeter does not draw — a debugging map
 
+> **RETIRED 2026-09-15 — see [the decision record](../../decision-2026-09-15-two-desktops.md).** This page debugs the branded AquariusOS greeter (greetd + the Aquarius Shell), which was retired on 2026-09-15 along with the desktop that drew it. greetd is not in the image and `aq login use greetd` no longer exists. The login screen today is GDM, and it lists both desktops: [`../desktops.md`](../desktops.md).
+
 *Written 2026-09-05, after the bench journal confirmed the multi-day "black
 screen with a cursor" saga was the greetd greeter, not GDM. This page does NOT
 fix the greeter. It scopes the fault so the next person with a Linux machine in

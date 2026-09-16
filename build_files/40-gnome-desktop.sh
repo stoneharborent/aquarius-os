@@ -4,14 +4,20 @@
 # ==============================================================================
 # WHY GNOME IS HERE AT ALL
 #
-# The desktop AquariusOS is being built towards is our own — the Aquarius
-# Desktop, a shell we write, running on the labwc compositor. That is Phase R2.
+# ⚠️ THIS ANSWER CHANGED ON 15 SEPTEMBER 2026. GNOME used to be the FALLBACK:
+# a complete, stock desktop installed beside our own, so that a bad night's
+# work on the Aquarius Session could never leave Royce with a machine he could
+# not log into.
 #
-# GNOME is the FALLBACK, and it is permanent. The rule (standing decision 2)
-# is: there is always a complete, stock, working desktop installed beside ours,
-# so that a bad night's work on the Aquarius Session can never leave Royce with
-# a machine he cannot log into. It is also what he approved the look of on the
-# bench on 2026-08-31, so for now it is the desktop AquariusOS boots into.
+# There is no "ours" any more. Royce retired the Aquarius Session and asked for
+# GNOME and KDE Plasma side by side, so he can use each one for real and pick
+# (../docs/decision-2026-09-15-two-desktops.md). GNOME is now one of the two
+# desktops AquariusOS ships, not a safety net for a third — and it is the one a
+# brand-new account lands in, because it is the look Royce approved on the bench
+# on 2026-08-31 and because every AquariusOS window is a GTK 4 window.
+#
+# The other desktop is step 4b, build_files/41-kde-desktop.sh, which is written
+# to match this file line for line.
 #
 # WHY THIS IS A LIST AND NOT `dnf group install "GNOME Desktop"`
 #

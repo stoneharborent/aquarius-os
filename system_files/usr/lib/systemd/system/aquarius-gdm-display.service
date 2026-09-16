@@ -19,7 +19,7 @@
 #
 # WHY Before= AND NOT Wants=
 #   display-manager.service is the link systemd uses to mean "whichever login
-#   screen is switched on" — GDM today, possibly greetd later. Naming it in
+#   screen is switched on" — GDM, which is the only one AquariusOS has. Naming it in
 #   Before= means "if it is going to start, run me first" and says nothing about
 #   whether it should start, which is not this service's business.
 #

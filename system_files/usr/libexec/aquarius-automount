@@ -7,13 +7,13 @@
 # On a Mac, when you plug in a USB stick, an SD card, or an external SSD, it
 # just appears — you never type a password, and you drag it to the bin (or
 # right-click Eject) to put it away safely. That is what a creator expects, and
-# it is what this program gives the Aquarius Desktop.
+# it is what this program gives both AquariusOS desktops.
 #
 # Fedora already ships the machinery that does the actual mounting — a service
 # called udisks2 — and it already lets the person sitting at the screen mount
 # and unmount a removable drive without a password. What Fedora does NOT do on
 # its own is mount a drive the MOMENT you plug it in. GNOME's Files app does it
-# while Files is running; our own Aquarius Session has no Files app running in
+# while Files is running; a Plasma session has no Nautilus running in
 # the background, so nothing was doing it. This program is that missing piece.
 #
 # It sits quietly in your logged-in session, watches udisks2 for a drive being

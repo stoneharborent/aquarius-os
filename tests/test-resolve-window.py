@@ -10,6 +10,9 @@ import sys
 import tempfile
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import aquarius_headless as headless  # noqa: E402
+
 
 def worker(root):
     import gi
@@ -84,18 +87,23 @@ def main():
         work=Path(temp)
         (work/'run').mkdir(mode=0o700)
         (work/'config').mkdir()
+        # labwc, if it is the compositor that ends up being used on somebody's
+        # own machine, wants this file to exist. The others ignore it.
         (work/'config/rc.xml').write_text('<labwc_config/>')
         command=work/'worker.sh'
         # Arguments are fixed filesystem paths, shell quoted independently.
         import shlex
         command.write_text('#!/bin/sh\n'+shlex.join([sys.executable,str(Path(__file__).resolve()),'--worker',str(root)])+'\n')
         command.chmod(0o700)
-        # Pixman controls labwc, but Xwayland still tries its own GPU renderer.
-        # The NVIDIA image has GPU libraries and no GPU in CI. Use wlroots'
-        # WLR_XWAYLAND override only inside this test selects shared-memory
-        # rendering. Disable GLX too: even with glamor off its swrast loader
-        # enumerates EGL vendors and crashes in NVIDIA's GBM code without a GPU.
-        # These geometry checks use no OpenGL; real sessions keep acceleration.
+        # The compositor renders in software, but Xwayland still tries its own
+        # GPU renderer. The NVIDIA image has GPU libraries and no GPU in CI, so
+        # this test hands the compositor a WRAPPER around Xwayland that selects
+        # shared-memory rendering. Disable GLX too: even with glamor off its
+        # swrast loader enumerates EGL vendors and crashes in NVIDIA's GBM code
+        # without a GPU. These geometry checks use no OpenGL; real sessions keep
+        # acceleration. (tests/aquarius_headless.py knows the name each
+        # compositor reads the wrapper from — WLR_XWAYLAND for labwc,
+        # KWIN_XWAYLAND for KWin.)
         xwayland = shutil.which('Xwayland')
         if xwayland is None:
             raise RuntimeError('Window test requires Xwayland')
@@ -103,23 +111,25 @@ def main():
         wrapper.write_text('#!/bin/sh\necho "TEST: software Xwayland" >&2\nexec '
                            + shlex.quote(xwayland) + ' -glamor off -extension GLX "$@"\n')
         wrapper.chmod(0o700)
-        env=dict(os.environ,XDG_RUNTIME_DIR=str(work/'run'),XDG_CONFIG_HOME=str(work/'config'),XDG_STATE_HOME=str(work/'state'),WLR_BACKENDS='headless',WLR_HEADLESS_OUTPUTS='1',WLR_RENDERER='pixman',WLR_XWAYLAND=str(wrapper),GDK_BACKEND='x11',GTK_A11Y='none')
+        env=dict(os.environ,XDG_RUNTIME_DIR=str(work/'run'),XDG_CONFIG_HOME=str(work/'config'),XDG_STATE_HOME=str(work/'state'),GDK_BACKEND='x11',GTK_A11Y='none')
         env.pop('DISPLAY',None)
         env.pop('WAYLAND_DISPLAY',None)
         with (work/'log').open('w+') as log:
-            wm=subprocess.Popen(['labwc','-C',str(work/'config'),'-s',str(command)],env=env,stdout=log,stderr=log)
+            compositor=headless.start(work/'run',work/'config',log,env,
+                                      xwayland_wrapper=wrapper,run_after=command)
+            print('Invisible desktop: %s'%compositor.name)
             try:
                 until=time.monotonic()+30
                 while time.monotonic()<until:
                     time.sleep(.5)
                     log.flush();log.seek(0);text=log.read()
                     if 'PASS: real XWayland' in text:
-                        assert 'TEST: software Xwayland' in text, 'labwc did not use the test Xwayland wrapper'
+                        assert 'TEST: software Xwayland' in text, compositor.name+' did not use the test Xwayland wrapper'
                         print(text[text.index('PASS: real XWayland'):].splitlines()[0]);return
                     if 'Traceback' in text: raise RuntimeError(text)
                 raise RuntimeError('Window test timed out:\n'+text)
             finally:
-                wm.terminate();wm.wait(timeout=5)
+                compositor.stop()
 
 if __name__=='__main__':
     main()

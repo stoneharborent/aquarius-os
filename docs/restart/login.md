@@ -1,5 +1,27 @@
 # The login screen
 
+> ## ⚠️ READ THIS FIRST — 15 September 2026
+>
+> **There is now exactly ONE login screen, GDM, and it lists BOTH desktops.**
+>
+> Most of this page is about a second one: a branded AquariusOS login screen
+> (greetd plus a greeter drawn by the Aquarius Shell), called "Part B"
+> throughout. **That does not exist any more.** Royce retired the Aquarius
+> Session on 2026-09-15 and the greeter went with it — greetd is not in the
+> image, `aq login use greetd` has been removed, and the watchdog that put GDM
+> back after two failed greetd boots is gone because nothing can fail that way.
+>
+> **What you almost certainly came here for:** how to choose between GNOME and
+> KDE Plasma at the login screen. That is [`desktops.md`](desktops.md).
+>
+> **What on this page is still true:** everything about GDM — why it looks like
+> stock GNOME, what can and cannot be branded, the scale problem and
+> `aq login scale`, and the two black-screen sagas as history. The greetd
+> sections are kept because they are the record of a real multi-day fault, and
+> because one machine somewhere may still be *set* to greetd from before
+> (`aq login status` detects exactly that and prints the fix). The debugging map
+> has moved to [`history/greeter-debug.md`](history/greeter-debug.md).
+
 *Written 2026-09-04, after Royce photographed the bench machine booting and
 asked why the screen he logs in at does not look like AquariusOS. Assumes you
 have never used Linux.*
@@ -103,7 +125,7 @@ The greeter *not drawing* is a deeper fault, scoped but not fixed here. It is
 labwc applying our `rc.xml`? did `qs` crash on a QML import? did the layer-shell
 surface never attach? does labwc `-s` exit when its command does?) and the exact
 bench commands to capture the greeter's own log next time someone opts in are in
-**[greeter-debug.md](greeter-debug.md)**. Do not rewrite the greeter blind.
+**[greeter-debug.md](history/greeter-debug.md)**. Do not rewrite the greeter blind.
 
 ---
 

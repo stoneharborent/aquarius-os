@@ -21,7 +21,7 @@
 # leaving it at that:
 #
 # 1. ⚠️ THE DOCK CANNOT WATCH A FOLDER THAT IS NOT THERE. The Aquarius dock
-#    lists your drives by watching that folder (aquarius-shell,
+#    listed your drives by watching that folder (the retired Aquarius Session,
 #    components/dock/DockDrives.qml). The Qt component it uses does something
 #    genuinely dangerous when the folder is missing — it silently lists the
 #    program's own working directory instead, which is your home folder. The

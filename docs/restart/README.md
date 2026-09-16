@@ -75,9 +75,11 @@ this is starting from an empty room.
 - **Every codec.** The full ffmpeg, the AAC encoder, hardware H.264 and H.265
   decoding, HEIC photos from iPhones. This is the part Fedora leaves out for
   patent reasons and it is the part a video machine cannot live without.
-- **A desktop.** GNOME — a deliberately short list of it, not the whole thing —
-  in the Ice light theme, with our wallpaper, our fonts, our logo on the About
-  page and the login screen, and a dock along the bottom.
+- **Two desktops.** GNOME *and* KDE Plasma — a deliberately short, hand-written
+  list of each, not the whole of either — with our wallpaper, our fonts, our
+  logo on the About page and the login screen, and a dock along the bottom of
+  GNOME. One login screen lists both and remembers which you picked. See
+  [`desktops.md`](desktops.md).
 - **The plumbing for what comes next.** Flatpak with Flathub already set up,
   `distrobox` and `podman` ready for the Resolve container, XWayland ready for
   Resolve itself, and the NVIDIA container toolkit already wired in. R3a turned
@@ -91,7 +93,7 @@ this is starting from an empty room.
 
 | Missing | Comes back in |
 | --- | --- |
-| ~~The Aquarius Desktop (our own shell), labwc, Quickshell, greetd~~ | **shipped in R2** — see [`aquarius-session.md`](aquarius-session.md) |
+| ~~The Aquarius Desktop (our own shell), labwc, Quickshell, greetd~~ | **shipped in R2, and RETIRED on 2026-09-15.** AquariusOS ships GNOME and KDE Plasma instead, both on one login screen — see [`desktops.md`](desktops.md). The retired guide: [`history/aquarius-session.md`](history/aquarius-session.md). |
 | The AquariusOS logo button in the top-left corner of the screen | **R2** (see below) |
 | ~~DaVinci Resolve, in its own Rocky Linux container~~ | **shipped in R3a** — see [`resolve.md`](resolve.md) |
 | ~~Aquarius Editor, Aquarius Writer, OBS, Kdenlive, Blender and the rest of the creator suite~~ | **shipped in R3b** — see [`creator-apps.md`](creator-apps.md) |
@@ -135,28 +137,25 @@ after it.
 
 | File | What it does |
 | --- | --- |
-| `stage-labwc.sh` | Not part of the operating system. Compiles the labwc window manager in a throwaway container, because Fedora 44 packages an older one than we need. |
-| `stage-quickshell.sh` | The same, for Quickshell — the runtime that draws our bar. Compiled inside the image so it can never disagree with the image's Qt. |
-| `stage-aquarius-shell.sh` | The same idea again: fetches the Aquarius Shell at one exact commit and copies across only the parts that run. |
+| ~~`stage-labwc.sh`, `stage-quickshell.sh`, `stage-aquarius-shell.sh`~~ | **Gone, 2026-09-15.** They compiled or fetched the three pieces of the Aquarius Session. Both desktops are Fedora packages now, so there is nothing to compile. See [`desktops.md`](desktops.md). |
+| `stage-resolve-menu.sh` | Not part of the operating system. Builds DaVinci Resolve's small menu adapter inside a Rocky Linux 9 container, because it runs inside Resolve's own container and must match its libraries. |
 | `aq-lib.sh` | Shared helpers. Read the top of this one first — it explains the "trust content, never timestamps" rule that shapes every check in the repo. |
 | `10-repos.sh` | Adds RPM Fusion, so the next step has real codecs to install. |
 | `20-hardware-media.sh` | Makes it a working computer: graphics, sound, network, power, firmware, filesystems, and every codec. The biggest step. |
 | `20-hardware-media.sh` (the firmware) | **The programs that live inside the hardware.** Every Wi-Fi and Bluetooth vendor, every graphics vendor, laptop speaker amplifiers, laptop webcams, and both CPU makers' microcode — then counts the actual files on disk to prove they landed. ⚠️ Fedora split `linux-firmware` into about thirty per-vendor packages and the leftovers no longer contain any radio; installing only the old name is what left the bench with "No Wi-Fi Adapter Found" on 2026-09-05. Plain-language guide: [`hardware.md`](hardware.md). |
-| `30-session.sh` | The invisible layer between "has drivers" and "has a desktop": the login screen, portals, XWayland, Flatpak, fonts, containers. |
+| `30-session.sh` | The invisible layer between "has drivers" and "has a desktop": the login screen, portals, XWayland, Flatpak, fonts, containers — and, since 2026-09-15, the three small programs our own features talk to a person through (`libnotify`, `zenity`, `wlr-randr`). |
 | `30-session.sh` (fingerprint login) | Also installs **fprintd + fprintd-pam**. ⚠️ Fedora's stock login rules name a fingerprint step (`pam_fprintd.so`), but the bare base ships the rule without the module, so every login logged "PAM adding faulty module" — the 2026-09-05 bench journal. Installing the module resolves the reference (matching Fedora Workstation) and makes fingerprint login work on laptops that have a reader; on a machine without one it sits idle. CI now also fails the build if any `/etc/pam.d` rule *requires* a module that is not installed (silent-optional `-` lines, like keyring and wallet, are honoured and skipped). Plain-language guide: [`login.md`](login.md#the-faulty-pam-module-at-every-login). |
-| `40-gnome-desktop.sh` | GNOME — a hand-written short list, with a note on everything deliberately left out. |
 | `50-aquarius-desktop.sh` | Makes it *ours*: wallpaper, logos, Ice theme, fonts, dock, the right-click ingest menu. |
 | `40-gnome-desktop.sh` | GNOME — a hand-written short list, with a note on everything deliberately left out. Also installs the **desktop-identity themes** (Adwaita cursor + icons, freedesktop sounds) and checks they are really on disk. See [`desktop-identity.md`](desktop-identity.md). |
 | `50-aquarius-desktop.sh` | Makes it *ours*: wallpaper, logos, Ice theme, fonts, dock, the right-click ingest menu, and the **cursor / icon / sound defaults** that match the login screen. See [`desktop-identity.md`](desktop-identity.md). |
-| `55-aquarius-session.sh` | The **Aquarius Desktop** — our own shell on the labwc window manager, added beside GNOME as a second choice at the login screen. Installs what the two compiled programs need, sets up the portals, and switches greetd off. See [`aquarius-session.md`](aquarius-session.md). |
+| `41-kde-desktop.sh` | **KDE Plasma — the second desktop**, a hand-written short list in the same shape as step 4, with a note on everything deliberately left out. ⚠️ **No sddm, no Discover, no plasma-welcome**, and the build fails if any of them arrives as somebody else's dependency: AquariusOS has one login screen, one app store and one welcome. Also installs the Breeze pieces our own GTK windows need on Plasma, and sets GNOME as the desktop a brand-new account lands in. See [`desktops.md`](desktops.md). |
+| ~~`55-aquarius-session.sh`, `57-lock-screen.sh`, `78-rfkill.sh`~~ | **Gone, 2026-09-15**, with the Aquarius Session they belonged to. What they installed that was NOT about a desktop — `libnotify`, `zenity`, `wlr-randr` — moved up into `30-session.sh`. See [`desktops.md`](desktops.md) and [`history/aquarius-session.md`](history/aquarius-session.md). |
 | `58-kernel-pin.sh` | **Which kernel AquariusOS ships.** Pins it to the one Universal Blue's ready-made, already-signed kernel modules were built for — the NVIDIA driver, the OBS virtual camera and the two Xbox controller drivers all depend on it exactly. Runs on BOTH images and before every step that installs a module. See [`kernel.md`](kernel.md). |
 | `60-nvidia.sh` | The NVIDIA driver. Does nothing on the AMD/Intel image. The hardest file in the repo — see [`nvidia-notes.md`](nvidia-notes.md). |
 | `62-resolve-runtime.sh` | **DaVinci Resolve — everything except Resolve.** Resolve itself may not be shipped by anybody but Blackmagic, so this puts in place the setup that builds a Rocky Linux container on the user's own machine and installs their own download into it, plus the launcher, the `aq resolve` commands, the USB rules for licence dongles, the graphics-card plumbing, and — since 2026-09-08 — the update flow: a once-a-day check against Blackmagic's release list, one notification when there is something newer, and an "Update DaVinci Resolve" window. Why a container at all: [`resolve.md`](resolve.md). |
 | `62-resolve-runtime.sh` (the windows) | Also checks the two DaVinci Resolve windows — Install and Remove — the shared window pieces in `/usr/lib/aquarius/python/aquarius_ui.py`, and the rule that nothing a person reads may name another Linux. |
 | `70-image-info.sh` | Teaches the system to call itself AquariusOS. |
 | `74-xremap-build.sh` | ⚠️ Does NOT run inside AquariusOS. It runs in a throwaway container whose only job is to compile the keyboard remapper, so that a compiler never ends up in the finished operating system. |
-| `55-aquarius-session.sh` (password prompts) | Also installs the polkit authentication agent and checks the session starts it. Without one, nothing in the Aquarius Desktop can ask for a password and installing creator apps fails with a message about `/dev/tty` — the 2026-09-04 bench fault. See [`aquarius-session.md`](aquarius-session.md#asking-for-your-password). |
-| `55-aquarius-session.sh` (screen size) | Also installs `/usr/libexec/aquarius-display-scale`, which sets each monitor to the right size at every login. Without it labwc leaves every screen at 100% and a 4K desktop is physically tiny — the bench's first complaint on 2026-09-03. Guide: [`aquarius-display.md`](aquarius-display.md). |
 | `75-aquarius-keys.sh` | Mac-style keyboard shortcuts, on by default — Copy is Command-C. Installs what the step above built, and checks the whole feature. Plain-language guide: [`aquarius-keys.md`](aquarius-keys.md). |
 | `62-virtual-camera.sh` | The fake webcam behind OBS Studio's "Start Virtual Camera" button. Takes a ready-made, already-signed kernel module from Universal Blue. ⚠️ Must run after `58-kernel-pin.sh`, which sometimes replaces this image's kernel. Since 2026-09-04 a mismatch STOPS the build instead of quietly leaving the feature out — see [`kernel.md`](kernel.md). |
 | `64-creator-apps.sh` | **The creator layer.** Bakes **Aquarius Writer** into the image; checks that **Aquarius Editor is NOT in it** and that everything which fetches it on a real machine is; checks the list of creator Flatpaks against Flathub; validates the extra permissions those apps need; switches the permissions service on (and deliberately leaves the bulk app installer OFF, because the chooser at first login asks the person which apps they want); and promotes the ingest helper. ⚠️ Until 2026-09-04 it also baked in Aquarius Editor, which is 4.1 GB — that is where roughly four of this image's gigabytes used to go. See [`creator-apps.md`](creator-apps.md). |
@@ -194,7 +193,7 @@ Whatever is in here is copied to the same place on the finished system. To add
 a file to the operating system, put it in the right place under `system_files/`
 — there is no list anywhere to update.
 
-The interesting ones are the three `zz1-aquarius-*.gschema.override` files,
+The interesting ones are the four `zz1-aquarius-*.gschema.override` files,
 which are GNOME's factory settings replaced with ours. Each one has a long
 plain-English header explaining what it does and, more usefully, what it
 deliberately does *not* do.
@@ -205,7 +204,6 @@ A few more worth knowing about, all added in R3b:
 | --- | --- |
 | `usr/share/flatpak/preinstall.d/aquarius-creator-apps.preinstall` | The shopping list of creator apps. Adding or removing an app is a one-block edit here. |
 | `usr/share/aquarius/flatpak-overrides/` | The extra permissions those apps need — a camera for OBS, an external drive for Kdenlive. Its `README.md` explains why they cannot simply be shipped where Flatpak reads them. |
-| `etc/skel/.config/aquarius-shell/dock.json` | What a brand-new account finds pinned to the Aquarius Desktop's dock. |
 | `usr/libexec/aquarius-creator-apps` | **The app chooser window.** Opens itself once at the first login, and lives in the app grid as "Aquarius Apps". Knows no app names of its own — it reads them from the two files above. |
 | `usr/libexec/aquarius-creator-apps-install` | The part that actually installs the **Flathub** apps, one at a time, as an administrator. The window starts it through `pkexec`, which is where the single password prompt comes from. |
 | `usr/libexec/aquarius-appimage-install` | *(2026-09-04)* The **other** installer: our own apps, from their GitHub release, into the person's own home folder — no password, no `pkexec`, and it refuses to run under `sudo`. Aquarius Editor is the first app to go through it. It also removes one again and answers "is mine the version this OS offers?". |
@@ -223,7 +221,8 @@ A few more worth knowing about, all added in R3b:
 | `usr/libexec/aquarius-brew-update` | *(2026-09-12)* The weekly `brew update`. Refreshes the catalogue and deliberately does **not** run `brew upgrade` — see [`homebrew.md`](homebrew.md). |
 | `etc/profile.d/aquarius-brew.sh` | *(2026-09-12)* What makes `brew` work in a terminal. ⚠️ It puts Homebrew at the **end** of PATH, not the front as Homebrew's own instructions say, so that brew's copies of `bash`, `systemd` or `dbus` can never beat Fedora's. |
 | `usr/lib/environment.d/70-aquarius-brew.conf` | *(2026-09-12)* The same, for apps started by **clicking** — they never read a profile file. Without it a brew tool works in a terminal and is missing from an app opened off the dock. |
-| `etc/xdg/autostart/aquarius-welcome-firstrun.desktop` | What opens the welcome at a first GNOME login. ⚠️ The Aquarius session needs the same thing said again, at the end of `usr/share/aquarius/labwc/autostart`, because labwc does not read this folder at all. *(It replaced `aquarius-creator-apps-firstrun.desktop` on 2026-09-04; the build fails if that one comes back.)* |
+| `etc/xdg/autostart/aquarius-welcome-firstrun.desktop` | What opens the welcome at a first login. **One file, both desktops** — GNOME and KDE Plasma both read `/etc/xdg/autostart`. ⚠️ Until 2026-09-15 the same fact had to be written down a second time for the Aquarius Session, which read only its own file; that copy, and the chance of the two drifting, are gone. *(It replaced `aquarius-creator-apps-firstrun.desktop` on 2026-09-04; the build fails if that one comes back.)* |
+| `etc/xdg/kglobalshortcutsrc` | *(2026-09-15)* The Mac shortcuts that have to reach **KDE Plasma itself**: Command-Tab, Command-\`, Command-Space and Control-Command-Q, added to KWin's own bindings rather than replacing them. GNOME answers the first two out of the box; `zz1-aquarius-40-keys.gschema.override` gives it the lock key. ⚠️ In `/etc` so that changing a shortcut in System Settings beats it and survives updates. |
 
 ---
 
@@ -293,6 +292,7 @@ thing locally. `just` with no arguments lists everything available.
 
 - **Taking the real names, step by step (the clicks Royce makes):** [`final-names.md`](final-names.md)
 - **What the Bazzite line left behind, and how to get any of it back:** [`history.md`](history.md)
+- **How the retired Aquarius Session worked (history only):** [`history/aquarius-session.md`](history/aquarius-session.md)
 - **Moving the bench machine over:** [`bench-rebase.md`](bench-rebase.md)
 - **How the boot screen and the boot menu are branded:** [`boot-branding.md`](boot-branding.md)
 - **The welcome — the first three minutes of a new machine:** [`welcome.md`](welcome.md)
@@ -303,6 +303,7 @@ thing locally. `just` with no arguments lists everything available.
 - **How big things are on the screen (and why it was too small):** [`aquarius-display.md`](aquarius-display.md)
 - **The pointer, the icons and the system sounds (and the seam for real Aquarius artwork later):** [`desktop-identity.md`](desktop-identity.md)
 - **⚠️ The wallpaper that stayed pale when the desktop went dark (8 September 2026), and the program that now swaps it:** [`desktop-identity.md`](desktop-identity.md#the-wallpaper)
+- **⭐ Two desktops, one login screen — how to pick, what each one is, what is the same on both:** [`desktops.md`](desktops.md)
 - **The login screen — why it looked like stock Fedora, and the two answers:** [`login.md`](login.md)
 - **⚠️ The BLACK login screen — twice, 4 and 5 September — and why AquariusOS now gives the login screen no display file at all:** [`login.md`](login.md#the-black-login-screen--twice-4-and-5-september-2026)
 - **DaVinci Resolve — installing it, and why it lives in a container:** [`resolve.md`](resolve.md)

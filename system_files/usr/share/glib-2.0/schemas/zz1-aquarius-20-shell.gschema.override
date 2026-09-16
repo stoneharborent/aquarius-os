@@ -71,8 +71,8 @@
 #
 # ⚠️ ALSO NOT HERE: Steam. It arrives in Phase R4.
 #
-# The Aquarius Desktop — our own session — has its own dock and its own list,
-# which is /etc/skel/.config/aquarius-shell/dock.json. That one CAN name the
+# ⚠️ THE SECOND DOCK IS GONE (2026-09-15). The Aquarius Session had its own
+# dock with its own list, /etc/skel/.config/aquarius-shell/dock.json. That one CAN name the
 # Flatpak apps, because the Aquarius dock simply skips a name it cannot find
 # rather than drawing a dead square. The two lists are deliberately allowed to
 # differ for that reason, and both are explained in docs/restart/creator-apps.md.
