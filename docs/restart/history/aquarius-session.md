@@ -1,5 +1,7 @@
 # The Aquarius Desktop — our own desktop, on the login screen
 
+> **RETIRED 2026-09-15 — see [the decision record](../../decision-2026-09-15-two-desktops.md).** The Aquarius Session (labwc + Quickshell) was replaced by GNOME and KDE Plasma on 2026-09-15. Nothing on this page is in the image any more; it is kept because it is the record of how that desktop worked. What replaced it: [`../desktops.md`](../desktops.md).
+
 *Written 2026-09-03, for Phase R2. Assumes you have never used Linux.*
 
 ---
@@ -862,7 +864,7 @@ Both work from a text console (Ctrl+Alt+F3), and `aq login status` says which
 one is on.
 
 **The whole story — what it looks like, what each key does, why it cannot lock
-you out, and the bench list — is in [`login.md`](login.md).** Read that one, not
+you out, and the bench list — is in [`login.md`](../login.md).** Read that one, not
 this section.
 
 ⚠️ **Never enable both.** Exactly one login manager may be switched on; two is a
@@ -973,12 +975,12 @@ of its own, it must not also start this one — it should write `agent=none` int
 | `/usr/libexec/aquarius-shell-start` | Runs the shell, and puts a dialog on screen if it fails. |
 | `/usr/libexec/aquarius-polkit-agent` | Starts the thing that asks you for your password. See the section above. |
 | `~/.config/aquarius/polkit.conf` | `agent=none` here switches that off. |
-| `/usr/libexec/aquarius-display-scale` | Sets each monitor to the right size at login. Without it every screen stays at 100% and a 4K desktop is tiny. Guide: [`aquarius-display.md`](aquarius-display.md). |
+| `/usr/libexec/aquarius-display-scale` | Sets each monitor to the right size at login. Without it every screen stays at 100% and a 4K desktop is tiny. Guide: [`aquarius-display.md`](../aquarius-display.md). |
 | `~/.config/aquarius/display.conf` | Your own screen-size answers, written by `aq display`. |
 | `/usr/share/xdg-desktop-portal/aquarius-portals.conf` | Which portal back end answers which request. |
 | `/usr/share/xdg-desktop-portal/portals/nautilus.portal` | The note saying the Files app can be the Open/Save picker. Ours, because Nautilus ships none. |
 | `/etc/xdg/xdg-desktop-portal-wlr/config` | How screen recording picks a screen. |
-| `/etc/greetd/config.toml` | The AquariusOS login screen, installed and switched off. See [`login.md`](login.md). |
+| `/etc/greetd/config.toml` | The AquariusOS login screen, installed and switched off. See [`login.md`](../login.md). |
 | `~/.local/state/aquarius-session/session.log` | **The log. Read this first when something is wrong.** |
 | `/usr/share/aquarius/shell-build.txt` | Exactly which commit of the shell this image contains. |
 | `/usr/share/aquarius/quickshell-build.txt` | Which Quickshell, and which Qt it was built against. |
@@ -1035,7 +1037,7 @@ Being clear about this matters more than it being short.
   through `brightnessctl`, and a desktop monitor has no backlight the computer
   can control.
 - **There is no lock screen yet, and no display settings panel.** Screen SIZE
-  is now handled — see [`aquarius-display.md`](aquarius-display.md) and
+  is now handled — see [`aquarius-display.md`](../aquarius-display.md) and
   `aq display` — but monitor *layout* (which screen is left of which) still
   means `wlr-randr` in a terminal.
 - **X11 applications are not scaled, and nothing can scale them.** On a screen

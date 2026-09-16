@@ -1,5 +1,24 @@
 # The Bazzite line — what it was, and how to get any of it back
 
+> ## The Aquarius Session is also history now — 15 September 2026
+>
+> This page is about the **Bazzite** line (2026-08-23 → 09-02) and how to get any
+> of it back. A second thing has since been retired the same way, and it is worth
+> knowing where it went:
+>
+> **The Aquarius Session** — our own desktop, labwc plus Quickshell plus the
+> `aquarius-shell` repository — was replaced by **GNOME and KDE Plasma** on
+> 2026-09-15. Same posture as Bazzite: archived, not deleted.
+>
+> | | Where it is |
+> |---|---|
+> | The shell's code | the `aquarius-shell` repository, tagged **`aquarius-session-final`** |
+> | The last image that shipped it | still in `ghcr.io/stoneharborent/`, under the tags it published with |
+> | How it worked | [`history/aquarius-session.md`](history/aquarius-session.md) |
+> | Why the greeter never drew | [`history/greeter-debug.md`](history/greeter-debug.md) |
+> | Why it was stopped, and what moved where | [`../decision-2026-09-15-two-desktops.md`](../decision-2026-09-15-two-desktops.md) |
+> | What replaced it | [`desktops.md`](desktops.md) |
+
 *The record of the first AquariusOS. Nothing here is live; all of it is
 recoverable. Assumes no Linux experience.*
 
