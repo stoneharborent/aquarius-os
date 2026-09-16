@@ -1,0 +1,62 @@
+# =============================================================================
+# aquarius-login-screen-alias.service — keep "the login screen" meaning GDM
+# =============================================================================
+# WHAT THIS IS FOR
+#
+# On 2026-09-15 the bench machine updated to the first two-desktop image and
+# booted to a text prompt with no login screen. The cause was one link in /etc:
+#
+#     /etc/systemd/system/display-manager.service -> greetd.service
+#
+# left behind by a summer test of our own login screen. /etc belongs to the
+# machine, and every update carefully keeps the machine's own changes to it —
+# including that one. greetd is not in the image any more, so the link named a
+# service that does not exist, and nothing started a login screen.
+#
+# This service runs one small program, once, early in every boot, which puts
+# that link back on GDM if it has drifted. The program is
+# /usr/libexec/aquarius-login-screen-alias and its own header is the long
+# version of the story.
+#
+# ⚠️ IT IS NOT WHAT MAKES THE LOGIN SCREEN START. That is the other half of the
+# same fix: the image now ships
+# /usr/lib/systemd/system/graphical.target.wants/gdm.service, so GDM is wanted
+# from the read-only half of the system and no local change can lose it. This
+# service repairs the NAME, which is what `systemctl` reads to answer "which
+# login screen is this" and what Before=display-manager.service orders against.
+# On the boot where it repairs anything, GDM has already started anyway.
+#
+# WHY Before=display-manager.service AND NOT Wants=
+#   Same rule as aquarius-gdm-display.service: "if a login screen is going to
+#   start, run me first" and nothing at all about whether it should. A repair
+#   must never be the reason a login screen does not appear.
+#
+# IT CHANGES NOTHING ELSE. It does not run daemon-reload and it does not start,
+# stop or restart any service. A program that runs before the login screen on
+# every boot must not be able to disturb that boot.
+#
+# HOW IT IS SWITCHED ON. By a link shipped in the read-only half of the system,
+# graphical.target.wants/, the same way every other Aquarius service is. See
+# the note beside aq_unit_is_on_from_usr in build_files/aq-lib.sh.
+# =============================================================================
+[Unit]
+Description=Make sure this computer's login screen is still GDM
+Documentation=https://github.com/stoneharborent/aquarius-os/blob/main/docs/restart/login.md
+After=local-fs.target
+Before=display-manager.service
+# Only worth running where the program exists. A machine without it has nothing
+# to run and should not carry a failed unit for the rest of its life.
+ConditionPathExists=/usr/libexec/aquarius-login-screen-alias
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/aquarius-login-screen-alias
+RemainAfterExit=no
+# The program handles its own problems and says so in the journal. A failure
+# here must never hold up the login screen, so systemd is told not to care.
+SuccessExitStatus=0 1
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical.target

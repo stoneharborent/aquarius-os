@@ -426,7 +426,27 @@ fi
 # old `aq login use greetd` may still be set to it. This guard knows how to
 # repair GDM and nothing else, and quietly standing aside is much better than
 # restarting a login screen it does not understand.
+#
+# ⚠️ IF YOU ARE READING THIS LINE IN THE JOURNAL BESIDE A MACHINE WITH NO LOGIN
+# SCREEN, this is almost certainly the 2026-09-15 fault and not a decision
+# anybody made: a stale /etc/systemd/system/display-manager.service left by an
+# older image, still naming greetd. The extra lines below say so, in the words a
+# person would use, because standing aside silently is what made that night take
+# an hour.
 if ! systemctl is-enabled gdm.service > /dev/null 2>&1; then
+    say "WHY THAT PROBABLY HAPPENED, AND WHAT TO DO ABOUT IT:"
+    say "  This computer decides which login screen it has from one link,"
+    say "  /etc/systemd/system/display-manager.service. /etc belongs to this"
+    say "  machine, so an update keeps whatever that link was changed to — even"
+    say "  when it names a login screen that is no longer in the image (greetd,"
+    say "  retired 2026-09-15). Here is what it says right now:"
+    say "    $(readlink -f /etc/systemd/system/display-manager.service 2> /dev/null || echo "nothing — the link is missing or points at nothing")"
+    say "  AquariusOS repairs this by itself: aquarius-login-screen-alias runs"
+    say "  early in every boot and points the name back at GDM, so the next"
+    say "  restart should already be right. To fix it now, by hand:"
+    say "    sudo systemctl enable --force gdm.service && sudo systemctl start gdm.service"
+    say "  The whole story: docs/restart/login.md, 'Booted to a text console, no"
+    say "  login screen — 15 September 2026'."
     stand_aside "GDM is not the login screen on this computer, and this guard knows how to repair nothing else"
 fi
 

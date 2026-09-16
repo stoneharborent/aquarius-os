@@ -45,6 +45,150 @@ Start there. The rest of this page is the first fault, which is closed.*
 
 ---
 
+# Booted to a text console, no login screen — 15 September 2026
+
+*Written the same night, on the bench, after the first two-desktop image
+(GNOME + KDE, GDM the only login screen) came up as a text prompt. If this is
+happening to you right now, the fix is the first thing below and it takes about
+fifteen seconds.*
+
+## If you are looking at a text prompt right now
+
+You are looking at a **text console**: a black screen with a line like
+`localhost login:` and nothing else. This is a real, working computer — it just
+did not start the part that draws the login screen.
+
+1. If you cannot see that prompt, press **Ctrl + Alt + F1**. (F2 and F3 are two
+   more of the same thing; any of them will do.)
+2. Type your username, press Enter, type your password, press Enter. **The
+   password does not show as you type it, not even as dots.** That is normal.
+3. Type these two commands, pressing Enter after each:
+
+```bash
+sudo systemctl enable --force gdm.service
+sudo systemctl start gdm.service
+```
+
+The login screen appears on the spot.
+
+**Why `--force`.** The first command writes the link that says "the login
+screen on this computer is GDM". There is already a link there — that is the
+whole problem — and without `--force`, `systemctl` sees one and politely leaves
+it alone. `--force` means "yes, replace the one that is there".
+
+You do not have to do any of this on an image from 16 September 2026 onwards.
+It repairs itself; see **What ships now** below.
+
+## What happened
+
+Linux does not start "GDM" by name. It starts whatever **one link** points at:
+
+```
+/etc/systemd/system/display-manager.service  ->  some login screen
+```
+
+That link is how the computer says "this is my login screen", and the
+AquariusOS image ships one pointing at GDM.
+
+But `/etc` belongs to **your machine**, not to the image. This is deliberate and
+it is normally a kindness: when you update, AquariusOS takes the new image's
+`/etc` and merges **your** changes onto it, so nothing you set by hand is ever
+silently undone.
+
+The bench machine had changed that link. Back in the summer it was used to test
+our own login screen — greetd, retired on 2026-09-15 along with the Aquarius
+Session — and that test left the link pointing at `greetd.service`. The update
+did exactly what it promises: it kept the machine's own choice. Except greetd is
+not in the image any more. So the link named a service that does not exist,
+nothing else asked for GDM, and the computer booted all the way to a text prompt
+without a single error message that said why.
+
+The image was fine. One leftover link from months earlier was not.
+
+**And here is the lesson, which is why this page has a section instead of a
+line in a changelog:** the only thing that made the login screen start was a
+link in `/etc`, and `/etc` drifts on a real machine. Everything *else*
+AquariusOS runs is switched on from `/usr`, which is replaced whole at every
+update precisely so that this cannot happen (that is the section
+[How these services are switched on](#how-these-services-are-switched-on-and-what-that-means-for-you)).
+The login screen was the one exception. It is not any more.
+
+## What ships now
+
+Two lines of defence, from the image of 16 September 2026.
+
+**1. GDM is switched on from `/usr`.** The image ships
+
+```
+/usr/lib/systemd/system/graphical.target.wants/gdm.service
+```
+
+which means "when this computer goes to a desktop, start GDM" — said by the
+image, in the half of the system that is replaced whole at every update and that
+nothing local can edit. Whatever `/etc` has drifted to, the login screen starts.
+That alone would have saved the bench that night.
+
+**2. A service repairs the name, once per boot.**
+`aquarius-login-screen-alias.service` runs early in every boot, before the login
+screen would start. It looks at
+`/etc/systemd/system/display-manager.service` and:
+
+- if it points at GDM, it says so in one line and does nothing;
+- if it is missing, points at nothing, or names another login screen (greetd,
+  SDDM), it says exactly which of those it found and points it back at GDM.
+
+**It starts nothing, restarts nothing, and reloads nothing** — on purpose. GDM
+is already starting on that boot because of line of defence 1. What the repair
+fixes is the **ordering** from the next boot onwards: the small services that
+say "run me before the login screen" (`aquarius-boot-hold`,
+`aquarius-gdm-display`) need that name to point at something real, or they have
+nothing to be ordered before.
+
+Both halves are also why the rescue guard now explains itself. If
+`aquarius-gdm-guard` finds that GDM is not this computer's login screen, it
+prints what the link actually says, points at this section, and gives you the
+two commands above before standing aside.
+
+## How to check it
+
+All three of these are safe to run at any time.
+
+**Is the name right?**
+
+```bash
+ls -l /etc/systemd/system/display-manager.service
+```
+
+You want the arrow to end in `gdm.service`. Anything else — `greetd.service`,
+`sddm.service`, `No such file or directory` — is the fault this section is
+about, and the next boot will repair it.
+
+**What did the repair do this boot?**
+
+```bash
+journalctl -b -u aquarius-login-screen-alias.service
+```
+
+On a healthy machine that is one line saying the login screen is GDM and there
+is nothing to repair. On a machine that had drifted, it says what it found and
+what it changed it to.
+
+**Is the login screen actually running?**
+
+```bash
+systemctl status gdm
+```
+
+`active (running)` is what you want.
+
+**And to ask the repair without changing anything:**
+
+```bash
+/usr/libexec/aquarius-login-screen-alias --check
+```
+
+---
+
 # The real root cause: our own greeter, switched on and not drawing
 
 *Added 2026-09-05 (evening), after reading the bench journal. This is the answer
@@ -333,7 +477,13 @@ So AquariusOS switches its own services on from `/usr` instead —
 `/usr/lib/systemd/system/graphical.target.wants/` — which is replaced whole at
 every update and which nothing local can edit. An update always restores them.
 
-**The honest cost:** `systemctl disable` no longer turns these two off, because
+Switched on this way: `aquarius-gdm-display.service`,
+`aquarius-gdm-guard.service`, `aquarius-boot-hold.service`,
+`aquarius-login-screen-alias.service` — **and since 2026-09-15 `gdm.service`
+itself**, which is the whole point of
+[Booted to a text console, no login screen](#booted-to-a-text-console-no-login-screen--15-september-2026).
+
+**The honest cost:** `systemctl disable` no longer turns these off, because
 there is nothing in `/etc` for it to remove.
 
 - To turn the display copy off, use its own switch: **`sudo aq login scale off`**.
@@ -1321,7 +1471,10 @@ In order, and stop at the first one that is wrong:
 | `/usr/lib/systemd/system/aquarius-gdm-display.service` | runs the messenger at every boot, before the login screen |
 | `/usr/libexec/aquarius-gdm-guard` | the rescue: removes the copies and restarts the login screen if it never appeared. Its trigger is three questions, not one — see "why it did not save the bench". **On a default machine it does nothing at all**, and says so: `DID NOT TOUCH THE LOGIN SCREEN`. |
 | `/usr/lib/systemd/system/aquarius-gdm-guard.service` | runs the rescue once per boot, after the login screen starts |
-| `/usr/lib/systemd/system/graphical.target.wants/` | the two links that switch those services on. **Under `/usr`, not `/etc`** — see "How these services are switched on". |
+| `/usr/libexec/aquarius-login-screen-alias` | **Added 2026-09-15.** Points `/etc/systemd/system/display-manager.service` back at GDM when it has drifted — the text-console fault. Starts and restarts nothing. `--check` to ask without changing. |
+| `/usr/lib/systemd/system/aquarius-login-screen-alias.service` | runs that repair once per boot, before the login screen would start |
+| `/etc/systemd/system/display-manager.service` | **the one link that names this computer's login screen.** Should end in `gdm.service`. This is the file the 15 September fault was about. |
+| `/usr/lib/systemd/system/graphical.target.wants/` | the links that switch those services on — **and, since 2026-09-15, `gdm.service` itself**. **Under `/usr`, not `/etc`** — see "How these services are switched on". |
 | `/etc/gdm/PostSession/Default` | runs the messenger again at every logout — **but only if the switch is on**. Otherwise it does nothing, like Fedora's. |
 | `/usr/share/aquarius/gdm-PostSession-Default.orig` | Fedora's version of that file, kept so the difference is a fact and not a memory |
 | `/etc/xdg/monitors.xml` | the copy of your display arrangement the login screen reads. **Should not exist** on a default machine. |

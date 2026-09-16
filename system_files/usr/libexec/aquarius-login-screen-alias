@@ -1,0 +1,192 @@
+#!/usr/bin/bash
+# =============================================================================
+# aquarius-login-screen-alias — make sure "the login screen" still means GDM
+# =============================================================================
+# WHAT THIS IS FOR, AND THE NIGHT THAT CAUSED IT
+#
+# On 2026-09-15 the bench machine took today's update — the first image with
+# GNOME and KDE side by side, GDM the only login screen — and booted to a text
+# prompt. No login screen at all. Royce had to log in on the text console and
+# type two commands to get his computer back.
+#
+# Nothing was broken in the image. Here is what actually happened, in plain
+# words, because it is a trap that can catch any file in /etc.
+#
+#   Linux does not start "GDM" by name. It starts whatever a link called
+#   display-manager.service points at:
+#
+#       /etc/systemd/system/display-manager.service  ->  some login screen
+#
+#   That link is how `systemctl` — and every service of ours that says
+#   "run me before the login screen" — knows which login screen this computer
+#   has. The image ships one pointing at GDM.
+#
+#   But /etc belongs to the machine, not to the image. Every update takes the
+#   new image's /etc and MERGES the machine's own /etc onto it, so that a
+#   setting you changed by hand is never quietly undone. That is usually
+#   exactly what you want.
+#
+#   The bench machine had changed that link. In the summer it was used to test
+#   our own login screen (greetd, retired 2026-09-15), and that test left
+#   /etc/systemd/system/display-manager.service pointing at greetd.service. The
+#   merge did its job perfectly: it kept the machine's choice. Except greetd is
+#   no longer in the image, so the link pointed at a service that does not
+#   exist, nothing else asked for GDM by name, and the computer booted to a
+#   text prompt with no login screen and no error that said why.
+#
+# THE LESSON, which is the rule this whole repository is built on: the only
+# thing that made GDM start was a link in /etc, and /etc can drift on a real
+# machine. Everything else of ours is switched on from /usr, which is replaced
+# whole at every update (see the note beside aq_unit_is_on_from_usr in
+# build_files/aq-lib.sh). GDM was the one exception. It is not any more.
+#
+# TWO LINES OF DEFENCE NOW SHIP, AND THIS PROGRAM IS THE SECOND ONE
+#
+#   1. GDM is wanted from /usr.
+#      /usr/lib/systemd/system/graphical.target.wants/gdm.service is shipped in
+#      the image. GDM now starts because the image says so, whatever /etc says.
+#      That alone would have saved the bench machine.
+#
+#   2. This program repairs the name.
+#      The link still matters, for two reasons: `systemctl` uses it to answer
+#      "which login screen is this", and aquarius-boot-hold and
+#      aquarius-gdm-display order themselves Before=display-manager.service, so
+#      a link pointing at a service that does not exist means they have nothing
+#      to be ordered before. So once per boot, early, this program looks at the
+#      link and — if it is missing, dangling, or naming some other login screen
+#      — points it back at GDM.
+#
+# WHAT IT DELIBERATELY DOES NOT DO
+#
+#   It does not run `systemctl daemon-reload`, and it does not start, stop or
+#   restart anything. A program that runs on every boot, before the login
+#   screen, must not be able to disturb the boot it is running in. GDM is
+#   already starting this boot through line of defence 1; the repaired link
+#   makes the ORDERING right from the NEXT boot onwards. A login screen one
+#   boot later is a fine price for a repair that can never make things worse.
+#
+#   It never fails in a way that matters. Every path here exits 0 or 1, and the
+#   service file says SuccessExitStatus=0 1, so a broken repair is a line in
+#   the journal and nothing else.
+#
+# READING WHAT IT DID
+#
+#     journalctl -b -u aquarius-login-screen-alias.service
+#
+# RUNNING IT BY HAND
+#
+#     sudo /usr/libexec/aquarius-login-screen-alias            repair if needed
+#     /usr/libexec/aquarius-login-screen-alias --check         say, change nothing
+#
+# The plain-English version of all of this is in docs/restart/login.md, under
+# "Booted to a text console, no login screen".
+# =============================================================================
+
+set -uo pipefail
+
+# The link that means "this computer's login screen".
+AQ_ALIAS="${AQ_LOGIN_ALIAS:-/etc/systemd/system/display-manager.service}"
+
+# What it is supposed to point at.
+AQ_GDM="${AQ_LOGIN_GDM:-/usr/lib/systemd/system/gdm.service}"
+
+say() { echo "aquarius-login-screen-alias: $*"; }
+
+CHECK_ONLY=0
+case "${1:-}" in
+    -h | --help | help)
+        # Print the header comment, however long it grows, and stop at the
+        # first line that is not a comment.
+        awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
+        exit 0
+        ;;
+    --check) CHECK_ONLY=1 ;;
+    "") : ;;
+    *)
+        say "'$1' is not something this understands. Try --help or --check."
+        exit 1
+        ;;
+esac
+
+# -----------------------------------------------------------------------------
+# Is GDM even here?
+# -----------------------------------------------------------------------------
+# If the image has no GDM there is nothing this program could point at, and
+# writing a link to a missing file would be making the problem it exists to
+# fix. Say so and leave.
+if [ ! -e "${AQ_GDM}" ]; then
+    say "${AQ_GDM} is not on this computer, so there is nothing to point at."
+    say "Nothing was changed."
+    exit 0
+fi
+
+# -----------------------------------------------------------------------------
+# What is the link doing right now?
+# -----------------------------------------------------------------------------
+# readlink -f follows the whole chain of links and prints where the link ends
+# up. ⚠️ It prints that path whether or not anything is actually there — so the
+# answer alone does not tell you the service exists, and the case that broke
+# the bench is exactly a link pointing at a service that does not. So the
+# existence is asked separately, with -e, right below.
+AQ_POINTS_AT=""
+if [ -e "${AQ_ALIAS}" ] || [ -L "${AQ_ALIAS}" ]; then
+    AQ_POINTS_AT="$(readlink -f "${AQ_ALIAS}" 2> /dev/null || true)"
+fi
+AQ_GDM_REAL="$(readlink -f "${AQ_GDM}" 2> /dev/null || printf '%s' "${AQ_GDM}")"
+
+if [ -n "${AQ_POINTS_AT}" ] && [ -e "${AQ_POINTS_AT}" ] && [ "${AQ_POINTS_AT}" = "${AQ_GDM_REAL}" ]; then
+    say "the login screen on this computer is GDM (${AQ_ALIAS} -> ${AQ_POINTS_AT}). Nothing to repair."
+    exit 0
+fi
+
+# -----------------------------------------------------------------------------
+# Say plainly what is wrong, in the words a person would use
+# -----------------------------------------------------------------------------
+if [ ! -e "${AQ_ALIAS}" ] && [ ! -L "${AQ_ALIAS}" ]; then
+    say "there is no ${AQ_ALIAS} on this computer, so nothing names a login screen."
+elif [ -z "${AQ_POINTS_AT}" ] || [ ! -e "${AQ_POINTS_AT}" ]; then
+    say "${AQ_ALIAS} points at '$(readlink "${AQ_ALIAS}" 2> /dev/null || echo "something unreadable")',"
+    say "which is not on this computer. That is the 2026-09-15 fault: a login screen"
+    say "chosen on this machine long ago, kept across every update, and no longer in the image."
+else
+    say "${AQ_ALIAS} points at ${AQ_POINTS_AT},"
+    say "which is a different login screen from the one AquariusOS ships."
+fi
+
+if [ "${CHECK_ONLY}" = "1" ]; then
+    say "--check: nothing was changed."
+    exit 0
+fi
+
+# -----------------------------------------------------------------------------
+# The repair
+# -----------------------------------------------------------------------------
+# Written to a temporary name beside the real one and then moved over it, so
+# that at no moment is there no link at all. A boot that lands in that moment
+# would be a boot with no login screen, which is the thing being fixed.
+AQ_TMP="${AQ_ALIAS}.aquarius-new"
+
+if ! mkdir -p "$(dirname "${AQ_ALIAS}")" 2> /dev/null; then
+    say "could not create $(dirname "${AQ_ALIAS}") — nothing was changed."
+    exit 1
+fi
+
+if ! ln -sfn "${AQ_GDM}" "${AQ_TMP}" 2> /dev/null; then
+    say "could not write ${AQ_TMP} (is /etc read-only, or is this not running as root?)."
+    say "Nothing was changed."
+    exit 1
+fi
+
+if ! mv -Tf "${AQ_TMP}" "${AQ_ALIAS}" 2> /dev/null; then
+    rm -f "${AQ_TMP}" 2> /dev/null || true
+    say "could not move the repaired link into place. Nothing was changed."
+    exit 1
+fi
+
+say "repaired: ${AQ_ALIAS} -> ${AQ_GDM}"
+say "GDM still starts on THIS boot, because the image switches it on from /usr"
+say "(/usr/lib/systemd/system/graphical.target.wants/gdm.service). What this repair"
+say "fixes is the ORDER of things from the next boot onwards: the services that say"
+say "'run me before the login screen' now have a real login screen to run before."
+say "Nothing was reloaded, started or restarted — on purpose. See docs/restart/login.md."
+exit 0

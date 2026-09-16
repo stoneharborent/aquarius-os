@@ -223,6 +223,14 @@ aq login status
 It will say which login screen is switched on and what it can offer. If it
 reports that nothing is switched on, it prints the two commands that fix it.
 
+If what you are looking at is a plain text prompt after an update — no login
+screen at all, on a machine that had one yesterday — that is a known fault with
+a fifteen-second fix, and it repairs itself from the 16 September 2026 image
+onwards: [`login.md`, "Booted to a text console, no login
+screen"](login.md#booted-to-a-text-console-no-login-screen--15-september-2026).
+The services that now prevent it are `gdm.service` itself (wanted from `/usr`)
+and `aquarius-login-screen-alias.service` (repairs the name at every boot).
+
 **Both desktops look wrong / no icons / no theme.** That is a build fault rather
 than a setting. `aq update check` first; if the machine is already up to date,
 it belongs in a bench note.

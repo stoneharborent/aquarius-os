@@ -2138,7 +2138,8 @@ jobs:
           # on one machine turns a service off there FOREVER, and no image can
           # switch it back on. Royce hit exactly that. The long version is in
           # build_files/aq-lib.sh.
-          for unit in aquarius-gdm-display.service aquarius-gdm-guard.service; do
+          for unit in aquarius-gdm-display.service aquarius-gdm-guard.service \
+                      aquarius-login-screen-alias.service; do
             link="/usr/lib/systemd/system/graphical.target.wants/${unit}"
             if [ -L "${link}" ] && [ -e "${link}" ]; then
               ok "${unit} is switched on from /usr, where an update always restores it"
@@ -2157,6 +2158,33 @@ jobs:
           else
             bad "it is not ordered Before=display-manager.service — it could run too late to matter"
           fi
+
+          # ⚠️ THE 2026-09-15 FIX: GDM ITSELF IS NOW WANTED FROM /usr.
+          # The bench booted to a text prompt because the only thing starting
+          # the login screen was a link in /etc, and that machine's /etc still
+          # named greetd from a summer test. GDM now starts because the image
+          # says so.
+          if [ -L /usr/lib/systemd/system/graphical.target.wants/gdm.service ] \
+             && [ -e /usr/lib/systemd/system/graphical.target.wants/gdm.service ]; then
+            ok "gdm.service is wanted from /usr, so no change to /etc can stop the login screen"
+          else
+            bad "graphical.target.wants/gdm.service is missing from /usr — a stale /etc alias could leave this machine with no login screen"
+          fi
+          # And the name still points at GDM. In the finished image this link
+          # lives under /usr/etc, which is where the packaging tool puts the
+          # image's copy of /etc.
+          aq_dm_alias=""
+          for f in /usr/etc/systemd/system/display-manager.service \
+                   /etc/systemd/system/display-manager.service; do
+            [ -e "${f}" ] || [ -L "${f}" ] || continue
+            aq_dm_alias="$(readlink -f "${f}" 2>/dev/null || true)"
+            echo "       ${f} -> ${aq_dm_alias:-(nothing)}"
+            break
+          done
+          case "${aq_dm_alias}" in
+            */gdm.service) ok "'the login screen' in this image means GDM" ;;
+            *) bad "the display-manager alias does not point at gdm.service (it says '${aq_dm_alias:-nothing}')" ;;
+          esac
 
           echo "== the logout hook does nothing unless somebody asked =="
           # ⚠️ THE SECOND BLACK SCREEN WAS PROBABLY THIS FILE. An update's new

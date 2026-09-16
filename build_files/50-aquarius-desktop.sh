@@ -761,6 +761,66 @@ if aq_have systemd-analyze; then
 fi
 
 # ------------------------------------------------------------------------------
+# The repair that keeps "the login screen" meaning GDM
+# ------------------------------------------------------------------------------
+# ⚠️ THE 2026-09-15 BENCH FAULT. The machine took the day's update and booted to
+# a text prompt with no login screen at all. Nothing in the image was wrong.
+# The machine's own /etc still had
+#
+#     /etc/systemd/system/display-manager.service -> greetd.service
+#
+# from a summer test of our old login screen; /etc belongs to the machine and
+# every update keeps the machine's changes to it; greetd is not in the image
+# any more; so the one link that names this computer's login screen named
+# nothing, and nothing started.
+#
+# Two things ship because of it. The first is in 40-gnome-desktop.sh: GDM is
+# now ALSO wanted from /usr, so it starts whatever /etc says. The second is
+# this: a small program that runs once per boot, early, and points the name
+# back at GDM when it has drifted. It reloads nothing and restarts nothing —
+# the boot it is running in is already fine — so all it repairs is the ORDERING
+# for the next boot. docs/restart/login.md has the plain-English version.
+say "The repair that keeps 'the login screen' meaning GDM"
+
+AQ_DM_ALIAS_PROG="/usr/libexec/aquarius-login-screen-alias"
+chmod 0755 "${AQ_DM_ALIAS_PROG}"
+
+if [ -x "${AQ_DM_ALIAS_PROG}" ]; then
+    ok "$(basename "${AQ_DM_ALIAS_PROG}") is installed and executable"
+else
+    bad "${AQ_DM_ALIAS_PROG} is missing — a machine with a stale login-screen name would stay broken"
+fi
+
+if bash -n "${AQ_DM_ALIAS_PROG}"; then
+    ok "it is valid shell"
+else
+    bad "${AQ_DM_ALIAS_PROG} does not parse as shell"
+fi
+
+aq_unit_is_on_from_usr aquarius-login-screen-alias.service \
+    "it checks the login screen's name at every boot"
+
+AQ_DM_ALIAS_UNIT="/usr/lib/systemd/system/aquarius-login-screen-alias.service"
+
+aq_file_has "${AQ_DM_ALIAS_UNIT}" '^Before=display-manager\.service$' \
+    "the repair runs before the login screen would start"
+
+# ⚠️ IT MUST NOT RESTART ANYTHING. A program that runs on every boot before the
+# login screen and reloads or restarts services can turn a working boot into a
+# broken one. Checked by reading the program, because this is the one property
+# that makes it safe to run unconditionally.
+if grep -Eq 'systemctl (daemon-reload|start|restart|reload)' "${AQ_DM_ALIAS_PROG}"; then
+    bad "${AQ_DM_ALIAS_PROG} reloads or restarts something — it must only repair a link"
+else
+    ok "it only repairs the link: it starts, restarts and reloads nothing"
+fi
+
+# And it has to know what it is repairing TO. A repair that pointed anywhere
+# else would be the fault with extra steps.
+aq_file_has "${AQ_DM_ALIAS_PROG}" '/usr/lib/systemd/system/gdm.service' \
+    "and what it points the name at is GDM"
+
+# ------------------------------------------------------------------------------
 # The logout half
 # ------------------------------------------------------------------------------
 # ⚠️ WE REPLACE A FILE THE gdm PACKAGE OWNS, AND HERE IS WHY THAT IS THE ONLY

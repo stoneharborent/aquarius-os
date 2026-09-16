@@ -247,9 +247,48 @@ aq_dnf install \
 #
 #   set-default graphical.target   "when you start, go all the way to a desktop"
 #   enable gdm                     "and the way you get there is GDM"
+#
+# ⚠️ AND A THIRD THING SINCE 15 SEPTEMBER 2026, BECAUSE THE FIRST TWO WERE NOT
+# ENOUGH. Read this before removing either line below.
+#
+# `systemctl enable gdm.service` creates exactly one thing: the link
+#
+#     /etc/systemd/system/display-manager.service -> .../gdm.service
+#
+# which is how this computer says "the login screen here is GDM". That is what
+# starts it, and it lives in /etc — which belongs to the MACHINE, not to the
+# image. Every update merges the machine's own /etc onto the new image's, so a
+# change somebody made by hand is kept forever.
+#
+# On the bench that afternoon, the machine's /etc still had that link pointing
+# at greetd.service from a summer test of our old login screen. The merge kept
+# it, as designed. greetd is not in this image any more, so the link named a
+# service that does not exist, nothing else asked for GDM, and the computer
+# booted to a text prompt with no login screen.
+#
+# So GDM is now switched on the same way as everything else of ours: with a
+# link shipped in /usr, which is replaced whole at every update and which
+# nothing local can edit. Both lines are needed and they do different jobs:
+#
+#   the /etc alias (systemctl enable)  NAMES the login screen. `systemctl` reads
+#                                      it to answer "which one is this", and
+#                                      aquarius-boot-hold and
+#                                      aquarius-gdm-display say
+#                                      Before=display-manager.service, which
+#                                      needs this name to point somewhere real.
+#   the /usr link (below)              STARTS it. graphical.target wants
+#                                      gdm.service because the image says so,
+#                                      whatever /etc has drifted to.
+#
+# The third piece of the same fix is aquarius-login-screen-alias.service, which
+# repairs a drifted /etc alias once per boot. See docs/restart/login.md,
+# "Booted to a text console, no login screen", and the note beside
+# aq_unit_is_on_from_usr in aq-lib.sh.
 say "Making the machine boot to a desktop"
 systemctl set-default graphical.target
 systemctl enable gdm.service
+mkdir -p /usr/lib/systemd/system/graphical.target.wants
+ln -sfn ../gdm.service /usr/lib/systemd/system/graphical.target.wants/gdm.service
 
 # ------------------------------------------------------------------------------
 # Check the desktop is really in there
@@ -318,6 +357,31 @@ if systemctl is-enabled gdm.service > /dev/null 2>&1; then
 else
     bad "GDM is not switched on — nothing would draw a login screen"
 fi
+
+# ⚠️ THE 2026-09-15 FIX, READ BACK OUT OF THE FINISHED IMAGE.
+#
+# 1. GDM is wanted from /usr, so an update always restores it and no local
+#    change to /etc can lose it. The helper also checks that NOTHING switches
+#    gdm on through /etc/systemd/system/graphical.target.wants/ — `systemctl
+#    enable gdm` does not create that (gdm.service has no WantedBy=, only
+#    Alias=display-manager.service), so this passes, and if some future step
+#    starts creating it the helper will say so.
+aq_unit_is_on_from_usr gdm.service \
+    "the login screen starts because the image says so, whatever /etc says"
+
+# 2. And the name still points at GDM. At build time this link lives at
+#    /etc/systemd/system/display-manager.service — the image's copy of it,
+#    which the packaging tool moves to /usr/etc when it seals the image, and
+#    which every machine then merges its own /etc onto. readlink -f follows the
+#    whole chain and prints where it really ends up.
+AQ_DM_ALIAS="/etc/systemd/system/display-manager.service"
+AQ_DM_TARGET="$(readlink -f "${AQ_DM_ALIAS}" 2> /dev/null || true)"
+echo "  ${AQ_DM_ALIAS} -> ${AQ_DM_TARGET:-(nothing)}"
+case "${AQ_DM_TARGET}" in
+    */gdm.service) ok "'the login screen' on this image means GDM" ;;
+    "") bad "${AQ_DM_ALIAS} is missing or points at nothing — 'systemctl enable gdm' did not do its job" ;;
+    *) bad "${AQ_DM_ALIAS} points at ${AQ_DM_TARGET}, which is not GDM" ;;
+esac
 
 # All four extensions have to be where GNOME looks for them, under their own
 # id. A package can install fine and put its files somewhere GNOME does not
