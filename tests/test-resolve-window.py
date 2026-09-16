@@ -14,6 +14,61 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import aquarius_headless as headless  # noqa: E402
 
 
+def shrink_screen(d, width, height):
+    """Tell X the screen is now smaller, the way unplugging a monitor does.
+
+    ⚠️ 2026-09-15 — this used to be `wlr-randr --output HEADLESS-1
+    --custom-mode 800x600`. wlr-randr speaks a wlroots-only protocol: it worked
+    on labwc, and on KWin it answers "compositor doesn't support
+    wlr-output-management-unstable-v1" and changes nothing. KWin has no
+    stand-in either — kscreen-doctor hangs against a bare headless kwin, and
+    Xwayland's own RandR mode-setting only fakes a resolution for the one
+    program that asked for it.
+
+    So we do it in X itself, where the watcher is looking. X lets any program
+    define the monitor list with RandR's SetMonitor; every other program then
+    reads our definition back from GetMonitors. GetMonitors is EXACTLY the call
+    /usr/libexec/aquarius-resolve-window makes to find out how big the screen
+    is, so from the watcher's side this is indistinguishable from a monitor
+    being unplugged and a smaller one taking its place — and it works the same
+    on every compositor, which wlr-randr never did.
+
+    (python-xlib 0.33's own randr.set_monitor() is broken — it packs the
+    request through rq.Object, which returns two values where the packer wants
+    three. So the request is spelled out field by field here instead; this is
+    the same wire format, just written flat.)
+    """
+    from Xlib.ext import randr
+    from Xlib.protocol import rq
+
+    class SetMonitor(rq.Request):
+        _request = rq.Struct(
+            rq.Card8('opcode'), rq.Opcode(43), rq.RequestLength(),
+            rq.Window('window'),
+            rq.Card32('name'), rq.Bool('primary'), rq.Bool('automatic'),
+            rq.LengthOf('outputs', 2),
+            rq.Int16('x'), rq.Int16('y'),
+            rq.Card16('width_in_pixels'), rq.Card16('height_in_pixels'),
+            rq.Card32('width_in_millimeters'), rq.Card32('height_in_millimeters'),
+            rq.List('outputs', rq.Card32Obj),
+        )
+
+    root = d.screen().root
+    # Claiming the real outputs is what makes the automatic monitor go away, so
+    # the screen genuinely shrinks instead of a second monitor appearing.
+    outputs = list(randr.get_screen_resources(root).outputs)
+    SetMonitor(display=d.display, opcode=d.display.get_extension_major('RANDR'),
+               window=root, name=d.intern_atom('AQUARIUS-TEST'),
+               primary=1, automatic=0, x=0, y=0,
+               width_in_pixels=width, height_in_pixels=height,
+               width_in_millimeters=int(width*0.265), height_in_millimeters=int(height*0.265),
+               outputs=outputs)
+    d.sync()
+    seen = [[m.x, m.y, m.width_in_pixels, m.height_in_pixels]
+            for m in randr.get_monitors(root, True).monitors]
+    assert seen == [[0, 0, width, height]], seen
+
+
 def worker(root):
     import gi
     gi.require_version('Gtk', '3.0')
@@ -57,20 +112,21 @@ def worker(root):
         assert d.intern_atom('_NET_WM_STATE_MAXIMIZED_HORZ') not in props
         pos=d.screen().root.translate_coords(xwin,0,0)
         assert pos.x>=0 and pos.y>=0, (pos.x,pos.y)
-        # Change the live headless output while the app stays open. This is
-        # the same RandR change the watcher sees on a disconnected monitor.
+        # Shrink the live screen while the app stays open. This is the same
+        # change the watcher sees when a monitor is unplugged: the monitor list
+        # it reads gets smaller under it.
         win.iconify()
         pump(2)
         props=xwin.get_full_property(d.intern_atom('_NET_WM_STATE'),0).value
         assert d.intern_atom('_NET_WM_STATE_HIDDEN') in props, 'test did not minimize'
-        subprocess.run(['wlr-randr', '--output', 'HEADLESS-1', '--custom-mode', '800x600'], check=True, timeout=3)
+        shrink_screen(d, 800, 600)
         pump(2)
         win.deiconify()
         pump(3)
         pos=d.screen().root.translate_coords(xwin,0,0)
         g=xwin.get_geometry()
         assert pos.x>=0 and pos.y>=0 and pos.x+g.width<=800 and pos.y+g.height<=600, (pos.x,pos.y,g.width,g.height)
-        print('PASS: real XWayland restore, normal memory, manual maximize, reset, live output shrink')
+        print('PASS: real XWayland restore, normal memory, manual maximize, reset, live screen shrink')
     finally:
         proc.terminate()
         proc.wait(timeout=3)
@@ -101,9 +157,10 @@ def main():
         # shared-memory rendering. Disable GLX too: even with glamor off its
         # swrast loader enumerates EGL vendors and crashes in NVIDIA's GBM code
         # without a GPU. These geometry checks use no OpenGL; real sessions keep
-        # acceleration. (tests/aquarius_headless.py knows the name each
-        # compositor reads the wrapper from — WLR_XWAYLAND for labwc,
-        # KWIN_XWAYLAND for KWin.)
+        # acceleration. (tests/aquarius_headless.py knows how to make each
+        # compositor use it: KWin runs whatever `Xwayland` is first on PATH, so
+        # the helper puts ours there. It also makes /tmp/.X11-unix, without
+        # which KWin skips X and the worker below gets no DISPLAY.)
         xwayland = shutil.which('Xwayland')
         if xwayland is None:
             raise RuntimeError('Window test requires Xwayland')

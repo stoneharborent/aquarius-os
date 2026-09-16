@@ -98,6 +98,27 @@ def main():
         g = win.get_geometry()
         p = root.translate_coords(win, 0, 0)
         return [p.x, p.y, g.width, g.height]
+    def frame(win):
+        # How thick the title bar and border the desktop draws around this
+        # window are: left, right, top, bottom, in pixels.
+        #
+        # ⚠️ 2026-09-15, when the OS gained GNOME and KDE Plasma: a move
+        # request in X11 says where the FRAME goes, not where the window
+        # inside it goes. The Aquarius Session drew no frame, so the two were
+        # the same thing and nobody noticed. GNOME and KDE both draw a real
+        # title bar, so asking for y=40 put the title bar at 40 and the window
+        # itself 32 pixels lower — and a full-height window then hung off the
+        # bottom of the screen, a little further every time it was restored.
+        # Subtracting these numbers (below) puts the WINDOW where we meant.
+        # Anything that draws its own title bar publishes nothing here and
+        # gets zeros, which is exactly the old behaviour.
+        values = list(prop(win, '_NET_FRAME_EXTENTS'))
+        if len(values) >= 4:
+            try:
+                return [max(0, int(v)) for v in values[:4]]
+            except (TypeError, ValueError):
+                pass
+        return [0, 0, 0, 0]
     def send(win, name, values):
         event = protocol.event.ClientMessage(window=win, client_type=atom(name), data=(32, values))
         root.send_event(event, event_mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask)
@@ -106,7 +127,9 @@ def main():
         if reset:
             send(win, '_NET_WM_STATE', [0, atom('_NET_WM_STATE_MAXIMIZED_VERT'), atom('_NET_WM_STATE_MAXIMIZED_HORZ'), 1, 0])
             send(win, '_NET_WM_STATE', [0, atom('_NET_WM_STATE_FULLSCREEN'), 0, 1, 0])
-        win.configure(x=rect[0], y=rect[1], width=rect[2], height=rect[3])
+        left, _right, top, _bottom = frame(win)
+        win.configure(x=max(0, rect[0]-left), y=max(0, rect[1]-top),
+                      width=rect[2], height=rect[3])
         d.flush()
     seen, previous_areas = {}, None
     initial = {}
