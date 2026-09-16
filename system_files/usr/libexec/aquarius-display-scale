@@ -233,13 +233,16 @@ def _run(command):
 #
 #     scale=1.25          every screen
 #     scale.DP-2=1.0      this one screen only, overriding the line above
-#     ui=1.15             how big the Aquarius Shell's own design is drawn
+#     ui=1.15             ⚠️ DEAD SINCE 2026-09-15. Nothing reads it.
 #
-# The `ui` line is NOT read here. It is read by /usr/bin/aquarius-session, which
-# hands it to the shell as AQ_UI_SCALE. The two are deliberately different
-# things and the documentation is careful about it: `scale` makes EVERYTHING on
-# the screen bigger, including other people's applications; `ui` makes only our
-# own bar and dock bigger, and is for tuning the design.
+# The `ui` line was never read here: /usr/bin/aquarius-session read it and
+# handed it to the Aquarius Shell as AQ_UI_SCALE, to make OUR OWN bar and dock
+# bigger without touching anybody else's applications. That desktop was retired
+# (../docs/decision-2026-09-15-two-desktops.md) and there is no bar or dock of
+# ours left to size, so `aq display ui` writes a line nothing acts on. It is
+# left readable rather than deleted so that a file written by an older
+# AquariusOS still parses; `scale` — which is what DaVinci Resolve's launcher
+# reads — is unaffected.
 
 
 def read_conf(path):
@@ -550,14 +553,19 @@ def main(argv=None):
     # --monitors-xml and --conf — "read somebody ELSE'S answer"
     # ------------------------------------------------------------------------
     # ⚠️ THESE ARE NOT TEST-ONLY, AND THEY USED TO BE HIDDEN. They were made
-    # visible on 2026-09-04 because the AquariusOS LOGIN SCREEN depends on them,
-    # and a hidden option that a shipped feature depends on is an option
+    # visible on 2026-09-04 because the AquariusOS LOGIN SCREEN depended on
+    # them, and a hidden option that a shipped feature depends on is an option
     # somebody will one day delete as unused.
     #
-    # The login screen runs as its own user with no home folder worth reading,
-    # so it cannot look in ~/.config for the two files this program normally
-    # reads. /usr/libexec/aquarius-greeter-shell therefore points it at the
-    # system-wide copies instead:
+    # ⚠️ THAT LOGIN SCREEN IS GONE (2026-09-15) — the branded greeter went with
+    # the Aquarius Session. These two options are KEPT because they are how this
+    # program is asked about a machine other than the one it is running on,
+    # which is what makes it testable and what `aq login scale` still reads. The
+    # original reasoning, which explains the shape of the options, was:
+    #
+    # The login screen ran as its own user with no home folder worth reading,
+    # so it could not look in ~/.config for the two files this program normally
+    # reads. Its launcher pointed it at the system-wide copies instead:
     #
     #   --monitors-xml /etc/xdg/monitors.xml
     #       the display arrangement, copied there from whoever last set a Scale

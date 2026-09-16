@@ -482,7 +482,7 @@ aq_rescue() {
 # The exception is a test run: when AQ_SYSFS_ROOT points somewhere other than
 # the real /sys, every "write" lands in a temporary folder of ordinary files and
 # there is nothing to protect. Same arrangement, and same reason, as
-# AQ_GREETER_WATCHDOG_ROOT in aquarius-greeter-watchdog.
+# AQ_GREETER_WATCHDOG_ROOT in the greeter watchdog (retired 2026-09-15).
 aq_needs_root() {
     [ "${AQ_SYSFS_ROOT}" = "/sys" ] && [ "$(id -u)" -ne 0 ]
 }
