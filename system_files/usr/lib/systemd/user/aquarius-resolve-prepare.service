@@ -1,0 +1,95 @@
+# ==============================================================================
+# AquariusOS — get DaVinci Resolve's environment ready before anybody asks
+# ==============================================================================
+# PLAIN ENGLISH
+#
+# DaVinci Resolve runs inside its own protected environment on this computer.
+# Building that environment used to be the slow part of setting Resolve up —
+# about a gigabyte to download and a few minutes to unpack, while somebody sat
+# and watched a progress bar.
+#
+# The NVIDIA edition of AquariusOS now carries that environment with it, so
+# there is nothing to download. This job unpacks it and builds the container
+# out of it, quietly, in the background, shortly after you log in — so that by
+# the time you click DaVinci Resolve for the first time, the slow part is
+# already behind you and all that is left is your own download from Blackmagic.
+#
+# ⚠️ IT INSTALLS NO DAVINCI RESOLVE AND IT NEVER WILL. Blackmagic's licence
+# lets them hand out their installer and nobody else. This builds the empty
+# room; you bring the furniture. That is the whole arrangement and it is not
+# going to change.
+#
+# ⚠️ NOBODY IS WAITING FOR IT, AND THAT SHAPES EVERY LINE BELOW.
+#
+#   * It does not hold up your login. It is Wanted by the graphical session
+#     rather than needed by it, so the desktop comes up while this is still
+#     going, and nothing on screen mentions it.
+#   * It opens no window and sends no notification. A person who never uses
+#     Resolve should never learn this ran.
+#   * It is safe to fail. If it cannot finish — no disk space, no unpacked
+#     environment, an interrupted first login — it stops, leaves nothing half
+#     built that the full setup cannot walk over, and the next login runs it
+#     again. Nothing retries in a loop.
+#   * It is safe to run every time, because it does. It does nothing at all
+#     when the container already exists, which after the first login is every
+#     time for ever.
+#
+# ⚠️ AND IT STANDS DOWN ON A MACHINE WITH NO NVIDIA GRAPHICS CARD. Blackmagic
+# support NVIDIA on Linux and nothing else, so building a gigabyte of container
+# on an AMD laptop would spend somebody's disk on a thing they cannot use. The
+# Condition below is the first lock and the script itself is the second: it
+# checks again and says so plainly. (The AMD/Intel edition does not carry the
+# environment at all, so there would be nothing to unpack either.)
+#
+# ⚠️ IT IS A USER SERVICE, NOT A SYSTEM ONE. The container belongs to you: it
+# runs as you, it shares your home folder, and it lives in your own container
+# store. Nothing here needs an administrator and nothing here asks for a
+# password. That is also why it cannot be done once at build time for everybody
+# — an image store belongs to whoever unpacked it, and this one has to be yours.
+#
+# TO TURN IT OFF for good on one machine:
+#     systemctl --user mask aquarius-resolve-prepare.service
+# `disable` will not do it: the "switched on" link is shipped in /usr, where an
+# operating-system update always restores it and nothing local can remove it.
+# The long explanation is in build_files/aq-lib.sh.
+# ==============================================================================
+
+[Unit]
+Description=Get DaVinci Resolve's environment ready
+Documentation=https://github.com/stoneharborent/aquarius-os/blob/main/docs/restart/resolve.md
+
+# The first lock: an NVIDIA driver is loaded on this machine. A Condition that
+# is not met is not a failure — systemd simply skips the job and says so in the
+# log, which is exactly the right outcome on an AMD or Intel machine.
+ConditionPathExists=/proc/driver/nvidia/version
+
+# The second: the environment is really inside this operating system. Only the
+# NVIDIA edition carries it. Without this, a machine with an NVIDIA card running
+# the AMD/Intel edition would start a gigabyte download nobody asked for, in the
+# background, at the first login — the exact opposite of the point of this file.
+ConditionPathExists=/usr/share/aquarius/resolve/runtime.oci
+
+[Service]
+Type=oneshot
+
+# ⚠️ THE `-` IN FRONT OF THE COMMAND IS DELIBERATE. It tells systemd that a
+# non-zero exit is not a failure of this unit. It matters because a failed user
+# unit is a red line in `systemctl --user status` and a notification on some
+# desktops, and this job failing is a thing that should cost a person nothing at
+# all: they have lost nothing, they were not waiting, and the next login tries
+# again. The script's own output still goes to the log for anybody looking.
+ExecStart=-/usr/libexec/aquarius-resolve-install --prepare
+
+# Building a container must never fight the machine's owner for the machine.
+# The first minutes after a login are the minutes somebody is opening a project.
+Nice=15
+IOSchedulingClass=idle
+
+# Unpacking about a gigabyte on a slow disk is minutes, not seconds, and the
+# very first login is also when everything else is starting. Generous on
+# purpose: a job killed half way leaves a part-built container the next run has
+# to clear away, which is slower than simply letting it finish.
+TimeoutStartSec=30min
+
+[Install]
+WantedBy=graphical-session.target

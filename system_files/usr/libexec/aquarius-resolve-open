@@ -1,0 +1,142 @@
+#!/usr/bin/bash
+# ==============================================================================
+# What happens when somebody clicks DaVinci Resolve
+# ==============================================================================
+# PLAIN ENGLISH
+#
+# On the NVIDIA edition, DaVinci Resolve is in your apps from the moment you
+# first log in — before you have downloaded anything from Blackmagic. That is
+# deliberate. Resolve is the reason this operating system exists, and an
+# operating system whose flagship application is hidden behind a thing called
+# "Install DaVinci Resolve" has buried it.
+#
+# So there is ONE entry, and this program is what it runs. It asks one question
+# and acts on the answer:
+#
+#     Is DaVinci Resolve installed?
+#       YES  →  start it. This is every day after the first.
+#       NO   →  open the window that finishes setting it up.
+#
+# ⚠️ AND THE ICON ON THAT ENTRY IS OURS, NOT BLACKMAGIC'S. Until somebody has
+# installed their own copy of Resolve there is nothing of Blackmagic's on this
+# computer, and putting their mark on an app grid entry would be using their
+# branding to advertise a thing we did not give you. The entry wears the
+# AquariusOS "DR" mark that the Install entry has worn since 2026-09-06. The
+# moment Resolve really is installed, Blackmagic's own installer writes its own
+# app-menu entry with its own logo, this placeholder hides itself, and their
+# mark appears because their software is genuinely there.
+#
+# WHY THIS IS A SEPARATE PROGRAM AND NOT A CLEVER Exec= LINE
+# A .desktop file's Exec line cannot ask a question. It could be written as a
+# shell one-liner with an `if` in it, and that line would then be a program
+# nobody could read, could not comment, and could not test. This can be run from
+# a terminal, has --report for looking at what it would do, and is checked by
+# the build.
+# ==============================================================================
+
+set -uo pipefail
+
+: "${HOME:=/tmp}"
+
+RUNTIME_ENV=/usr/share/aquarius/resolve/runtime.env
+LAUNCH=/usr/libexec/aquarius-resolve-launch
+INSTALLER_GUI=/usr/libexec/aquarius-resolve-installer
+APPS_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/applications"
+
+REPORT_ONLY=0
+[ "${1:-}" = "--report" ] && {
+    REPORT_ONLY=1
+    shift
+}
+
+# ------------------------------------------------------------------------------
+# Is DaVinci Resolve really installed?
+# ------------------------------------------------------------------------------
+# ⚠️ THE QUESTION IS ASKED OF THE APP-MENU ENTRY, NOT OF THE CONTAINER, AND THAT
+# IS THE POINT. The container exists on every NVIDIA machine from the first
+# login — that is what the preparation job is for — so "is there a container"
+# would answer yes on a machine with no Resolve in it at all and this program
+# would try to start something that is not there.
+#
+# What actually proves Resolve is installed is the entry Blackmagic's own
+# installer wrote, repaired by aquarius-resolve-entry and pointed at our
+# launcher. If that is there, there is a Resolve to start. It is also exactly
+# what the desktop uses to decide whether to draw a DaVinci Resolve icon, so
+# this program and the app grid can never disagree.
+#
+# ⚠️ AND IT LOOKS FOR THE PROGRAM, NOT FOR THE WORD "RESOLVE" IN A FILE NAME.
+# Blackmagic's installer writes EIGHT entries, and seven of them are not the
+# video editor: the RAW Player, the RAW Speed Test, the Remote Monitor, the
+# Control Panels Setup, Capture Logs, the uninstaller. Every one of them has
+# "resolve" in its file name and our launcher in its Exec line, because they all
+# live in /opt/resolve. An earlier draft of this matched on the name and picked
+# the RAW Player, which would have meant clicking DaVinci Resolve and getting a
+# still-image viewer.
+#
+# So what is looked for is the one thing only the editor has: the Exec line that
+# runs /opt/resolve/bin/resolve.
+RESOLVE_PROGRAM=/opt/resolve/bin/resolve
+resolve_entry() {
+    local f
+    for f in "${APPS_DIR}"/com.blackmagicdesign.resolve.desktop \
+        "${APPS_DIR}"/*.desktop; do
+        [ -r "${f}" ] || continue
+        # Our own placeholder is not evidence of anything.
+        case "${f}" in
+            *aquarius-davinci-resolve.desktop) continue ;;
+        esac
+        # Ours, and the editor itself. The launcher's name rules out distrobox's
+        # raw "enter a terminal" entries; the program name rules out Blackmagic's
+        # seven other tools. The space (or end of line) after the program name
+        # stops /opt/resolve/bin/resolvesomethingelse from matching.
+        grep -qE "^Exec=[^ ]*aquarius-resolve-launch +${RESOLVE_PROGRAM}( |\$)" "${f}" || continue
+        printf '%s' "${f}"
+        return 0
+    done
+    return 1
+}
+
+if ENTRY="$(resolve_entry)"; then
+    if [ "${REPORT_ONLY}" = "1" ]; then
+        echo "installed	${ENTRY}	would start DaVinci Resolve"
+        exit 0
+    fi
+    # Hand over completely — `exec` replaces this program with the launcher, so
+    # nothing of ours is left sitting in the process list behind a video editor
+    # somebody will have open for eight hours. Any file the desktop handed us
+    # (an "Open With → DaVinci Resolve" on a project) goes straight through.
+    exec "${LAUNCH}" "$@"
+fi
+
+# ------------------------------------------------------------------------------
+# Not installed: finish setting it up
+# ------------------------------------------------------------------------------
+# The window is the same one "Install DaVinci Resolve" has always opened. It
+# already does the right thing here: it looks for a Blackmagic download in your
+# Downloads folder by itself, and if there is not one it opens Blackmagic's page
+# and waits for the file to appear. Nothing about that changes — what changes is
+# that the environment it would have spent fifteen minutes downloading is
+# already built, so what is left is your download and about three minutes.
+#
+# ⚠️ --finish-setup IS A WORD FOR THE WINDOW, NOT A DIFFERENT PROGRAM. It tells
+# the window it was opened by somebody clicking DaVinci Resolve rather than by
+# somebody looking for an installer, so that it can say "finish setting up"
+# instead of "install", and be honest about how little is left to do. The window
+# ignores the flag if it does not know it, which is what makes an older window
+# and a newer entry safe together.
+if [ "${REPORT_ONLY}" = "1" ]; then
+    if [ -r "${RUNTIME_ENV}" ]; then
+        echo "not-installed	${INSTALLER_GUI}	would open the window that finishes setting Resolve up"
+    else
+        echo "not-installed	${INSTALLER_GUI}	would open the window (this AquariusOS has no Resolve support files, which is a fault)"
+    fi
+    exit 0
+fi
+
+if [ ! -x "${INSTALLER_GUI}" ]; then
+    echo "aquarius-resolve-open: ${INSTALLER_GUI} is missing from this system." >&2
+    echo "  That is a fault in AquariusOS, not in anything you did." >&2
+    exit 1
+fi
+
+exec "${INSTALLER_GUI}" --finish-setup

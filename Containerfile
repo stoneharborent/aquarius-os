@@ -390,14 +390,39 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 #     Resolve runs in a container because it carries its own copy of GLib from
 #     2021, which clashes with any modern Linux's own and kills it before its
 #     window opens. Enterprise Linux still carries the matching version, so in
-#     there the clash cannot happen. The container image is built separately by
-#     resolve-runtime/Containerfile and downloaded on first use — it is about a
-#     gigabyte and does not belong in an OS everybody downloads.
+#     there the clash cannot happen. That container is built separately by
+#     resolve-runtime/Containerfile, and step 6b2 below puts it into the NVIDIA
+#     edition so that setting Resolve up needs no download of ours at all.
 #
 #     After step 6 because the NVIDIA checks read what step 6 installed.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     NVIDIA="${NVIDIA}" /ctx/build_files/62-resolve-runtime.sh
+
+# 6b2. The environment Resolve runs in, carried inside the NVIDIA edition.
+#
+#      ⚠️ STILL NOT ONE BYTE OF BLACKMAGIC'S. This is OUR Rocky Linux container
+#      — a userland with the libraries Resolve needs and no video editor in it —
+#      fetched from the public package this repository publishes. The person
+#      still downloads Resolve from Blackmagic themselves, which is the one step
+#      their licence does not allow anybody to take off them.
+#
+#      Before this, setting Resolve up was fifteen minutes and nearly all of it
+#      was downloading a gigabyte. Now it is already here, the first login
+#      builds the container out of it in the background, and what is left for
+#      the person is their own download and about three minutes. It also makes
+#      setting Resolve up possible with no internet connection at all.
+#
+#      NVIDIA edition only. It adds about 330 MB, and Blackmagic support NVIDIA
+#      on Linux and nothing else, so the AMD/Intel edition would be carrying it
+#      for people who cannot use it. That edition downloads the environment when
+#      somebody asks for it, exactly as every edition did before 2026-09-16.
+#
+#      After 6b because it reads the shipped setup script back and runs its
+#      tests against the copy in this image.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache/libdnf5 \
+    NVIDIA="${NVIDIA}" /ctx/build_files/63-resolve-runtime-bake.sh
 
 # 6c. The virtual camera. Runs AFTER step 5.8, because that step sometimes
 #     replaces this image's kernel and a kernel module belongs to one exact

@@ -224,6 +224,7 @@ while [ $# -gt 0 ]; do
         --find-installer) QUERY="find" ;;
         --drives) QUERY="drives" ;;
         --sound) QUERY="sound" ;;
+        --state) QUERY="state" ;;
         --progress-fd)
             shift
             PROGRESS_FD="${1:-}"
@@ -1152,6 +1153,44 @@ case "${QUERY}" in
         gpu_summary
         exit 0
         ;;
+    state)
+        # ⚠️ ONE WORD, AND THE WINDOW READS IT BEFORE IT DRAWS ANYTHING.
+        # How long setting Resolve up takes depends entirely on how much of it
+        # has already happened, and on the NVIDIA edition the answer is "nearly
+        # all of it". A window that says "about fifteen minutes" to somebody who
+        # is three minutes from finishing has told them something worse than
+        # nothing, so the wording is chosen from this answer.
+        #
+        #   ready     the environment is built. Nothing of ours to do.
+        #   unpacked  the environment is in this person's store but not built.
+        #   carried   it is inside AquariusOS, waiting to be unpacked. No
+        #             download, whatever the state of the internet.
+        #   none      none of the above: it has to come from the registry, the
+        #             way every machine did before 2026-09-16.
+        #
+        # Same shape, same reason, as --drives below: runtime.env is read here
+        # rather than at the top, so that asking a question on a broken image
+        # still answers instead of stopping.
+        if [ -r "${RUNTIME_ENV}" ]; then
+            # shellcheck source=/dev/null
+            . "${RUNTIME_ENV}"
+            [ -n "${OVERRIDE_IMAGE}" ] && AQ_RESOLVE_RUNTIME_IMAGE="${OVERRIDE_IMAGE}"
+            [ -n "${OVERRIDE_TAG}" ] && AQ_RESOLVE_RUNTIME_TAG="${OVERRIDE_TAG}"
+            IMAGE="${AQ_RESOLVE_RUNTIME_IMAGE}:${AQ_RESOLVE_RUNTIME_TAG}"
+            CONTAINER="${AQ_RESOLVE_CONTAINER:-aquarius-resolve}"
+        fi
+        survey_machine
+        if [ "${HAVE_CONTAINER}" = "1" ]; then
+            echo "ready"
+        elif [ "${HAVE_IMAGE}" = "1" ]; then
+            echo "unpacked"
+        elif [ -n "$(baked_archive)" ]; then
+            echo "carried"
+        else
+            echo "none"
+        fi
+        exit 0
+        ;;
     find)
         if found="$(find_installer)"; then
             printf '%s\n' "${found}"
@@ -1296,6 +1335,31 @@ if [ "${MODE}" = "remove" ]; then
             -o -iname '*davinci*.desktop' \
             -o -iname '*blackmagic*.desktop' \) 2> /dev/null | sort)
     fi
+    # ------------------------------------------------------------------------
+    # And the day-one DaVinci Resolve icon comes BACK
+    # ------------------------------------------------------------------------
+    # On the NVIDIA edition there is a DaVinci Resolve entry in the app grid
+    # from the first login, before anybody has downloaded anything. Installing
+    # Resolve hides it, because Blackmagic's own entry takes over and two
+    # DaVinci Resolves in the app grid is a computer arguing with itself. The
+    # hiding is one small file in the person's own folder (see hide_placeholder
+    # further down); deleting it puts the entry back exactly as it was.
+    #
+    # ⚠️ IT IS DELETED HERE EXPLICITLY, RATHER THAN BY THE LOOP ABOVE. That loop
+    # only removes entries that point at our launcher, on purpose — somebody who
+    # installed Resolve another way keeps their own. This file points at
+    # nothing; it is two lines saying "do not show the one in the operating
+    # system". So it needs naming, and a removal that left it behind would leave
+    # a machine with no way back to Resolve except a terminal.
+    PLACEHOLDER_HIDE="${APPS_DIR}/aquarius-davinci-resolve.desktop"
+    if [ -e "${PLACEHOLDER_HIDE}" ]; then
+        if [ "${DRY_RUN}" = "1" ]; then
+            echo "  would put the DaVinci Resolve icon back in your apps"
+        elif rm -f "${PLACEHOLDER_HIDE}"; then
+            echo "  DaVinci Resolve is back in your apps as a thing you can set up again."
+        fi
+    fi
+
     echo "  ${removed} menu entries removed."
     [ "${DRY_RUN}" = "1" ] || update-desktop-database "${APPS_DIR}" > /dev/null 2>&1 || true
 
@@ -2239,6 +2303,60 @@ if command -v distrobox > /dev/null 2>&1 \
     echo ""
     echo "        (Add --force if it refuses because it is running.)"
 fi
+
+# ------------------------------------------------------------------------------
+# One DaVinci Resolve in the app grid, not two
+# ------------------------------------------------------------------------------
+# On the NVIDIA edition AquariusOS puts a DaVinci Resolve entry in the app grid
+# at the first login, wearing our own mark, so that the application this
+# operating system is built around is there from the start rather than hidden
+# behind a thing called "Install DaVinci Resolve". The moment Resolve is really
+# installed, Blackmagic's own entry — with Blackmagic's own logo — takes over,
+# and ours has to get out of the way. Two DaVinci Resolves in the app grid is a
+# computer arguing with itself.
+#
+# ⚠️ IT IS HIDDEN, NOT DELETED, AND IT CANNOT BE DELETED. The entry lives in
+# /usr, which on this kind of operating system is read-only and is replaced
+# whole by every update — so deleting it is impossible now and would be undone
+# by the next update if it were not. What the desktop provides for this is a
+# file of the same name in the person's OWN applications folder saying "do not
+# show that one", which is what `Hidden=true` means. Removing Resolve deletes
+# this file and the entry comes straight back; that is done in the removal steps.
+#
+# The AMD/Intel edition has no such entry, so this finds nothing to hide and
+# says nothing, which is correct.
+hide_placeholder() {
+    local system_entry=/usr/share/applications/aquarius-davinci-resolve.desktop
+    local hide="${APPS_DIR}/aquarius-davinci-resolve.desktop"
+    [ -r "${system_entry}" ] || return 0
+    # Already hidden by an earlier run. Writing it twice is harmless; saying so
+    # twice is noise in a log somebody is reading to find a real problem.
+    grep -q '^Hidden=true$' "${hide}" 2> /dev/null && return 0
+    cat > "${hide}" << 'HIDE'
+[Desktop Entry]
+# Written by AquariusOS when DaVinci Resolve was installed.
+#
+# It hides the "set up DaVinci Resolve" entry that AquariusOS shows before
+# Resolve is installed, because Blackmagic's own entry — with their own logo —
+# is now in your apps and doing that job properly.
+#
+# Delete this file and the AquariusOS entry comes back. Removing Resolve
+# ("Remove DaVinci Resolve" in your apps) deletes it for you.
+Type=Application
+Name=DaVinci Resolve
+NoDisplay=true
+Hidden=true
+HIDE
+    if grep -q '^Hidden=true$' "${hide}" 2> /dev/null; then
+        echo "  The 'set up DaVinci Resolve' icon has stepped aside for the real one."
+    else
+        # Not fatal, and deliberately not treated as such: the worst outcome is
+        # two icons that both work, which is untidy rather than broken.
+        echo "  NOTE: there may be two DaVinci Resolve icons in your apps now."
+        echo "        Both work. To tidy it, delete ${hide}."
+    fi
+}
+hide_placeholder
 
 update-desktop-database "${APPS_DIR}" > /dev/null 2>&1 || true
 

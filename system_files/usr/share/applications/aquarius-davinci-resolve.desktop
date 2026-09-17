@@ -1,0 +1,41 @@
+[Desktop Entry]
+# ==============================================================================
+# DaVinci Resolve, in your apps from the first login
+# ==============================================================================
+# This is the NVIDIA edition's DaVinci Resolve entry, and it is here before
+# anybody has downloaded anything. Clicking it starts Resolve if it is
+# installed, and finishes setting it up if it is not — see
+# /usr/libexec/aquarius-resolve-open, which is the program that decides.
+#
+# ⚠️ THE ICON IS OURS. Until somebody installs their own copy of Resolve there
+# is nothing of Blackmagic's on this computer, and their mark may not be used to
+# advertise software we did not give them. This wears the AquariusOS "DR" mark.
+# Once Resolve really is installed, Blackmagic's own installer writes its own
+# entry with its own logo, and this one hides itself — so there is never a
+# moment with two DaVinci Resolves in the app grid.
+#
+# ⚠️ IT IS NOT IN THE AMD/INTEL EDITION. Blackmagic support NVIDIA on Linux and
+# nothing else, so on those machines Resolve is offered rather than promised:
+# that edition keeps the plain "Install DaVinci Resolve" entry, which says what
+# it is. build_files/63-resolve-runtime-bake.sh removes this file there.
+# ==============================================================================
+Type=Application
+Version=1.0
+Name=DaVinci Resolve
+GenericName=Video Editor
+Comment=Edit, colour, mix and finish video with Blackmagic's DaVinci Resolve
+Exec=/usr/libexec/aquarius-resolve-open %U
+TryExec=/usr/libexec/aquarius-resolve-open
+Icon=aquarius-install-resolve
+Terminal=false
+StartupNotify=true
+# ⚠️ THE WINDOW THIS ENTRY IS JOINED TO IS THE SETUP WINDOW, NOT RESOLVE'S.
+# The dock matches a window to an app-menu entry on this name. While Resolve is
+# being set up, the window on screen is ours and calls itself
+# org.aquariusos.ResolveInstaller, so that is the name here — the setup appears
+# under the DaVinci Resolve icon somebody just clicked, which is where they will
+# look for it. Once Resolve is installed this entry is hidden and Blackmagic's
+# own entry, whose StartupWMClass is `resolve`, takes over.
+StartupWMClass=org.aquariusos.ResolveInstaller
+Categories=AudioVideo;Video;AudioVideoEditing;
+Keywords=davinci;resolve;blackmagic;colour;color;grade;grading;video;editor;edit;fusion;fairlight;

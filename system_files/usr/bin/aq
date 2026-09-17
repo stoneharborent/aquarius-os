@@ -23,6 +23,7 @@
 #
 #     aq resolve install      set up DaVinci Resolve
 #     aq resolve status       is it installed, and can it see the graphics card
+#     aq resolve prepare      build the environment Resolve runs in, and stop
 #     aq resolve check        is there a newer Resolve than the one you have
 #     aq resolve run          start it
 #     aq resolve shell        a terminal inside the environment it runs in
@@ -756,6 +757,16 @@ aq resolve — DaVinci Resolve on AquariusOS
                     A rehearsal. Walks through all seven steps and installs
                     nothing at all. Add --gui to look at the window.
 
+    aq resolve prepare
+                    Build the environment Resolve will run in, and stop there.
+                    No download of yours is wanted and nothing is installed.
+                    You should never need this: on the NVIDIA edition your
+                    first login does it in the background, which is why setting
+                    Resolve up afterwards takes about three minutes instead of
+                    fifteen. It is here for the moment after "aq resolve
+                    remove", and for looking at what that background job does.
+                    Running it twice does nothing the second time.
+
     aq resolve run  Start Resolve. (You can also just click it in your apps.)
 
     aq resolve status
@@ -1358,6 +1369,17 @@ resolve() {
         scale)
             shift
             resolve_scale "${1:-}"
+            ;;
+        prepare)
+            shift
+            # Nothing of `aq`'s to understand here: the whole job, and every
+            # decision in it — no NVIDIA card, already done, nothing to unpack —
+            # belongs to the setup script. See its --prepare.
+            [ -x "${AQ_RESOLVE_INSTALLER}" ] || {
+                echo "aq: ${AQ_RESOLVE_INSTALLER} is missing from this system." >&2
+                return 1
+            }
+            "${AQ_RESOLVE_INSTALLER}" --prepare "$@"
             ;;
         shell) resolve_shell ;;
         remove | uninstall)

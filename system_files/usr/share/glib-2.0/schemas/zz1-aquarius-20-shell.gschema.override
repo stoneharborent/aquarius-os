@@ -76,7 +76,25 @@
 # Flatpak apps, because the Aquarius dock simply skips a name it cannot find
 # rather than drawing a dead square. The two lists are deliberately allowed to
 # differ for that reason, and both are explained in docs/restart/creator-apps.md.
-favorite-apps=['org.gnome.Nautilus.desktop', 'aquarius-editor.desktop', 'aquarius-writer.desktop', 'org.mozilla.firefox.desktop', 'org.gnome.Ptyxis.desktop', 'org.gnome.TextEditor.desktop', 'org.gnome.Software.desktop', 'org.gnome.Settings.desktop']
+#
+# ⚠️ DAVINCI RESOLVE IS PINNED HERE FROM THE FIRST LOGIN, AND IT IS THE ONLY
+# NAME ON THIS LINE THAT IS NOT IN BOTH EDITIONS. Added 2026-09-16. It is the
+# reason this operating system exists, so it sits on the dock next to Files,
+# before anybody has downloaded anything — clicking it starts Resolve if it is
+# installed and finishes setting it up if it is not.
+#
+#   * On the NVIDIA edition aquarius-davinci-resolve.desktop is in the image, so
+#     the icon is drawn from the first login and 50-aquarius-desktop.sh's "is
+#     every pinned app really installed" check passes in the ordinary way.
+#   * On the AMD/Intel edition build_files/63-resolve-runtime-bake.sh takes that
+#     entry back out, because Blackmagic support NVIDIA on Linux and nothing
+#     else and promising Resolve on a machine it cannot use would be a lie told
+#     by an icon. GNOME simply does not draw a name it cannot resolve — no gap,
+#     no dead square — so the dock there is the same dock without it. That step
+#     runs AFTER step 50, which is why the check above still passes on both.
+#
+# It is the same arrangement, for the same reason, as aquarius-editor.desktop.
+favorite-apps=['org.gnome.Nautilus.desktop', 'aquarius-davinci-resolve.desktop', 'aquarius-editor.desktop', 'aquarius-writer.desktop', 'org.mozilla.firefox.desktop', 'org.gnome.Ptyxis.desktop', 'org.gnome.TextEditor.desktop', 'org.gnome.Software.desktop', 'org.gnome.Settings.desktop']
 
 # ------------------------------------------------------------------------------
 # The GNOME Shell extensions that are switched on

@@ -120,7 +120,30 @@ LAUNCHER = "/usr/libexec/aquarius-resolve-launch"
 BLACKMAGIC = "https://www.blackmagicdesign.com/products/davinciresolve"
 
 # How long the whole thing takes, in one place, because it is said in four.
-MINUTES = "about fifteen minutes"
+#
+# ⚠️ IT IS NOT ONE NUMBER ANY MORE, AND THAT IS THE POINT (2026-09-16). On the
+# NVIDIA edition the environment Resolve runs in is carried inside AquariusOS
+# and the first login has already built it, so nearly all of the old fifteen
+# minutes has already happened before this window opens. Saying "about fifteen
+# minutes" to somebody who is three minutes from finishing is worse than saying
+# nothing: they put the laptop down and come back in the evening.
+#
+# So the sentence is chosen from what the machine actually is, asked of the same
+# script that does the work — never worked out separately in here, because two
+# programs with two opinions about the same machine is the fault this window's
+# whole cli_query arrangement exists to prevent.
+
+
+def minutes_for(state):
+    """How long to tell somebody it will take, given `--state`'s one word."""
+    return {
+        # The container is built. All that is left is Blackmagic's own installer.
+        "ready": "about three minutes",
+        # The environment is unpacked but not built.
+        "unpacked": "about five minutes",
+        # It is inside AquariusOS: a quick unpack, and no download at all.
+        "carried": "about five minutes",
+    }.get(state, "about fifteen minutes")
 
 # The step names drawn before anything starts. The script sends its own wording
 # with every STEP line and that wins the moment it arrives; this list is only so
@@ -198,10 +221,21 @@ def installed_resolve_icon():
 
 
 class InstallerWindow(Adw.ApplicationWindow):
-    def __init__(self, app, dry_run=False, preset_file=None):
+    def __init__(self, app, dry_run=False, preset_file=None, finish_setup=False):
         super().__init__(application=app)
         self.dry_run = dry_run
         self.chosen = preset_file
+        # Opened by somebody clicking DaVinci Resolve in their apps, rather than
+        # by somebody looking for an installer. The only difference it makes is
+        # the words on the first page: "finish setting up" instead of "install",
+        # because on a machine where the environment is already built that is a
+        # truer description of what is left.
+        self.finish_setup = finish_setup
+        # ⚠️ ASKED ONCE, BEFORE THE FIRST PAGE IS BUILT. Every page reads it, and
+        # a window whose first page says five minutes and whose second says
+        # fifteen has told somebody the machine changed its mind.
+        self.state = cli_query("--state") or "none"
+        self.minutes = minutes_for(self.state)
         self.proc = None
         self.cancelled = False
         self.finished = False
@@ -211,7 +245,11 @@ class InstallerWindow(Adw.ApplicationWindow):
         self.current_step = 0
         self.step_total = len(DEFAULT_STEPS)
 
-        self.set_title("Install DaVinci Resolve")
+        self.set_title(
+            "Finish setting up DaVinci Resolve"
+            if finish_setup
+            else "Install DaVinci Resolve"
+        )
         self.set_default_size(620, 640)
 
         self.stack = Gtk.Stack(
@@ -245,6 +283,64 @@ class InstallerWindow(Adw.ApplicationWindow):
 
     # -- page 1: choose -----------------------------------------------------
 
+    def _choose_blurb(self):
+        """The sentence under the heading on the first page.
+
+        ⚠️ IT SAYS DIFFERENT THINGS BECAUSE DIFFERENT THINGS ARE TRUE. On a
+        machine where the environment is already built, describing a fifteen
+        minute download would be describing somebody else's computer. What every
+        version of it keeps is the two facts a person can act on: it is safe,
+        and roughly how long they are committing to.
+        """
+        if self.state == "ready":
+            return (
+                "Almost everything is already done. AquariusOS set up the "
+                "protected environment Resolve runs in when you first logged "
+                "in, so all that is left is your own download from Blackmagic "
+                "and %s." % self.minutes
+            )
+        if self.state in ("unpacked", "carried"):
+            return (
+                "Resolve runs inside its own protected environment on this "
+                "computer, so it stays stable across updates and cannot clash "
+                "with anything else you have installed. That environment is "
+                "already inside AquariusOS — there is nothing of ours to "
+                "download — so this takes %s." % self.minutes
+            )
+        return (
+            "Resolve runs inside its own protected environment on this "
+            "computer, so it stays stable across updates and cannot clash with "
+            "anything else you have installed. Setting that up takes %s, "
+            "nearly all of it downloading." % self.minutes
+        )
+
+    def _environment_step(self):
+        """The second row of "what will happen", which is the row that changes.
+
+        On a prepared machine this step does not happen at all — the script does
+        not even announce it (see SKIP_STEPS in aquarius-resolve-install). The
+        row stays on the list rather than disappearing, because "this is already
+        done" is a genuinely reassuring thing to read and a list that silently
+        loses a row between one machine and another is harder to support.
+        """
+        if self.state == "ready":
+            return (
+                "Set up the environment",
+                "Already done — AquariusOS did this in the background when you "
+                "first logged in.",
+            )
+        if self.state in ("unpacked", "carried"):
+            return (
+                "Set up the environment",
+                "It is already inside AquariusOS, so this is a quick unpack "
+                "with nothing to download. It happens once.",
+            )
+        return (
+            "Set up the environment",
+            "A one-off download of %s. It happens once, not every time you "
+            "open Resolve." % self.minutes,
+        )
+
     def _build_choose_page(self):
         # ⚠️ THIS PARAGRAPH IS SHORTER THAN IT WAS, ON PURPOSE (Royce,
         # 2026-09-04). It used to explain the container, name the Linux inside
@@ -253,11 +349,10 @@ class InstallerWindow(Adw.ApplicationWindow):
         # somebody who wants to edit a video. What survives is the two things
         # they can act on: it is safe, and it takes a while.
         mark, title, blurb = aquarius_ui.hero(
-            "Install DaVinci Resolve",
-            "Resolve runs inside its own protected environment on this "
-            "computer, so it stays stable across updates and cannot clash with "
-            "anything else you have installed. Setting that up takes %s, "
-            "nearly all of it downloading." % MINUTES,
+            "Finish setting up DaVinci Resolve"
+            if self.finish_setup
+            else "Install DaVinci Resolve",
+            self._choose_blurb(),
         )
 
         # What will happen, before it happens. Four rows, so that the fifteen
@@ -269,11 +364,7 @@ class InstallerWindow(Adw.ApplicationWindow):
                     "The file you got from Blackmagic. AquariusOS looks in your "
                     "Downloads folder first.",
                 ),
-                (
-                    "Set up the environment",
-                    "A one-off download of %s. It happens once, not every time "
-                    "you open Resolve." % MINUTES,
-                ),
+                self._environment_step(),
                 (
                     "Install Resolve into it",
                     "Blackmagic's own installer runs, where it has everything "
@@ -488,7 +579,7 @@ class InstallerWindow(Adw.ApplicationWindow):
         mark, self.working_title, self.working_blurb = aquarius_ui.hero(
             "Installing DaVinci Resolve",
             "This takes %s and most of it is quiet. You can leave it and come "
-            "back." % MINUTES,
+            "back." % self.minutes,
             style="title-2",
         )
 
@@ -917,31 +1008,43 @@ class InstallerWindow(Adw.ApplicationWindow):
 
 
 class InstallerApp(Adw.Application):
-    def __init__(self, dry_run=False, preset_file=None):
+    def __init__(self, dry_run=False, preset_file=None, finish_setup=False):
         super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.NON_UNIQUE)
         self.dry_run = dry_run
         self.preset_file = preset_file
+        self.finish_setup = finish_setup
 
     def do_activate(self):
         window = self.props.active_window
         if window is None:
-            window = InstallerWindow(self, self.dry_run, self.preset_file)
+            window = InstallerWindow(
+                self, self.dry_run, self.preset_file, self.finish_setup
+            )
         window.present()
 
 
 def main(argv):
     dry_run = os.environ.get("AQ_RESOLVE_DRY_RUN") == "1"
     preset = None
+    # Opened by somebody clicking DaVinci Resolve in their apps rather than by
+    # somebody hunting for an installer. See /usr/libexec/aquarius-resolve-open.
+    finish_setup = False
     for arg in argv[1:]:
         if arg == "--dry-run":
             dry_run = True
+        elif arg == "--finish-setup":
+            finish_setup = True
         elif arg in ("-h", "--help"):
             print(
                 "aquarius-resolve-installer — the Install DaVinci Resolve window\n"
                 "\n"
-                "    aquarius-resolve-installer [--dry-run] [file]\n"
+                "    aquarius-resolve-installer [--dry-run] [--finish-setup] [file]\n"
                 "\n"
                 "    --dry-run   walk through the window without installing anything\n"
+                "    --finish-setup\n"
+                "                say 'finish setting up' rather than 'install'. It is what\n"
+                "                clicking DaVinci Resolve in your apps passes, because on a\n"
+                "                machine AquariusOS already prepared that is the truth.\n"
                 "    file        the download from Blackmagic, if you already have it\n"
                 "\n"
                 "It runs %s, which is the same installer 'aq resolve install'\n"
@@ -964,7 +1067,7 @@ def main(argv):
 
     GLib.set_prgname(APP_ID)
     GLib.set_application_name("Install DaVinci Resolve")
-    app = InstallerApp(dry_run=dry_run, preset_file=preset)
+    app = InstallerApp(dry_run=dry_run, preset_file=preset, finish_setup=finish_setup)
     return app.run([argv[0]])
 
 
