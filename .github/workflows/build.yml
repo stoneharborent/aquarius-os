@@ -35,6 +35,26 @@
 # bootable image flattens every clock, so a timestamp check passes forever,
 # including when the step it was checking did nothing. We learned that on
 # 2026-08-31 and it is now a rule.
+#
+# ⚠️ THIS WORKFLOW NEEDS THE OTHER ONE TO HAVE RUN AT LEAST ONCE (2026-09-16).
+# Since the NVIDIA image carries the environment DaVinci Resolve runs in, this
+# build fetches `ghcr.io/stoneharborent/aquarius-resolve-runtime:9` while it
+# runs. So on a repository where "Build the Resolve runtime" has NEVER
+# published anything, the NVIDIA build fails at step 63 with "manifest
+# unknown", and the fix is to run that workflow once from the Actions tab.
+#
+# The two are not chained on purpose, and it is worth saying why rather than
+# leaving it looking like an oversight. The runtime changes a few times a year;
+# the operating system changes several times a week. Making every OS build wait
+# for a runtime build would add ten minutes to every single push to buy a
+# guarantee that matters exactly once in a repository's life. And a real
+# dependency between them would mean a broken runtime build stopping OS builds,
+# which is the tail wagging the dog.
+#
+# ⚠️ AND IT NEEDS NO CREDENTIALS. That package is PUBLIC, so this build reads it
+# anonymously and a fork can build the image without being given any secrets.
+# If somebody ever makes it private, step 63 stops with a message that says
+# exactly that — see build_files/63-resolve-runtime-bake.sh.
 # ==============================================================================
 
 name: Build AquariusOS
@@ -1163,6 +1183,17 @@ jobs:
           #               growth, and still far less than 4.1 GB of head room,
           #               so Aquarius Editor creeping back in is caught on the
           #               very next build.
+          #   2026-09-16  The environment DaVinci Resolve runs in is now carried
+          #               inside the NVIDIA image — about 0.33 GB, and NVIDIA
+          #               only (build_files/63-resolve-runtime-bake.sh). It buys
+          #               a Resolve setup of about three minutes instead of
+          #               fifteen, and one that works with no internet at all.
+          #               The ceilings were NOT raised for it: 14.7 + 0.33 is
+          #               about 15.0, comfortably under the 16 GB already there.
+          #               ⚠️ IF THIS BUILD FAILS THE SIZE CHECK ON THE NVIDIA
+          #               IMAGE AND NOT ON THE BASE ONE, that difference is the
+          #               first thing to look at — the environment should be
+          #               ~330 MB and step 63 fails on its own if it is not.
           BYTES="$(podman image inspect "${IMAGE_NAME}:${DEFAULT_TAG}" \
             --format '{{.Size}}' 2>/dev/null || echo 0)"
           GB="$(awk -v b="${BYTES}" 'BEGIN { printf "%.1f", b / 1000000000 }')"
@@ -2536,6 +2567,150 @@ jobs:
             -v "${GITHUB_WORKSPACE}/tests/test-resolve-done-window.py:/tmp/test-resolve-done-window.py:ro" \
             --entrypoint /usr/bin/python3 \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" /tmp/test-resolve-done-window.py /
+
+      # ------------------------------------------------------------------------
+      # The environment Resolve runs in is really inside the NVIDIA image
+      # ------------------------------------------------------------------------
+      # ⚠️ ADDED 2026-09-16, AND IT IS A CHECK ABOUT A FILE NOBODY WOULD MISS.
+      # Step 63 of the build fetches the Rocky runtime and puts it into the
+      # NVIDIA image so that setting Resolve up takes about three minutes
+      # instead of fifteen and works with no internet at all. If that file ever
+      # silently stopped arriving, NOTHING WOULD LOOK WRONG: the image would
+      # build, boot, and set Resolve up perfectly well — by downloading a
+      # gigabyte, exactly as it used to. A feature quietly reverting to the
+      # thing it replaced is the hardest kind of regression to notice, so it is
+      # read back here, out of the finished image, one more time.
+      #
+      # It also checks the opposite on the AMD/Intel image, which is the half
+      # somebody changing this is most likely to get wrong: system_files/ is one
+      # tree copied into both editions, so "not in the base image" is something
+      # a build step has to ENFORCE rather than something that is true by
+      # accident. 330 MB of container for a machine Blackmagic do not support is
+      # exactly the kind of thing that creeps in and stays.
+      - name: Check the environment Resolve runs in is in the NVIDIA image, and only there
+        run: |
+          set -uo pipefail
+          fails=0
+          ARCHIVE=/usr/share/aquarius/resolve/runtime.oci
+          BAKED=/usr/share/aquarius/resolve/runtime-baked.env
+          ENTRY=/usr/share/applications/aquarius-davinci-resolve.desktop
+
+          # One run, reading the finished image the way a booted machine would.
+          # `--pull=never` guarantees this is the thing that was just built.
+          if ! podman run --rm --pull=never \
+            -e EXPECTED_NVIDIA="${NVIDIA}" \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" -c '
+              set -uo pipefail
+              rc=0
+              ARCHIVE=/usr/share/aquarius/resolve/runtime.oci
+              BAKED=/usr/share/aquarius/resolve/runtime-baked.env
+              ENTRY=/usr/share/applications/aquarius-davinci-resolve.desktop
+              UNIT=/usr/lib/systemd/user/aquarius-resolve-prepare.service
+              LINK=/usr/lib/systemd/user/graphical-session.target.wants/aquarius-resolve-prepare.service
+
+              if [ "${EXPECTED_NVIDIA}" = "1" ]; then
+                if [ -s "${ARCHIVE}" ]; then
+                  MB=$(( $(stat -c %s "${ARCHIVE}") / 1024 / 1024 ))
+                  echo "  OK   the environment is in this image (${MB} MB)"
+                  # A floor and a ceiling, for the same reasons as in step 63: a
+                  # truncated copy, and somebody accidentally baking a container
+                  # with a video editor in it — which we may not distribute.
+                  if [ "${MB}" -lt 100 ] || [ "${MB}" -gt 900 ]; then
+                    echo "  FAIL ${MB} MB is not a plausible size for it — it has been ~330 MB"
+                    rc=1
+                  fi
+                else
+                  echo "  FAIL ${ARCHIVE} is missing — setting Resolve up would silently go back to a gigabyte download"
+                  rc=1
+                fi
+
+                # The digest, which is what lets a machine say what it is really
+                # running. Written by the build, never by hand.
+                if grep -qE "^AQ_RESOLVE_BAKED_DIGEST=sha256:[0-9a-f]{64}$" "${BAKED}" 2>/dev/null; then
+                  echo "  OK   and the image records which environment it is, by digest"
+                  sed -n "s/^/       /p" "${BAKED}" | grep -v "^       #" | grep -v "^       $"
+                else
+                  echo "  FAIL ${BAKED} does not name the environment by digest"
+                  rc=1
+                fi
+
+                # DaVinci Resolve is in the apps from day one, with OUR icon.
+                if grep -q "^Icon=aquarius-install-resolve$" "${ENTRY}" 2>/dev/null; then
+                  echo "  OK   DaVinci Resolve is in the app grid, wearing the AquariusOS mark"
+                else
+                  echo "  FAIL ${ENTRY} is missing or does not wear our own icon"
+                  rc=1
+                fi
+                # ⚠️ AND NOTHING OF BLACKMAGIC S IS SHIPPED AS ARTWORK. Their
+                # mark may appear only once their software really is installed,
+                # which happens on the person s own machine and never here.
+                if [ -n "$(find /usr/share/icons /usr/share/pixmaps -iname "*blackmagic*" -o -iname "*davinci*" 2>/dev/null)" ]; then
+                  echo "  FAIL there is Blackmagic artwork in this image, which we may not distribute"
+                  rc=1
+                else
+                  echo "  OK   no Blackmagic artwork anywhere in the image"
+                fi
+
+                # The first login builds it, without anybody waiting.
+                if [ -e "${LINK}" ]; then
+                  echo "  OK   the first login prepares the environment (switched on from /usr)"
+                else
+                  echo "  FAIL ${LINK} is missing — the environment would only ever be built while somebody waited"
+                  rc=1
+                fi
+                if grep -q "^ExecStart=-/usr/libexec/aquarius-resolve-install --prepare$" "${UNIT}" 2>/dev/null; then
+                  echo "  OK   and a failure there costs the person nothing"
+                else
+                  echo "  FAIL ${UNIT} does not run the preparation, or would fail loudly"
+                  rc=1
+                fi
+              else
+                if [ -e "${ARCHIVE}" ]; then
+                  echo "  FAIL ${ARCHIVE} is in the AMD/Intel image — ~330 MB for graphics Blackmagic do not support"
+                  rc=1
+                else
+                  echo "  OK   the AMD/Intel image carries no environment, as it must not"
+                fi
+                if [ -e "${ENTRY}" ]; then
+                  echo "  FAIL ${ENTRY} promises a DaVinci Resolve this edition cannot run well"
+                  rc=1
+                else
+                  echo "  OK   and no day-one DaVinci Resolve entry either"
+                fi
+                # ⚠️ AND THE WAY IN IS STILL THERE. Hiding Install DaVinci
+                # Resolve is what the NVIDIA edition does, because it has a
+                # DaVinci Resolve entry instead. Doing it here would leave this
+                # edition with no way to set Resolve up without a terminal.
+                if grep -q "^NoDisplay=true$" /usr/share/applications/aquarius-install-resolve.desktop 2>/dev/null; then
+                  echo "  FAIL Install DaVinci Resolve is hidden here — there would be no way in at all"
+                  rc=1
+                else
+                  echo "  OK   Install DaVinci Resolve is still in the app grid, which here is the only way in"
+                fi
+              fi
+              exit "${rc}"
+            '; then
+            fails=1
+          fi
+
+          if [ "${fails}" -ne 0 ]; then
+            echo "::error::the environment DaVinci Resolve runs in is not where it should be in this image. See build_files/63-resolve-runtime-bake.sh."
+            exit 1
+          fi
+
+      # The arithmetic behind "only promise steps that are going to happen",
+      # against the copy of the setup script in the finished image, with stand-in
+      # podman and distrobox programs — no container, no graphics card, no
+      # download, and nothing on the runner touched.
+      - name: Check the Resolve setup only promises steps it will do
+        run: |
+          set -euo pipefail
+          podman run --rm --pull=never \
+            -v "${GITHUB_WORKSPACE}/tests/test-resolve-step-count.sh:/tmp/test-resolve-step-count.sh:ro" \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" \
+            /tmp/test-resolve-step-count.sh /usr/libexec/aquarius-resolve-install
 
       - name: Check Resolve display controls and window memory in the finished image
         run: |

@@ -6,13 +6,28 @@
 
 ## The short version
 
-Open your apps, click **Install DaVinci Resolve**, pick the file you downloaded
-from Blackmagic, and wait about fifteen minutes. A window shows you the seven
-steps as they happen. Resolve then sits in your dock like any other program, at
-the same size as everything else on your screen and with your own mouse pointer.
+**DaVinci Resolve is already on your dock, next to Files, the first time you log
+in.** Click it, give it the file you downloaded from Blackmagic, and wait about
+three minutes. A window shows you the steps as they happen. Resolve then opens
+from that same icon like any other program, at the same size as everything else
+on your screen and with your own mouse pointer.
 
 You never see a terminal, and you never type anything. The way out is a window
-too — **Remove DaVinci Resolve**, in the same place.
+too — **Remove DaVinci Resolve**, in your apps.
+
+> **Why three minutes and not fifteen.** Resolve runs inside its own protected
+> environment on this computer, and building that environment used to be the
+> slow part — a gigabyte to download, while you watched. On the NVIDIA edition
+> that environment now comes *inside* AquariusOS, and your computer builds it
+> quietly in the background the first time you log in, before you have asked for
+> anything. So by the time you click DaVinci Resolve, the only thing left is
+> Blackmagic's own installer and your own download. It also means you can set
+> Resolve up **with no internet connection at all**, as long as you have their
+> file.
+>
+> *(The AMD/Intel edition does not carry it — see [What you need](#what-you-need)
+> — so there the setup downloads the environment and takes about fifteen minutes,
+> exactly as it always did.)*
 
 Everything below explains what happened and what to do when it does not.
 
@@ -81,7 +96,12 @@ Blackmagic themselves test against, which is the part everyone else skips.
   AquariusOS ships the driver with the operating system, so `sudo bootc upgrade`
   is how you get a newer one. The setup checks and tells you.
 - **About 15 GB free** — roughly 1 GB for the Rocky Linux, the rest for Resolve.
-- **Your download from Blackmagic.**
+- **Your download from Blackmagic.** This is the one thing nobody can do for
+  you, and it is not a limitation we could remove if we tried harder: Blackmagic's
+  licence lets *them* hand out their installer and nobody else. So AquariusOS
+  ships everything around Resolve and none of Resolve.
+- **Nothing else.** Not even an internet connection, on the NVIDIA edition —
+  everything of ours is already on the computer.
 
 ---
 
@@ -139,8 +159,17 @@ below.
 
 ### 2. Run the setup
 
-Press the **Super** key (the one with the Windows or Command symbol), type
-**Install**, and click **Install DaVinci Resolve**.
+**Click DaVinci Resolve on your dock.** It is there from the first time you log
+in, next to Files, wearing an AquariusOS "DR" icon — because Resolve is what
+this operating system is for, and hiding it behind something called "Install
+DaVinci Resolve" would be burying it. (You can also press the **Super** key —
+the one with the Windows or Command symbol — and type **DaVinci**.)
+
+> **The icon before and after.** Until you have installed your own copy, that
+> icon is one we drew. There is nothing of Blackmagic's on this computer yet, so
+> putting their logo on it would be advertising something we did not give you.
+> Once Resolve is really installed, Blackmagic's own entry takes over, with
+> their own logo, and ours steps aside — you will not see two.
 
 A window opens. There are three pages and you will see all three.
 
@@ -161,24 +190,30 @@ do, and then two lines about your computer:
 
 Then click **Install**.
 
-**Page two — the seven steps.** A list, with a spinner on the step that is
-happening and a tick on the ones that are done:
+**Page two — the steps.** A list, with a spinner on the step that is happening
+and a tick on the ones that are done. **On the NVIDIA edition you will see five
+steps, not seven**, and that is the good news rather than something missing:
 
 1. Checking your graphics card
 2. Finding your download
-3. Downloading the Rocky Linux runtime
-4. Building the container
-5. Installing DaVinci Resolve
-6. Adding it to your apps
-7. Matching Resolve to your screen
+3. Installing DaVinci Resolve
+4. Adding it to your apps
+5. Matching Resolve to your screen
 
-(The window says "the environment Resolve runs in" for 3 and 4, not "Rocky
-Linux" — the names above are what they are, for whoever maintains this.)
+The two that are not there are *Downloading the Rocky Linux runtime* and
+*Building the container*. Your computer did both in the background when you
+first logged in, so there is nothing left to do and the setup does not pretend
+otherwise. If you ever *do* see them — on the AMD/Intel edition, or after you
+have removed Resolve and the environment with it — then they really are
+happening, and the whole thing takes about fifteen minutes instead of three.
 
-Underneath is a progress bar. During the download it fills properly, because
-that is the one step where there is a real number to report; the rest of the
-time it sweeps back and forth, which honestly means *"this is working and nobody
-can say how long it will take"*. Step 5 is the long, quiet one.
+(The window says "the environment Resolve runs in" rather than "Rocky Linux" —
+the names above are what they are, for whoever maintains this.)
+
+Underneath is a progress bar. During a download it fills properly, because that
+is the one step where there is a real number to report; the rest of the time it
+sweeps back and forth, which honestly means *"this is working and nobody can say
+how long it will take"*. "Installing DaVinci Resolve" is the long, quiet one.
 
 Everything the old terminal window used to show is still there, behind
 **Details**. Click it and the whole log is in front of you, scrolling as it
@@ -216,8 +251,10 @@ appears. You cannot get the order wrong.
 
 ### 3. Open it
 
-"DaVinci Resolve" is now in your apps and can be pinned to the dock. The window's
-own **Open DaVinci Resolve** button does the same thing.
+Click the same **DaVinci Resolve** icon you clicked to start all this. It now
+starts Resolve instead of setting it up — that is the whole difference, and it is
+the only thing that icon ever decides. The window's own **Open DaVinci Resolve**
+button does the same thing.
 
 ### Looking at the window without installing anything
 
@@ -1209,6 +1246,7 @@ Resolve itself is unaffected.
 | `resolve-runtime/system_files/usr/bin/aquarius-resolve-setup` | Runs Blackmagic's installer, **inside** the container. |
 | `resolve-runtime/system_files/usr/bin/aquarius-resolve-run` | Starts Resolve, inside the container. |
 | `build_files/62-resolve-runtime.sh` | The OS-image step. Checks everything below arrived. |
+| `build_files/63-resolve-runtime-bake.sh` | **Puts the runtime inside the NVIDIA image**, as one file, and reads it back out. NVIDIA only; on the AMD/Intel build it *removes* the file and the day-one entry and proves they are gone. |
 | `system_files/usr/libexec/aquarius-resolve-install` | **The setup, on the host. The long one, and the only one.** |
 | `system_files/usr/libexec/aquarius-resolve-installer` | The window. GTK 4 + libadwaita, in Python. Runs the above; installs nothing itself. |
 | `system_files/usr/libexec/aquarius-resolve-updater` | The "Update DaVinci Resolve" window. Same pieces, same progress channel, runs the same script with `--update`. |
@@ -1218,7 +1256,13 @@ Resolve itself is unaffected.
 | `system_files/usr/lib/systemd/user/aquarius-resolve-update-check.{timer,service}` | What runs it, switched on from `/usr`. |
 | `system_files/usr/libexec/aquarius-resolve-launch` | The host-side launcher. Carries the desktop's settings in, and turns a `file://` address from Files into a plain path for Resolve. `--report` says what it would do and starts nothing. |
 | `system_files/usr/share/mime/packages/aquarius-resolve.xml` | The missing name for a `.drp` project. Folded into the desktop's compiled list by `update-mime-database` at build time, in `62-resolve-runtime.sh`. |
-| `system_files/usr/share/aquarius/resolve/runtime.env` | **The one place the runtime image is named.** |
+| `system_files/usr/share/aquarius/resolve/runtime.env` | **The one place the runtime image is named**, plus where the baked copy lives and the seed-not-a-pin policy. |
+| `/usr/share/aquarius/resolve/runtime.oci` | The runtime itself, ~330 MB, **generated by step 63** — NVIDIA image only, never in the repository. |
+| `/usr/share/aquarius/resolve/runtime-baked.env` | Which digest that file is. **Generated by step 63.** `installed.env` copies it when a machine starts from the baked copy, because an image loaded from a file has no RepoDigest. |
+| `system_files/usr/libexec/aquarius-resolve-open` | **What clicking "DaVinci Resolve" runs.** Resolve installed → launch it; not installed → the setup window in `--finish-setup` mode. `--report` says which, and starts nothing. |
+| `system_files/usr/share/applications/aquarius-davinci-resolve.desktop` | The day-one app-grid entry, with **our** icon. Removed from the AMD/Intel image by step 63. |
+| `system_files/usr/lib/systemd/user/aquarius-resolve-prepare.service` | Builds the environment in the background at the first login. Two Conditions, `ExecStart=-`, switched on from `/usr`. |
+| `tests/test-resolve-step-count.sh` | Proves the setup only promises steps it will do, against stand-in `podman` and `distrobox`. |
 | `system_files/usr/lib/udev/rules.d/75-aquarius-resolve.rules` | Dongles and control panels. |
 | `system_files/usr/lib/systemd/system/aquarius-resolve-cdi.service` | Graphics-card description, safety net only. |
 | `.github/workflows/build-resolve-runtime.yml` | Builds and publishes the runtime. |
@@ -1371,6 +1415,78 @@ rewritten **only when a working entry survives**, asks
 `aquarius-resolve-launch --report` for the line it would print, and compares a
 `cksum` of `~/.config/aquarius/resolve.conf` taken before Blackmagic's installer
 ran. Contents, never timestamps.
+
+### The runtime inside the image, for whoever maintains this
+
+*Added 2026-09-16. Before this, every machine downloaded the runtime from the
+registry the first time somebody set Resolve up — about a gigabyte, and it was
+the great majority of the fifteen minutes.*
+
+**What changed.** The NVIDIA image now carries the runtime as a single OCI
+archive at `/usr/share/aquarius/resolve/runtime.oci` (~330 MB, the same bytes
+the registry would have sent). `build_files/63-resolve-runtime-bake.sh` fetches
+it with `skopeo` at build time, **by digest**, reads it back out of the finished
+image, and writes `runtime-baked.env` saying which digest it is. The setup then
+has three places to get the runtime from, tried in this order: the person's own
+container store, that file, the registry.
+
+**Why the archive and not a read-only image store under `/usr`.** An additional
+podman image store was the first design and it is the better one on paper: the
+`additionalimagestores` setting works, it works rootless, and the user's podman
+sees the image with no pull and no copy into `$HOME` at all — verified on Fedora
+with podman 5.8, where a second store's image shows up as `R/O true` and runs.
+
+It fails for a reason that has nothing to do with bootc, ostree or read-only
+folders. **An image store belongs to the account that unpacked it.** Measured on
+the same machine: an image pulled by an ordinary person is stored with every
+file owned by that person, and containers/storage records *no* ID mapping
+alongside it — there is nothing for podman to translate later. A store built by
+`root` during the image build therefore has `root`-owned files, and Resolve's
+container is rootless: it runs in a sandbox where the build machine's `root` is
+not mapped at all. Restrictive files in the store become unreadable, in ways
+that look like a broken Resolve rather than like a permissions problem.
+
+Loading the archive into the person's own store at their first login gives every
+file the right owner by construction. **It costs the disk twice** — the file in
+`/usr` and the unpacked copy in `~/.local/share/containers` — and that is the
+honest price of it being correct. Roughly 330 MB plus about a gigabyte, on
+machines that have 15 GB free for Resolve anyway.
+
+> **If somebody wants that gigabyte back**, the thing to try is not a different
+> store layout: it is making the store's files world-readable when it is built,
+> so ownership stops mattering for reading. That is a real option and a
+> defensible one — the image is public anyway — but it is a security-shaped
+> decision about permissions inside a shipped operating system, so it is Royce's
+> to make and not one to slip in.
+
+**It is a seed, not a pin.** This is the part most likely to be quietly broken
+by a future change, so it has a check of its own
+(`tests/test-resolve-step-count.sh`). `aq resolve update` **never** skips the
+"Downloading the environment" step, even though the image is obviously already
+there, because that is the moment an online machine moves onto a newer build of
+tag `9` and picks up Rocky's security rebuilds. Skipping it as an optimisation
+would freeze every NVIDIA machine on whatever runtime its installer happened to
+carry. `installed.env` always records the digest actually in use — from
+`RepoDigests` where podman has one, and from `runtime-baked.env` where it does
+not, which is the case for every image loaded from a file.
+
+**The first login does the work.** `aquarius-resolve-prepare.service` is a
+*user* unit — the container belongs to the person, runs as them, and lives in
+their own store, which is also why this cannot be done once at build time for
+everybody. It is `WantedBy=graphical-session.target` so it never holds up a
+login; its `ExecStart` is prefixed with `-` so a failure is not a red line in
+anybody's `systemctl --user status`; and it carries two `ConditionPathExists`
+lines — an NVIDIA driver, and the baked archive — so it stands down completely
+on a machine it would be wasting disk on. It runs at every login and does
+nothing at all after the first.
+
+**CI.** `build.yml` fetches the runtime package anonymously; it is public, so a
+fork builds with no secrets. The two workflows are deliberately **not** chained:
+on a repository where "Build the Resolve runtime" has never published anything,
+the NVIDIA build stops at step 63 with *manifest unknown* and a message saying
+to run that workflow once. Chaining them would put ten minutes on every push to
+buy a guarantee that matters once in a repository's life, and would let a broken
+runtime build stop OS builds.
 
 ### Why Rocky 9 and not Rocky 10
 

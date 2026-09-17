@@ -341,7 +341,7 @@ cat > "${BAKED_ENV}" << BAKED
 # podman quite correctly has nothing to say, and without this file your machine
 # could not tell you what it is running.
 #
-# ⚠️ THIS IS WHERE A MACHINE STARTS, NOT WHERE IT IS STUCK. `aq resolve update`
+# ⚠️ THIS IS WHERE A MACHINE STARTS, NOT WHERE IT IS STUCK. "aq resolve update"
 # still re-asks the registry for the tag below, so Rocky's security rebuilds
 # reach machines that started from this copy. The full reasoning is in
 # runtime.env next door.
@@ -361,10 +361,15 @@ aq_file_has "${BAKED_ENV}" "^AQ_RESOLVE_BAKED_TAG=${AQ_RESOLVE_RUNTIME_TAG}$" \
 # so anything in it that could RUN would run as the person. It is generated from
 # three values we just read, so this cannot fail — which is precisely why it is
 # worth one line to prove, rather than one line of reasoning.
-if [ -z "$(grep -vE '^[[:space:]]*(#|$)' "${BAKED_ENV}" | grep -vE '^AQ_RESOLVE_BAKED_[A-Z]+=[^ ;&|$(`]*$')" ]; then
-    ok "it is three plain settings and nothing that could run"
-else
+# Read as: strip the comments and the blank lines, then look for any line that
+# is NOT a plain AQ_RESOLVE_BAKED_SOMETHING=value with no shell punctuation in
+# it. Finding one is the failure.
+# shellcheck disable=SC2016  # the $ and ` are regex, not shell — single quotes are the point
+if grep -vE '^[[:space:]]*(#|$)' "${BAKED_ENV}" \
+    | grep -qvE '^AQ_RESOLVE_BAKED_[A-Z]+=[^ ;&|$(`]*$'; then
     bad "${BAKED_ENV} contains something other than plain NAME=value settings"
+else
+    ok "it is three plain settings and nothing that could run"
 fi
 
 echo "  ---- for the log ----"
@@ -502,13 +507,11 @@ fi
 # ==============================================================================
 say "DaVinci Resolve — the environment is built at the first login"
 
-for unit in "${PREPARE_UNIT}"; do
-    if [ -r "${unit}" ]; then
-        ok "$(basename "${unit}") is installed"
-    else
-        bad "${unit} is missing — the environment would only ever be built while somebody waited"
-    fi
-done
+if [ -r "${PREPARE_UNIT}" ]; then
+    ok "$(basename "${PREPARE_UNIT}") is installed"
+else
+    bad "${PREPARE_UNIT} is missing — the environment would only ever be built while somebody waited"
+fi
 
 aq_file_has "${PREPARE_UNIT}" '^ExecStart=-/usr/libexec/aquarius-resolve-install --prepare$' \
     "it runs the preparation, and the '-' means a failure costs the person nothing"

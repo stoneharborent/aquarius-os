@@ -95,6 +95,27 @@ Firefox is none of the three: it is an ordinary system package, so it is
 *inside* the image and works from the very first second, with nothing to
 download.
 
+**DaVinci Resolve is none of the three either, and it is the one exception worth
+understanding.** Blackmagic's licence lets *them* hand out their installer and
+nobody else, so it cannot be baked in, cannot be offered from a store of ours,
+and is not on Flathub. What AquariusOS does instead, on the NVIDIA edition
+(since 2026-09-16), is ship **everything around it**:
+
+- the protected environment Resolve runs in is *inside* the image, and your
+  first login builds it in the background, before you have asked for anything;
+- **DaVinci Resolve is on your dock from that first login**, wearing an icon we
+  drew — not Blackmagic's, because none of their software is on the computer
+  yet;
+- clicking it starts Resolve if it is installed, and finishes setting it up if
+  it is not.
+
+So it is as close to "already installed" as anybody is legally allowed to get:
+what is left for you is their download and about three minutes, instead of
+fifteen — and it works with no internet connection at all. The full story is in
+[docs/restart/resolve.md](resolve.md). *(The AMD/Intel edition keeps the plain
+"Install DaVinci Resolve" entry, because Blackmagic support NVIDIA on Linux and
+nothing else.)*
+
 Nobody has to open a terminal for any of it.
 
 ### ⚠️ Aquarius Editor changed on 2026-09-04, and this is why
