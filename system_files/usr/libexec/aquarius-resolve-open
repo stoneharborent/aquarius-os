@@ -4,8 +4,8 @@
 # ==============================================================================
 # PLAIN ENGLISH
 #
-# On the NVIDIA edition, DaVinci Resolve is in your apps from the moment you
-# first log in — before you have downloaded anything from Blackmagic. That is
+# DaVinci Resolve is in your apps from the moment you first log in — before you
+# have downloaded anything from Blackmagic, and on every edition. That is
 # deliberate. Resolve is the reason this operating system exists, and an
 # operating system whose flagship application is hidden behind a thing called
 # "Install DaVinci Resolve" has buried it.
@@ -116,7 +116,12 @@ fi
 # Downloads folder by itself, and if there is not one it opens Blackmagic's page
 # and waits for the file to appear. Nothing about that changes — what changes is
 # that the environment it would have spent fifteen minutes downloading is
-# already built, so what is left is your download and about three minutes.
+# already built, so what is left is your download and about three minutes. On
+# the AMD/Intel edition it is not, so the window downloads the environment and
+# says so — seven steps rather than five — and its first page carries the
+# graphics-card warning that tells an AMD or Intel owner where Blackmagic stand
+# before they commit to it. Neither of those is decided here; the window asks
+# the setup script, which is the only thing that has an opinion about either.
 #
 # ⚠️ --finish-setup IS A WORD FOR THE WINDOW, NOT A DIFFERENT PROGRAM. It tells
 # the window it was opened by somebody clicking DaVinci Resolve rather than by

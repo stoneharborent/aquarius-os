@@ -192,6 +192,25 @@ echo "Testing ${INSTALL}"
 # -----------------------------------------------------------------------------
 check_run "Nothing on the machine yet — the full seven steps" 0 0 7
 
+# ⚠️ AND THAT STATE IS NOT A CORNER CASE, IT IS A WHOLE EDITION. Since
+# 2026-09-17 the DaVinci Resolve icon is on the AMD/Intel image too, but the
+# 330 MB environment is not — so every AMD or Intel machine clicking that icon
+# walks this path, downloads the environment, and takes about fifteen minutes.
+# It is the old flow, unchanged, and it has to STAY unchanged: an optimisation
+# aimed at prepared machines that quietly dropped the download step here would
+# leave those machines building a container out of nothing.
+STEPS_BARE="$(run_setup 0 0)"
+if printf '%s\n' "${STEPS_BARE}" | grep -q 'Downloading the environment'; then
+    ok "a machine with no environment (every AMD/Intel one) is still told it is downloading"
+else
+    bad "a machine with nothing on it no longer announces the download — the AMD/Intel flow would lie"
+fi
+if printf '%s\n' "${STEPS_BARE}" | grep -q 'Setting that environment up'; then
+    ok "and that it is building the environment afterwards"
+else
+    bad "a machine with nothing on it no longer announces building the environment"
+fi
+
 # -----------------------------------------------------------------------------
 # The environment is here but the container is not: six steps
 # -----------------------------------------------------------------------------

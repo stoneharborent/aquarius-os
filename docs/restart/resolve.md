@@ -25,9 +25,13 @@ too — **Remove DaVinci Resolve**, in your apps.
 > Resolve up **with no internet connection at all**, as long as you have their
 > file.
 >
-> *(The AMD/Intel edition does not carry it — see [What you need](#what-you-need)
-> — so there the setup downloads the environment and takes about fifteen minutes,
-> exactly as it always did.)*
+> *(The AMD/Intel edition has the same dock icon and the same window — only the
+> environment is not carried inside it, because Blackmagic support NVIDIA
+> graphics on Linux and nothing else and a third of a gigabyte should not be in
+> the download of people who cannot use it. So on those machines clicking
+> DaVinci Resolve downloads the environment and takes about fifteen minutes,
+> exactly as it always did, and the window tells you where AMD and Intel stand
+> before you start. See [If you have AMD or Intel](#if-you-have-amd-or-intel).)*
 
 Everything below explains what happened and what to do when it does not.
 
@@ -86,7 +90,8 @@ Blackmagic themselves test against, which is the part everyone else skips.
 
 ## What you need
 
-- **An NVIDIA graphics card.** This is Blackmagic's rule, not ours: NVIDIA is
+- **An NVIDIA graphics card**, to get the good version of all this. This is
+  Blackmagic's rule, not ours: NVIDIA is
   the only graphics vendor with official Resolve support on Linux, the only one
   with the CUDA compute Resolve uses, and the only one that can decode camera
   video in hardware. Royce's bench machine (an RTX 4090) is exactly the target.
@@ -1220,6 +1225,27 @@ Straight answer, no hedging:
 This is a limitation of AquariusOS today, and a real one. It is on the plan and
 it is not done. NVIDIA is the supported creator path, and that is Blackmagic's
 choice showing through ours.
+
+**You still get the DaVinci Resolve icon, on the dock, from your first login.**
+That was not true for a day in September 2026 and Royce changed it, because
+leaving the flagship application out of one edition's menu is a worse answer
+than telling somebody the truth about their graphics card. Resolve *installs*
+and *runs* on AMD — it is the GPU processing that is unsupported — and where
+that matters you should be the one deciding whether it is worth your afternoon.
+
+So clicking the icon opens the same setup window everybody else gets, and its
+first page carries the **Graphics card** line with a warning triangle and the
+sentence above, before you press anything. Two things are different from an
+NVIDIA machine, and neither is hidden from you:
+
+- **It takes about fifteen minutes, not three.** The protected environment
+  Resolve runs in is carried inside the NVIDIA image and not inside this one —
+  a third of a gigabyte in the download of everybody who cannot use it is a cost
+  with no matching benefit — so your computer fetches it when you ask for it.
+  The window shows **seven** steps rather than five, and two of them are that
+  download. That is the flow every AquariusOS had before 2026-09-16.
+- **Nothing is prepared in the background at your first login.** There is
+  nothing to prepare, so that job looks at your machine and stands down.
 
 ### The Blackmagic RAW Player will not start
 

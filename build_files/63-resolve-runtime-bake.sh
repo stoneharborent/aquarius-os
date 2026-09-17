@@ -133,7 +133,172 @@ if [ "${AQ_RESOLVE_BAKED_ENV:-}" != "${BAKED_ENV}" ]; then
 fi
 
 # ==============================================================================
-# 2. The AMD/Intel edition carries none of it
+# 2. DaVinci Resolve is in the apps from the first login — on BOTH editions
+# ==============================================================================
+# ⚠️ ROYCE'S POINT, AND IT IS THE WHOLE REASON THIS SECTION EXISTS: an operating
+# system built around DaVinci Resolve whose flagship application is hidden
+# behind a thing called "Install DaVinci Resolve" has buried it. So on the
+# NVIDIA edition there is a DaVinci Resolve entry from the moment somebody first
+# logs in, it is pinned to the dock beside Files, and clicking it does the right
+# thing whether or not Resolve has been installed yet.
+#
+# ⚠️ AND IT IS ON BOTH EDITIONS, NOT ONLY THE NVIDIA ONE (Royce, 2026-09-17).
+# The first version of this shipped the entry on the NVIDIA image and took it
+# off the AMD/Intel one, reasoning that an icon promising a Resolve the machine
+# cannot run well is a lie told by an icon. Royce's call is the other way, and
+# it is the better one: Resolve DOES install and DOES run on AMD — it is the GPU
+# processing that Blackmagic do not support — and a person who has bought this
+# operating system to edit video should not have to discover that their machine
+# is the one where the flagship application was quietly left out of the menu.
+#
+# What that costs is one honest sentence, and it is already written. Clicking
+# the icon opens the setup window, and the FIRST PAGE of that window shows the
+# graphics-card line — the same `--gpu-summary` answer the terminal gives —
+# which on an AMD or Intel machine reads as a warning saying Blackmagic's only
+# supported Linux graphics is NVIDIA and GPU processing mode will most likely be
+# unsupported. They are told before they spend the time, in the window, not
+# afterwards by Resolve. That row is checked in section 2b below.
+#
+# ⚠️ WHAT IS STILL NVIDIA-ONLY IS THE 330 MB ARCHIVE. An icon costs nothing; a
+# third of a gigabyte in everybody's download does. On the AMD/Intel edition
+# clicking DaVinci Resolve does exactly what it always did — downloads the
+# environment, seven steps, about fifteen minutes.
+#
+# ⚠️ AND IT WEARS OUR ICON, NOT BLACKMAGIC'S. Until somebody installs their own
+# copy of Resolve, nothing of Blackmagic's is on this computer, and using their
+# mark to advertise software we did not give them is not something we do. The
+# entry wears the AquariusOS "DR" mark that the Install entry has worn since
+# 2026-09-06 — drawn by us, checked in build_files/56-aquarius-icons.sh.
+say "DaVinci Resolve — in your apps from the first login"
+
+if [ ! -x "${RESOLVE_OPEN}" ]; then
+    bad "${RESOLVE_OPEN} is missing or not runnable — the DaVinci Resolve icon would do nothing"
+else
+    chmod 0755 "${RESOLVE_OPEN}"
+    ok "aquarius-resolve-open is present and runnable"
+    if bash -n "${RESOLVE_OPEN}"; then
+        ok "and it is valid shell"
+    else
+        bad "${RESOLVE_OPEN} has a syntax error"
+    fi
+    # ⚠️ IT MUST LOOK FOR THE PROGRAM AND NOT FOR THE WORD "RESOLVE". Blackmagic's
+    # installer writes eight app-menu entries and seven of them are not the video
+    # editor — the RAW Player, the Speed Test, the Remote Monitor, the Control
+    # Panels Setup, Capture Logs, the uninstaller. Every one has "resolve" in its
+    # file name, because they all live in /opt/resolve. An earlier draft matched
+    # on the name and picked the RAW Player: clicking DaVinci Resolve would have
+    # opened a still-image viewer.
+    aq_file_has "${RESOLVE_OPEN}" 'RESOLVE_PROGRAM=/opt/resolve/bin/resolve' \
+        "it recognises Resolve by the program it runs, not by a name that seven other tools share"
+    aq_file_has "${RESOLVE_OPEN}" 'exec "\$\{INSTALLER_GUI\}" --finish-setup' \
+        "and opens the setup window when there is no Resolve to start"
+
+    # It answers on a machine with no Resolve at all, which is what this build
+    # container is. `--report` decides and prints without starting anything.
+    AQ_OPEN_SAYS="$("${RESOLVE_OPEN}" --report 2>&1 || true)"
+    echo "  What it would do on this machine: ${AQ_OPEN_SAYS}"
+    case "${AQ_OPEN_SAYS}" in
+        "not-installed"*)
+            ok "with no Resolve installed it would open the setup window, as it must"
+            ;;
+        "installed"*)
+            bad "it thinks DaVinci Resolve is installed in a build container, which is impossible"
+            ;;
+        *)
+            bad "'--report' did not answer in the shape the build reads: ${AQ_OPEN_SAYS}"
+            ;;
+    esac
+fi
+
+if [ ! -r "${RESOLVE_ENTRY}" ]; then
+    bad "${RESOLVE_ENTRY} is missing — there would be no DaVinci Resolve in the app grid until somebody installed one"
+else
+    aq_file_has "${RESOLVE_ENTRY}" '^Name=DaVinci Resolve$' \
+        "the app grid calls it DaVinci Resolve and nothing else"
+    aq_file_has "${RESOLVE_ENTRY}" '^Exec=/usr/libexec/aquarius-resolve-open %U$' \
+        "clicking it asks the program that decides, and a file dropped on it goes through"
+    # ⚠️ OUR MARK. If this ever became a Blackmagic icon shipped in our image, it
+    # would be their artwork redistributed by us on a machine with none of their
+    # software on it. This line is the check that stops that happening quietly.
+    aq_file_has "${RESOLVE_ENTRY}" '^Icon=aquarius-install-resolve$' \
+        "⚠️ and it wears OUR drawn mark, never Blackmagic's, until their software is really here"
+    aq_file_has "${RESOLVE_ENTRY}" '^StartupWMClass=org\.aquariusos\.ResolveInstaller$' \
+        "the setup window it opens appears under this icon rather than as a nameless window"
+    if desktop-file-validate "${RESOLVE_ENTRY}"; then
+        ok "it passes freedesktop's own validator"
+    else
+        bad "${RESOLVE_ENTRY} is not a valid desktop entry — it would never appear in the app grid"
+    fi
+fi
+
+# ⚠️ ONE ENTRY, NOT TWO. "DaVinci Resolve" and "Install DaVinci Resolve" side by
+# side in the app grid is two doors into the same room, and the person has to
+# work out which one they want before they have any way of knowing. So the
+# Install entry is taken out of the grid on both editions — it still exists, still
+# works, and is still what `aq resolve install --gui` and the Software-style
+# flows open; it simply is not a second icon.
+if grep -q '^NoDisplay=true$' "${INSTALL_ENTRY}"; then
+    ok "'Install DaVinci Resolve' is already folded into the DaVinci Resolve entry"
+else
+    printf 'NoDisplay=true\n' >> "${INSTALL_ENTRY}"
+    if grep -q '^NoDisplay=true$' "${INSTALL_ENTRY}"; then
+        ok "'Install DaVinci Resolve' folded into the DaVinci Resolve entry — one icon, not two"
+    else
+        bad "could not hide ${INSTALL_ENTRY} — the app grid would show two DaVinci Resolves"
+    fi
+fi
+if desktop-file-validate "${INSTALL_ENTRY}"; then
+    ok "and it is still a valid desktop entry afterwards"
+else
+    bad "${INSTALL_ENTRY} stopped being a valid desktop entry"
+fi
+# ------------------------------------------------------------------------------
+# 2b. And the warning an AMD or Intel owner needs is in the WINDOW
+# ------------------------------------------------------------------------------
+# ⚠️ THIS IS THE CHECK THAT PAYS FOR THE ICON BEING ON BOTH EDITIONS. Putting
+# DaVinci Resolve on an AMD machine's dock is only honest if the person is told,
+# before they commit to it, what Blackmagic do and do not support. The wording
+# already exists and there is exactly one copy of it: gpu_summary() in the setup
+# script answers with a word, a tab and a sentence, the terminal prints it, and
+# the window draws it as a row on its FIRST page with a warning triangle.
+#
+# So nothing new is written here. What is checked is that the one wording is
+# still there, still says the thing that matters, and still reaches the window.
+say "DaVinci Resolve — an AMD or Intel owner is warned in the window, before they spend the time"
+
+# The answer itself, asked of the shipped script. There is no graphics card in a
+# build machine, so what comes back is the "no card at all" answer — which is
+# fine: what is being proved is the SHAPE the window reads and the fact that the
+# AMD wording is still in the file.
+AQ_GPU_SAYS="$(/usr/libexec/aquarius-resolve-install --gpu-summary || true)"
+echo "  What it says about this build machine's graphics: ${AQ_GPU_SAYS}"
+if printf '%s' "${AQ_GPU_SAYS}" | grep -Eq "^(ok|warn|none)$(printf '\t')"; then
+    ok "'--gpu-summary' still answers in the shape the window reads (a word, a tab, a sentence)"
+else
+    bad "'--gpu-summary' does not answer in the shape the window reads — the warning row would be blank"
+fi
+
+# The AMD sentence, by its two load-bearing halves. It is grepped rather than
+# provoked because there is no AMD card here to provoke it with.
+aq_file_has /usr/libexec/aquarius-resolve-install \
+    "AMD or Intel graphics. Blackmagic's only supported Linux graphics is NVIDIA" \
+    "the one AMD/Intel wording still says whose decision this is"
+aq_file_has /usr/libexec/aquarius-resolve-install \
+    'GPU processing mode is unsupported' \
+    "and still says what Resolve will most likely tell them"
+
+# ⚠️ AND THE WINDOW MUST REALLY ASK. A window that drew the row from its own
+# words would be a second opinion about somebody's graphics card, and the two
+# would drift. The row is built from this query and from nothing else.
+aq_file_has /usr/libexec/aquarius-resolve-installer \
+    'cli_query\("--gpu-summary"\)' \
+    "the window asks the setup script about the graphics card rather than deciding for itself"
+aq_file_has /usr/libexec/aquarius-resolve-installer \
+    'self\.gpu_row' \
+    "and draws the answer as a row on the page a person sees before they press Install"
+
+# ==============================================================================
+# 3. The AMD/Intel edition carries no ENVIRONMENT (but keeps the icon above)
 # ==============================================================================
 # system_files/ is one tree copied into both editions, so "not on the AMD image"
 # has to be something this step ENFORCES rather than something that is true by
@@ -146,35 +311,17 @@ if [ "${NVIDIA}" != "1" ]; then
     echo "  usefully run. Setting Resolve up here downloads the environment, the"
     echo "  way every edition did before 2026-09-16."
 
-    # And no "DaVinci Resolve" entry in the app grid either. On this edition
-    # Resolve is OFFERED — the plain "Install DaVinci Resolve" entry, which says
-    # what it is and whose window says out loud that AMD graphics are not
-    # supported by Blackmagic. Putting a DaVinci Resolve icon on the dock of a
-    # machine that cannot usefully run it would be a lie told by an icon.
-    rm -f "${RESOLVE_ENTRY}"
-    if [ -e "${RESOLVE_ENTRY}" ]; then
-        bad "${RESOLVE_ENTRY} is in the AMD/Intel image — it would promise a Resolve this machine cannot run well"
+    # ⚠️ THE ICON STAYS. Section 2 above put DaVinci Resolve in the app grid and
+    # on the dock, and it did that on BOTH editions on purpose — Royce's call,
+    # 2026-09-17. Resolve installs and runs on AMD; it is the GPU processing
+    # Blackmagic do not support, and the setup window says so on its first page
+    # before anybody commits to it. What this edition does NOT carry is the
+    # 330 MB environment, because an icon costs nothing and a third of a
+    # gigabyte in everybody's download does.
+    if [ -r "${RESOLVE_ENTRY}" ]; then
+        ok "DaVinci Resolve is in the app grid here too — only the environment is left out"
     else
-        ok "no day-one DaVinci Resolve entry in the AMD/Intel image"
-    fi
-    # The pinned name on the dock therefore resolves to nothing here, which is
-    # deliberate and costs nothing: GNOME does not draw a name it cannot find.
-    # The long version is beside favorite-apps in
-    # system_files/usr/share/glib-2.0/schemas/zz1-aquarius-20-shell.gschema.override.
-    if grep -q "aquarius-davinci-resolve.desktop" \
-        /usr/share/glib-2.0/schemas/zz1-aquarius-20-shell.gschema.override; then
-        ok "the dock still names it, and GNOME quietly skips a name it cannot find"
-    else
-        bad "the dock no longer names DaVinci Resolve at all — the NVIDIA edition would lose its pin"
-    fi
-
-    # "Install DaVinci Resolve" stays VISIBLE here. It is the only way in on
-    # this edition, so hiding it (which is what the NVIDIA edition does) would
-    # leave no way to set Resolve up without a terminal.
-    if grep -q '^NoDisplay=true$' "${INSTALL_ENTRY}"; then
-        bad "'Install DaVinci Resolve' is hidden in the AMD/Intel image — there would be no way in at all"
-    else
-        ok "'Install DaVinci Resolve' is still in the app grid, which here is the only way in"
+        bad "${RESOLVE_ENTRY} is missing from the AMD/Intel image — this edition would have no Resolve icon at all"
     fi
 
     rm -f "${ARCHIVE}" "${BAKED_ENV}"
@@ -403,104 +550,6 @@ else
     bad "tests/test-resolve-step-count.sh FAILED — the progress bar would not match the work"
 fi
 
-# ==============================================================================
-# 6b. DaVinci Resolve is in the apps from the first login
-# ==============================================================================
-# ⚠️ ROYCE'S POINT, AND IT IS THE WHOLE REASON THIS SECTION EXISTS: an operating
-# system built around DaVinci Resolve whose flagship application is hidden
-# behind a thing called "Install DaVinci Resolve" has buried it. So on the
-# NVIDIA edition there is a DaVinci Resolve entry from the moment somebody first
-# logs in, it is pinned to the dock beside Files, and clicking it does the right
-# thing whether or not Resolve has been installed yet.
-#
-# ⚠️ AND IT WEARS OUR ICON, NOT BLACKMAGIC'S. Until somebody installs their own
-# copy of Resolve, nothing of Blackmagic's is on this computer, and using their
-# mark to advertise software we did not give them is not something we do. The
-# entry wears the AquariusOS "DR" mark that the Install entry has worn since
-# 2026-09-06 — drawn by us, checked in build_files/56-aquarius-icons.sh.
-say "DaVinci Resolve — in your apps from the first login"
-
-if [ ! -x "${RESOLVE_OPEN}" ]; then
-    bad "${RESOLVE_OPEN} is missing or not runnable — the DaVinci Resolve icon would do nothing"
-else
-    chmod 0755 "${RESOLVE_OPEN}"
-    ok "aquarius-resolve-open is present and runnable"
-    if bash -n "${RESOLVE_OPEN}"; then
-        ok "and it is valid shell"
-    else
-        bad "${RESOLVE_OPEN} has a syntax error"
-    fi
-    # ⚠️ IT MUST LOOK FOR THE PROGRAM AND NOT FOR THE WORD "RESOLVE". Blackmagic's
-    # installer writes eight app-menu entries and seven of them are not the video
-    # editor — the RAW Player, the Speed Test, the Remote Monitor, the Control
-    # Panels Setup, Capture Logs, the uninstaller. Every one has "resolve" in its
-    # file name, because they all live in /opt/resolve. An earlier draft matched
-    # on the name and picked the RAW Player: clicking DaVinci Resolve would have
-    # opened a still-image viewer.
-    aq_file_has "${RESOLVE_OPEN}" 'RESOLVE_PROGRAM=/opt/resolve/bin/resolve' \
-        "it recognises Resolve by the program it runs, not by a name that seven other tools share"
-    aq_file_has "${RESOLVE_OPEN}" 'exec "\$\{INSTALLER_GUI\}" --finish-setup' \
-        "and opens the setup window when there is no Resolve to start"
-
-    # It answers on a machine with no Resolve at all, which is what this build
-    # container is. `--report` decides and prints without starting anything.
-    AQ_OPEN_SAYS="$("${RESOLVE_OPEN}" --report 2>&1 || true)"
-    echo "  What it would do on this machine: ${AQ_OPEN_SAYS}"
-    case "${AQ_OPEN_SAYS}" in
-        "not-installed"*)
-            ok "with no Resolve installed it would open the setup window, as it must"
-            ;;
-        "installed"*)
-            bad "it thinks DaVinci Resolve is installed in a build container, which is impossible"
-            ;;
-        *)
-            bad "'--report' did not answer in the shape the build reads: ${AQ_OPEN_SAYS}"
-            ;;
-    esac
-fi
-
-if [ ! -r "${RESOLVE_ENTRY}" ]; then
-    bad "${RESOLVE_ENTRY} is missing — there would be no DaVinci Resolve in the app grid until somebody installed one"
-else
-    aq_file_has "${RESOLVE_ENTRY}" '^Name=DaVinci Resolve$' \
-        "the app grid calls it DaVinci Resolve and nothing else"
-    aq_file_has "${RESOLVE_ENTRY}" '^Exec=/usr/libexec/aquarius-resolve-open %U$' \
-        "clicking it asks the program that decides, and a file dropped on it goes through"
-    # ⚠️ OUR MARK. If this ever became a Blackmagic icon shipped in our image, it
-    # would be their artwork redistributed by us on a machine with none of their
-    # software on it. This line is the check that stops that happening quietly.
-    aq_file_has "${RESOLVE_ENTRY}" '^Icon=aquarius-install-resolve$' \
-        "⚠️ and it wears OUR drawn mark, never Blackmagic's, until their software is really here"
-    aq_file_has "${RESOLVE_ENTRY}" '^StartupWMClass=org\.aquariusos\.ResolveInstaller$' \
-        "the setup window it opens appears under this icon rather than as a nameless window"
-    if desktop-file-validate "${RESOLVE_ENTRY}"; then
-        ok "it passes freedesktop's own validator"
-    else
-        bad "${RESOLVE_ENTRY} is not a valid desktop entry — it would never appear in the app grid"
-    fi
-fi
-
-# ⚠️ ONE ENTRY, NOT TWO. "DaVinci Resolve" and "Install DaVinci Resolve" side by
-# side in the app grid is two doors into the same room, and the person has to
-# work out which one they want before they have any way of knowing. So on this
-# edition the Install entry is taken out of the grid — it still exists, still
-# works, and is still what `aq resolve install --gui` and the Software-style
-# flows open; it simply is not a second icon.
-if grep -q '^NoDisplay=true$' "${INSTALL_ENTRY}"; then
-    ok "'Install DaVinci Resolve' is already folded into the DaVinci Resolve entry"
-else
-    printf 'NoDisplay=true\n' >> "${INSTALL_ENTRY}"
-    if grep -q '^NoDisplay=true$' "${INSTALL_ENTRY}"; then
-        ok "'Install DaVinci Resolve' folded into the DaVinci Resolve entry — one icon, not two"
-    else
-        bad "could not hide ${INSTALL_ENTRY} — the app grid would show two DaVinci Resolves"
-    fi
-fi
-if desktop-file-validate "${INSTALL_ENTRY}"; then
-    ok "and it is still a valid desktop entry afterwards"
-else
-    bad "${INSTALL_ENTRY} stopped being a valid desktop entry"
-fi
 
 # ==============================================================================
 # 6c. The first login builds the environment, with nobody watching

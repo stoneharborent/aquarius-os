@@ -98,23 +98,28 @@ download.
 **DaVinci Resolve is none of the three either, and it is the one exception worth
 understanding.** Blackmagic's licence lets *them* hand out their installer and
 nobody else, so it cannot be baked in, cannot be offered from a store of ours,
-and is not on Flathub. What AquariusOS does instead, on the NVIDIA edition
-(since 2026-09-16), is ship **everything around it**:
+and is not on Flathub. What AquariusOS does instead, since 2026-09-16, is ship
+**everything around it**:
 
-- the protected environment Resolve runs in is *inside* the image, and your
-  first login builds it in the background, before you have asked for anything;
-- **DaVinci Resolve is on your dock from that first login**, wearing an icon we
-  drew — not Blackmagic's, because none of their software is on the computer
-  yet;
+- **DaVinci Resolve is on your dock from your first login**, on *both* editions,
+  wearing an icon we drew — not Blackmagic's, because none of their software is
+  on the computer yet;
 - clicking it starts Resolve if it is installed, and finishes setting it up if
-  it is not.
+  it is not;
+- on the NVIDIA edition the protected environment Resolve runs in is *inside*
+  the image, and your first login builds it in the background before you have
+  asked for anything.
 
 So it is as close to "already installed" as anybody is legally allowed to get:
-what is left for you is their download and about three minutes, instead of
-fifteen — and it works with no internet connection at all. The full story is in
-[docs/restart/resolve.md](resolve.md). *(The AMD/Intel edition keeps the plain
-"Install DaVinci Resolve" entry, because Blackmagic support NVIDIA on Linux and
-nothing else.)*
+on an NVIDIA machine what is left is their download and about three minutes
+instead of fifteen, and it works with no internet connection at all.
+
+*On the AMD/Intel edition you get the same icon and the same window; what it
+does not carry is that 330 MB environment, so clicking it downloads one and
+takes about fifteen minutes. The window's first page tells you where AMD and
+Intel stand with Blackmagic before you spend the time — Resolve installs and
+runs, it is the GPU processing that is unsupported.* The full story is in
+[docs/restart/resolve.md](resolve.md).
 
 Nobody has to open a terminal for any of it.
 

@@ -116,14 +116,20 @@ Around that: every codec present and working, hardware video decoding, XWayland
 because Resolve is X11-only, and NVIDIA drivers because NVIDIA is the only
 vendor Blackmagic supports on Linux.
 
-**And Resolve is as preinstalled as the law allows.** On the NVIDIA image the
-Rocky Linux userland Resolve needs is *inside the image*, the first login builds
-its container in the background, and **DaVinci Resolve is on the dock from that
-first login** — wearing an icon we drew, because none of Blackmagic's software
-is on the machine yet. Click it and it either starts Resolve or finishes setting
-it up. What is left for the person is their own download from Blackmagic, which
-their licence does not allow anybody else to hand out, and about three minutes
-instead of fifteen. It works with no internet connection at all.
+**And Resolve is as preinstalled as the law allows.** **DaVinci Resolve is on
+the dock from the first login, on every edition** — wearing an icon we drew,
+because none of Blackmagic's software is on the machine yet. Click it and it
+either starts Resolve or finishes setting it up. What is left for the person is
+their own download from Blackmagic, which their licence does not allow anybody
+else to hand out.
+
+On the NVIDIA image the Rocky Linux userland Resolve needs is *inside the
+image* and the first login builds its container in the background, so finishing
+takes about three minutes instead of fifteen and works with no internet
+connection at all. The AMD/Intel image has the same icon and the same window and
+downloads that environment when asked, because 330 MB should not be in the
+download of people whose graphics Blackmagic do not support — and the window
+says exactly that before anybody spends the time.
 
 Not one byte of Blackmagic's is in this repository or in any image it publishes,
 and the build checks that on every run. See

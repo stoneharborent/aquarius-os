@@ -14,10 +14,12 @@
 # entry with its own logo, and this one hides itself — so there is never a
 # moment with two DaVinci Resolves in the app grid.
 #
-# ⚠️ IT IS NOT IN THE AMD/INTEL EDITION. Blackmagic support NVIDIA on Linux and
-# nothing else, so on those machines Resolve is offered rather than promised:
-# that edition keeps the plain "Install DaVinci Resolve" entry, which says what
-# it is. build_files/63-resolve-runtime-bake.sh removes this file there.
+# ⚠️ IT IS IN BOTH EDITIONS (Royce, 2026-09-17). Resolve installs and runs on
+# AMD — it is the GPU processing Blackmagic do not support — so an AMD or Intel
+# owner gets the same icon and the same window, and the window's first page
+# carries the graphics-card warning before they spend the time. What those
+# machines do not carry is the environment inside the image, so clicking this
+# downloads one and takes about fifteen minutes instead of three.
 # ==============================================================================
 Type=Application
 Version=1.0

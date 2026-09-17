@@ -2587,6 +2587,13 @@ jobs:
       # a build step has to ENFORCE rather than something that is true by
       # accident. 330 MB of container for a machine Blackmagic do not support is
       # exactly the kind of thing that creeps in and stays.
+      #
+      # ⚠️ THE ICON IS A DIFFERENT QUESTION FROM THE ARCHIVE, AND THE TWO WERE
+      # CONFLATED UNTIL 2026-09-17. The DaVinci Resolve entry and its dock pin
+      # are on BOTH editions — Royce's call: Resolve installs and runs on AMD,
+      # it is the GPU processing Blackmagic do not support, and the setup window
+      # says so on its first page before anybody commits. So this step now
+      # checks the entry on both and the archive on one.
       - name: Check the environment Resolve runs in is in the NVIDIA image, and only there
         run: |
           set -uo pipefail
@@ -2635,23 +2642,6 @@ jobs:
                   rc=1
                 fi
 
-                # DaVinci Resolve is in the apps from day one, with OUR icon.
-                if grep -q "^Icon=aquarius-install-resolve$" "${ENTRY}" 2>/dev/null; then
-                  echo "  OK   DaVinci Resolve is in the app grid, wearing the AquariusOS mark"
-                else
-                  echo "  FAIL ${ENTRY} is missing or does not wear our own icon"
-                  rc=1
-                fi
-                # ⚠️ AND NOTHING OF BLACKMAGIC S IS SHIPPED AS ARTWORK. Their
-                # mark may appear only once their software really is installed,
-                # which happens on the person s own machine and never here.
-                if [ -n "$(find /usr/share/icons /usr/share/pixmaps -iname "*blackmagic*" -o -iname "*davinci*" 2>/dev/null)" ]; then
-                  echo "  FAIL there is Blackmagic artwork in this image, which we may not distribute"
-                  rc=1
-                else
-                  echo "  OK   no Blackmagic artwork anywhere in the image"
-                fi
-
                 # The first login builds it, without anybody waiting.
                 if [ -e "${LINK}" ]; then
                   echo "  OK   the first login prepares the environment (switched on from /usr)"
@@ -2672,22 +2662,50 @@ jobs:
                 else
                   echo "  OK   the AMD/Intel image carries no environment, as it must not"
                 fi
-                if [ -e "${ENTRY}" ]; then
-                  echo "  FAIL ${ENTRY} promises a DaVinci Resolve this edition cannot run well"
-                  rc=1
-                else
-                  echo "  OK   and no day-one DaVinci Resolve entry either"
-                fi
-                # ⚠️ AND THE WAY IN IS STILL THERE. Hiding Install DaVinci
-                # Resolve is what the NVIDIA edition does, because it has a
-                # DaVinci Resolve entry instead. Doing it here would leave this
-                # edition with no way to set Resolve up without a terminal.
-                if grep -q "^NoDisplay=true$" /usr/share/applications/aquarius-install-resolve.desktop 2>/dev/null; then
-                  echo "  FAIL Install DaVinci Resolve is hidden here — there would be no way in at all"
-                  rc=1
-                else
-                  echo "  OK   Install DaVinci Resolve is still in the app grid, which here is the only way in"
-                fi
+              fi
+
+              # ------------------------------------------------------------
+              # ON BOTH EDITIONS: the icon, the pin, and whose artwork it is
+              # ------------------------------------------------------------
+              # ⚠️ 2026-09-17. DaVinci Resolve is in the app grid and on the
+              # dock of every AquariusOS, not only the NVIDIA one. On an AMD or
+              # Intel machine clicking it downloads the environment and takes
+              # about fifteen minutes, and the setup window shows Blackmagic s
+              # graphics position on its first page before anybody commits.
+              if grep -q "^Icon=aquarius-install-resolve$" "${ENTRY}" 2>/dev/null; then
+                echo "  OK   DaVinci Resolve is in the app grid, wearing the AquariusOS mark"
+              else
+                echo "  FAIL ${ENTRY} is missing or does not wear our own icon"
+                rc=1
+              fi
+              if grep -q "aquarius-davinci-resolve.desktop" \
+                /usr/share/glib-2.0/schemas/zz1-aquarius-20-shell.gschema.override 2>/dev/null; then
+                echo "  OK   and it is pinned to the dock"
+              else
+                echo "  FAIL DaVinci Resolve is no longer pinned to the dock"
+                rc=1
+              fi
+              # One icon, not two: Install DaVinci Resolve is folded into it.
+              if grep -q "^NoDisplay=true$" /usr/share/applications/aquarius-install-resolve.desktop 2>/dev/null; then
+                echo "  OK   Install DaVinci Resolve is folded into it, so there is one icon and not two"
+              else
+                echo "  FAIL there would be two DaVinci Resolve icons in the app grid"
+                rc=1
+              fi
+              # The program behind the icon answers on a machine with no Resolve.
+              OPENS="$(/usr/libexec/aquarius-resolve-open --report 2>&1 || true)"
+              case "${OPENS}" in
+                "not-installed"*) echo "  OK   clicking it would open the setup window: ${OPENS}" ;;
+                *) echo "  FAIL aquarius-resolve-open did not answer sensibly: ${OPENS}" ; rc=1 ;;
+              esac
+              # ⚠️ AND NOTHING OF BLACKMAGIC S IS SHIPPED AS ARTWORK. Their mark
+              # may appear only once their software really is installed, which
+              # happens on the person s own machine and never here.
+              if [ -n "$(find /usr/share/icons /usr/share/pixmaps -iname "*blackmagic*" -o -iname "*davinci*" 2>/dev/null)" ]; then
+                echo "  FAIL there is Blackmagic artwork in this image, which we may not distribute"
+                rc=1
+              else
+                echo "  OK   no Blackmagic artwork anywhere in the image"
               fi
               exit "${rc}"
             '; then

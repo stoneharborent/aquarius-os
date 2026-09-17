@@ -399,7 +399,8 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     NVIDIA="${NVIDIA}" /ctx/build_files/62-resolve-runtime.sh
 
-# 6b2. The environment Resolve runs in, carried inside the NVIDIA edition.
+# 6b2. DaVinci Resolve in the apps from day one, and — on the NVIDIA edition —
+#      the environment it runs in carried inside the image.
 #
 #      ⚠️ STILL NOT ONE BYTE OF BLACKMAGIC'S. This is OUR Rocky Linux container
 #      — a userland with the libraries Resolve needs and no video editor in it —
@@ -413,10 +414,23 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 #      the person is their own download and about three minutes. It also makes
 #      setting Resolve up possible with no internet connection at all.
 #
-#      NVIDIA edition only. It adds about 330 MB, and Blackmagic support NVIDIA
-#      on Linux and nothing else, so the AMD/Intel edition would be carrying it
-#      for people who cannot use it. That edition downloads the environment when
-#      somebody asks for it, exactly as every edition did before 2026-09-16.
+#      ⚠️ TWO DIFFERENT QUESTIONS, AND THEY HAVE DIFFERENT ANSWERS.
+#
+#      THE ICON IS ON BOTH EDITIONS (Royce, 2026-09-17). This step also puts
+#      "DaVinci Resolve" in the app grid and on the dock — wearing OUR drawn
+#      mark, never Blackmagic's, because none of their software is on the
+#      machine yet — and folds the old "Install DaVinci Resolve" entry into it
+#      so there is one icon and not two. Resolve installs and runs on AMD; it is
+#      the GPU processing Blackmagic do not support, and the setup window says
+#      so on its first page before anybody commits to it. Leaving the flagship
+#      application out of one edition's menu would be the worse answer.
+#
+#      THE 330 MB ENVIRONMENT IS NVIDIA ONLY. An icon costs nothing; a third of
+#      a gigabyte in everybody's download does, and Blackmagic support NVIDIA on
+#      Linux and nothing else. So the AMD/Intel edition fetches the environment
+#      when somebody asks for it — seven steps, about fifteen minutes, exactly
+#      as every edition did before 2026-09-16 — and this step proves the archive
+#      is NOT in that image, since system_files/ is one tree copied into both.
 #
 #      After 6b because it reads the shipped setup script back and runs its
 #      tests against the copy in this image.
