@@ -4,9 +4,9 @@
 # ==============================================================================
 # WHAT THESE SWITCHES ARE
 #
-# AquariusOS has one Mac-or-Windows choice — Mac-style keyboard shortcuts with
-# the window buttons on the left, or the normal Windows ones with the buttons on
-# the right — and since 2026-09-16 it has a switch on each desktop:
+# AquariusOS has one Mac-or-Windows choice — Mac-style keyboard shortcuts, where
+# copy is Command-C, or the normal Linux and Windows ones, where copy is Ctrl+C
+# — and since 2026-09-16 it has a switch on each desktop:
 #
 #   GNOME   an add-on of ours in the quick settings menu at the top-right of the
 #           screen. Source: system_files/usr/share/gnome-shell/extensions/ .
@@ -191,9 +191,17 @@ if meta.get("X-KDE-System-Settings-Parent-Category") != "appearance":
 
 # It has to be findable by the words a person would actually type.
 keywords = meta.get("X-KDE-Keywords", "").lower()
-for word in ("mac", "windows", "keyboard", "window buttons"):
+# ⚠️ "window buttons" WAS ONE OF THESE UNTIL 2026-09-17, and must not come
+# back: the page does not touch the window buttons any more, and a settings
+# page that turns up when you search for something it cannot change is worse
+# than one that does not turn up at all.
+for word in ("mac", "windows", "keyboard", "shortcuts"):
     if word not in keywords:
         problems.append(f"searching for {word!r} would not find the page")
+if "window buttons" in keywords:
+    problems.append(
+        "it still advertises 'window buttons', which it has not changed since 2026-09-17"
+    )
 
 for problem in problems:
     print(f"       {problem}")
@@ -222,6 +230,44 @@ if [ -r "${KCM_DIR}/ui/main.qml" ]; then
 else
     bad "${KCM_DIR}/ui/main.qml is missing — the page would open empty"
 fi
+
+# ==============================================================================
+# The window buttons are NOT part of this choice any more (Royce, 2026-09-17)
+# ==============================================================================
+# Until that day, choosing Mac also moved the close, minimise and maximise
+# buttons to the LEFT of the title bar. It was dropped because applications that
+# draw their own title bar never followed it, so some windows moved and some did
+# not. The buttons are stock and on the RIGHT now, for everybody, on both
+# desktops — and three things in the source have to stay true for that.
+echo
+echo "== the window buttons do not move, and the old ones are put back =="
+
+AQ_CLI_SRC="${REPO}/system_files/usr/bin/aq"
+LOOK_OVERRIDE="${REPO}/system_files/usr/share/glib-2.0/schemas/zz1-aquarius-10-look.gschema.override"
+
+# 1. Nothing in `aq` moves them.
+if [ -r "${AQ_CLI_SRC}" ] && grep -q "apply_window_buttons" "${AQ_CLI_SRC}"; then
+    bad "aq still has apply_window_buttons — the Mac/Windows switch would move the buttons again"
+else
+    ok "'aq keys' is the keyboard only; it does not move the window buttons"
+fi
+
+# 2. The image's default is the stock right-hand layout, with all three buttons.
+has "${LOOK_OVERRIDE}" "^button-layout=':minimize,maximize,close'$" \
+    "a new account gets all three buttons, on the right"
+
+# 3. ⚠️ AND ACCOUNTS THAT ALREADY HAVE THE OLD LEFT-HAND LAYOUT ARE PUT BACK.
+# A default only reaches an account that never wrote the setting itself, and
+# `aq keys` wrote it into every account that ran it. So the login script undoes
+# our own handwriting, once per account, marked by a file.
+has "${RUNNER}" "button-layout" \
+    "the login script resets an old left-hand GNOME layout"
+has "${RUNNER}" "ButtonsOnLeft" \
+    "and clears the KDE half of it out of kwinrc"
+has "${RUNNER}" "gtk-decoration-layout" \
+    "and fixes the stale GTK settings.ini files sandboxed apps read"
+has "${RUNNER}" "window-buttons-unpinned" \
+    "once per account, remembered by a marker file"
 
 echo
 if [ "${fails}" -ne 0 ]; then

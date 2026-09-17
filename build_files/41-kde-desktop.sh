@@ -123,14 +123,17 @@ source "$(dirname "$0")/aq-lib.sh"
 #                           dictionary, weather, notes, the window-list applet).
 #                           16 MB, which is inside the "is it small?" test this
 #                           file is allowed to apply.
-#   kf6-kconfig             supplies /usr/bin/kwriteconfig6, which is how one of
-#                           OUR programs writes a Plasma setting: `aq keys mac`
-#                           moves the window buttons to the left on both
-#                           desktops, and on Plasma that is two keys in kwinrc.
-#                           It arrives as a dependency of Plasma anyway — it is
-#                           named here because a feature of ours depends on it,
-#                           and "it comes in anyway" is exactly the kind of
-#                           accident this repository asks for by name instead.
+#   kf6-kconfig             supplies /usr/bin/kreadconfig6 and kwriteconfig6,
+#                           which is how one of OUR programs reads and clears a
+#                           Plasma setting: /usr/libexec/aquarius-keys-run
+#                           removes the window-button layout that `aq keys`
+#                           used to write into kwinrc before 2026-09-17, so
+#                           existing accounts get Plasma's own stock, right-hand
+#                           buttons back. It arrives as a dependency of Plasma
+#                           anyway — it is named here because a feature of ours
+#                           depends on it, and "it comes in anyway" is exactly
+#                           the kind of accident this repository asks for by
+#                           name instead.
 say "KDE Plasma"
 aq_dnf install --exclude=plasma-welcome \
     plasma-desktop \

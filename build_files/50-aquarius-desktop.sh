@@ -29,7 +29,8 @@
 #
 #     the window background      the palette's `bg`
 #     the header-bar background  the palette's `panel`
-#     the three window buttons   close, minimize and maximize, redrawn as the
+#     the three window buttons   close, minimize and maximize — always on the
+#                                RIGHT, since 2026-09-17 — redrawn as the
 #                                design's round ink discs, with their pointer
 #                                and unfocused states
 #

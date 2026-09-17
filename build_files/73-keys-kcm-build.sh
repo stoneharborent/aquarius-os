@@ -4,9 +4,12 @@
 # ==============================================================================
 # WHAT THIS IS FOR
 #
-# AquariusOS has one Mac-or-Windows switch: Mac-style keyboard shortcuts with
-# the window buttons on the left, or the normal Windows ones with the buttons on
-# the right. Until 2026-09-16 the only ways to change it were the Welcome window
+# AquariusOS has one Mac-or-Windows switch: Mac-style keyboard shortcuts, where
+# copy is Command-C, or the normal Windows ones, where copy is Ctrl+C. (Until
+# 2026-09-17 it moved the window buttons as well; Royce dropped that because
+# applications that draw their own title bar never followed it, so the buttons
+# are stock and on the right for everybody now.)
+# Until 2026-09-16 the only ways to change it were the Welcome window
 # — which you see once, on your first login — and typing `aq keys mac` in a
 # terminal. Royce asked for a switch you can find.
 #

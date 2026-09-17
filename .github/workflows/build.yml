@@ -318,8 +318,10 @@ on:
       # The window frame — the 2026-09-06 design session's other half: the title
       # bar, the border, the round window buttons and the desktop menu, all now
       # GENERATED from the shell's Ice or Midnight palette instead of being
-      # typed out by hand. Also moves the window buttons with `aq keys mac` /
-      # `aq keys windows`, and adds the two-property dark-mode GTK colour.
+      # typed out by hand. It also moved the window buttons with `aq keys mac` /
+      # `aq keys windows` — that half was undone on 2026-09-17, because apps
+      # that draw their own title bar never followed it — and adds the
+      # two-property dark-mode GTK colour.
       # Same arrangement as every side branch: builds and checks, never
       # publishes.
       - restart/window-frame
@@ -4049,6 +4051,33 @@ jobs:
           check "it also switches our own toggle on" 'aquarius-keys@stoneharborent.github.io' "${RUNNER}"
           check "once per account, not once per login" 'keys-toggle-enabled'   "${RUNNER}"
           check "'aq keys status' reports the keyboards" 'Keyboards :'                  /usr/bin/aq
+
+          # ⚠️ THE WINDOW BUTTONS ARE NOT PART OF THIS CHOICE ANY MORE
+          # (Royce, 2026-09-17). Until that day, choosing Mac also moved the
+          # close, minimise and maximise buttons to the LEFT. It was dropped
+          # because applications that draw their own title bar never followed
+          # it, so some windows moved and some did not. Three things have to
+          # stay true: aq does not move them, the image's default is the stock
+          # right-hand layout, and accounts that already had the old left-hand
+          # layout written into them are put back, once per account.
+          if grep -q 'apply_window_buttons' /usr/bin/aq; then
+            bad "aq still has apply_window_buttons — the Mac/Windows switch would move the window buttons again"
+          else
+            ok "'aq keys' is the keyboard only; it does not move the window buttons"
+          fi
+          echo "--- the window-button default a new account gets ---"
+          AQ_BTN="$(GSETTINGS_BACKEND=memory gsettings get org.gnome.desktop.wm.preferences button-layout 2>/dev/null || echo '(no answer)')"
+          echo "       ${AQ_BTN}"
+          case "${AQ_BTN}" in
+            *":minimize,maximize,close"*)
+              ok "a new account gets all three buttons, on the right" ;;
+            *)
+              bad "the image's button-layout default is ${AQ_BTN}, not ':minimize,maximize,close'" ;;
+          esac
+          check "an old left-hand GNOME layout is reset"  'button-layout'            "${RUNNER}"
+          check "the KDE half is cleared out of kwinrc"   'ButtonsOnLeft'            "${RUNNER}"
+          check "the stale GTK settings.ini files are fixed" 'gtk-decoration-layout'  "${RUNNER}"
+          check "and that repair runs once per account"   'window-buttons-unpinned'  "${RUNNER}"
 
           echo "== how big things are on the screen =="
           # ⚠️ THIS FEATURE CHANGED SHAPE ON 2026-09-15. It existed because the

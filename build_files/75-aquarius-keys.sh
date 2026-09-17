@@ -603,6 +603,51 @@ aq_file_has "${SKEL_CONF}" '^mode=mac$' \
 aq_file_has "${RUN_SCRIPT}" '^AQ_MODE="mac"$' \
     "an account with no settings file also gets Mac shortcuts"
 
+# ------------------------------------------------------------------------------
+# 6b. The window buttons are NOT part of this choice (Royce, 2026-09-17)
+# ------------------------------------------------------------------------------
+# From 6 to 17 September 2026, `aq keys mac` also moved the close, minimise and
+# maximise buttons to the LEFT of the title bar. It was dropped because it could
+# not be made universal: applications that draw their own title bar (Chrome's
+# Flatpak on the bench) ignored it, so some windows moved and some did not.
+#
+# The buttons are now stock and on the RIGHT, on both desktops, for everybody.
+# Three things have to be true for that, and losing any one of them brings the
+# old behaviour back in a way nobody would notice until the bench.
+say "The window buttons are stock, on the right, and nothing moves them"
+
+# 1. The image's default really is the right-hand layout. Asked of the settings
+#    system the same way a brand-new account asks it.
+if aq_have gsettings; then
+    if aq_output_has ":minimize,maximize,close" \
+        env GSETTINGS_BACKEND=memory gsettings get org.gnome.desktop.wm.preferences button-layout; then
+        ok "a new account gets all three buttons, on the right"
+    else
+        bad "the image's button-layout default is not ':minimize,maximize,close' — fix system_files/usr/share/glib-2.0/schemas/zz1-aquarius-10-look.gschema.override"
+    fi
+fi
+
+# 2. Nothing in `aq` moves them any more. The old function was called
+#    apply_window_buttons; if it ever comes back, this catches it.
+if grep -q "apply_window_buttons" "${AQ_CLI}"; then
+    bad "${AQ_CLI} still has apply_window_buttons — the Mac/Windows switch would move the buttons again"
+else
+    ok "'aq keys' no longer moves the window buttons; it is the keyboard only"
+fi
+
+# 3. ⚠️ AND THE ACCOUNTS THAT ALREADY HAVE A LEFT-HAND LAYOUT WRITTEN INTO THEM
+#    ARE PUT BACK. The default in point 1 only reaches accounts that have never
+#    written this setting themselves, and `aq keys` wrote it into every account
+#    that ever ran it. So the login script undoes our own handwriting, once per
+#    account, marked by a file. Both halves are checked, because without either
+#    one those accounts keep left-hand buttons forever.
+aq_file_has "${RUN_SCRIPT}" "button-layout" \
+    "the login script puts an old left-hand layout back to the default"
+aq_file_has "${RUN_SCRIPT}" "window-buttons-unpinned" \
+    "and does it once per account, remembered by a marker file"
+aq_file_has "${RUN_SCRIPT}" "ButtonsOnLeft" \
+    "it clears the KDE half of the old layout out of kwinrc too"
+
 # ==============================================================================
 # 7. The two graphical switches (added 2026-09-16)
 # ==============================================================================
