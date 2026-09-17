@@ -250,14 +250,10 @@ secondary-color='#111A2B'
 #                                turning the corner off now would remove a
 #                                gesture and replace it with nothing.
 #
-#   button-layout                Stock GNOME title bars have only a close
-#                                button. Royce is coming from KDE, where
-#                                minimise and maximise are always there, so
-#                                this is a real candidate for a future default
-#                                — but it is a change to how windows behave,
-#                                not how they look, and it belongs in a round
-#                                of decisions made on the bench rather than
-#                                slipped in here.
+#   button-layout                THIS ONE WE DO SET — see the section at the
+#                                bottom of this file. It is named here only so
+#                                that nobody reading this list concludes it was
+#                                left alone.
 #
 #   any GTK or GNOME Shell THEME No shell theme, no GTK theme. The whole
 #                                posture is to work WITH GNOME's grain rather
@@ -279,16 +275,36 @@ secondary-color='#111A2B'
 #                                full story is docs/restart/desktop-identity.md.
 
 # ------------------------------------------------------------------------------
-# Window buttons follow the keyboard choice (Royce, 2026-09-06)
+# Window buttons: all three of them, always on the RIGHT
 # ------------------------------------------------------------------------------
-# The Welcome step's "Mac or Windows" choice sets where the window buttons sit
-# as well as the keyboard style: Mac = close, minimise, maximise on the LEFT;
-# Windows = minimise, maximise, close on the RIGHT. `aq keys mac|windows` writes
-# this key when the choice changes; this is the DEFAULT for a fresh account,
-# which is the Mac layout because Mac is the default keyboard style. Without a
-# default here, every GTK window kept GNOME's own close-only, right-hand bar
-# until someone ran `aq keys` by hand — which is what the bench showed on
-# 6 September 2026. (The comment block above once said this belonged to a
-# bench decision. That decision is made.)
+# WHAT THIS LINE DOES. Stock GNOME puts only a CLOSE button on a title bar. This
+# asks for all three — minimise, maximise, close — on the right-hand side, with
+# close on the outside, because close is the one press you cannot take back.
+# Royce decided on 2026-09-06 that minimise and maximise are always there, and
+# that still stands.
+#
+# WHAT CHANGED, AND WHY (Royce, 2026-09-17)
+#
+# From 2026-09-06 to 2026-09-17 the SIDE was tied to the Mac-or-Windows keyboard
+# choice: pick Mac and `aq keys mac` moved all three buttons to the LEFT, pick
+# Windows and they went back to the right. One answer, two effects.
+#
+# It was dropped because it could not be made universal. Some applications draw
+# their own title bar instead of letting the desktop draw it, and on the bench
+# those applications simply ignored the switch — Chrome's Flatpak was the one
+# that showed it. So a person who chose Mac got buttons on the left in most
+# windows and on the right in a few, which looks like a broken computer rather
+# than a choice. Royce's rule: if it cannot be universal, drop it.
+#
+# So the side is no longer a setting at all. It is the stock, right-hand
+# arrangement, on GNOME and on KDE Plasma, for everybody. The Mac-or-Windows
+# switch is now about THE KEYBOARD ONLY. Nothing writes this key any more —
+# this default is the whole story for a fresh account, and accounts that got a
+# left-hand layout written into them before 2026-09-17 are put back by the
+# one-per-account repair in /usr/libexec/aquarius-keys-run.
+#
+# (KDE Plasma is not mentioned in this file because there is nothing to say:
+# Plasma's own stock layout is already the right-hand one, so AquariusOS writes
+# nothing for it.)
 [org.gnome.desktop.wm.preferences]
-button-layout='close,minimize,maximize:'
+button-layout=':minimize,maximize,close'
