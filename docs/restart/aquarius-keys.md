@@ -1,5 +1,31 @@
 # Aquarius Keys — Mac-style keyboard shortcuts
 
+> ## ⚠️ THE KEYBOARD ONLY — 17 September 2026
+>
+> This choice used to move the **window buttons** as well: pick Mac and the
+> close, minimise and maximise buttons went to the LEFT of every title bar; pick
+> Windows and they went back to the right. **That half is gone.** Royce dropped
+> it on 17 September 2026.
+>
+> **Why, honestly:** some applications draw their own title bar instead of
+> letting the desktop draw it, and those applications simply ignored the switch
+> — Chrome, installed as a Flatpak, was the one that showed it on the bench. So
+> choosing Mac gave you buttons on the left in most windows and on the right in
+> a few, which looks like a broken computer rather than a choice made. Royce's
+> rule is that if it cannot be universal, it goes.
+>
+> **So: the buttons are always on the right now** — minimise, maximise, close,
+> with close on the outside — on GNOME and on KDE Plasma, for everybody, in
+> both keyboard styles. There is nothing to set and nothing to choose.
+>
+> **The Mac/Windows switch is about the keyboard and nothing else.** Everything
+> else on this page is unchanged.
+>
+> If your buttons are already on the left because you chose Mac before this
+> date, AquariusOS puts them back for you, once, the next time you log in. It
+> only undoes its own handwriting — if you moved them yourself to some other
+> arrangement, that is left exactly as you set it.
+
 > ## ⚠️ TWO DESKTOPS NOW — 15 September 2026
 >
 > Everywhere below that says **"the Aquarius Session"** or **"the Aquarius
@@ -143,22 +169,26 @@ agrees, straight away, with no logging out.
    "system settings").
 2. In the list down the left, click **Appearance & Style**.
 3. Click the page called **"Mac or Windows"**. You can also just type *mac*,
-   *windows*, *keyboard* or *window buttons* into the search box at the top —
-   the page answers to all of them.
+   *windows*, *keyboard* or *shortcuts* into the search box at the top — the
+   page answers to all of them.
 4. Pick **Mac** or **Windows**. There is no Apply button and there does not need
    to be: it happens when you click.
 
 ### What the switch changes
 
 Exactly what `aq keys` changes, because it *is* `aq keys` — the switch runs the
-same command you would have typed. So both of these move together, as they
-always have:
+same command you would have typed. And that is now **one thing only**:
 
-- **the keyboard**: Copy is ⌘C on Mac, Control-C on Windows;
-- **the window buttons**: close, minimise and maximise on the **left** on Mac,
-  on the **right** on Windows.
+- **the keyboard**: Copy is ⌘C on Mac, Control-C on Windows.
 
-One answer, not two questions. That is the design rule, and the switch obeys it.
+Nothing on the screen moves. The close, minimise and maximise buttons stay on
+the **right** of every title bar in both styles.
+
+Until 17 September 2026 this switch moved those buttons too. It was dropped
+because it could not be made to work everywhere: applications that draw their
+own title bar — Chrome's Flatpak was the one the bench caught — never followed
+it, so some of your windows moved and some did not. One fixed side for everybody
+is the honest version of that.
 
 ### If the switch is not there
 

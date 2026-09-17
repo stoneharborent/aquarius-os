@@ -296,8 +296,8 @@ desktop either way.
 The files go in your home rather than in `/usr` for two reasons, and both are
 plain: `/usr` on an image-based operating system is read-only, and these files
 have to be **rewritten while the desktop is running** — every time the machine
-goes light or dark, and every time somebody moves the window buttons to the
-other side.
+goes light or dark. (It also used to be rewritten when somebody moved the window
+buttons to the other side. That switch was dropped on 2026-09-17 — see below.)
 
 ### When it re-runs
 
@@ -306,8 +306,9 @@ other side.
    `services/SystemAppearance.qml` runs it again and then runs
    `labwc --reconfigure`, which is labwc's own "re-read your files now" command.
    No logout.
-3. **When you run `aq keys mac` or `aq keys windows`**, which is what moves the
-   window buttons from one side to the other.
+3. ~~**When you run `aq keys mac` or `aq keys windows`**~~ — *retired
+   2026-09-17.* That command no longer moves the window buttons; they are always
+   on the right. See the section below.
 
 ### How to change a colour
 
@@ -315,24 +316,60 @@ Edit `theme/Ice.qml` or `theme/Midnight.qml` **in the aquarius-shell
 repository**. Nowhere else. There is no second copy of the palette to keep in
 step, because the second copy is made rather than typed.
 
-### The window buttons follow the Mac / Windows choice — one switch, not two
+### The window buttons are always on the right — one fixed side, for everybody
 
-Royce's decision, 2026-09-06: which side the buttons sit on is **not a setting
-of its own**. It follows the answer given in the Welcome window.
+**Royce's decision, 2026-09-17.** All three buttons — minimise, maximise, close
+— sit on the **RIGHT** of every title bar, with close on the outside, because
+close is the one press you cannot take back. This is true on GNOME, on KDE
+Plasma, in both keyboard styles, on every account. It is not a setting.
 
-| `aq keys …` | Keyboard | Window buttons |
-|---|---|---|
-| `mac` (the default) | Copy is ⌘C | close, minimise, maximise on the **LEFT** |
-| `windows` | Copy is Ctrl+C | minimise, maximise, close on the **RIGHT** |
+GNOME is told once, in the image, by a default:
 
-Close is the outermost button either way — furthest from the title — because it
-is the one press you cannot take back.
+```
+[org.gnome.desktop.wm.preferences]
+button-layout=':minimize,maximize,close'
+```
 
-`aq keys` sets it on **both** desktops in one go: GNOME through its
-`org.gnome.desktop.wm.preferences button-layout` setting, and the Aquarius
-Desktop by re-running the generator. That matters, because a thing set for one
-desktop and not the other looks like a bug in whichever one you happen to be
-using — which is exactly how Command+Tab was lost earlier the same day.
+(in `system_files/usr/share/glib-2.0/schemas/zz1-aquarius-10-look.gschema.override`).
+KDE Plasma is told nothing at all, because Plasma's own stock layout is already
+this one. The part that is ours is that all three buttons are present — stock
+GNOME ships a title bar with only a close button, and that decision, made
+2026-09-06, still stands.
+
+#### What this replaced, and why it went
+
+From 6 to 17 September 2026 the **side** followed the Mac-or-Windows choice:
+`aq keys mac` moved all three buttons to the LEFT, `aq keys windows` put them
+back. One answer, two effects.
+
+It was dropped for one honest reason: **it could not be made universal.** Some
+applications draw their own title bar instead of letting the desktop draw it,
+and those applications ignored the setting completely — Chrome, installed as a
+Flatpak, was the one the bench caught. A person who chose Mac got left-hand
+buttons in most windows and right-hand buttons in a few, which reads as a broken
+computer rather than as a choice. Royce's rule: if it cannot be universal, drop
+it.
+
+So `aq keys` is now **the keyboard only**, and nothing writes `button-layout`.
+
+#### The accounts that already had it moved
+
+A default in the image only reaches an account that has never written that
+setting itself — and `aq keys` wrote it into every account that ever ran it.
+Those accounts would have kept their left-hand buttons forever. So
+`/usr/libexec/aquarius-keys-run` repairs them at login, **once per account**,
+remembered by a marker file at
+`~/.local/state/aquarius/window-buttons-unpinned`:
+
+| What it finds | What it does |
+|---|---|
+| GNOME's `button-layout` is exactly `close,minimize,maximize:` or `:minimize,maximize,close` | `gsettings reset` it, so the image's default applies again |
+| `~/.config/kwinrc` has exactly `ButtonsOnLeft=XIA` + empty `ButtonsOnRight` (or the Windows pair) | deletes both keys and asks a running KWin to re-read them |
+| `~/.config/gtk-3.0/settings.ini` or `gtk-4.0/settings.ini` has exactly `gtk-decoration-layout=close,minimize,maximize:` | rewrites that one line to the right-hand layout |
+
+**It only undoes its own handwriting.** Any other value, in any of those files,
+is somebody's own choice and is left alone. Nothing here can fail the login; the
+worst case is a warning in the journal.
 
 ### The one exception to the no-GTK-theme posture
 

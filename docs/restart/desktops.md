@@ -92,7 +92,8 @@ for** is below the desktop, so none of it changes when you switch:
 | **The welcome** | Opens once, at your first login, on either desktop. ([`welcome.md`](welcome.md)) |
 | **Your creator apps** | The chooser, the Flatpaks, Aquarius Writer and Aquarius Editor. ([`creator-apps.md`](creator-apps.md)) |
 | **DaVinci Resolve** | The setup, the launcher, the update check, the licence dongles. ([`resolve.md`](resolve.md)) |
-| **Mac-style shortcuts** | Copy is Command-C. Command-Tab switches apps on both. ([`aquarius-keys.md`](aquarius-keys.md)) |
+| **Mac-style shortcuts** | Copy is Command-C. Command-Tab switches apps on both. The keyboard only — it does not move anything on the screen. ([`aquarius-keys.md`](aquarius-keys.md)) |
+| **Window buttons** | Minimise, maximise and close, on the **RIGHT**, on both desktops, for everybody. Not a setting. Until 2026-09-17 the Mac/Windows choice moved them to the left; that was dropped because applications which draw their own title bar never followed it, so some windows moved and some did not. ([`desktop-identity.md`](desktop-identity.md)) |
 | **Gaming** | Steam, Proton, controllers. ([`gaming.md`](gaming.md)) |
 | **`aq-ingest`** | "Make Editor-Ready" on a camera card. ([`ingest.md`](ingest.md)) |
 | **Homebrew, Swift, every codec** | Installed once, for the machine. |
