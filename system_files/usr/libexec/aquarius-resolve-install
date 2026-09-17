@@ -81,6 +81,25 @@
 #     6  Adding it to your apps
 #     7  Matching Resolve to your screen
 #
+# ⚠️ SINCE 2026-09-16, STEPS 3 AND 4 ARE OFTEN NOT THERE AT ALL, AND THE COUNT
+# CHANGES TO MATCH. On the NVIDIA edition the environment is already inside the
+# operating system, and the first login already builds the container out of it
+# (see "aq resolve prepare" below). So by the time somebody clicks Install,
+# there is usually nothing to download and nothing to create.
+#
+# The old flow still ANNOUNCED both steps and completed them in under a second
+# each, which is a progress bar that lies to you: it says seven things are
+# going to happen and then flashes past two of them. So a step that has no work
+# to do is now not announced, and the total shrinks. A machine with everything
+# already in place walks five steps, numbered 1 to 5, and the window draws five
+# rows. A machine that has to fetch the environment walks all seven, exactly as
+# before.
+#
+# The numbers in the code below never change — they are always written as the
+# canonical 1 to 7, so that this list and the calls match each other for ever.
+# The translation from "canonical 4" to "the third of five" happens in one
+# place, in the `step` function. See SKIP_STEPS.
+#
 # ⚠️ NOTE THE WORDING. None of the seven says "Rocky Linux" any more, and that is
 # Royce's rule from the bench test on 2026-09-04: a person installing a video
 # editor is not helped by being told which Linux is inside the box. The comments
@@ -102,6 +121,24 @@
 #
 #     aquarius-resolve-install --gpu-summary
 #         Prints one line: a word (ok / warn / none), a tab, then a sentence.
+#
+# AND ONE THING THAT DOES WORK, QUIETLY, WITH NOBODY WATCHING:
+#
+#     aquarius-resolve-install --prepare
+#         Builds the protected environment Resolve will run in — and stops
+#         there. No Blackmagic download is wanted, nothing is asked, nothing is
+#         shown. It is what the first login runs in the background on an NVIDIA
+#         machine (aquarius-resolve-prepare.service), so that by the time
+#         anybody clicks DaVinci Resolve the slow part is already behind them.
+#
+#         It is safe to run at any time and safe to run again: it does nothing
+#         at all when the container already exists, and it does nothing at all
+#         on a machine with no NVIDIA graphics card, because that is a machine
+#         Resolve cannot usefully run on (Blackmagic support NVIDIA on Linux
+#         and nothing else). If it fails — no space, a half-written container —
+#         it says so and exits, and the next login tries again.
+#
+#         `aq resolve prepare` is the same thing with a friendlier name.
 #
 #     aquarius-resolve-install --drives
 #         Says, in plain English, whether every drive plugged into this
@@ -179,6 +216,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --update) MODE="update" ;;
         --remove | --uninstall) MODE="remove" ;;
+        --prepare) MODE="prepare" ;;
         --purge) PURGE=1 ;;
         --yes | -y) ASSUME_YES=1 ;;
         --dry-run) DRY_RUN=1 ;;
@@ -231,11 +269,62 @@ fi
 STEP_TOTAL=7
 [ "${MODE}" = "remove" ] && STEP_TOTAL=3
 
+# ------------------------------------------------------------------------------
+# Steps that are not going to happen
+# ------------------------------------------------------------------------------
+# ⚠️ ADDED 2026-09-16, AND THE REASON IS HONESTY RATHER THAN TIDINESS.
+#
+# On the NVIDIA edition the environment Resolve runs in is already inside the
+# operating system and the container is already built, because the first login
+# built it. So steps 3 ("Downloading the environment") and 4 ("Setting that
+# environment up") have nothing whatsoever to do.
+#
+# The old flow announced them anyway and finished each in under a second. A
+# progress bar that promises seven things and flashes past two of them teaches
+# people not to trust it, and — worse — "Downloading…" appearing and vanishing
+# on a machine with no internet reads as a failure that has been hidden.
+#
+# So a step with no work is now not announced at all, and the TOTAL shrinks to
+# match. SKIP_STEPS holds the canonical numbers (1-7) of the steps that will
+# not happen. It is filled in exactly once, further down, after we know what is
+# already on this machine — never guessed at here.
+#
+# Every call below still passes the canonical number, so the list of steps in
+# the header and the calls in the code can never drift apart. The translation
+# into "the third of five" happens here and nowhere else.
+SKIP_STEPS=""
+
+step_is_skipped() { # step_is_skipped <canonical number>
+    case " ${SKIP_STEPS} " in
+        *" $1 "*) return 0 ;;
+    esac
+    return 1
+}
+
+# Count what is left, and say so. Called once, after SKIP_STEPS is settled.
+recount_steps() {
+    local n=0 i
+    for i in 1 2 3 4 5 6 7; do
+        step_is_skipped "${i}" || n=$((n + 1))
+    done
+    STEP_TOTAL="${n}"
+}
+
 progress() {
     [ "${PROGRESS_OPEN}" = "1" ] || return 0
     printf '%s\n' "$*" >&9 || true
 }
-step() { progress "STEP ${1}/${STEP_TOTAL} ${2}"; }
+# The canonical number goes in; the number a person sees comes out. A skipped
+# step says nothing at all, which is what makes the count add up.
+step() {
+    step_is_skipped "$1" && return 0
+    local shown=0 i
+    for i in 1 2 3 4 5 6 7; do
+        step_is_skipped "${i}" || shown=$((shown + 1))
+        [ "${i}" = "$1" ] && break
+    done
+    progress "STEP ${shown}/${STEP_TOTAL} ${2}"
+}
 pct() { progress "PERCENT ${1}"; }
 # Used on every path that leaves this script unhappily. The window shows this
 # sentence in large type, so it has to be a sentence, not a code.
@@ -283,6 +372,210 @@ if [ -z "${QUERY}" ] && [ "${DRY_RUN}" != "1" ]; then
         echo "      version of AquariusOS ships with:  ${IMAGE}"
     fi
 fi
+
+# ==============================================================================
+# The environment Resolve runs in: already here, or fetched
+# ==============================================================================
+# THREE PLACES THE RUNTIME CAN COME FROM, IN THE ORDER WE TRY THEM:
+#
+#   1. It is already in this person's container store. Nothing to do. This is
+#      the normal state of every machine after its first login.
+#   2. It is in the operating system, as one file (see AQ_RESOLVE_RUNTIME_ARCHIVE
+#      in runtime.env). We load it out of there. No network, a few seconds.
+#   3. Neither — so we download it from the registry, which is what every
+#      machine did before 2026-09-16 and what the AMD/Intel edition still does.
+#
+# ⚠️ WHY THE BAKED COPY IS LOADED INTO THE PERSON'S OWN STORE RATHER THAN BEING
+#    READ WHERE IT LIES. This was tried the other way first and it does not
+#    work, so it is written down to stop somebody trying it again:
+#
+#    podman can be told about extra, read-only image stores — the
+#    `additionalimagestores` setting. It works, and it is exactly the shape of
+#    thing we wanted: the user's podman sees the image with no copying at all.
+#    But an image store belongs to the ACCOUNT THAT MADE IT. When a container
+#    image is unpacked, every file in it is given an owner, and a store built by
+#    the administrator during the image build has files owned by the
+#    administrator — while Resolve's container runs as YOU, in a sandbox where
+#    the administrator's account is not present at all. Half the files in the
+#    store would be unreadable, in ways that look like a broken Resolve rather
+#    than like a permissions problem.
+#
+#    Loading the file into the person's own store, once, at their first login,
+#    gives every file the right owner by construction. It costs the disk space
+#    twice — the file in the operating system and the unpacked copy in the home
+#    folder — and that is the honest price of it being correct.
+#
+# The whole point of this is that by the time anybody clicks DaVinci Resolve,
+# (1) is already true, because the first login did (2) in the background.
+# ==============================================================================
+
+# Is the runtime already in this person's container store?
+runtime_image_present() {
+    [ -n "${IMAGE}" ] || return 1
+    command -v podman > /dev/null 2>&1 || return 1
+    podman image exists "${IMAGE}" 2> /dev/null
+}
+
+# The single file the operating system carries, or nothing. Only the NVIDIA
+# edition has one, so "nothing" is a normal answer and never a fault.
+baked_archive() {
+    local a="${AQ_RESOLVE_RUNTIME_ARCHIVE:-}"
+    [ -n "${a}" ] && [ -r "${a}" ] && printf '%s' "${a}"
+}
+
+# What the baked copy claims to be, for the record and for `aq resolve status`.
+# Written by the build; missing on the AMD/Intel edition, and that is fine.
+baked_digest() {
+    local f="${AQ_RESOLVE_BAKED_ENV:-}"
+    [ -n "${f}" ] && [ -r "${f}" ] || return 0
+    sed -n 's/^AQ_RESOLVE_BAKED_DIGEST=//p' "${f}" | head -1
+}
+
+# ------------------------------------------------------------------------------
+# The one place there is a real number to report
+# ------------------------------------------------------------------------------
+# podman says how many megabytes of the gigabyte have arrived. This runs its
+# output through awk, which passes every line straight through to the person's
+# log untouched, and separately turns any "123.4MiB / 1.1GiB" it recognises into
+# a PERCENT line on the progress channel.
+#
+# ⚠️ IT IS ALLOWED TO RECOGNISE NOTHING. podman words its progress differently
+# depending on whether it thinks it is talking to a terminal, and that wording
+# is not a promise anybody made to us. If no line matches, no PERCENT is sent,
+# the window shows a bar with no end, and the download works exactly as well.
+# Nothing here may ever be load-bearing.
+pull_with_progress() {
+    local rc
+    if [ "${PROGRESS_OPEN}" != "1" ]; then
+        podman pull "${IMAGE}"
+        return $?
+    fi
+    # awk inherits descriptor 9 and writes the PERCENT lines there directly.
+    podman pull "${IMAGE}" 2>&1 | awk -v out="/dev/fd/9" '
+        function tosize(x,   v) {
+            gsub(/^[ \t]+|[ \t]+$/, "", x)
+            v = x + 0
+            if (x ~ /[kK]i?B/) return v * 1024
+            if (x ~ /Mi?B/)    return v * 1024 * 1024
+            if (x ~ /Gi?B/)    return v * 1024 * 1024 * 1024
+            return v
+        }
+        {
+            print
+            fflush()
+            if (match($0, /[0-9.]+ *[kKMG]?i?B *\/ *[0-9.]+ *[kKMG]?i?B/)) {
+                s = substr($0, RSTART, RLENGTH)
+                split(s, a, "/")
+                cur = tosize(a[1])
+                tot = tosize(a[2])
+                if (tot > 0) {
+                    p = int(cur * 100 / tot)
+                    if (p >= 0 && p <= 100 && p != last) {
+                        print "PERCENT " p > out
+                        fflush(out)
+                        last = p
+                    }
+                }
+            }
+        }
+    '
+    rc="${PIPESTATUS[0]}"
+    return "${rc}"
+}
+
+# Load the file the operating system carries into this person's store, and give
+# it the name everything else looks for. `podman load` brings the image in under
+# whatever name is recorded inside the archive; the tag is applied afterwards so
+# that a change to how the archive was made cannot rename the image out from
+# under the rest of this script.
+load_baked_runtime() {
+    local archive
+    archive="$(baked_archive)" || return 1
+    [ -n "${archive}" ] || return 1
+
+    echo "The environment is already inside AquariusOS — no download needed."
+    echo "Unpacking it into your own container store (this is quick, and it"
+    echo "happens once)."
+    if ! podman load --input "${archive}" > /dev/null 2>&1; then
+        echo "  That did not work. Falling back to downloading it instead."
+        return 1
+    fi
+    # Name it, if loading did not already. `podman tag` on an image that already
+    # carries the name is a no-op, so this is safe either way.
+    if ! podman image exists "${IMAGE}" 2> /dev/null; then
+        local loaded
+        loaded="$(podman images --format '{{.ID}}' --sort created 2> /dev/null | head -1)"
+        [ -n "${loaded}" ] && podman tag "${loaded}" "${IMAGE}" > /dev/null 2>&1
+    fi
+    podman image exists "${IMAGE}" 2> /dev/null
+}
+
+# ------------------------------------------------------------------------------
+# Get the runtime into the store, whichever of the three ways applies
+# ------------------------------------------------------------------------------
+# Returns 0 when the image is in the person's store afterwards, whatever it took
+# to get it there. Says nothing at all when there was nothing to do.
+ensure_runtime_image() {
+    runtime_image_present && return 0
+    load_baked_runtime && return 0
+
+    echo "Downloading ${IMAGE}"
+    echo "This is about a gigabyte and happens once."
+    echo ""
+    pull_with_progress
+}
+
+# ------------------------------------------------------------------------------
+# Build the container, if it is not already built
+# ------------------------------------------------------------------------------
+# The two flag variables it reads — DISTROBOX_NVIDIA and GPU_FLAGS — are worked
+# out by the graphics-card section further down and default to empty, which is
+# the right answer for a machine with no NVIDIA card.
+ensure_container() {
+    command -v distrobox > /dev/null 2>&1 || return 1
+    if podman container exists "${CONTAINER}" 2> /dev/null; then
+        return 0
+    fi
+    echo "Creating the container..."
+    # --yes            do not ask; the questions were asked above
+    # --nvidia         only when NVIDIA's own description was not available
+    # --additional-flags  passed straight to podman
+    #
+    # NOT --init. That switch runs a service manager inside the container and,
+    # in distrobox's own words, disables host process integration. Resolve is
+    # one program, not a system; it needs no service manager, and losing the
+    # process integration would cost us the thing that makes the container
+    # invisible to the user.
+    #
+    # NOT --home either. Sharing your real home folder is the default and it is
+    # what we want: Resolve reads and writes your ordinary Videos and Projects
+    # folders, so nothing has to be moved in and out.
+    # shellcheck disable=SC2086  # DISTROBOX_NVIDIA is deliberately word-split
+    distrobox create --yes \
+        --name "${CONTAINER}" \
+        --image "${IMAGE}" \
+        ${DISTROBOX_NVIDIA:-} \
+        ${GPU_FLAGS:+--additional-flags "${GPU_FLAGS}"}
+}
+
+# ------------------------------------------------------------------------------
+# What is already done on this machine
+# ------------------------------------------------------------------------------
+# Asked ONCE, before anything is announced, so that the list of steps a person
+# is shown is the list of steps that are really going to happen. Everything here
+# only looks; nothing here changes anything.
+HAVE_IMAGE=0
+HAVE_CONTAINER=0
+survey_machine() {
+    runtime_image_present && HAVE_IMAGE=1
+    if command -v podman > /dev/null 2>&1 \
+        && podman container exists "${CONTAINER}" 2> /dev/null; then
+        HAVE_CONTAINER=1
+        # A container that exists was built from an image, so the image is here
+        # whether or not the name still resolves to it.
+        HAVE_IMAGE=1
+    fi
+}
 
 # ==============================================================================
 # How this computer is looked at
@@ -1207,6 +1500,96 @@ AQ_DRY_ENTRY
 fi
 
 # ==============================================================================
+# What is already done on this machine, asked once
+# ==============================================================================
+# ⚠️ THIS HAS TO HAPPEN BEFORE THE FIRST `step` LINE. The window draws its list
+# of steps the moment the first one arrives, so the decision about which steps
+# are going to happen must already be made. Asking podman twice and getting two
+# different answers would be a list that changes shape while somebody watches.
+survey_machine
+# ⚠️ UPDATING NEVER SKIPS STEP 3, EVEN THOUGH THE IMAGE IS OBVIOUSLY ALREADY
+# HERE. This is the other half of the policy written down in runtime.env: the
+# copy baked into the operating system is a SEED, not a pin. An online machine
+# has to be able to move onto a newer build of the same Enterprise Linux — that
+# is where Rocky's security rebuilds arrive — and `aq resolve update` is the
+# deliberate moment it happens. Skipping it here would quietly freeze every
+# NVIDIA machine on whatever runtime its ISO happened to carry.
+if [ "${MODE}" != "update" ] && [ "${HAVE_IMAGE}" = "1" ]; then
+    SKIP_STEPS="${SKIP_STEPS} 3"
+fi
+[ "${HAVE_CONTAINER}" = "1" ] && SKIP_STEPS="${SKIP_STEPS} 4"
+recount_steps
+
+# ==============================================================================
+# --prepare: build the environment and stop there
+# ==============================================================================
+# The first login runs this, in the background, on NVIDIA machines. Everything
+# about it is written to be safe to interrupt and safe to repeat:
+#
+#   * On a machine with no NVIDIA graphics card it does nothing and says why.
+#     Blackmagic support NVIDIA on Linux and nothing else, so building a
+#     gigabyte of container on an AMD laptop would be spending somebody's disk
+#     on a thing they cannot use.
+#   * When the container already exists it does nothing at all.
+#   * When something goes wrong it says so and exits non-zero. Nothing is
+#     retried in a loop and nothing is left half-built that the full setup
+#     cannot walk over: the next login simply runs this again.
+#   * It never writes to the progress channel, never opens a window and never
+#     sends a notification. Nobody is waiting for it.
+if [ "${MODE}" = "prepare" ]; then
+    if ! have_nvidia; then
+        echo "No NVIDIA graphics card here, so there is nothing worth preparing."
+        echo "DaVinci Resolve on Linux is supported on NVIDIA and nothing else."
+        exit 0
+    fi
+    if [ "${HAVE_CONTAINER}" = "1" ]; then
+        echo "The environment DaVinci Resolve runs in is already set up."
+        exit 0
+    fi
+    for tool in podman distrobox; do
+        if ! command -v "${tool}" > /dev/null 2>&1; then
+            echo "aquarius-resolve: '${tool}' is missing, so nothing can be prepared." >&2
+            exit 1
+        fi
+    done
+
+    echo "Preparing the environment DaVinci Resolve will run in."
+    if ! ensure_runtime_image; then
+        echo "aquarius-resolve: the environment could not be unpacked or downloaded." >&2
+        echo "  Nothing was left behind. The next login will try again." >&2
+        exit 1
+    fi
+
+    # The graphics-card flags. The full setup works these out in its step 1;
+    # here they are worked out the same way, from the same two functions, so a
+    # container built now is identical to one built by the full setup.
+    GPU_FLAGS=""
+    DISTROBOX_NVIDIA=""
+    if CDI_SPEC="$(find_cdi_spec)"; then
+        echo "  Using NVIDIA's own container description: ${CDI_SPEC}"
+        GPU_FLAGS="--device nvidia.com/gpu=all"
+    else
+        echo "  NVIDIA's container description has not been written yet;"
+        echo "  using distrobox's own way of sharing the driver."
+        DISTROBOX_NVIDIA="--nvidia"
+    fi
+    [ -e /dev/dri ] && GPU_FLAGS="${GPU_FLAGS}${GPU_FLAGS:+ }--device /dev/dri"
+
+    if ! ensure_container; then
+        echo "aquarius-resolve: the environment could not be created." >&2
+        echo "  The next login will try again." >&2
+        exit 1
+    fi
+    if ! distrobox enter --name "${CONTAINER}" -- true; then
+        echo "aquarius-resolve: the environment was created but would not start." >&2
+        exit 1
+    fi
+    echo "Ready. Setting DaVinci Resolve up now only needs your download from"
+    echo "Blackmagic, and takes about three minutes."
+    exit 0
+fi
+
+# ==============================================================================
 # 0. What is about to happen
 # ==============================================================================
 echo ""
@@ -1241,7 +1624,19 @@ echo ""
 echo "You will not notice the environment. Resolve appears in your apps like"
 echo "any other program and reads and writes your ordinary folders."
 echo ""
-echo "This takes roughly fifteen minutes, nearly all of it downloading."
+# How long it takes depends entirely on whether the environment is already here,
+# which on the NVIDIA edition it almost always is. Saying "fifteen minutes" to
+# somebody who is three minutes from finishing is a worse kind of wrong than
+# saying nothing, so the sentence is chosen from what we just found out.
+if [ "${HAVE_CONTAINER}" = "1" ]; then
+    echo "The slow part is already done — AquariusOS set the environment up when"
+    echo "you first logged in. This takes about three minutes."
+elif [ "${HAVE_IMAGE}" = "1" ] || [ -n "$(baked_archive)" ]; then
+    echo "The environment is already inside AquariusOS, so there is nothing of"
+    echo "ours to download. This takes about five minutes."
+else
+    echo "This takes roughly fifteen minutes, nearly all of it downloading."
+fi
 echo "Stop at any time with Ctrl+C — nothing will be left broken."
 echo ""
 
@@ -1542,73 +1937,41 @@ echo "------------------------------------------------------------------"
 echo " Setting up the environment Resolve runs in"
 echo "------------------------------------------------------------------"
 
-# ------------------------------------------------------------------------------
-# The one place there is a real number to report
-# ------------------------------------------------------------------------------
-# podman says how many megabytes of the gigabyte have arrived. This runs its
-# output through awk, which passes every line straight through to the person's
-# log untouched, and separately turns any "123.4MiB / 1.1GiB" it recognises into
-# a PERCENT line on the progress channel.
-#
-# ⚠️ IT IS ALLOWED TO RECOGNISE NOTHING. podman words its progress differently
-# depending on whether it thinks it is talking to a terminal, and that wording
-# is not a promise anybody made to us. If no line matches, no PERCENT is sent,
-# the window shows a bar with no end, and the download works exactly as well.
-# Nothing here may ever be load-bearing.
-pull_with_progress() {
-    local rc
-    if [ "${PROGRESS_OPEN}" != "1" ]; then
-        podman pull "${IMAGE}"
-        return $?
-    fi
-    # awk inherits descriptor 9 and writes the PERCENT lines there directly.
-    podman pull "${IMAGE}" 2>&1 | awk -v out="/dev/fd/9" '
-        function tosize(x,   v) {
-            gsub(/^[ \t]+|[ \t]+$/, "", x)
-            v = x + 0
-            if (x ~ /[kK]i?B/) return v * 1024
-            if (x ~ /Mi?B/)    return v * 1024 * 1024
-            if (x ~ /Gi?B/)    return v * 1024 * 1024 * 1024
-            return v
-        }
-        {
-            print
-            fflush()
-            if (match($0, /[0-9.]+ *[kKMG]?i?B *\/ *[0-9.]+ *[kKMG]?i?B/)) {
-                s = substr($0, RSTART, RLENGTH)
-                split(s, a, "/")
-                cur = tosize(a[1])
-                tot = tosize(a[2])
-                if (tot > 0) {
-                    p = int(cur * 100 / tot)
-                    if (p >= 0 && p <= 100 && p != last) {
-                        print "PERCENT " p > out
-                        fflush(out)
-                        last = p
-                    }
-                }
-            }
-        }
-    '
-    rc="${PIPESTATUS[0]}"
-    return "${rc}"
-}
+# ⚠️ ON THE NVIDIA EDITION THERE IS USUALLY NOTHING TO DO HERE AT ALL. The
+# environment is carried inside the operating system and the first login already
+# unpacked it and built the container. Both steps below are then not announced
+# and not counted — see SKIP_STEPS at the top of this file. What follows is what
+# happens on a machine where that has not happened yet, or has not worked.
 
-if podman container exists "${CONTAINER}" 2> /dev/null; then
+if [ "${MODE}" = "update" ]; then
+    # Updating re-asks the registry for the tag, so that a machine which started
+    # from the copy baked into AquariusOS still picks up Rocky's security
+    # rebuilds. It is BEST EFFORT and never fatal: an update with no internet
+    # still updates Resolve itself, which is what the person asked for.
     step 3 "Downloading the environment Resolve runs in"
-    if [ "${MODE}" = "update" ]; then
-        echo "Reusing the existing '${CONTAINER}' container."
+    RUNTIME_WAS="$(podman image inspect --format '{{index .RepoDigests 0}}' "${IMAGE}" 2> /dev/null || true)"
+    [ -n "${RUNTIME_WAS}" ] || RUNTIME_WAS="$(baked_digest)"
+    echo "Checking whether the environment itself is newer..."
+    if pull_with_progress; then
+        RUNTIME_NOW="$(podman image inspect --format '{{index .RepoDigests 0}}' "${IMAGE}" 2> /dev/null || true)"
+        if [ -n "${RUNTIME_NOW}" ] && [ "${RUNTIME_NOW}" != "${RUNTIME_WAS}" ]; then
+            echo "  The environment moved from ${RUNTIME_WAS:-a copy carried in AquariusOS}"
+            echo "                          to ${RUNTIME_NOW}"
+            echo "  It takes effect the next time the environment is rebuilt"
+            echo "  (aq resolve remove, then aq resolve install)."
+        else
+            echo "  The environment is already the newest one."
+        fi
     else
-        echo "A container called '${CONTAINER}' already exists — reusing it."
-        echo "(To start completely fresh:  aq resolve remove  then run this again.)"
+        echo "  Could not reach the registry, so the environment stays as it is."
+        echo "  That is not a problem: updating Resolve does not need it."
     fi
     pct 100
+elif [ "${HAVE_IMAGE}" = "1" ]; then
+    echo "The environment Resolve runs in is already on this computer."
 else
     step 3 "Downloading the environment Resolve runs in"
-    echo "Downloading ${IMAGE}"
-    echo "This is about a gigabyte and happens once."
-    echo ""
-    if ! pull_with_progress; then
+    if ! ensure_runtime_image; then
         fail "The environment Resolve runs in could not be downloaded. The usual cause is no internet connection — try again when you are back online."
         echo "" >&2
         echo "The download failed." >&2
@@ -1623,29 +1986,20 @@ else
         echo "docs/restart/resolve.md — and it does not affect released versions." >&2
         exit 1
     fi
+    pct 100
+fi
 
+if [ "${HAVE_CONTAINER}" = "1" ]; then
+    if [ "${MODE}" = "update" ]; then
+        echo "Reusing the existing '${CONTAINER}' container."
+    else
+        echo "A container called '${CONTAINER}' already exists — reusing it."
+        echo "(To start completely fresh:  aq resolve remove  then run this again.)"
+    fi
+else
     echo ""
     step 4 "Setting that environment up"
-    echo "Creating the container..."
-    # --yes            do not ask; the questions were asked above
-    # --nvidia         only when NVIDIA's own description was not available
-    # --additional-flags  passed straight to podman
-    #
-    # NOT --init. That switch runs a service manager inside the container and,
-    # in distrobox's own words, disables host process integration. Resolve is
-    # one program, not a system; it needs no service manager, and losing the
-    # process integration would cost us the thing that makes the container
-    # invisible to the user.
-    #
-    # NOT --home either. Sharing your real home folder is the default and it is
-    # what we want: Resolve reads and writes your ordinary Videos and Projects
-    # folders, so nothing has to be moved in and out.
-    # shellcheck disable=SC2086  # DISTROBOX_NVIDIA is deliberately word-split
-    if ! distrobox create --yes \
-        --name "${CONTAINER}" \
-        --image "${IMAGE}" \
-        ${DISTROBOX_NVIDIA} \
-        ${GPU_FLAGS:+--additional-flags "${GPU_FLAGS}"}; then
+    if ! ensure_container; then
         fail "The container could not be created. Nothing on your computer was changed. Try again, or start from a clean slate with: aq resolve remove"
         echo "" >&2
         echo "The container could not be created." >&2
@@ -1655,10 +2009,11 @@ else
 fi
 
 echo ""
-# Said again here because the container may already have existed, in which case
-# the branch above was skipped entirely and this is where step 4 really begins.
+# Said again here because the container may have been created just above OR have
+# existed already. `step` sends nothing at all when step 4 is one of the ones not
+# happening on this machine, so this line is safe either way.
 step 4 "Setting that environment up"
-echo "Starting it for the first time (this takes a moment)..."
+echo "Starting it (this takes a moment)..."
 if ! distrobox enter --name "${CONTAINER}" -- true; then
     fail "The container was built but would not start. Clear it away with 'aq resolve remove' and try again."
     echo "" >&2
@@ -2077,7 +2432,22 @@ report_drives
 # The file itself is written by write_record, beside record_value near the top
 # of this script, so that the two agree on the quoting.
 mkdir -p "${RECORD_DIR}" 2> /dev/null || true
-DIGEST="$(podman image inspect --format '{{index .RepoDigests 0}}' "${IMAGE}" 2> /dev/null || echo 'unknown')"
+# ⚠️ AN IMAGE THAT WAS UNPACKED FROM A FILE HAS NO "RepoDigest". That field is
+# the registry's name for the exact bytes, and an image loaded from the copy
+# baked into AquariusOS never came from a registry on this machine — so podman
+# quite correctly has nothing to say. The build wrote the digest down when it
+# made that file, which is the same answer from the same bytes, so that is what
+# gets recorded. installed.env must always say what this machine is really
+# running; "unknown" is only for the case where neither is available.
+DIGEST="$(podman image inspect --format '{{index .RepoDigests 0}}' "${IMAGE}" 2> /dev/null || true)"
+if [ -z "${DIGEST}" ]; then
+    BAKED="$(baked_digest)"
+    if [ -n "${BAKED}" ]; then
+        DIGEST="${AQ_RESOLVE_RUNTIME_IMAGE}@${BAKED}"
+    else
+        DIGEST="unknown"
+    fi
+fi
 RECORDED_EDITION="$(edition_from_name "${INSTALLER}")"
 RECORDED_VERSION="$(version_from_name "${INSTALLER}")"
 write_record "${RECORD}" "${INSTALLER}" "${IMAGE}" "${DIGEST}" "${GPU_METHOD}"
