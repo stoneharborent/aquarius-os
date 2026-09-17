@@ -112,6 +112,9 @@ COPY build_files /build_files
 COPY system_files /system_files
 COPY ingest /ingest
 COPY tests /tests
+# The source of the KDE "Mac or Windows" settings page. The kcm-build workshop
+# further down compiles it; without this line it finds an empty folder.
+COPY kcm /kcm
 
 # ------------------------------------------------------------------------------
 # The NVIDIA driver parts — fetched ONLY when we are building the NVIDIA image
