@@ -7,8 +7,7 @@
 # The very first time somebody logs in to AquariusOS, this window opens and
 # walks them through three questions and one goodbye:
 #
-#     Step 1 of 3   How should keyboard shortcuts and window buttons work?
-#                                                         Mac, or Windows.
+#     Step 1 of 3   How should keyboard shortcuts work?   Mac, or Windows.
 #     Step 2 of 3   Your creator apps.                    Tick what you want.
 #     Step 3 of 3   You're set.                           Three tips, and out.
 #
@@ -131,15 +130,13 @@ KEYBOARD_CHOICES = [
         "mac",
         "Mac",
         "Copy is ⌘C · Quit is ⌘Q · Search is ⌘Space\n"
-        "The key beside the space bar is Command.\n"
-        "Window buttons on the left.",
+        "The key beside the space bar is Command.",
         "Copy is ⌘C",
     ),
     (
         "windows",
         "Windows",
-        "Copy is Ctrl+C\nThe normal Linux and Windows shortcuts.\n"
-        "Window buttons on the right.",
+        "Copy is Ctrl+C\nThe normal Linux and Windows shortcuts.",
         "Copy is Ctrl+C",
     ),
 ]
@@ -159,8 +156,8 @@ KEYBOARD_NOTE = (
     "of the screen, beside Wi-Fi; on KDE Plasma it is System Settings > "
     "Appearance & Style > Mac or Windows. In a terminal it is "
     "aq keys mac or aq keys windows. Every one of them takes effect straight "
-    "away, with no need to log out, and moves the window buttons too: one "
-    "answer, not two questions."
+    "away, with no need to log out. It is the keyboard only — nothing on the "
+    "screen moves."
 )
 
 # The three things worth knowing on day one. Not a manual: three sentences that
@@ -291,8 +288,7 @@ def rehearse(pretend_apps_seen):
         number += 1
         if step == "keyboard":
             print(
-                "step %d of %d: keyboard — How should keyboard shortcuts and "
-                "window buttons work?"
+                "step %d of %d: keyboard — How should keyboard shortcuts work?"
                 % (number, len(steps))
             )
             for mode, title, detail, example in KEYBOARD_CHOICES:
@@ -430,11 +426,11 @@ def run_window(apps_seen):
         # -- step 1: the keyboard ----------------------------------------
         def _build_keyboard_page(self):
             mark, title, blurb = aquarius_ui.hero(
-                "How should keyboard shortcuts and window buttons work?",
-                "AquariusOS can work the way a Mac does — Copy is ⌘C, and the "
-                "close, minimise and maximise buttons sit on the LEFT of every "
-                "window. Most people who edit video came from a Mac, so that is "
-                "what it does unless you say otherwise. One answer sets both.",
+                "How should keyboard shortcuts work?",
+                "AquariusOS can work the way a Mac does — Copy is ⌘C, Quit is "
+                "⌘Q, Search is ⌘Space. Most people who edit video came from a "
+                "Mac, so that is what it does unless you say otherwise. This "
+                "changes the keyboard and nothing else.",
             )
 
             # The live example. It is one short line and it is the whole point

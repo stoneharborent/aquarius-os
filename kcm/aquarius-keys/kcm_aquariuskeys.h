@@ -19,9 +19,13 @@
       choose("mac")      runs `aq keys mac` and nothing else.
 
     ⚠️ IT NEVER WRITES THE SETTINGS FILE ITSELF. /usr/bin/aq owns that file, and
-    changing the mode is four jobs, not one: write the file, restart the
-    remapper, move GNOME's window buttons, move KDE's. Writing the file here
-    would do one of the four and look broken.
+    changing the mode is two jobs, not one: write the file, and restart the
+    remapper so the new shortcuts are live without logging out. Writing the file
+    here would do half of it and look broken.
+
+    ⚠️ THE KEYBOARD ONLY, SINCE 2026-09-17. This page used to change where the
+    window buttons sat too. Royce dropped that, because applications that draw
+    their own title bar never followed it.
 */
 
 #pragma once

@@ -16,6 +16,11 @@
     runs `aq keys ...` there and then, exactly as pressing Continue in the
     Welcome window does. That is why the page never sets needsSave.
 
+    ⚠️ THE KEYBOARD ONLY, SINCE 2026-09-17. This page used to say it moved the
+    window buttons as well. It does not any more: applications that draw their
+    own title bar never followed that switch, so Royce made the buttons stock
+    and right-hand for everybody and left this choice to the keyboard alone.
+
     Everything is stock Breeze — Kirigami's own form layout and radio buttons.
     AquariusOS does not theme KDE's settings app.
 */
@@ -49,14 +54,14 @@ KCMUtils.SimpleKCM {
         QQC2.Label {
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
-            text: i18n("AquariusOS can type like a Mac or like Windows. This one answer sets both the keyboard shortcuts and which side of a window the close, minimise and maximise buttons sit on — one choice, not two questions.")
+            text: i18n("AquariusOS can type like a Mac or like Windows. This answer is about the keyboard and nothing else — the close, minimise and maximise buttons stay where they are, on the right of every window.")
         }
 
         Kirigami.FormLayout {
             Layout.fillWidth: true
 
             QQC2.RadioButton {
-                Kirigami.FormData.label: i18n("Keyboard and windows:")
+                Kirigami.FormData.label: i18n("Keyboard shortcuts:")
                 text: i18n("Mac")
                 checked: kcm.mode === "mac"
                 enabled: !kcm.busy
@@ -67,7 +72,7 @@ KCMUtils.SimpleKCM {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 textFormat: Text.PlainText
-                text: i18n("Copy is ⌘C · Quit is ⌘Q · Search is ⌘Space. The key beside the space bar is Command. Window buttons on the left.")
+                text: i18n("Copy is ⌘C · Quit is ⌘Q · Search is ⌘Space. The key beside the space bar is Command.")
             }
 
             QQC2.RadioButton {
@@ -81,7 +86,7 @@ KCMUtils.SimpleKCM {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 textFormat: Text.PlainText
-                text: i18n("Copy is Ctrl+C. The normal Linux and Windows shortcuts; nothing about your keyboard is changed at all. Window buttons on the right.")
+                text: i18n("Copy is Ctrl+C. The normal Linux and Windows shortcuts; nothing about your keyboard is changed at all.")
             }
         }
 

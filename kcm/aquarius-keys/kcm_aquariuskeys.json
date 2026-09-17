@@ -1,13 +1,13 @@
 {
     "KPlugin": {
-        "Description": "Mac-style keyboard shortcuts and window buttons, or the normal Windows ones",
+        "Description": "Mac-style keyboard shortcuts, or the normal Windows ones",
         "Icon": "input-keyboard",
         "Name": "Mac or Windows",
         "FormFactors": [
             "desktop"
         ]
     },
-    "X-KDE-Keywords": "mac,windows,keyboard,shortcuts,window buttons,command,copy,close button,titlebar,aquarius",
+    "X-KDE-Keywords": "mac,windows,keyboard,shortcuts,command,copy,control,shortcut,aquarius",
     "X-KDE-System-Settings-Parent-Category": "appearance",
     "X-KDE-Weight": 20
 }

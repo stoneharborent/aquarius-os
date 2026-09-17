@@ -7,8 +7,14 @@
 // at the top-right corner of the screen — the same menu that holds Wi-Fi,
 // Bluetooth and Dark Style. The switch is the Mac-or-Windows choice:
 //
-//   Mac       Copy is Command-C, and the window buttons sit on the LEFT
-//   Windows   Copy is Control-C, and the window buttons sit on the RIGHT
+//   Mac       Copy is Command-C
+//   Windows   Copy is Control-C
+//
+// ⚠️ IT IS THE KEYBOARD ONLY, since 2026-09-17. Until that day this same choice
+// also moved the close, minimise and maximise buttons from one side of the
+// title bar to the other. Royce dropped that: applications that draw their own
+// title bar never followed it, so some windows moved and some did not. The
+// buttons are now stock and on the right for everybody.
 //
 // Before this existed, the only two ways to change that were the Welcome
 // window (which you see once, on your first login) and typing a command in a
@@ -27,10 +33,9 @@
 //   * WRITES nothing. To change the mode it runs `aq keys mac` or
 //     `aq keys windows`, exactly as a person would type it.
 //
-// That is deliberate. `aq keys` does four things beyond writing one line —
-// restarts the remapper, moves GNOME's window buttons, moves KDE's window
-// buttons, and tells a running KWin to re-read them. An add-on that wrote the
-// file itself would do one of those four and look broken.
+// That is deliberate. `aq keys` does more than write one line — it also
+// restarts the remapper, so the new shortcuts are live without logging out. An
+// add-on that wrote the file itself would do half the job and look broken.
 //
 // ------------------------------------------------------------------------------
 // ⚠️ NOTHING HERE MAY BLOCK. THIS CODE RUNS INSIDE THE DESKTOP ITSELF.
@@ -65,8 +70,8 @@ const ICON_NAME = 'input-keyboard-symbolic';
 // wording matches the two cards in the Welcome window so that a person meeting
 // this switch for the second time reads the same sentence.
 const MODES = [
-    ['mac', 'Mac', 'Copy is ⌘C. Window buttons on the left.'],
-    ['windows', 'Windows', 'Copy is Ctrl+C. Window buttons on the right.'],
+    ['mac', 'Mac', 'Copy is ⌘C. Keyboard only.'],
+    ['windows', 'Windows', 'Copy is Ctrl+C. Keyboard only.'],
 ];
 
 // The AquariusOS default, used whenever the file is missing or unreadable.
