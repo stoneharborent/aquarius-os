@@ -15,9 +15,9 @@ If you just want to look at them, open any file in [`ice/`](./ice) or
 |---|---|
 | Aquarius Editor | `aquarius-editor` |
 | Aquarius Writer | `aquarius-writer` |
-| Files | `org.gnome.Nautilus` *and* `aquarius-files` |
-| Settings | `org.gnome.Settings` *and* `aquarius-settings` |
-| Console | `org.gnome.Ptyxis` *and* `aquarius-console` |
+| Files | `aquarius-files` — *not* on GNOME's Files, see below |
+| Settings | `aquarius-settings` — *not* on GNOME's Settings, see below |
+| Console | `aquarius-console` — *not* on the Console, see below |
 | Aquarius Apps | `aquarius-apps` *and* `aquarius-installer` |
 | Aquarius Welcome | `aquarius-welcome` |
 | Install DaVinci Resolve | `aquarius-install-resolve` |
@@ -31,14 +31,16 @@ identical plate being drawn. **This is a placeholder, and an open design item:**
 Installer earns a drawing of its own it gets an entry in `icons.mjs` and loses its place in
 `ALIASES`.
 
-**Why three of them have two names.** Files, Settings and the Console are somebody else's
-programs — GNOME's Nautilus, GNOME's Settings, and Ptyxis, which is Fedora's terminal and
-the terminal AquariusOS ships. Each one asks the desktop for its icon by its own identifier
-— `org.gnome.Nautilus`, `org.gnome.Settings`, `org.gnome.Ptyxis` — and nothing will persuade
-it to ask for anything else. So the drawing is filed under that name, which is what actually
-replaces the icon, *and* under our own name, so that our windows, our docs and the Aquarius
-Shell can refer to it without having to know GNOME's internal names. Same picture, two file
-names.
+**The stock GNOME apps keep their stock icons** (Royce, 2026-09-17). Files, Settings and
+the Console are somebody else's programs — GNOME's Nautilus, GNOME's Settings, and Ptyxis,
+which is Fedora's terminal and the terminal AquariusOS ships. Each one asks the desktop for
+its icon by its own identifier — `org.gnome.Nautilus`, `org.gnome.Settings`,
+`org.gnome.Ptyxis` — and until 17 September 2026 our three drawings were *also* filed under
+those names, which is what put them on the dock. Those files are gone from both themes and
+from `ALIASES` in `render.mjs`, so the three apps fall through `Inherits=Adwaita` to GNOME's
+own artwork. The drawings themselves still ship under our own names, for our own windows;
+`Check for Update` wears `aquarius-settings`. `tests/test-aquarius-icons.sh` and the build
+step both fail if an `org.gnome.*` file ever comes back.
 
 **The Console icon** (Royce, 2026-09-06) is a prompt chevron in the Aquarius working line
 with a gold underscore cursor beside it. The cursor is the thing that moves on a terminal,
@@ -178,7 +180,8 @@ which is the thing that already watches the colour scheme.
 > one-setting change with no image work behind it.
 
 **2. "Check for Update" has no icon of its own.** Its launcher entry uses
-`Icon=org.gnome.Settings` on purpose (Royce, 2026-09-06).
+`Icon=aquarius-settings` on purpose (Royce, 2026-09-06; the name changed from
+`org.gnome.Settings` on 2026-09-17 when that name went back to GNOME).
 
 > **TODO:** when the update flow moves into System Settings where it belongs, that launcher
 > entry goes away rather than getting an icon.

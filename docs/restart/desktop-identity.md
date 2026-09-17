@@ -35,6 +35,12 @@ flip too, which it did not before — see that section for what went wrong.*
 > `branding/icons/` and documented in
 > [`branding/icons/README.md`](../../branding/icons/README.md).
 >
+> **Since 2026-09-17 the stock GNOME apps keep GNOME's own icons.** Files,
+> Settings and the Console used to wear our drawings too, by filing them under
+> GNOME's own names; those names are gone and only our own programs carry
+> Aquarius icons. The reasoning and the check that keeps it so:
+> [`branding/icons/README.md`](../../branding/icons/README.md).
+>
 > It is a *narrow* set on purpose: **nine icons**, the ones Royce looks at every
 > day, and both themes say `Inherits=Adwaita,hicolor`, so every other icon on the
 > machine still comes from GNOME. So the reasoning below about not drawing a

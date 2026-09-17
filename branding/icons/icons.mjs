@@ -128,5 +128,5 @@ export const SET = {
   'aquarius-editor':(s,t)=>editor(s,'simple',true,t), 'aquarius-writer':(s,t)=>writer(s,true,t), 'aquarius-files':(s,t)=>files(s,'outline',true,t),
   'aquarius-settings':(s,t)=>settings(s,'two',true,t), 'aquarius-apps':(s,t)=>apps(s,'color',true,t), 'aquarius-welcome':(s,t)=>welcome(s,'sun',true,t),
   'aquarius-install-resolve':(s,t)=>resolve(s,'install','dr',true,t), 'aquarius-remove-resolve':(s,t)=>resolve(s,'remove','dr',true,t),
-  'aquarius-console':(s,t)=>console_(s,'under',true,t),   // ships as org.gnome.Ptyxis too
+  'aquarius-console':(s,t)=>console_(s,'under',true,t),
 };

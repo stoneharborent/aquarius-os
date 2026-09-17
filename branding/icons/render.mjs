@@ -13,17 +13,18 @@
 //   branding/icons/midnight/<name>.svg    the dark set
 //   branding/icons/ice/<name>.svg         the light set
 //
-// THIRTEEN FILES IN EACH, NOT NINE. There are nine icons; four of them are
-// filed under two names each. Three because GNOME's Files, GNOME's Settings and
-// the terminal look their own icons up by their own identifiers
-// (org.gnome.Nautilus, org.gnome.Settings, org.gnome.Ptyxis) and nothing will
-// make them ask for "aquarius-files". So the same drawing is written twice: once
-// under the GNOME name, so the icon actually appears, and once under ours, so
-// our own windows, docs and the Aquarius Shell can name it without knowing
-// anything about GNOME. The fourth is ours on both sides: the app-chooser
-// drawing also ships as "aquarius-installer", because Aquarius Installer and
-// Aquarius Apps are two faces of one idea and only one of them is visible in
-// the app grid. See ALIASES below.
+// TEN FILES IN EACH, NOT NINE. There are nine icons; one of them is filed under
+// two names: the app-chooser drawing also ships as "aquarius-installer",
+// because Aquarius Installer and Aquarius Apps are two faces of one idea and
+// only one of them is visible in the app grid. See ALIASES below.
+//
+// UNTIL 2026-09-17 there were thirteen. The Files, Settings and Console
+// drawings were also written under GNOME's own identifiers (org.gnome.Nautilus,
+// org.gnome.Settings, org.gnome.Ptyxis), which is how a theme replaces the icon
+// of a program it does not own. Royce decided the stock GNOME apps keep their
+// stock icons, so those three names are gone and GNOME's own artwork shows
+// through Inherits=Adwaita. The three drawings still exist under our own names
+// for our own windows to use.
 //
 // OPTIONS (used by branding/render-app-icons.sh, not normally by a person)
 //   --size N      draw at N pixels instead of 1024
@@ -40,28 +41,25 @@ import { SET } from './icons.mjs';
 // The left-hand name is the drawing (a key in SET, in icons.mjs). The right-hand
 // list is every file name it is written out as.
 //
-// ⚠️ THE GNOME NAMES ARE NOT DECORATION. `org.gnome.Nautilus` is how the Files
-// app asks for its own icon, `org.gnome.Settings` is how the Settings app asks
-// for its own, and `org.gnome.Ptyxis` is how the terminal asks for its own —
-// Ptyxis is Fedora's terminal and it is the Console this image ships. Because
-// our themes say `Inherits=Adwaita`, a name we do not provide falls through to
-// GNOME's own artwork — so dropping any of these lines does not produce an error
-// anywhere. It produces GNOME icons sitting in a dock full of Aquarius ones,
-// which is the kind of thing that ships.
+// ⚠️ NO GNOME NAMES HERE, ON PURPOSE (2026-09-17). A theme replaces a program's
+// icon by filing a drawing under the name that program asks for — Files asks for
+// `org.gnome.Nautilus`, Settings for `org.gnome.Settings`, the Console for
+// `org.gnome.Ptyxis`. Adding one of those names to a list below would put our
+// drawing on a stock GNOME app again, which is exactly what was removed. The
+// stock apps keep GNOME's own icons.
 const ALIASES = {
   'aquarius-editor': ['aquarius-editor'],
   'aquarius-writer': ['aquarius-writer'],
-  'aquarius-files': ['org.gnome.Nautilus', 'aquarius-files'],
-  'aquarius-settings': ['org.gnome.Settings', 'aquarius-settings'],
-  'aquarius-console': ['org.gnome.Ptyxis', 'aquarius-console'],
+  'aquarius-files': ['aquarius-files'],
+  'aquarius-settings': ['aquarius-settings'],
+  'aquarius-console': ['aquarius-console'],
   // ⚠️ TWO NAMES, ONE DRAWING (2026-09-09). Aquarius Installer is the OS's
   // "install anything" window and Aquarius Apps is the first-login chooser
   // behind it — the same idea wearing two hats, and only the Installer is
   // visible in the app grid now. Rather than draw a second, nearly identical
-  // plate, the same picture ships under both names. Same reason as the three
-  // GNOME aliases above: one drawing, more than one thing asking for it. When
-  // the Installer gets a drawing of its own, this line loses its second name
-  // and gains an entry in SET.
+  // plate, the same picture ships under both names: one drawing, more than one
+  // thing asking for it. When the Installer gets a drawing of its own, this
+  // line loses its second name and gains an entry in SET.
   'aquarius-apps': ['aquarius-apps', 'aquarius-installer'],
   'aquarius-welcome': ['aquarius-welcome'],
   'aquarius-install-resolve': ['aquarius-install-resolve'],
