@@ -374,6 +374,12 @@ on:
       # Same arrangement as every side branch: builds and checks, never
       # publishes.
       - restart/boot-animation
+      # The stock GNOME apps keep their stock icons (2026-09-17): the Files,
+      # Settings and Console drawings stop being filed under GNOME's own names,
+      # and step 5.6 and the icon test fail if any org.gnome.* icon comes back.
+      # Same arrangement as every side branch: builds and checks, never
+      # publishes.
+      - claude/bold-rubin-hfjh8b
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
