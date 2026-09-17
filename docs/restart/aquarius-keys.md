@@ -165,6 +165,27 @@ One answer, not two questions. That is the design rule, and the switch obeys it.
 - **On GNOME, no "Mac-style keys" tile in the top-right panel.** Open the
   **Extensions** app and check that **"Mac or Windows"** is switched on. GNOME
   switches add-ons off if it decides one misbehaved.
+- **"I do not see the switch" on an account that has been here a while.** This
+  was a real bug, found on the bench on 2026-09-17. The image ships a list of
+  add-ons that are switched on, but that list is only a *default* — it applies
+  to an account that has never changed the list itself. The keyboard's own login
+  script changes it (it switches on the add-on that reports which app you are
+  typing into), so from an account's very first login it has its own copy, and
+  anything we add to the image's list afterwards never reaches it. The result
+  was an add-on that was installed, listed, and switched off.
+
+  It is fixed: the same login script now switches our toggle on as well, once
+  per account. If you are on an older install and the tile still is not there,
+  one line in a terminal does it by hand:
+
+  ```
+  gnome-extensions enable aquarius-keys@stoneharborent.github.io
+  ```
+
+  Log out and back in, and the tile is in the quick settings menu. Switching it
+  off in the Extensions app after that stays off — the script only ever does
+  this once per account.
+
 - **On KDE, no "Mac or Windows" page under Appearance & Style.** Close System
   Settings completely and open it again — it reads the list of pages once, when
   it starts.

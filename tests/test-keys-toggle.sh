@@ -32,7 +32,10 @@
 #   * neither switch writes the settings file itself — both must run
 #     `aq keys`, because that command does four things, not one;
 #   * the id of the add-on is in the image's list of switched-on add-ons, or it
-#     would be installed and invisible.
+#     would be installed and invisible;
+#   * AND that the login script switches it on as well, once per account — the
+#     list above is only a DEFAULT, and an account that has logged in before has
+#     long since written its own copy of it (bench bug, 2026-09-17).
 #
 # ⚠️ IT CANNOT CHECK THAT EITHER SWITCH ACTUALLY WORKS. That needs a running
 # GNOME and a running KDE Plasma, which means the bench machine. The build
@@ -49,6 +52,7 @@ EXT_UUID="aquarius-keys@stoneharborent.github.io"
 EXT_DIR="${REPO}/system_files/usr/share/gnome-shell/extensions/${EXT_UUID}"
 KCM_DIR="${REPO}/kcm/aquarius-keys"
 OVERRIDE="${REPO}/system_files/usr/share/glib-2.0/schemas/zz1-aquarius-20-shell.gschema.override"
+RUNNER="${REPO}/system_files/usr/libexec/aquarius-keys-run"
 
 fails=0
 ok() { echo "  OK   $*"; }
@@ -143,6 +147,22 @@ has "${EXT_JS}" "_cancellable\?\.cancel\(\)" "it cancels any command still runni
 # Installed but not switched on is the same as not installed, and nothing says so.
 has "${OVERRIDE}" "enabled-extensions=.*${EXT_UUID}" \
     "the add-on is in the image's list of switched-on add-ons"
+
+# ⚠️ THAT LINE ALONE IS NOT ENOUGH — the bench proved it on 2026-09-17.
+# A gschema default only applies while an account has never written the setting
+# itself, and the login script writes the whole enabled-extensions list at first
+# login (that is how it switches on the xremap add-on). So every account that
+# already exists stops reading the default, and this add-on arrived installed,
+# listed and switched off. The fix: the same login script switches this one on
+# too, once per account, remembered by a marker file so that turning it off in
+# the Extensions app sticks. Both halves are checked, because the bug comes
+# straight back if either goes missing.
+has "${RUNNER}" "${EXT_UUID}" \
+    "the login script switches the toggle on for accounts that already exist"
+has "${RUNNER}" "keys-toggle-enabled" \
+    "and remembers it with a marker file, so it is done once per account"
+has "${RUNNER}" "XDG_STATE_HOME" \
+    "the marker lives under the user's own state folder"
 
 echo
 echo "== the KDE System Settings page =="

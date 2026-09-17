@@ -4041,6 +4041,13 @@ jobs:
           check "it says how many keyboards it has"   'remapping .* keyboard'           "${RUNNER}"
           check "on GNOME it waits for the shell"     'GNOME Shell to be ready'         "${RUNNER}"
           check "and for the add-on to finish loading" 'gnome-extensions info'          "${RUNNER}"
+          # The image's enabled-extensions DEFAULT only reaches brand-new
+          # accounts — the line above writes that whole list into an existing
+          # account's own settings, which kills the default for it forever. So
+          # the login script switches our quick-settings toggle on too, once per
+          # account (bench bug, 2026-09-17: installed, listed, Enabled:No).
+          check "it also switches our own toggle on" 'aquarius-keys@stoneharborent.github.io' "${RUNNER}"
+          check "once per account, not once per login" 'keys-toggle-enabled'   "${RUNNER}"
           check "'aq keys status' reports the keyboards" 'Keyboards :'                  /usr/bin/aq
 
           echo "== how big things are on the screen =="

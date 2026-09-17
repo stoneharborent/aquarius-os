@@ -155,12 +155,27 @@ done
 #
 # ⚠️ IT IS STILL NOT LISTED IN THE IMAGE'S enabled-extensions DEFAULT, AND THAT
 # IS NOW A DELIBERATE DIFFERENCE RATHER THAN A TEMPORARY ONE. That list lives in
-# system_files/usr/share/glib-2.0/schemas/zz1-aquarius-20-shell.gschema.override,
-# and since 2026-09-16 our OWN add-on — the Mac-or-Windows toggle in the quick
-# settings menu, checked in part 7 below — is on it. This one stays off it,
-# because it belongs to the keyboard feature rather than to the desktop: the run
-# script switches it on per account at login, beside everything else it does for
-# the keyboard, and that keeps one feature's pieces in one place.
+# system_files/usr/share/glib-2.0/schemas/zz1-aquarius-20-shell.gschema.override.
+# This one stays off it, because it belongs to the keyboard feature rather than
+# to the desktop: the run script switches it on per account at login, beside
+# everything else it does for the keyboard, and that keeps one feature's pieces
+# in one place.
+#
+# ⚠️ AND SINCE 2026-09-17 THE RUN SCRIPT ALSO SWITCHES ON OUR OWN TOGGLE — the
+# Mac-or-Windows switch in the quick settings menu, checked in part 7 below —
+# even though that one IS in the enabled-extensions default. That is not a
+# contradiction, it is the fix for a bug found on the bench:
+#
+#   a gschema default only applies while an account has never written the
+#   setting itself, and the line above (`gnome-extensions enable`) writes the
+#   WHOLE enabled-extensions list into the user's own settings at first login.
+#   From that moment the image's default is dead for that account, so any
+#   add-on we add to the default later never reaches an account that already
+#   exists — which is exactly what the bench saw: installed, listed, Enabled:No.
+#
+# So: THE DEFAULT COVERS BRAND-NEW ACCOUNTS; THE LOGIN SCRIPT COVERS EXISTING
+# ONES. The login script does it once per account and leaves a marker file, so
+# turning the toggle off in the Extensions app sticks.
 say "The GNOME add-on that reports which app is focused"
 if [ -d "${XREMAP_BUILD}/gnome-shell/extensions/${GNOME_EXT_UUID}" ]; then
     install -d -m 0755 "$(dirname "${GNOME_EXT_DIR}")"
@@ -681,6 +696,18 @@ PY
     # It runs `aq keys`, so it has to name the real command.
     aq_file_has "${AQ_EXT_DIR}/extension.js" "'/usr/bin/aq'" \
         "the toggle runs /usr/bin/aq rather than writing the settings file itself"
+
+    # ⚠️ THE DEFAULT ABOVE ONLY REACHES BRAND-NEW ACCOUNTS (bench, 2026-09-17).
+    # An account that has logged in before already owns its own copy of
+    # enabled-extensions — the run script's `gnome-extensions enable` wrote it —
+    # and a default never beats a value. So the run script has to switch this
+    # toggle on as well, once per account, marked by a file so that a person who
+    # turns it off in the Extensions app stays off. Both halves are checked here,
+    # because losing either one brings the invisible-toggle bug straight back.
+    aq_file_has "${RUN_SCRIPT}" "${AQ_EXT_UUID}" \
+        "the login script switches the toggle on for accounts that already exist"
+    aq_file_has "${RUN_SCRIPT}" "keys-toggle-enabled" \
+        "and does it once per account, remembered by a marker file"
 fi
 
 # ------------------------------------------------------------------------------

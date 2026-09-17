@@ -397,6 +397,61 @@ case "${aq_binary}" in
             say "WARNING: the GNOME add-on '${aq_ext}' is not installed in this image."
             say "App-specific rules, including the terminal exception, will not work."
         fi
+
+        # ---------------------------------------------------------------------
+        # OUR OWN TOGGLE — the Mac-or-Windows switch in the quick settings menu
+        # ---------------------------------------------------------------------
+        # ⚠️ THE 2026-09-17 BENCH BUG, AND WHY THIS BLOCK EXISTS.
+        #
+        # Our toggle is listed in the image's enabled-extensions DEFAULT (in
+        # system_files/usr/share/glib-2.0/schemas/zz1-aquarius-20-shell.gschema.override).
+        # On the bench it was installed and still switched OFF, and here is why:
+        #
+        # A default only applies while an account has NEVER written that setting
+        # itself. The moment anything writes it, the account has its own copy and
+        # the image's default is dead for that account forever. And the block
+        # just above writes it — `gnome-extensions enable` saves the WHOLE list
+        # into the user's own settings. So every account that has ever logged in
+        # under the keyboard feature already owns its list, and any add-on we
+        # put in the image's default afterwards never reaches it.
+        #
+        # The division of labour, said plainly:
+        #   the DEFAULT in the override file covers BRAND-NEW accounts;
+        #   this block covers accounts that already exist.
+        #
+        # ⚠️ ONCE PER ACCOUNT, NOT ONCE PER LOGIN. Somebody who switches our
+        # toggle off in the Extensions app means it. Doing this at every login
+        # would switch it back on behind their back, every time. So we leave a
+        # marker file the first time it works, and never touch the setting
+        # again on that account.
+        aq_toggle="aquarius-keys@stoneharborent.github.io"
+        aq_state_dir="${XDG_STATE_HOME:-${HOME:-/tmp}/.local/state}/aquarius"
+        aq_toggle_marker="${aq_state_dir}/keys-toggle-enabled"
+
+        if [ -e "${aq_toggle_marker}" ]; then
+            : # Already done once for this account. The person owns it now.
+        elif [ ! -d "/usr/share/gnome-shell/extensions/${aq_toggle}" ]; then
+            say "the quick-settings toggle '${aq_toggle}' is not in this image; skipping."
+        elif ! command -v gnome-extensions > /dev/null 2>&1; then
+            say "'gnome-extensions' is not here, so the quick-settings toggle was left alone."
+        elif gnome-extensions enable "${aq_toggle}" 2> /dev/null; then
+            # Only write the marker once the enable really succeeded — a marker
+            # written after a failure would mean we never try again.
+            if mkdir -p "${aq_state_dir}" 2> /dev/null \
+                && : > "${aq_toggle_marker}" 2> /dev/null; then
+                say "switched on the 'Mac or Windows' toggle in the quick settings menu."
+                say "(Done once for this account only. Turn it off in the Extensions app"
+                say " and it stays off — this will not switch it back on.)"
+            else
+                say "WARNING: switched the toggle on, but could not write ${aq_toggle_marker},"
+                say "so this will be attempted again at the next login."
+            fi
+        else
+            # Never fatal: the keyboard itself does not depend on this toggle.
+            say "WARNING: could not switch on the quick-settings toggle '${aq_toggle}'."
+            say "The keyboard still works; only the on-screen switch is missing. Try:"
+            say "    gnome-extensions enable ${aq_toggle}"
+        fi
         ;;
 esac
 

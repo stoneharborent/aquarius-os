@@ -124,6 +124,18 @@ favorite-apps=['org.gnome.Nautilus.desktop', 'aquarius-davinci-resolve.desktop',
 #                         is checked by build_files/75-aquarius-keys.sh.
 #                         The KDE half of the same switch is a page in System
 #                         Settings — see kcm/aquarius-keys/ .
+#                         ⚠️ THIS LINE ONLY REACHES BRAND-NEW ACCOUNTS. A
+#                         default applies only while an account has never
+#                         written the setting itself, and
+#                         /usr/libexec/aquarius-keys-run writes the whole
+#                         enabled-extensions list at first login (it switches on
+#                         the xremap add-on). On the bench, 2026-09-17, this
+#                         add-on was therefore installed, listed here, and still
+#                         Enabled:No. So since that date the same login script
+#                         also switches THIS one on — once per account, marked
+#                         by a file, so turning it off in the Extensions app
+#                         sticks. The split is: this default covers new
+#                         accounts, the login script covers existing ones.
 #   dash-to-dock          The dock itself: always visible, along the bottom, in
 #                         the middle. GNOME's own dash only exists inside the
 #                         Activities overview, and Royce wants a dock on the
@@ -147,6 +159,13 @@ favorite-apps=['org.gnome.Nautilus.desktop', 'aquarius-davinci-resolve.desktop',
 # add-on that tells the key remapper which app you are typing into. It is
 # switched on per account at login by /usr/libexec/aquarius-keys-run instead,
 # and build_files/75-aquarius-keys.sh explains why in full.
+#
+# ⚠️ AND THAT SAME SCRIPT ALSO SWITCHES ON aquarius-keys, EVEN THOUGH IT IS ON
+# THIS LINE. Not a duplicate — the belt to this line's braces. Because the
+# script writes this whole list into the user's own settings when it enables
+# xremap, every existing account stops reading this default from its very first
+# login, and anything added here afterwards never arrives. The script does its
+# half once per account only.
 #
 # ------------------------------------------------------------------------------
 # WHAT THE PREVIOUS LINE HAD THAT THIS ONE DOES NOT
