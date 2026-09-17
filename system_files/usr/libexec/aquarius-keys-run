@@ -456,6 +456,149 @@ case "${aq_binary}" in
 esac
 
 # =============================================================================
+# 3c. PUT THE WINDOW BUTTONS BACK ON THE RIGHT — ONCE PER ACCOUNT
+# =============================================================================
+# ⚠️ THIS IS A REPAIR FOR A SETTING WE USED TO CHANGE AND NO LONGER DO.
+#
+# THE STORY, IN PLAIN ENGLISH. Between 6 and 17 September 2026 the Mac-or-
+# Windows choice moved the close, minimise and maximise buttons as well as the
+# keyboard: Mac put them on the LEFT of the title bar, Windows on the right.
+# Royce dropped that on 2026-09-17, because it could not be made universal —
+# applications that draw their own title bar (Chrome's Flatpak was the one the
+# bench caught) ignored it completely, so some windows moved and some did not.
+# The buttons are now stock and on the RIGHT for everybody, on both desktops,
+# and the Mac-or-Windows switch is about the keyboard only.
+#
+# WHY A REPAIR IS NEEDED AT ALL. The new right-hand arrangement is a DEFAULT
+# compiled into the image. A default only reaches an account that has never
+# written that setting itself — and `aq keys` wrote it, into every account that
+# ever ran it. Those accounts own their own copy, the image's default can never
+# reach them, and without this block they would sit with left-hand buttons
+# forever. (Exactly the same trap as the quick-settings toggle below.)
+#
+# ⚠️ WE ONLY UNDO OUR OWN HANDWRITING. This resets a value ONLY when it is
+# character-for-character one of the strings `aq keys` used to write. Anything a
+# person set themselves — any other layout, in any of these files — is left
+# exactly as they left it. We are not tidying up after the user; we are tidying
+# up after ourselves.
+#
+# ⚠️ ONCE PER ACCOUNT, NOT ONCE PER LOGIN, for the same reason: somebody who
+# puts their buttons back on the left afterwards means it. A marker file under
+# ~/.local/state/aquarius/ records that the repair has been done, the same
+# convention as keys-toggle-enabled below.
+#
+# ⚠️ AND IT RUNS ON WHICHEVER DESKTOP YOU LOG INTO. It is deliberately OUTSIDE
+# the GNOME-only block below: the GNOME value and the KDE values were both
+# written by one run of `aq keys`, whichever desktop was in front of you at the
+# time, so both have to be undone whichever desktop you are in now.
+#
+# Never fatal. Every failure here is a warning in the log and nothing more; the
+# keyboard remapper below does not depend on any of it.
+# =============================================================================
+aq_buttons_state_dir="${XDG_STATE_HOME:-${HOME:-/tmp}/.local/state}/aquarius"
+aq_buttons_marker="${aq_buttons_state_dir}/window-buttons-unpinned"
+
+if [ -e "${aq_buttons_marker}" ]; then
+    : # Already done once for this account. The person owns it now.
+else
+    aq_buttons_did_something=0
+
+    # --- GNOME -------------------------------------------------------------
+    # The two strings `aq keys` used to write, and nothing else:
+    #   mac      close,minimize,maximize:
+    #   windows  :minimize,maximize,close
+    # `gsettings get` answers with quotes around it, so they are stripped
+    # before comparing.
+    if command -v gsettings > /dev/null 2>&1; then
+        aq_btn_now="$(gsettings get org.gnome.desktop.wm.preferences button-layout 2> /dev/null || true)"
+        aq_btn_now="${aq_btn_now#\'}"
+        aq_btn_now="${aq_btn_now%\'}"
+        case "${aq_btn_now}" in
+            "close,minimize,maximize:" | ":minimize,maximize,close")
+                if gsettings reset org.gnome.desktop.wm.preferences button-layout 2> /dev/null; then
+                    say "put GNOME's window buttons back to the AquariusOS default (on the right)."
+                    aq_buttons_did_something=1
+                else
+                    say "WARNING: could not reset GNOME's window-button layout; it is still '${aq_btn_now}'."
+                    say "You can do it yourself with:"
+                    say "    gsettings reset org.gnome.desktop.wm.preferences button-layout"
+                fi
+                ;;
+        esac
+    fi
+
+    # --- KDE Plasma --------------------------------------------------------
+    # `aq keys` wrote two keys into the person's own ~/.config/kwinrc, under
+    # [org.kde.kdecoration2]. KDE spells each button as one letter: X is close,
+    # I is minimise, A is maximise. The two pairs it wrote were:
+    #   mac      ButtonsOnLeft=XIA   ButtonsOnRight=(empty)
+    #   windows  ButtonsOnLeft=      ButtonsOnRight=IAX
+    # Deleting both keys hands the decision back to Plasma's own stock layout,
+    # which is already the right-hand one.
+    if command -v kreadconfig6 > /dev/null 2>&1 \
+        && command -v kwriteconfig6 > /dev/null 2>&1; then
+        aq_kwin_left="$(kreadconfig6 --file kwinrc --group org.kde.kdecoration2 --key ButtonsOnLeft 2> /dev/null || true)"
+        aq_kwin_right="$(kreadconfig6 --file kwinrc --group org.kde.kdecoration2 --key ButtonsOnRight 2> /dev/null || true)"
+        if { [ "${aq_kwin_left}" = "XIA" ] && [ -z "${aq_kwin_right}" ]; } \
+            || { [ -z "${aq_kwin_left}" ] && [ "${aq_kwin_right}" = "IAX" ]; }; then
+            if kwriteconfig6 --file kwinrc --group org.kde.kdecoration2 \
+                    --key ButtonsOnLeft --delete 2> /dev/null \
+                && kwriteconfig6 --file kwinrc --group org.kde.kdecoration2 \
+                    --key ButtonsOnRight --delete 2> /dev/null; then
+                say "removed the window-button layout AquariusOS wrote into kwinrc; Plasma's own is back."
+                aq_buttons_did_something=1
+                # Ask a running KWin to re-read kwinrc, so nobody has to log
+                # out. If Plasma is not running this says and changes nothing,
+                # which is correct. Best-effort: never fails the login.
+                if command -v qdbus6 > /dev/null 2>&1; then
+                    qdbus6 org.kde.KWin /KWin reconfigure > /dev/null 2>&1 || true
+                elif command -v busctl > /dev/null 2>&1; then
+                    busctl --user call org.kde.KWin /KWin org.kde.KWin reconfigure \
+                        > /dev/null 2>&1 || true
+                elif command -v dbus-send > /dev/null 2>&1; then
+                    dbus-send --session --dest=org.kde.KWin /KWin \
+                        org.kde.KWin.reconfigure > /dev/null 2>&1 || true
+                fi
+            else
+                say "WARNING: could not remove the window-button keys from kwinrc."
+                say "System Settings > Appearance & Style > Window Decorations will also fix it."
+            fi
+        fi
+    fi
+
+    # --- the GTK settings files -------------------------------------------
+    # Two leftovers from the KDE-era theme generator that sandboxed apps still
+    # read. Only the one exact line we used to write is changed; a file that
+    # says anything else is left alone, and a missing file is not created.
+    for aq_gtk_ini in \
+        "${XDG_CONFIG_HOME:-${HOME:-/tmp}/.config}/gtk-3.0/settings.ini" \
+        "${XDG_CONFIG_HOME:-${HOME:-/tmp}/.config}/gtk-4.0/settings.ini"; do
+        [ -f "${aq_gtk_ini}" ] || continue
+        grep -qx 'gtk-decoration-layout=close,minimize,maximize:' "${aq_gtk_ini}" || continue
+        if sed -i 's/^gtk-decoration-layout=close,minimize,maximize:$/gtk-decoration-layout=:minimize,maximize,close/' \
+            "${aq_gtk_ini}" 2> /dev/null; then
+            say "put the window buttons back on the right in ${aq_gtk_ini}."
+            aq_buttons_did_something=1
+        else
+            say "WARNING: could not edit ${aq_gtk_ini}; its window buttons stay on the left."
+        fi
+    done
+
+    # The marker is written whether or not anything needed changing — the
+    # question this block answers is "has this account been looked at since
+    # 2026-09-17?", and the answer is now yes either way.
+    if mkdir -p "${aq_buttons_state_dir}" 2> /dev/null \
+        && : > "${aq_buttons_marker}" 2> /dev/null; then
+        if [ "${aq_buttons_did_something}" -eq 1 ]; then
+            say "(Done once for this account. Move them back if you like — this will not undo it.)"
+        fi
+    else
+        say "WARNING: could not write ${aq_buttons_marker}, so the window-button"
+        say "check will be made again at the next login."
+    fi
+fi
+
+# =============================================================================
 # 4. CAN WE ACTUALLY READ THE KEYBOARD?
 # =============================================================================
 # The remapper needs two things that ordinary programs do not:
