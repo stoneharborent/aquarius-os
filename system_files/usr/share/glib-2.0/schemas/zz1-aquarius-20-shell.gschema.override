@@ -109,8 +109,21 @@ favorite-apps=['org.gnome.Nautilus.desktop', 'aquarius-davinci-resolve.desktop',
 # has to be spelled exactly right (each one is the extension's own id, which
 # always looks like an email address).
 #
-# THE FOUR, AND WHY
+# THE FIVE, AND WHY
 #
+#   aquarius-keys         OURS, added 2026-09-16. The Mac-or-Windows switch in
+#                         the quick settings menu at the top-right of the
+#                         screen — the same menu as Wi-Fi and Dark Style. It
+#                         shows which style is on and changes it in one press,
+#                         by running the same `aq keys` command a person would
+#                         type. Before it existed the only ways to change this
+#                         were the Welcome window (seen once) and a terminal.
+#                         It is the only extension on this line that is not a
+#                         Fedora package: it lives in this repo, at
+#                         system_files/usr/share/gnome-shell/extensions/ , and
+#                         is checked by build_files/75-aquarius-keys.sh.
+#                         The KDE half of the same switch is a page in System
+#                         Settings — see kcm/aquarius-keys/ .
 #   dash-to-dock          The dock itself: always visible, along the bottom, in
 #                         the middle. GNOME's own dash only exists inside the
 #                         Activities overview, and Royce wants a dock on the
@@ -125,8 +138,15 @@ favorite-apps=['org.gnome.Nautilus.desktop', 'aquarius-davinci-resolve.desktop',
 #   gsconnect             Phone pairing: notifications, file send, clipboard.
 #                         Genuinely useful and hard to replace.
 #
-# All four are packaged by Fedora and installed in
-# build_files/40-gnome-desktop.sh. Nothing here is downloaded at build time.
+# The last four are packaged by Fedora and installed in
+# build_files/40-gnome-desktop.sh. The first one is ours and is copied into the
+# image with the rest of system_files/ at step 50. Nothing here is downloaded
+# at build time.
+#
+# ⚠️ ONE EXTENSION IS DELIBERATELY *NOT* ON THIS LINE: xremap@k0kubun.com, the
+# add-on that tells the key remapper which app you are typing into. It is
+# switched on per account at login by /usr/libexec/aquarius-keys-run instead,
+# and build_files/75-aquarius-keys.sh explains why in full.
 #
 # ------------------------------------------------------------------------------
 # WHAT THE PREVIOUS LINE HAD THAT THIS ONE DOES NOT
@@ -166,4 +186,4 @@ favorite-apps=['org.gnome.Nautilus.desktop', 'aquarius-davinci-resolve.desktop',
 #
 # Neither is even installed here — they are listed so that "why is there no
 # blur?" has an answer in the same file as the decision.
-enabled-extensions=['dash-to-dock@micxgx.gmail.com', 'appindicatorsupport@rgcjonas.gmail.com', 'caffeine@patapon.info', 'gsconnect@andyholmes.github.io']
+enabled-extensions=['aquarius-keys@stoneharborent.github.io', 'dash-to-dock@micxgx.gmail.com', 'appindicatorsupport@rgcjonas.gmail.com', 'caffeine@patapon.info', 'gsconnect@andyholmes.github.io']

@@ -95,6 +95,13 @@ USAGE
                         running, how many keyboards it has hold of, and where
                         to look if something is wrong.
 
+                        You do not have to use a terminal for this. The same
+                        choice has a switch on each desktop:
+                          GNOME  the menu at the TOP-RIGHT of the screen (the
+                                 one with Wi-Fi in it) — "Mac-style keys".
+                          KDE    System Settings > Appearance & Style >
+                                 "Mac or Windows".
+
     aq display scale N  Make EVERYTHING on the screen N times its normal size.
                         This is the setting GNOME calls "Scale". On a 4K
                         monitor, try 1.25 or 1.5. Applies straight away.
@@ -228,6 +235,12 @@ aq keys — choose how keyboard shortcuts work
     aq keys windows     The normal Linux ones. Copy is Control-C, and the window
                         buttons sit on the RIGHT.
     aq keys status      What is switched on, and is it running?
+
+WITHOUT A TERMINAL
+    GNOME   the menu at the top-right of the screen, beside Wi-Fi and Dark
+            Style: a switch called "Mac-style keys".
+    KDE     System Settings > Appearance & Style > "Mac or Windows".
+    Either one does exactly what the commands above do.
 EOF
 }
 
@@ -437,6 +450,25 @@ status() {
 
     local desktop="${XDG_CURRENT_DESKTOP:-not set}"
     echo "  Desktop   : ${desktop}"
+
+    # Where the switch is WITHOUT a terminal. Added 2026-09-16, when the choice
+    # got a graphical switch on each desktop — before that, this command and the
+    # Welcome window were the only ways to change it, and the Welcome window
+    # only appears once. Both desktops are named whichever one you are sitting
+    # in, because a person who has just switched desktops is exactly the person
+    # asking this question.
+    case "${desktop}" in
+        *KDE* | *Plasma* | *plasma*)
+            echo "  Change it : System Settings > Appearance & Style > 'Mac or Windows'"
+            echo "              (on GNOME it is the menu at the top-right of the screen)"
+            ;;
+        *)
+            echo "  Change it : the menu at the top-right of the screen — the switch"
+            echo "              called 'Mac-style keys', beside Wi-Fi and Dark Style"
+            echo "              (on KDE Plasma it is System Settings > Appearance &"
+            echo "              Style > 'Mac or Windows')"
+            ;;
+    esac
 
     if ! command -v systemctl > /dev/null 2>&1; then
         echo "  Running   : cannot tell — there is no systemctl here."

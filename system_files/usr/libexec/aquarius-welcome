@@ -145,15 +145,22 @@ KEYBOARD_CHOICES = [
 ]
 DEFAULT_KEYBOARD = KEYBOARD_CHOICES[0][0]
 
-# The line under the two cards. It names the command rather than a Settings
-# panel because the command is what exists today: `aq keys` is shipped and
-# works, and there is no keyboard page in any settings app yet. Promising a
-# panel that is not there is how a welcome screen becomes a liar.
+# The line under the two cards.
+#
+# ⚠️ IT USED TO NAME ONLY THE COMMAND, because until 2026-09-16 the command was
+# genuinely the only way to change this afterwards, and promising a settings
+# panel that does not exist is how a welcome screen becomes a liar. Since then
+# both desktops really do have a switch — the GNOME add-on in the quick settings
+# menu and the KDE page in System Settings — so the panel is named first and the
+# command second. If either switch is ever removed, this sentence comes back
+# with it.
 KEYBOARD_NOTE = (
-    "You can change this any time. Open a terminal and type "
-    "aq keys mac or aq keys windows — it takes effect straight away, "
-    "with no need to log out. It moves the window buttons too: one answer, "
-    "not two questions."
+    "You can change this any time. On GNOME it is in the menu at the top-right "
+    "of the screen, beside Wi-Fi; on KDE Plasma it is System Settings > "
+    "Appearance & Style > Mac or Windows. In a terminal it is "
+    "aq keys mac or aq keys windows. Every one of them takes effect straight "
+    "away, with no need to log out, and moves the window buttons too: one "
+    "answer, not two questions."
 )
 
 # The three things worth knowing on day one. Not a manual: three sentences that

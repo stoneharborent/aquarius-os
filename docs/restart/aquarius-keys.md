@@ -118,7 +118,77 @@ itself: `system_files/usr/share/aquarius/keys/mac.yaml`.
 
 ---
 
+## ⭐ The switch, without a terminal
+
+*Added 16 September 2026.*
+
+You do **not** have to type anything to change this. Each desktop has a switch,
+and they are the same switch — change it in one place and every other place
+agrees, straight away, with no logging out.
+
+### On GNOME
+
+1. Click the **top-right corner of the screen**, where the Wi-Fi, battery and
+   volume icons are. A panel drops down.
+2. Find the tile labelled **"Mac-style keys"**. Under the label it says which
+   one you are on right now — **Mac** or **Windows**.
+3. **Click the tile** to swap to the other one. That is the whole thing.
+4. If you would rather pick than swap, click the **small arrow** on the right
+   of the tile. A little menu opens listing **Mac** and **Windows**, with a tick
+   beside the one that is on. Click either.
+
+### On KDE Plasma
+
+1. Open **System Settings** (it is in your apps; on Mac keys, ⌘Space and type
+   "system settings").
+2. In the list down the left, click **Appearance & Style**.
+3. Click the page called **"Mac or Windows"**. You can also just type *mac*,
+   *windows*, *keyboard* or *window buttons* into the search box at the top —
+   the page answers to all of them.
+4. Pick **Mac** or **Windows**. There is no Apply button and there does not need
+   to be: it happens when you click.
+
+### What the switch changes
+
+Exactly what `aq keys` changes, because it *is* `aq keys` — the switch runs the
+same command you would have typed. So both of these move together, as they
+always have:
+
+- **the keyboard**: Copy is ⌘C on Mac, Control-C on Windows;
+- **the window buttons**: close, minimise and maximise on the **left** on Mac,
+  on the **right** on Windows.
+
+One answer, not two questions. That is the design rule, and the switch obeys it.
+
+### If the switch is not there
+
+- **On GNOME, no "Mac-style keys" tile in the top-right panel.** Open the
+  **Extensions** app and check that **"Mac or Windows"** is switched on. GNOME
+  switches add-ons off if it decides one misbehaved.
+- **On KDE, no "Mac or Windows" page under Appearance & Style.** Close System
+  Settings completely and open it again — it reads the list of pages once, when
+  it starts.
+- **Either way, it still works from a terminal**, with the commands in the next
+  section. Nothing about the keyboard depends on the switch; the switch is only
+  a way of reaching it.
+
+### Where it lives, for the record
+
+| Desktop | What it is | In this repo |
+| --- | --- | --- |
+| GNOME | a small add-on of ours, `aquarius-keys@stoneharborent.github.io` | `system_files/usr/share/gnome-shell/extensions/` |
+| KDE Plasma | a System Settings page, `kcm_aquariuskeys` | `kcm/aquarius-keys/`, compiled by `build_files/73-keys-kcm-build.sh` |
+
+Neither one stores the setting itself. Both read the same file, `aq` reads —
+`~/.config/aquarius/keys.conf` — and both change it by running `aq keys`. There
+is one owner of this setting and it is `/usr/bin/aq`.
+
+---
+
 ## Switching it off, and back on
+
+The same two choices, typed. Everything the switch above does, these do — it is
+the same command.
 
 ```
 aq keys windows     the normal Linux and Windows shortcuts — Copy is Control-C

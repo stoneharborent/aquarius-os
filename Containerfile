@@ -112,6 +112,9 @@ COPY build_files /build_files
 COPY system_files /system_files
 COPY ingest /ingest
 COPY tests /tests
+# The source of the KDE "Mac or Windows" settings page. The kcm-build workshop
+# further down compiles it; without this line it finds an empty folder.
+COPY kcm /kcm
 
 # ------------------------------------------------------------------------------
 # The NVIDIA driver parts — fetched ONLY when we are building the NVIDIA image
@@ -171,6 +174,25 @@ ARG XREMAP_COMMIT
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     XREMAP_VERSION="${XREMAP_VERSION}" XREMAP_COMMIT="${XREMAP_COMMIT}" \
     /ctx/build_files/74-xremap-build.sh
+
+# ------------------------------------------------------------------------------
+# The KDE half of the Mac-or-Windows switch
+# ------------------------------------------------------------------------------
+# AquariusOS has one Mac-or-Windows choice, and since 2026-09-16 it has a switch
+# on each desktop. On GNOME the switch is a small add-on of ours made of plain
+# text files, so it just ships in system_files/ with everything else. On KDE it
+# is a page in System Settings, and a page in System Settings has to be a
+# compiled program — kcm/aquarius-keys/CMakeLists.txt sets out the evidence for
+# that, checked against Fedora 44's own packages rather than assumed.
+#
+# So it is built here, in its own throwaway workshop, for the same reason
+# xremap is: the KDE development libraries and a C++ compiler come to several
+# hundred megabytes, and the finished plugin is about a hundred kilobytes. Only
+# the plugin crosses into the operating system, in step 7b below.
+FROM quay.io/fedora/fedora:${FEDORA_VERSION} AS kcm-build
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache/libdnf5 \
+    /ctx/build_files/73-keys-kcm-build.sh
 
 # ==============================================================================
 # THE THREE WORKSHOPS
@@ -457,8 +479,16 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 #     two remapper programs built in the xremap-build stage above, and checks
 #     the rule files, the service and the `aq keys` switch that came in with
 #     system_files at step 5.
+#
+#     Since 2026-09-16 it also installs the two GRAPHICAL switches for the same
+#     choice: the GNOME toggle in the quick settings menu (plain text files,
+#     already in the image from step 5, checked here) and the KDE "Mac or
+#     Windows" page in System Settings, which comes from the kcm-build workshop
+#     above. Both of them just run `aq keys`, so the whole feature stays in one
+#     step and is checked in one place.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=xremap-build,source=/out,target=/ctx-xremap \
+    --mount=type=bind,from=kcm-build,source=/out,target=/ctx-kcm \
     /ctx/build_files/75-aquarius-keys.sh
 
 # 7c. The creator layer: Aquarius Editor and Aquarius Writer baked in, the list
