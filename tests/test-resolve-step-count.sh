@@ -286,7 +286,13 @@ if [ -z "${PREPARE_STEPS}" ]; then
 else
     bad "preparing sent progress lines nobody is reading: ${PREPARE_STEPS}"
 fi
-if grep -q 'already set up' "${WORK}/said.txt"; then
+# The "already set up" sentence comes AFTER the graphics-card check in the
+# program, so only a machine with an NVIDIA card ever reaches it. GitHub's build
+# machines have no card: there, --prepare stands down first (tested just below),
+# and asking for this sentence failed build 35250163615 on 2026-09-17.
+if [ ! -e /proc/driver/nvidia/version ] && [ ! -c /dev/nvidiactl ]; then
+    note "(no NVIDIA card here, so the 'already set up' sentence is never reached)"
+elif grep -q 'already set up' "${WORK}/said.txt"; then
     ok "and says plainly that there was nothing to do"
 else
     bad "preparing an already-prepared machine did not say so:"
