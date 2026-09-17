@@ -346,10 +346,15 @@ fi
 # 3. Fetch it
 # ==============================================================================
 # skopeo copies between image stores and files without needing a container
-# engine running, which is the only thing that can work inside a build. It is
-# not in the base image, so it is asked for by name here — and it is removed
-# again at the end, because a tool that exists only to build the image has no
-# business being in the finished one.
+# engine running, which is the only thing that can work inside a build.
+#
+# ⚠️ IT IS ALREADY IN THE BASE IMAGE, AND IT IS NOT OURS. bootc — the program
+# that updates this operating system — needs skopeo to do its job, so Fedora
+# ships it. This step once said "it is not in the base image", asked for it, and
+# REMOVED it at the end. The removal took bootc and rpm-ostree out with it, and
+# build 35252615446 (2026-09-17) only noticed because the updater step looks for
+# them. An image published like that could never have updated itself again.
+# So: ask for it (which does nothing when it is already here), never remove it.
 say "DaVinci Resolve — fetching the environment"
 
 aq_dnf install skopeo
@@ -619,19 +624,18 @@ aq_file_has /usr/bin/aq 'resolve prepare' \
     "'aq resolve prepare' is a command people can find"
 
 # ==============================================================================
-# 7. Take the build tool back out
+# 7. The build tool stays, and so does the updater
 # ==============================================================================
-# skopeo was wanted for ninety seconds. Leaving it in would be a tool in
-# everybody's operating system that exists only because of how the image was
-# made, which is the sort of thing that accumulates until nobody knows why any
-# of it is there.
-say "DaVinci Resolve — putting the build tool away"
-aq_dnf remove skopeo
-if aq_have skopeo; then
-    echo "  NOTE: skopeo is still on the path — something else in this image needs it."
-    echo "        That is fine; it simply means it was not ours to remove."
-else
-    ok "skopeo is gone from the finished image"
-fi
+# skopeo is NOT taken back out — see the warning in part 3. What is checked here
+# instead is the thing that removal once broke: the programs that update the
+# operating system must still be in the image when this step is finished.
+say "DaVinci Resolve — the updater is still here"
+for aq_keep in bootc rpm-ostree skopeo; do
+    if rpm -q "${aq_keep}" > /dev/null 2>&1; then
+        ok "${aq_keep} is still installed"
+    else
+        bad "${aq_keep} is gone — this step removed something the updater needs"
+    fi
+done
 
 aq_finish "DaVinci Resolve — the baked environment"
