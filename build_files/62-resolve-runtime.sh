@@ -393,6 +393,8 @@ for f in /usr/libexec/aquarius-resolve-install \
     /usr/libexec/aquarius-resolve-check \
     /usr/libexec/aquarius-resolve-update-notify \
     /usr/libexec/aquarius-resolve-entry \
+    /usr/libexec/aquarius-resolve-open \
+    /usr/share/applications/aquarius-davinci-resolve.desktop \
     /usr/share/applications/aquarius-install-resolve.desktop \
     /usr/share/applications/aquarius-remove-resolve.desktop \
     /usr/share/applications/aquarius-update-resolve.desktop; do
@@ -1450,11 +1452,25 @@ fi
 # to an operating system image that everyone downloads, for a feature not
 # everyone uses. It arrives on first use instead, which is the whole reason it
 # is a separate image with its own build.
-say "Not downloaded on purpose"
-echo "  The Rocky Linux runtime is NOT baked into this image."
-echo "  It is about a gigabyte and it is fetched the first time somebody sets"
-echo "  Resolve up. Baking it in would make every AquariusOS download bigger"
-echo "  for a feature not everybody uses."
+# ⚠️ THIS SECTION WAS TRUE UNTIL 2026-09-16 AND IS NOW TRUE OF ONE EDITION ONLY.
+# It used to say the Rocky Linux runtime is never baked in, because it is about
+# a gigabyte and not everybody uses Resolve. Two things changed that: the
+# archived form is ~330 MB rather than a gigabyte, and Blackmagic support NVIDIA
+# on Linux and nothing else — so it can be carried by the edition whose owners
+# can actually use it and left out of the one whose owners cannot. That is
+# build_files/63-resolve-runtime-bake.sh, which runs directly after this step.
+say "What this step does not do"
+if [ "${NVIDIA}" = "1" ]; then
+    echo "  This step does not fetch the environment Resolve runs in — step 63"
+    echo "  does, and on this edition it puts it INSIDE the image, so setting"
+    echo "  Resolve up needs no download of ours at all."
+else
+    echo "  The Rocky Linux runtime is NOT baked into this image, and on this"
+    echo "  edition that is still the right answer: Blackmagic support NVIDIA on"
+    echo "  Linux and nothing else, so ~330 MB here would be carried by people"
+    echo "  who cannot usefully run Resolve. It is fetched the first time"
+    echo "  somebody sets Resolve up, exactly as it always was."
+fi
 
 
 # Display preferences and the host-side normal-window memory helper.
