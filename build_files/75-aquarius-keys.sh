@@ -68,6 +68,16 @@ SKEL_CONF="/etc/skel/.config/aquarius/keys.conf"
 GNOME_EXT_UUID="xremap@k0kubun.com"
 GNOME_EXT_DIR="/usr/share/gnome-shell/extensions/${GNOME_EXT_UUID}"
 
+# Our own GNOME toggle — the Mac-or-Windows switch in the quick settings menu.
+# It is plain text files, shipped in system_files/ and copied in at step 50, so
+# there is nothing to compile; this step only checks it. See part 7 below.
+AQ_EXT_UUID="aquarius-keys@stoneharborent.github.io"
+AQ_EXT_DIR="/usr/share/gnome-shell/extensions/${AQ_EXT_UUID}"
+
+# Where the throwaway `kcm-build` stage left the compiled KDE settings page.
+# Mounted by the Containerfile, exactly like /ctx-xremap above.
+KCM_BUILD="/ctx-kcm"
+
 say "Aquarius Keys — installing the two remapper programs"
 
 # ==============================================================================
@@ -141,12 +151,16 @@ done
 # do not work.
 #
 # It is installed for the whole machine here, and switched on for each account
-# by the run script at login. It is NOT listed in the image's
-# enabled-extensions default on purpose: that list lives in
+# by the run script at login.
+#
+# ⚠️ IT IS STILL NOT LISTED IN THE IMAGE'S enabled-extensions DEFAULT, AND THAT
+# IS NOW A DELIBERATE DIFFERENCE RATHER THAN A TEMPORARY ONE. That list lives in
 # system_files/usr/share/glib-2.0/schemas/zz1-aquarius-20-shell.gschema.override,
-# which belongs to the desktop layer and is being edited by other work in
-# progress. Switching it on per account does the same job and touches nothing
-# shared.
+# and since 2026-09-16 our OWN add-on — the Mac-or-Windows toggle in the quick
+# settings menu, checked in part 7 below — is on it. This one stays off it,
+# because it belongs to the keyboard feature rather than to the desktop: the run
+# script switches it on per account at login, beside everything else it does for
+# the keyboard, and that keeps one feature's pieces in one place.
 say "The GNOME add-on that reports which app is focused"
 if [ -d "${XREMAP_BUILD}/gnome-shell/extensions/${GNOME_EXT_UUID}" ]; then
     install -d -m 0755 "$(dirname "${GNOME_EXT_DIR}")"
@@ -573,5 +587,165 @@ aq_file_has "${SKEL_CONF}" '^mode=mac$' \
     "a brand-new account gets Mac shortcuts (${SKEL_CONF})"
 aq_file_has "${RUN_SCRIPT}" '^AQ_MODE="mac"$' \
     "an account with no settings file also gets Mac shortcuts"
+
+# ==============================================================================
+# 7. The two graphical switches (added 2026-09-16)
+# ==============================================================================
+# WHAT THIS PART IS FOR
+#
+# Everything above gives the computer Mac-style keys and one command to change
+# them. What it did NOT give anybody was a way to FIND that choice again. The
+# Welcome window asks it once, on a person's first login, and after that the
+# only answer was to know that a command called `aq` exists.
+#
+# So since 2026-09-16 the same choice has a switch on each desktop:
+#
+#   GNOME   a toggle in the quick settings menu at the top-right of the screen,
+#           beside Wi-Fi and Dark Style. It is a small add-on of ours, plain
+#           text files, shipped in system_files/ and switched on for everybody
+#           in the image's own list of add-ons.
+#   KDE     a page called "Mac or Windows" in System Settings, under
+#           "Appearance & Style". It is a compiled plugin, built in the
+#           throwaway `kcm-build` stage by build_files/73-keys-kcm-build.sh.
+#
+# ⚠️ NEITHER OF THEM DECIDES ANYTHING. Both read the same settings file this
+# whole step is about, and both change it by running `aq keys mac` or
+# `aq keys windows` — the same command a person would type. There is one owner
+# of this setting and it is /usr/bin/aq.
+
+# ------------------------------------------------------------------------------
+# 7a. The GNOME toggle
+# ------------------------------------------------------------------------------
+say "The GNOME quick-settings toggle"
+
+if [ ! -r "${AQ_EXT_DIR}/metadata.json" ]; then
+    bad "${AQ_EXT_DIR}/metadata.json is missing — the toggle would simply not exist"
+elif [ ! -s "${AQ_EXT_DIR}/extension.js" ]; then
+    bad "${AQ_EXT_DIR}/extension.js is missing or empty"
+else
+    ok "the add-on's files are in the image"
+
+    # ⚠️ THE FOLDER NAME AND THE ID INSIDE THE FILE HAVE TO MATCH, EXACTLY.
+    # GNOME finds an add-on by folder name and then believes the id written
+    # inside it. If the two disagree, the add-on is loaded and then refuses to
+    # start, with nothing anywhere saying why.
+    if python3 - "${AQ_EXT_DIR}/metadata.json" "${AQ_EXT_UUID}" << 'PY'; then
+import json
+import sys
+
+meta = json.load(open(sys.argv[1]))
+print(f"       it calls itself {meta['uuid']!r}, version name {meta.get('version-name', '?')!r}")
+print(f"       it says it works with GNOME Shell {', '.join(str(v) for v in meta['shell-version'])}")
+sys.exit(0 if meta["uuid"] == sys.argv[2] else 1)
+PY
+        ok "metadata.json is valid and its id matches the folder it lives in"
+    else
+        bad "metadata.json is not valid, or its id is not ${AQ_EXT_UUID} — GNOME would refuse to start it"
+    fi
+
+    # It has to declare support for THIS GNOME Shell, or the shell refuses to
+    # load it — silently, with no toggle and no error anywhere. Same trap the
+    # dock hits; see build_files/40-gnome-desktop.sh.
+    if aq_have gnome-shell; then
+        gnome-shell --version > /tmp/aq-keys-shell-version.txt
+        AQ_SHELL_MAJOR="$(awk '{print $3}' /tmp/aq-keys-shell-version.txt | cut -d. -f1)"
+        rm -f /tmp/aq-keys-shell-version.txt
+        if python3 - "${AQ_EXT_DIR}/metadata.json" "${AQ_SHELL_MAJOR}" << 'PY'; then
+import json
+import sys
+
+meta = json.load(open(sys.argv[1]))
+sys.exit(0 if sys.argv[2] in [str(v) for v in meta["shell-version"]] else 1)
+PY
+            ok "it supports the GNOME Shell this image ships (${AQ_SHELL_MAJOR})"
+        else
+            bad "it does not list GNOME Shell ${AQ_SHELL_MAJOR} — the toggle would never appear. Edit shell-version in ${AQ_EXT_DIR}/metadata.json."
+        fi
+    fi
+
+    # ⚠️ AN ADD-ON THAT IS INSTALLED BUT NOT SWITCHED ON IS INVISIBLE, and
+    # nothing says so. The list of add-ons GNOME switches on is a DEFAULT
+    # compiled into the image's settings, so the honest way to check it is to
+    # ask the settings system the same question a new account asks on its first
+    # login. GSETTINGS_BACKEND=memory means "read the compiled defaults", which
+    # is the only thing that can work in a build with no desktop running.
+    if aq_have gsettings; then
+        if aq_output_has "${AQ_EXT_UUID}" \
+            env GSETTINGS_BACKEND=memory gsettings get org.gnome.shell enabled-extensions; then
+            ok "it is switched on by default for every new account"
+        else
+            bad "${AQ_EXT_UUID} is not in the image's enabled-extensions default — it would be installed and invisible. Add it in system_files/usr/share/glib-2.0/schemas/zz1-aquarius-20-shell.gschema.override."
+        fi
+    fi
+
+    # It runs `aq keys`, so it has to name the real command.
+    aq_file_has "${AQ_EXT_DIR}/extension.js" "'/usr/bin/aq'" \
+        "the toggle runs /usr/bin/aq rather than writing the settings file itself"
+fi
+
+# ------------------------------------------------------------------------------
+# 7b. The KDE System Settings page
+# ------------------------------------------------------------------------------
+say "The KDE 'Mac or Windows' page in System Settings"
+
+if [ ! -s "${KCM_BUILD}/kcm/kcm_aquariuskeys.so" ]; then
+    bad "the settings page did not come through from the kcm-build stage"
+elif [ ! -s "${KCM_BUILD}/kcm/install-path" ]; then
+    bad "${KCM_BUILD}/kcm/install-path is missing — the build did not say where the page belongs"
+else
+    # The build stage wrote down the exact folder its own KDE libraries chose,
+    # rather than us guessing between lib and lib64.
+    KCM_DEST="$(cat "${KCM_BUILD}/kcm/install-path")"
+    install -D -m 0755 "${KCM_BUILD}/kcm/kcm_aquariuskeys.so" "${KCM_DEST}"
+    ok "installed at ${KCM_DEST}"
+
+    # ⚠️ IT IS ONLY A SETTINGS PAGE IF IT IS IN THE ONE FOLDER SYSTEM SETTINGS
+    # READS. Anywhere else and it is just a file.
+    case "${KCM_DEST}" in
+        */plasma/kcms/systemsettings/kcm_aquariuskeys.so)
+            ok "that is the folder System Settings looks in"
+            ;;
+        *)
+            bad "${KCM_DEST} is not a folder System Settings reads — the page would never appear"
+            ;;
+    esac
+
+    # Does it have every library it needs, HERE, in the image that ships? This
+    # is the check the header of 73-keys-kcm-build.sh promises: the page was
+    # compiled in a different container, and `ldd` prints "not found" beside
+    # anything missing.
+    echo "--- what the page needs ---"
+    ldd "${KCM_DEST}" || true
+    echo "---"
+    if ldd "${KCM_DEST}" 2>&1 | grep -q "not found"; then
+        bad "the settings page needs a library that is not in this image (see above) — it would fail to load"
+    else
+        ok "every library the page needs is in the image"
+    fi
+
+    # The page's name, its search words and WHERE IT APPEARS are baked into the
+    # plugin as text. Read them back out of the finished file: if the
+    # description did not make it in, System Settings shows nothing at all.
+    for aq_kcm_text in \
+        "Mac or Windows" \
+        "X-KDE-System-Settings-Parent-Category" \
+        "appearance"; do
+        if grep -aq -- "${aq_kcm_text}" "${KCM_DEST}"; then
+            ok "the page carries its own description: ${aq_kcm_text}"
+        else
+            bad "the page does not contain '${aq_kcm_text}' — System Settings would not know what it is or where to put it"
+        fi
+    done
+
+    # ⚠️ IT MUST NOT TURN UP IN GNOME. Both desktops read
+    # /usr/share/applications/, so a menu entry for a KDE-only settings page
+    # would be a dead icon in GNOME's app grid. The build is told not to make
+    # one; this is what catches it if that ever changes.
+    if ls /usr/share/applications/kcm_aquariuskeys* > /dev/null 2>&1; then
+        bad "a menu entry for the KDE page was installed — it would appear in GNOME's app grid"
+    else
+        ok "it has no menu entry, so GNOME never shows it"
+    fi
+fi
 
 aq_finish "Aquarius Keys"

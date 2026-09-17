@@ -484,6 +484,19 @@ jobs:
         run: ./tests/test-media-dir.sh
 
       # ------------------------------------------------------------------------
+      # The two Mac-or-Windows switches, before anything is built
+      # ------------------------------------------------------------------------
+      # AquariusOS has one Mac-or-Windows choice and, since 2026-09-16, a switch
+      # for it on each desktop: our own add-on in GNOME's quick settings menu,
+      # and a page in KDE's System Settings. Seconds, and it catches the two
+      # mistakes that are completely silent — a GNOME add-on whose id does not
+      # match its folder (loaded, then refused, with nothing said) and a syntax
+      # error in its code (simply absent). The build checks more, inside the
+      # finished image; "it appears and it flips the setting" is a bench test.
+      - name: Check the Mac-or-Windows switches
+        run: ./tests/test-keys-toggle.sh
+
+      # ------------------------------------------------------------------------
       # The app icons are all present, and are the sizes they claim
       # ------------------------------------------------------------------------
       # Before the build, because it takes a second and reads the same files the
@@ -3893,6 +3906,61 @@ jobs:
           EXT=/usr/share/gnome-shell/extensions/xremap@k0kubun.com
           check "it is installed" '"uuid": "xremap@k0kubun.com"' "${EXT}/metadata.json"
           if [ -s "${EXT}/extension.js" ]; then ok "its code is present"; else bad "${EXT}/extension.js is missing"; fi
+
+          echo
+          echo "== the two graphical switches for Mac or Windows (2026-09-16) =="
+          # Before these existed, the only ways to change this were the Welcome
+          # window — seen once, on a first login — and typing a command. A
+          # switch that is installed but invisible is worth nothing, and both
+          # ways of being invisible are silent, so both are checked here.
+          AQEXT=/usr/share/gnome-shell/extensions/aquarius-keys@stoneharborent.github.io
+          check "the GNOME toggle is installed" \
+            '"uuid": "aquarius-keys@stoneharborent.github.io"' "${AQEXT}/metadata.json"
+          check "it runs aq rather than writing the settings file itself" \
+            "'/usr/bin/aq'" "${AQEXT}/extension.js"
+          # Switched on, asked of the settings system itself — the same question
+          # a brand-new account asks on its first login.
+          if GSETTINGS_BACKEND=memory gsettings get org.gnome.shell enabled-extensions \
+               > /tmp/aq-exts.txt 2>/dev/null \
+             && grep -q 'aquarius-keys@stoneharborent.github.io' /tmp/aq-exts.txt; then
+            ok "the GNOME toggle is switched on by default"
+          else
+            bad "the GNOME toggle is not in enabled-extensions — it would be installed and invisible"
+          fi
+
+          # The KDE page. There is exactly one folder System Settings reads, and
+          # anywhere else it is just a file.
+          KCM="$(find /usr/lib /usr/lib64 -type f -name kcm_aquariuskeys.so 2>/dev/null | head -n 1)"
+          if [ -z "${KCM}" ]; then
+            bad "the KDE 'Mac or Windows' page is not in this image"
+          else
+            ok "the KDE page is installed at ${KCM}"
+            case "${KCM}" in
+              */plasma/kcms/systemsettings/kcm_aquariuskeys.so)
+                ok "that is the folder System Settings reads" ;;
+              *)
+                bad "${KCM} is not a folder System Settings reads — the page would never appear" ;;
+            esac
+            # It was compiled in a different container from the one it runs in.
+            if ldd "${KCM}" 2>&1 | grep -q "not found"; then
+              bad "the KDE page needs a library that is not in this image"
+              ldd "${KCM}" || true
+            else
+              ok "every library the KDE page needs is here"
+            fi
+            # Its name and its place in System Settings are baked into the file.
+            for want in "Mac or Windows" "X-KDE-System-Settings-Parent-Category"; do
+              if grep -aq -- "${want}" "${KCM}"; then ok "the page carries: ${want}"
+              else bad "the page does not contain '${want}'"; fi
+            done
+          fi
+          # ⚠️ AND IT MUST NOT TURN UP IN GNOME. Both desktops read
+          # /usr/share/applications/.
+          if ls /usr/share/applications/kcm_aquariuskeys* > /dev/null 2>&1; then
+            bad "the KDE page has a menu entry — it would be a dead icon in GNOME's app grid"
+          else
+            ok "the KDE page has no menu entry, so GNOME never shows it"
+          fi
 
           if [ "$fails" -ne 0 ]; then
             echo "::error::Aquarius Keys is not correctly assembled in this image."
