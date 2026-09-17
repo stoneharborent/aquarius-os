@@ -3,10 +3,19 @@
 # STEP 5.6 — The AquariusOS app icons
 # ==============================================================================
 # Up to here the machine has our colours, our fonts, our wallpaper and our two
-# desktops — and GNOME's app icons. This step is where the nine icons Royce
-# actually looks at every day become ours: the Editor, the Writer, Files,
-# Settings, the Console, the app chooser, the welcome window, and the two
-# DaVinci Resolve buttons.
+# desktops — and GNOME's app icons. This step is where the icons of our OWN
+# programs become ours: the Editor, the Writer, the app chooser, the welcome
+# window, the Check-for-Update window and the two DaVinci Resolve buttons.
+#
+# ⚠️ THE STOCK GNOME APPS KEEP THEIR STOCK ICONS (Royce, 2026-09-17). Until
+# then the Files, Settings and Console drawings were also filed under GNOME's
+# own identifiers — org.gnome.Nautilus, org.gnome.Settings, org.gnome.Ptyxis —
+# which is how a theme replaces the icon of a program it does not own. Those
+# names are gone from both themes, so Files, Settings and the Console show
+# GNOME's own artwork through Inherits=Adwaita. The three drawings are still
+# shipped under our own names (aquarius-files, aquarius-settings,
+# aquarius-console) so our own windows can wear them. Section 5 checks that no
+# GNOME name has crept back in.
 #
 # ------------------------------------------------------------------------------
 # WHAT THIS STEP ACTUALLY DOES — WHICH IS ALMOST NOTHING, ON PURPOSE
@@ -102,25 +111,13 @@ AUTOSTART_DIR="/etc/xdg/autostart"
 # disagreement stops the build rather than shipping half a theme.
 SIZES=(16 24 32 48 64 128 256 512)
 
-# Every icon file name that must exist in BOTH themes.
-#
-# ⚠️ THE THREE GNOME NAMES ARE THE POINT OF THE LIST. GNOME's Files asks for its
-# icon as `org.gnome.Nautilus`, GNOME's Settings asks for `org.gnome.Settings`,
-# and the Console asks for `org.gnome.Ptyxis` — Ptyxis is Fedora's terminal and
-# it is the terminal this image ships. None of the three can be persuaded to ask
-# for anything else, so those are the three names that actually replace an icon
-# on screen. `aquarius-files`, `aquarius-settings` and `aquarius-console` are the
-# SAME PICTURES filed a second time under our own names, so our windows, our docs
-# and the Aquarius Shell can name them without knowing GNOME's internal
-# identifiers.
+# Every icon file name that must exist in BOTH themes. Every one is an Aquarius
+# name; see the header for why no org.gnome.* name belongs here.
 ICON_NAMES=(
     aquarius-editor
     aquarius-writer
-    org.gnome.Nautilus
     aquarius-files
-    org.gnome.Settings
     aquarius-settings
-    org.gnome.Ptyxis
     aquarius-console
     aquarius-apps
     aquarius-installer
@@ -133,8 +130,10 @@ ICON_NAMES=(
 #
 # ⚠️ aquarius-updater.desktop DELIBERATELY CARRIES THE SETTINGS ICON. There is
 # no "Check for Update" app — it is a window the Aquarius logo menu opens — and
-# it wears the Settings icon until that flow moves into System Settings where it
-# belongs. Not an oversight; do not "fix" it by drawing it one.
+# it wears OUR Settings drawing (aquarius-settings) until that flow moves into
+# System Settings where it belongs. Not an oversight; do not "fix" it by drawing
+# it one. It used to ask for org.gnome.Settings, which was the same picture while
+# that name was ours; since 2026-09-17 it is GNOME's, so the launcher names ours.
 DESKTOP_ICONS=(
     "${APPS_DIR}/aquarius-installer.desktop|aquarius-installer"
     "${APPS_DIR}/aquarius-creator-apps.desktop|aquarius-apps"
@@ -142,7 +141,7 @@ DESKTOP_ICONS=(
     "${AUTOSTART_DIR}/aquarius-welcome-firstrun.desktop|aquarius-welcome"
     "${APPS_DIR}/aquarius-install-resolve.desktop|aquarius-install-resolve"
     "${APPS_DIR}/aquarius-remove-resolve.desktop|aquarius-remove-resolve"
-    "${APPS_DIR}/aquarius-updater.desktop|org.gnome.Settings"
+    "${APPS_DIR}/aquarius-updater.desktop|aquarius-settings"
     "${APPS_DIR}/aquarius-writer.desktop|aquarius-writer"
     "/usr/share/aquarius/apps/aquarius-editor.desktop.in|aquarius-editor"
 )
@@ -265,25 +264,22 @@ PY
     rm -f "${ICON_REPORT}"
 fi
 
-# The three GNOME names and our own names must be the SAME PICTURE. If they ever
-# drift, Files shows one drawing in the dock and our docs describe another.
-say "Our names and GNOME's names are the same drawing"
+# The stock GNOME apps keep their stock icons. A theme takes over a program's
+# icon simply by filing a drawing under the name that program asks for, so the
+# only way to be sure Files, Settings and the Console still look like GNOME is
+# to check that no such name exists in either theme. Nothing else would notice:
+# a stray org.gnome.Nautilus.svg is not an error anywhere, it is just our old
+# Files icon back in the dock.
+say "No Aquarius drawing sits on a stock GNOME app"
 
 for theme in "${DEFAULT_THEME}" "${DARK_THEME}"; do
-    for pair in "org.gnome.Nautilus|aquarius-files" "org.gnome.Settings|aquarius-settings" \
-                "org.gnome.Ptyxis|aquarius-console"; do
-        gnome_name="${pair%%|*}"
-        our_name="${pair##*|}"
-        a="${ICONS_ROOT}/${theme}/scalable/apps/${gnome_name}.svg"
-        b="${ICONS_ROOT}/${theme}/scalable/apps/${our_name}.svg"
-        if [ ! -r "${a}" ] || [ ! -r "${b}" ]; then
-            bad "${theme}: ${gnome_name} or ${our_name} is missing, so they cannot be compared"
-        elif cmp -s "${a}" "${b}"; then
-            ok "${theme}: ${gnome_name} and ${our_name} are the same drawing"
-        else
-            bad "${theme}: ${gnome_name} and ${our_name} have drifted apart — regenerate with branding/render-app-icons.sh"
-        fi
-    done
+    strays="$(find "${ICONS_ROOT}/${theme}" -name 'org.gnome.*' 2> /dev/null)"
+    if [ -n "${strays}" ]; then
+        bad "${theme} files a drawing under a GNOME app's name — the stock apps keep their stock icons:"
+        echo "${strays}" | sed 's/^/        /'
+    else
+        ok "${theme} has no org.gnome.* icon, so Files, Settings and the Console show GNOME's own"
+    fi
 done
 
 # ==============================================================================
@@ -369,25 +365,6 @@ for entry in "${DESKTOP_ICONS[@]}"; do
         bad "  …but ${want} is NOT in ${DEFAULT_THEME} — that launcher would show a blank square"
     fi
 done
-
-# ------------------------------------------------------------------------------
-# The Console's launcher is not ours — it comes with Ptyxis
-# ------------------------------------------------------------------------------
-# Every entry in the table above is a file this repo writes, so if one asks for
-# the wrong icon that is our mistake to make. The Console is different: Ptyxis is
-# Fedora's terminal, its launcher arrives with the RPM, and we replace its icon
-# purely by filing a drawing under the name it already asks for. That means the
-# whole thing hangs on a name we do not control. If Fedora ever renames the
-# launcher or the icon it asks for, our drawing is simply never looked up — no
-# error, no blank square, just GNOME's own terminal icon in a dock full of
-# Aquarius ones. So the name is read back out of Ptyxis's own launcher here.
-PTYXIS_DESKTOP="${APPS_DIR}/org.gnome.Ptyxis.desktop"
-if [ -r "${PTYXIS_DESKTOP}" ]; then
-    aq_file_has "${PTYXIS_DESKTOP}" "^Icon=org.gnome.Ptyxis$" \
-        "Ptyxis's own launcher asks for org.gnome.Ptyxis, which is the name we draw"
-else
-    bad "${PTYXIS_DESKTOP} is missing — the terminal this image ships has no launcher"
-fi
 
 # The logo keeps its own icon and its own job. Everything that is the OS itself
 # — the About page, the boot screen, the logo menu — still uses aquarius-logo,

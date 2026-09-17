@@ -55,11 +55,8 @@ SIZES=(16 24 32 48 64 128 256 512)
 ICON_NAMES=(
     aquarius-editor
     aquarius-writer
-    org.gnome.Nautilus
     aquarius-files
-    org.gnome.Settings
     aquarius-settings
-    org.gnome.Ptyxis
     aquarius-console
     aquarius-apps
     aquarius-installer
@@ -72,8 +69,9 @@ ICON_NAMES=(
 #
 # ⚠️ aquarius-updater.desktop WEARS THE SETTINGS ICON ON PURPOSE. There is no
 # "Check for Update" app — it is a window the Aquarius logo menu opens — and it
-# borrows the Settings icon until that flow moves into System Settings. Not a
-# mistake, and not a gap waiting for artwork.
+# borrows our Settings drawing until that flow moves into System Settings. Not a
+# mistake, and not a gap waiting for artwork. Since 2026-09-17 it names
+# aquarius-settings, not org.gnome.Settings: that name is GNOME's again.
 DESKTOP_ICONS=(
     "usr/share/applications/aquarius-installer.desktop|aquarius-installer"
     "usr/share/applications/aquarius-creator-apps.desktop|aquarius-apps"
@@ -81,7 +79,7 @@ DESKTOP_ICONS=(
     "etc/xdg/autostart/aquarius-welcome-firstrun.desktop|aquarius-welcome"
     "usr/share/applications/aquarius-install-resolve.desktop|aquarius-install-resolve"
     "usr/share/applications/aquarius-remove-resolve.desktop|aquarius-remove-resolve"
-    "usr/share/applications/aquarius-updater.desktop|org.gnome.Settings"
+    "usr/share/applications/aquarius-updater.desktop|aquarius-settings"
     "usr/share/applications/aquarius-writer.desktop|aquarius-writer"
     "usr/share/aquarius/apps/aquarius-editor.desktop.in|aquarius-editor"
 )
@@ -97,21 +95,6 @@ pass() {
 fail() {
     FAILED=$((FAILED + 1))
     printf '  FAIL  %s\n' "$1"
-}
-
-# same_file <a> <b>  — are these two files byte for byte identical?
-#
-# `cmp` is the obvious tool and it is normally there, but it comes from the
-# diffutils package and a trimmed image is not obliged to have it. Falling back
-# to python3 (which this test already needs, and which every AquariusOS image
-# has because aq-ingest is written in it) means this test cannot fail for a
-# reason that has nothing to do with icons.
-same_file() {
-    if command -v cmp > /dev/null 2>&1; then
-        cmp -s "$1" "$2"
-    else
-        python3 -c 'import filecmp,sys; sys.exit(0 if filecmp.cmp(sys.argv[1], sys.argv[2], shallow=False) else 1)' "$1" "$2"
-    fi
 }
 
 # file_says <file> <extended regex> <what this proves>
@@ -218,32 +201,26 @@ PY
 fi
 
 # ------------------------------------------------------------------------------
-# 3. GNOME's names and ours are the same picture
+# 3. No Aquarius drawing sits on a stock GNOME app
 # ------------------------------------------------------------------------------
-# GNOME's Files asks for its icon as `org.gnome.Nautilus`, GNOME's Settings as
-# `org.gnome.Settings`, and the Console as `org.gnome.Ptyxis` — Ptyxis being
-# Fedora's terminal, which is the terminal this image ships. None of the three
-# can be persuaded to ask for anything else, so those are the three names that
-# actually replace an icon on screen. Our own names exist so our windows and our
-# docs can refer to the same picture without knowing GNOME's identifiers — which
-# only works while they ARE the same picture.
+# A theme takes over a program's icon by filing a drawing under the name that
+# program asks for — Files asks for `org.gnome.Nautilus`, Settings for
+# `org.gnome.Settings`, the Console for `org.gnome.Ptyxis`. Royce decided
+# (2026-09-17) the stock GNOME apps keep their stock icons, so the only way to
+# be sure of that is to check no such name exists in either theme, in the
+# branding masters or in the shipped files.
 echo
-echo "== our names and GNOME's names are the same drawing =="
-for theme in "${DEFAULT_THEME}" "${DARK_THEME}"; do
-    for pair in "org.gnome.Nautilus|aquarius-files" "org.gnome.Settings|aquarius-settings" \
-                "org.gnome.Ptyxis|aquarius-console"; do
-        gnome_name="${pair%%|*}"
-        our_name="${pair##*|}"
-        a="${ICONS_ROOT}/${theme}/scalable/apps/${gnome_name}.svg"
-        b="${ICONS_ROOT}/${theme}/scalable/apps/${our_name}.svg"
-        if [ ! -r "${a}" ] || [ ! -r "${b}" ]; then
-            fail "${theme}: ${gnome_name} or ${our_name} is missing, so they cannot be compared"
-        elif same_file "${a}" "${b}"; then
-            pass "${theme}: ${gnome_name} and ${our_name} are the same drawing"
-        else
-            fail "${theme}: ${gnome_name} and ${our_name} have drifted apart — rerun branding/render-app-icons.sh"
-        fi
-    done
+echo "== no Aquarius drawing sits on a stock GNOME app =="
+for dir in "${ICONS_ROOT}/${DEFAULT_THEME}" "${ICONS_ROOT}/${DARK_THEME}" \
+           "${REPO_ROOT}/branding/icons/ice" "${REPO_ROOT}/branding/icons/midnight"; do
+    [ -d "${dir}" ] || continue
+    strays="$(find "${dir}" -name 'org.gnome.*' 2> /dev/null)"
+    if [ -n "${strays}" ]; then
+        fail "${dir#"${REPO_ROOT}"/} files a drawing under a GNOME app's name:"
+        echo "${strays}" | sed 's/^/          /'
+    else
+        pass "${dir#"${REPO_ROOT}"/} has no org.gnome.* icon"
+    fi
 done
 
 # ------------------------------------------------------------------------------
