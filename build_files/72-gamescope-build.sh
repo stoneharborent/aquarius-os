@@ -84,28 +84,122 @@ echo "  commit: ${AQ_GS_COMMIT}"
 # ==============================================================================
 # 1. The tools to build it with
 # ==============================================================================
-# ⚠️ THE LIST OF DEVELOPMENT PACKAGES IS NOT WRITTEN OUT BY HAND, ON PURPOSE.
-# gamescope needs something like forty of them and the list changes between
-# versions. Fedora already packages gamescope, which means Fedora already knows
-# that list — `dnf builddep` asks it. Writing our own list would mean a build
-# that breaks every time upstream adds a dependency, with an error message forty
-# lines into a compiler log.
+# ⚠️ THE LIST OF DEVELOPMENT PACKAGES IS ASKED FOR, NOT WRITTEN OUT BY HAND —
+# AND THERE IS A HAND-WRITTEN ONE BEHIND IT ANYWAY. Here is why both exist.
 #
-# The handful named explicitly afterwards are the ones OUR way of building needs
-# and Fedora's does not: git (to fetch the branch and its sub-projects) and the
-# shader compiler, which some Fedora releases leave out of the build-dependency
-# list.
+# gamescope needs something like forty development packages and the list
+# changes between versions. Fedora already packages gamescope, so Fedora already
+# knows that list: `dnf builddep gamescope` asks for it. That is the right
+# first answer, because it can never go stale.
+#
+# ⚠️ BUT IT NEEDS THE *SOURCE* REPOSITORY, WHICH FEDORA'S CONTAINER IMAGES SHIP
+# SWITCHED OFF. `builddep <name>` works by finding the SOURCE package and
+# reading its recipe, and `fedora-source` and `updates-source` are disabled in
+# the container base. Without them the command fails with "no package matched",
+# forty minutes into a build, for a reason that has nothing to do with our code.
+# So they are switched on for exactly that one command — the same "on for one
+# command" discipline this repository uses for Terra.
+#
+# AND IF IT STILL FAILS, WE DO NOT STOP. A builder stage that dies on a
+# repository configuration detail is a bad builder stage. The fallback is the
+# list of build requirements read out of Fedora's own gamescope recipe
+# (https://src.fedoraproject.org/rpms/gamescope, rawhide, read 2026-09-17),
+# written out below. Most of it is in `pkgconfig(...)` form, which is not a
+# typo: that is a thing dnf can be asked for directly, so nobody here has to
+# guess which package provides which library — Fedora's own recipe already said,
+# and we are repeating it word for word rather than translating it.
+#
+# The hand-written list can go stale, which is why it is second and not first.
+# If it is ever the one doing the work, the build log says so loudly.
 say "The tools and libraries needed to compile it"
-aq_dnf install dnf5-plugins git meson ninja-build gcc-c++ glslang spirv-tools
+aq_dnf install dnf5-plugins git meson ninja-build gcc gcc-c++ cmake glslang spirv-tools
 
-if ! aq_dnf builddep gamescope; then
-    echo "AQUARIUS ERROR: could not work out what gamescope needs to be built." >&2
-    echo "                'dnf builddep gamescope' failed. Either Fedora ${FEDORA_VERSION:-}" >&2
-    echo "                has stopped packaging gamescope — in which case this whole" >&2
-    echo "                builder stage needs rethinking — or the source repository" >&2
-    echo "                is not enabled in this container." >&2
-    exit 1
+# The source repositories, on for one command. dnf5 spells it --enable-repo and
+# dnf4 spelled it --enablerepo; the same uncertainty step 68 works around for
+# Terra, worked around the same way.
+AQ_SRC_FLAGS=""
+for flag in --enable-repo --enablerepo; do
+    if aq_dnf repolist "${flag}=fedora-source" > /tmp/aq-src-probe.txt 2>&1; then
+        AQ_SRC_FLAGS="${flag}=fedora-source ${flag}=updates-source"
+        ok "the source repositories can be switched on for one command (${flag})"
+        break
+    fi
+done
+if [ -z "${AQ_SRC_FLAGS}" ]; then
+    echo "  neither --enable-repo nor --enablerepo was understood:"
+    sed 's/^/       /' /tmp/aq-src-probe.txt
+    echo "  Carrying on; 'builddep' will probably fail and the written-out list will be used."
 fi
+rm -f /tmp/aq-src-probe.txt
+
+say "Asking Fedora what gamescope needs to be built"
+AQ_BUILDDEP_WORKED=0
+# shellcheck disable=SC2086
+if aq_dnf builddep ${AQ_SRC_FLAGS} gamescope; then
+    AQ_BUILDDEP_WORKED=1
+    ok "Fedora's own build requirements for gamescope are installed"
+else
+    echo
+    echo "  ⚠️  'dnf builddep gamescope' did not work. That is not fatal."
+    echo "      Falling back to the list written into this script, which was read"
+    echo "      out of Fedora's gamescope recipe on 2026-09-17."
+    echo
+fi
+
+if [ "${AQ_BUILDDEP_WORKED}" -eq 0 ]; then
+    say "Installing the written-out list of build requirements instead"
+    # Straight from Fedora's gamescope.spec, minus the three things this build
+    # deliberately switches off further down (OpenVR, the unit tests and the
+    # benchmark tools), because asking for a package we are not going to use is
+    # one more thing that can fail for nothing.
+    aq_dnf install \
+        glm-devel \
+        libXcursor-devel \
+        libXmu-devel \
+        libXi-devel \
+        spirv-headers-devel \
+        stb_image-devel stb_image-static \
+        stb_image_resize-devel stb_image_resize-static \
+        stb_image_write-devel stb_image_write-static \
+        "pkgconfig(hwdata)" \
+        "pkgconfig(libavif)" \
+        "pkgconfig(libcap)" \
+        "pkgconfig(libdecor-0)" \
+        "pkgconfig(libdisplay-info)" \
+        "pkgconfig(libdrm)" \
+        "pkgconfig(libeis-1.0)" \
+        "pkgconfig(libinput)" \
+        "pkgconfig(libpipewire-0.3)" \
+        "pkgconfig(libudev)" \
+        "pkgconfig(luajit)" \
+        "pkgconfig(pixman-1)" \
+        "pkgconfig(sdl2)" \
+        "pkgconfig(vulkan)" \
+        "pkgconfig(wayland-client)" \
+        "pkgconfig(wayland-protocols)" \
+        "pkgconfig(wayland-scanner)" \
+        "pkgconfig(wayland-server)" \
+        "pkgconfig(x11)" \
+        "pkgconfig(xcomposite)" \
+        "pkgconfig(xdamage)" \
+        "pkgconfig(xext)" \
+        "pkgconfig(xfixes)" \
+        "pkgconfig(xkbcommon)" \
+        "pkgconfig(xrender)" \
+        "pkgconfig(xres)" \
+        "pkgconfig(xtst)" \
+        "pkgconfig(xxf86vm)"
+    ok "the written-out build requirements are installed"
+fi
+
+# ⚠️ NOT ASKED FOR ON PURPOSE: pkgconfig(wlroots-0.20) and
+# pkgconfig(libliftoff). Fedora builds gamescope against the system copies of
+# those. THIS gamescope wants wlroots 0.19 (see src/meson.build at the pinned
+# commit) and insists on building libliftoff and vkroots itself — its own
+# meson.build refuses to configure if you take them out of that list. So both
+# come from the sub-projects fetched in section 2, and a system wlroots of the
+# wrong version is simply ignored. If `builddep` installed one anyway, no harm
+# is done.
 
 # ==============================================================================
 # 2. Fetch exactly that commit, and its sub-projects
@@ -163,6 +257,24 @@ fi
 # sub-projects upstream insists on building itself (libliftoff and vkroots) —
 # their meson.build refuses to configure if you take them out of that list, and
 # it is right to.
+# ⚠️ AND THE THREE OPTIONS REALLY EXIST AT THIS COMMIT. meson stops on an
+# option it has never heard of, which is the right behaviour — but the message
+# is buried in a configure log and the obvious reading of it ("our build is
+# broken") is wrong. The honest cause would be a pin bump to a version that
+# renamed or dropped one. So they are read out of the source's own option list
+# first, by name, and named in the failure.
+say "The build options we pass still exist at this commit"
+for aq_opt in enable_openvr_support enable_tests benchmark; do
+    if grep -q "option('${aq_opt}'" meson_options.txt; then
+        ok "meson_options.txt has '${aq_opt}'"
+    else
+        bad "this commit of gamescope has no build option called '${aq_opt}' — it has been renamed or removed since the pin was set. Read meson_options.txt and update the 'meson setup' line below."
+    fi
+done
+if [ "${AQ_FAILS}" -ne 0 ]; then
+    aq_finish "our own gamescope"
+fi
+
 say "Compiling"
 meson setup build \
     --prefix=/usr \
