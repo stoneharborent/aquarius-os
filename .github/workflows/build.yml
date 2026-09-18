@@ -6598,7 +6598,9 @@ jobs:
             # author's later work removed this setting and made the behaviour
             # unconditional, so pinning the wrong commit gives a program that
             # builds, installs, and quietly ignores the switch.
-            if strings /usr/bin/aquarius-gamescope 2>/dev/null | grep -q 'drm_gbm_scanout'; then
+            # grep -a reads a program file as text; `strings` is not in the
+            # bootc base image.
+            if grep -aq 'drm_gbm_scanout' /usr/bin/aquarius-gamescope 2>/dev/null; then
               ok "our gamescope really contains the 'drm_gbm_scanout' fix"
             else
               bad "our gamescope has no 'drm_gbm_scanout' in it — the wrong commit was built"

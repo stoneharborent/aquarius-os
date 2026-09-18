@@ -589,7 +589,10 @@ EOF
             # switched on in a file. gamescope lists its settings in --help on
             # some builds and not others, so the honest test is to look for the
             # setting's name inside the compiled program itself.
-            if strings /usr/bin/aquarius-gamescope 2> /dev/null | grep -q 'drm_gbm_scanout'; then
+            # `grep -a` reads a program file as if it were text, which is the
+            # honest way to ask "is this name inside it" without needing the
+            # `strings` tool — which the bootc base image does not carry.
+            if grep -aq 'drm_gbm_scanout' /usr/bin/aquarius-gamescope 2> /dev/null; then
                 ok "our gamescope really contains the 'drm_gbm_scanout' setting"
             else
                 bad "our gamescope does NOT contain 'drm_gbm_scanout' — the wrong commit was built, and Game Mode would still draw a corrupted picture"
