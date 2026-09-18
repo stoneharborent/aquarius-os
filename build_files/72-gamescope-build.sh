@@ -474,7 +474,13 @@ DESTDIR="${AQ_OUT}" ninja -C build install
 # What did we actually produce? Print it, because a build that installs nothing
 # is a build that looks successful.
 echo "  everything staged in ${AQ_OUT}:"
-find "${AQ_OUT}" -type f | sed "s|^${AQ_OUT}|       |" | head -40
+# (Written to a file first, then shown: under `set -o pipefail`, a `| head`
+# that stops reading early makes `find` die of SIGPIPE and the whole step
+# fail with exit code 141 — which is exactly how build 35303696765 ended,
+# AFTER the compile had succeeded.)
+find "${AQ_OUT}" -type f | sed "s|^${AQ_OUT}|       |" > /tmp/aq-gamescope-files.txt
+head -40 /tmp/aq-gamescope-files.txt
+echo "       ($(wc -l < /tmp/aq-gamescope-files.txt) files in all)"
 
 if [ -x "${AQ_OUT}/usr/bin/gamescope" ]; then
     ok "${AQ_OUT}/usr/bin/gamescope exists and can be run"
