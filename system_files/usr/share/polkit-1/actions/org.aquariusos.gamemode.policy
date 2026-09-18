@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!--
+  ===========================================================================
+  org.aquariusos.gamemode.policy — switching between the desktop and Game Mode
+  ===========================================================================
+  PLAIN ENGLISH
+
+  This file tells polkit — the part of Linux that decides who may do what —
+  that AquariusOS has one new privileged job, and what to ask before doing it.
+
+  The job is: tell the login screen which session to start next
+  (/var/lib/AccountsService/users/<account>) and, for one switch, to log that
+  person straight back in without a password (the TimedLogin lines in
+  /etc/gdm/custom.conf). The program that does it is
+  /usr/libexec/aquarius-session-root, and it does nothing else at all: it
+  refuses any account that is not an ordinary person's account on this
+  computer, and any session name that is not one of the session files this
+  image actually ships.
+
+  ⚠️ THE ANSWER BELOW IS "YES, WITH NO PASSWORD" (`yes`), WHICH IS UNUSUAL ON
+  THIS COMPUTER, SO HERE IS THE WHOLE REASONING.
+
+  Every other privileged job AquariusOS adds asks for an administrator password
+  (auth_admin_keep). This one cannot, for a simple physical reason: the switch
+  is meant to be pressed from the sofa with a game controller in your hands,
+  and there is no way to type a password into a box with a controller. A
+  password prompt here does not make the machine safer — it makes the feature
+  not work, and the way people route around a feature that does not work is
+  worse than the feature.
+
+  WHAT IS ACTUALLY BEING RISKED, STATED PLAINLY. Somebody who can already run
+  programs as the logged-in person, sitting at this computer, can change which
+  session that same person's next login starts, and can make that next login
+  happen without a password. They could already close the session, and they are
+  already the person whose session it is. No file is read, no password is
+  revealed, no other account is touched, and nothing here survives a restart
+  with the boot setting at its default (aquarius-login-mode.service undoes the
+  automatic login at every boot).
+
+  WHO MAY ASK is narrowed hard in
+  /usr/share/polkit-1/rules.d/51-aquarius-game-mode.rules: the person at this
+  screen, in the session that owns the screen right now, in the `wheel` group.
+  Over SSH, from a switched-away session, or from a non-administrator account,
+  the answer is a flat no.
+
+  This is the same trade Valve, Bazzite and Nobara all make for the same
+  button, on the same reasoning.
+  ===========================================================================
+-->
+<policyconfig>
+
+  <vendor>AquariusOS</vendor>
+  <vendor_url>https://github.com/stoneharborent</vendor_url>
+
+  <action id="org.aquariusos.gamemode.select">
+    <description>Switch between the desktop and Game Mode</description>
+    <message>Authentication is required to change which session this computer starts</message>
+    <icon_name>input-gaming</icon_name>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/aquarius-session-root</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+
+</policyconfig>

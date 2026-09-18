@@ -1,0 +1,246 @@
+#!/usr/bin/bash
+# =============================================================================
+# os-session-select — the hinge the whole Game Mode switch turns on
+# =============================================================================
+# WHAT THIS IS, IN PLAIN ENGLISH
+#
+# AquariusOS can show you two completely different faces:
+#
+#   * THE DESKTOP — GNOME or KDE Plasma, windows, Files, Resolve. What you work
+#     in.
+#   * GAME MODE — Steam owning the whole screen, driven with a controller from
+#     the sofa. The same thing a Steam Deck shows.
+#
+# This little program is what moves you between them. It does not do the moving
+# itself: it writes down where you want to go next, and then the session you are
+# in ends. The login screen reads what was written down and takes you there.
+#
+# ⚠️ EVERY SWITCH IS A FULL LOGOUT. Not a pause, not a background desktop — your
+# desktop session really closes, and unsaved work really is lost. That is not a
+# shortcut we took; it is how Game Mode works on every Linux that has it,
+# because the graphics card cannot sanely be shared by two of these at once (on
+# NVIDIA, trying it freezes the machine — the bench proved that on 2026-09-17).
+# So every button that leads here warns first.
+#
+# WHO CALLS IT
+#   * Steam, from its power menu → "Switch to Desktop". Steam runs
+#     `steamos-session-select desktop`, a script that comes with the Game Mode
+#     package, and the only thing that script does is look for THIS file and
+#     hand over to it. That is the hook we are filling in.
+#   * Our own "Return to Game Mode" icon in the app grid, and `aq game`.
+#
+# WHAT IT ACTUALLY WRITES
+#   1. Which session the login screen should start for you next time
+#      (`Session=` in your account's file under /var/lib/AccountsService/users).
+#   2. A one-second automatic login, so the switch does not stop to ask for a
+#      password — you cannot type a password with a game controller.
+#   3. Which DESKTOP you came from, so that "Switch to Desktop" puts you back in
+#      GNOME if you were in GNOME and in Plasma if you were in Plasma. That one
+#      is remembered in your own home folder, because it is yours:
+#          ~/.local/state/aquarius/desktop-session
+#
+# Steps 1 and 2 need an administrator, so they are handed to
+# /usr/libexec/aquarius-session-root through pkexec. On this computer, for the
+# person at the screen, that happens with no password box (see that program's
+# header for exactly who is allowed and why).
+#
+# Plain-language guide: docs/restart/game-mode.md
+# =============================================================================
+
+set -uo pipefail
+
+AQ_ROOT_HELPER="/usr/libexec/aquarius-session-root"
+AQ_GAME_SESSION="gamescope-session-steam"
+AQ_STATE_DIR="${XDG_STATE_HOME:-${HOME:-/tmp}/.local/state}/aquarius"
+AQ_REMEMBERED="${AQ_STATE_DIR}/desktop-session"
+AQ_FLAG_FILE="/etc/aquarius/login-mode"
+
+say() { echo "os-session-select: $*"; }
+die() {
+    echo "os-session-select: $*" >&2
+    exit 1
+}
+
+[ "$(id -u)" != "0" ] || die "do not run this as root. Run it as yourself; it asks for what it needs."
+[ -x "${AQ_ROOT_HELPER}" ] || die "${AQ_ROOT_HELPER} is missing from this copy of AquariusOS. That is a fault in the operating system."
+
+# -----------------------------------------------------------------------------
+# Which desktop am I in right now?
+# -----------------------------------------------------------------------------
+# Answers with the name of a session file this image ships — `gnome` or
+# `plasma` — or nothing at all if we are not in a desktop (which is the case
+# when Steam calls this from inside Game Mode).
+#
+# The desktop announces itself in XDG_CURRENT_DESKTOP ("GNOME" or "KDE"). When
+# that is empty — a systemd user service only sees what the desktop pushed into
+# it — we ask what is actually running, the same way aquarius-keys-run does.
+aq_current_desktop() {
+    local d="${XDG_CURRENT_DESKTOP:-}"
+    if [ -z "${d}" ] && command -v systemctl > /dev/null 2>&1; then
+        d="$(systemctl --user show-environment 2> /dev/null | sed -n 's/^XDG_CURRENT_DESKTOP=//p' | tail -n 1)"
+    fi
+    case "${d}" in
+        *[Gg][Nn][Oo][Mm][Ee]*)
+            # The same trap as in aquarius-keys-run: the user's systemd manager
+            # remembers the LAST desktop it was told about within a boot, so a
+            # person who used GNOME this morning and Plasma now can still have
+            # the word GNOME sitting there. Ask what is running.
+            if pgrep -x gnome-shell > /dev/null 2>&1; then
+                echo gnome
+            elif pgrep -x kwin_wayland > /dev/null 2>&1; then
+                echo plasma
+            else
+                echo gnome
+            fi
+            ;;
+        *[Kk][Dd][Ee]* | *[Pp][Ll][Aa][Ss][Mm][Aa]*) echo plasma ;;
+        *[Gg][Aa][Mm][Ee][Ss][Cc][Oo][Pp][Ee]*) echo "" ;;
+        *)
+            if pgrep -x gnome-shell > /dev/null 2>&1; then
+                echo gnome
+            elif pgrep -x kwin_wayland > /dev/null 2>&1; then
+                echo plasma
+            else
+                echo ""
+            fi
+            ;;
+    esac
+}
+
+# -----------------------------------------------------------------------------
+# Which desktop should "Switch to Desktop" take me back to?
+# -----------------------------------------------------------------------------
+# The one we wrote down on the way into Game Mode. If there is nothing written
+# down — a machine that booted straight into Game Mode and has never been to a
+# desktop — the answer is GNOME, which every AquariusOS image has.
+aq_remembered_desktop() {
+    local d=""
+    [ -r "${AQ_REMEMBERED}" ] && d="$(tr -d '[:space:]' < "${AQ_REMEMBERED}")"
+    case "${d}" in
+        gnome | plasma) echo "${d}" ;;
+        *) echo gnome ;;
+    esac
+}
+
+aq_remember_desktop() {
+    local d="$1"
+    [ -n "${d}" ] || return 0
+    mkdir -p "${AQ_STATE_DIR}" 2> /dev/null || return 0
+    printf '%s\n' "${d}" > "${AQ_REMEMBERED}" 2> /dev/null \
+        && say "remembered that you came from ${d}; Switch to Desktop will bring you back here."
+}
+
+# -----------------------------------------------------------------------------
+# What does a cold boot do on this machine?
+# -----------------------------------------------------------------------------
+aq_boot_mode() {
+    local m="desktop"
+    if [ -r "${AQ_FLAG_FILE}" ]; then
+        m="$(sed -n 's/^[[:space:]]*mode[[:space:]]*=[[:space:]]*\([a-z]*\).*/\1/p' "${AQ_FLAG_FILE}" | tail -n 1)"
+    fi
+    case "${m}" in
+        game) echo game ;;
+        *) echo desktop ;;
+    esac
+}
+
+# -----------------------------------------------------------------------------
+# --tidy — make "Log Out" mean "Log Out" again
+# -----------------------------------------------------------------------------
+# ⚠️ THE PROBLEM THIS SOLVES, BECAUSE IT IS NOT OBVIOUS.
+#
+# The switch works by telling the login screen "log this person straight back
+# in". That setting stays switched on after the switch has finished. So if you
+# then choose Log Out from the desktop menu — a normal thing to do, nothing to
+# do with games — the login screen would log you straight back in, and Log Out
+# would look broken.
+#
+# So when a DESKTOP session starts on a computer whose cold-boot setting is
+# `desktop` (which is every AquariusOS desktop image), that automatic login is
+# taken back off. The switch has landed; it is not needed any more.
+#
+# This runs from a small service at every login (aquarius-game-tidy.service).
+# On a machine set to boot INTO Game Mode, nothing is taken off, because there
+# the automatic login is the point.
+aq_tidy() {
+    if [ "$(aq_boot_mode)" = "game" ]; then
+        say "this computer is set to start in Game Mode, so the automatic login stays switched on."
+        exit 0
+    fi
+    if [ -z "$(aq_current_desktop)" ]; then
+        say "this is not a desktop session, so nothing to tidy."
+        exit 0
+    fi
+    # Non-interactive on purpose: at login there is nobody watching a password
+    # box, and if polkit says no, nothing bad happens — the automatic login just
+    # stays on until the next restart.
+    if pkexec --disable-internal-agent "${AQ_ROOT_HELPER}" timed-login off; then
+        say "the login screen will ask who you are again, so Log Out behaves normally."
+    else
+        say "NOTE: could not switch the automatic login back off. Log Out may log"
+        say "you straight back in until this computer is restarted. Nothing is broken."
+    fi
+    exit 0
+}
+
+# =============================================================================
+# Here we go
+# =============================================================================
+aq_target="${1:-gamescope}"
+[ "${aq_target}" = "--tidy" ] && aq_tidy
+
+# Steam's script is a SteamOS script and speaks SteamOS's words. `plasma` and
+# the two `*-persistent` spellings all mean the same thing on this computer:
+# take me back to my desktop.
+case "${aq_target}" in
+    gamescope | game)
+        aq_session="${AQ_GAME_SESSION}"
+        aq_remember_desktop "$(aq_current_desktop)"
+        ;;
+    desktop | plasma | plasma-wayland-persistent | plasma-x11-persistent | gnome)
+        aq_session="$(aq_remembered_desktop)"
+        # If Steam asked for a desktop by name and that desktop is on this
+        # computer, honour the name rather than the memory.
+        case "${aq_target}" in
+            gnome | plasma) [ -r "/usr/share/wayland-sessions/${aq_target}.desktop" ] && aq_session="${aq_target}" ;;
+        esac
+        ;;
+    *)
+        die "'${aq_target}' is not a session this computer knows. The answers are 'gamescope' and 'desktop'."
+        ;;
+esac
+
+say "next session: ${aq_session}"
+
+# -----------------------------------------------------------------------------
+# The two root jobs
+# -----------------------------------------------------------------------------
+# ⚠️ ORDER MATTERS. The session has to be written down BEFORE the automatic
+# login is switched on, because the automatic login is what reads it.
+if ! pkexec --disable-internal-agent "${AQ_ROOT_HELPER}" set-session "${USER}" "${aq_session}"; then
+    die "could not tell the login screen which session to start. Nothing has been changed."
+fi
+
+if ! pkexec --disable-internal-agent "${AQ_ROOT_HELPER}" timed-login on "${USER}"; then
+    say "WARNING: could not switch the automatic login on. The switch will still"
+    say "work — you will be asked for your password once at the login screen."
+fi
+
+# -----------------------------------------------------------------------------
+# And make the login screen read what we just wrote
+# -----------------------------------------------------------------------------
+# ⚠️ WHY THIS HAPPENS NOW AND NOT AFTER THE SESSION ENDS. GDM reads
+# /etc/gdm/custom.conf when it is told to, not continuously. On Nobara — the one
+# distribution that does this switch with GDM, and the source of this whole
+# mechanism — the reload happens in a script that runs as the session is torn
+# down. AquariusOS does it here instead, one moment earlier, because that is the
+# last point at which OUR code is running: everything after this belongs to
+# Steam's own scripts, and forking those to add one line is exactly the kind of
+# thing this project does not do.
+#
+# Reloading while the session is still alive is safe — reload does not touch
+# running sessions, it only re-reads settings — and by the time the login screen
+# next appears, which is a second or two from now, it has the new ones.
+pkexec --disable-internal-agent "${AQ_ROOT_HELPER}" reload-gdm || true
+
+say "done. This session is about to end, and the login screen will take you to ${aq_session}."

@@ -1,0 +1,36 @@
+#!/usr/bin/bash
+# =============================================================================
+# /usr/libexec/ogc/os-update — "no, Steam, you do not update this computer"
+# =============================================================================
+# WHAT THIS IS, AND WHY IT IS THREE LINES LONG
+#
+# In Game Mode, Steam believes it is running on SteamOS, and SteamOS lets Steam
+# update the operating system itself — there is an "Check for updates" entry in
+# Steam's own settings that expects to be able to do it.
+#
+# On AquariusOS that must not happen, ever. This operating system is updated by
+# downloading a whole new image, all at once, so that it can be rolled back in
+# one command if anything is wrong — `aq update`, or the Aquarius logo menu.
+# Half an update applied by Steam in the middle of a game is precisely the kind
+# of thing that model exists to make impossible.
+#
+# ⚠️ SO WE DO NOT HIDE THE BUTTON; WE ANSWER IT HONESTLY. The Game Mode package
+# ships a script called `steamos-update` which Steam calls, and that script
+# hands the real work to this file. Steam's contract with it is exact and is
+# written down in the script itself:
+#
+#     exit 7  =  "there is no update available"
+#     exit 0  =  "there is one, here it comes"
+#
+# So this exits 7, always. Steam shows "your system is up to date", asks nothing
+# further, and nothing on the disk is touched. The person updates AquariusOS the
+# normal way, from the desktop.
+#
+# The one thing this must never do is exit 0, which would make Steam start an
+# update that cannot happen and sit at a progress bar for ever.
+#
+# Plain-language guide: docs/restart/game-mode.md
+# =============================================================================
+echo "AquariusOS updates itself in one piece, from the desktop — not from Steam."
+echo "Use 'aq update', or the Aquarius logo menu > Check for Update."
+exit 7

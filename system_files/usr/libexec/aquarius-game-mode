@@ -1,0 +1,163 @@
+#!/usr/bin/bash
+# =============================================================================
+# aquarius-game-mode — the "Return to Game Mode" button
+# =============================================================================
+# WHAT THIS IS
+#
+# The thing that happens when you click "Return to Game Mode" in the app grid,
+# or type `aq game`. It is three steps and a warning:
+#
+#   1. TELL YOU WHAT IS ABOUT TO HAPPEN. Switching to Game Mode closes your
+#      desktop completely — every window, every unsaved document. There is no
+#      way around that (the reason is in docs/restart/game-mode.md), so the
+#      least this can do is say so before it happens and let you say no.
+#   2. Write down where you are going: /usr/libexec/os-session-select gamescope.
+#   3. End the desktop session. GNOME and Plasma are asked in their own
+#      language. The login screen then logs you straight into Game Mode, with
+#      no password, one second later.
+#
+# ⚠️ THE WARNING IS NOT OPTIONAL AND IS NOT REMEMBERED. There is no "don't ask
+# me again". Losing an afternoon's edit to a mis-click from the sofa is exactly
+# the kind of thing an operating system should refuse to make easy.
+#
+#   --yes   skip the warning. For `aq game --yes` and for scripts. A person
+#           typing this has already said it out loud.
+#
+# Plain-language guide: docs/restart/game-mode.md
+# =============================================================================
+
+set -uo pipefail
+
+AQ_SELECT="/usr/libexec/os-session-select"
+
+AQ_TITLE="Switch to Game Mode"
+AQ_HEADLINE="This will close your desktop."
+AQ_BODY="Game Mode gives the whole screen to Steam, the way a games console does.
+
+To do that, this desktop session has to end — every window will close and
+anything you have not saved will be lost.
+
+Save your work first. You will not be asked for your password: the computer
+logs you straight into Game Mode.
+
+To come back: Steam's power menu (the button at the bottom-left) has
+\"Switch to Desktop\"."
+
+say() { echo "aquarius-game-mode: $*"; }
+
+# -----------------------------------------------------------------------------
+# Ask, in whatever way this desktop can be asked
+# -----------------------------------------------------------------------------
+# zenity ships with AquariusOS and works on both desktops. kdialog is tried
+# first because on Plasma it looks native, and it costs one failed `command -v`
+# on a machine that does not have it — the same pattern, for the same reason, as
+# aquarius-app-launch.
+#
+# ⚠️ IF NEITHER IS THERE, WE DO NOT PROCEED SILENTLY. A switch that closes every
+# window without asking, because the program that asks was missing, is the worst
+# possible failure. Without a way to ask, this refuses and says how to do it on
+# purpose.
+aq_ask() {
+    if command -v kdialog > /dev/null 2>&1; then
+        kdialog --title "${AQ_TITLE}" \
+            --yes-label "Close my desktop and go" --no-label "Stay here" \
+            --warningyesno "${AQ_HEADLINE}
+
+${AQ_BODY}" > /dev/null 2>&1
+        return $?
+    fi
+    if command -v zenity > /dev/null 2>&1; then
+        zenity --question \
+            --title="${AQ_TITLE}" \
+            --width=460 \
+            --ok-label="Close my desktop and go" \
+            --cancel-label="Stay here" \
+            --text="<b>${AQ_HEADLINE}</b>
+
+${AQ_BODY}" > /dev/null 2>&1
+        return $?
+    fi
+    return 2
+}
+
+# -----------------------------------------------------------------------------
+# End the session, the way this desktop wants to be asked
+# -----------------------------------------------------------------------------
+# GNOME:  gnome-session-quit --no-prompt  (--no-prompt because we have already
+#         asked, and a second "are you sure" from GNOME is noise)
+# Plasma: the Shutdown service on the session bus, which is what Plasma's own
+#         Log Out menu entry calls. qdbus6 is the Plasma 6 name; qdbus is kept
+#         as a fallback.
+# If neither works, logind can end the session, and that is the last resort
+# because it is less polite — applications are not asked to save anything.
+aq_logout() {
+    if command -v gnome-session-quit > /dev/null 2>&1 && pgrep -x gnome-shell > /dev/null 2>&1; then
+        say "asking GNOME to log out."
+        exec gnome-session-quit --no-prompt --logout
+    fi
+    local qd
+    for qd in qdbus6 qdbus qdbus-qt6; do
+        if command -v "${qd}" > /dev/null 2>&1 && pgrep -x kwin_wayland > /dev/null 2>&1; then
+            say "asking KDE Plasma to log out."
+            exec "${qd}" org.kde.Shutdown /Shutdown org.kde.Shutdown.logout
+        fi
+    done
+    if command -v loginctl > /dev/null 2>&1; then
+        say "no desktop answered, so ending this session directly."
+        exec loginctl terminate-session "${XDG_SESSION_ID:-self}"
+    fi
+    say "ERROR: nothing here can end the session. Log out by hand and pick"
+    say "'Steam Big Picture' at the login screen."
+    exit 1
+}
+
+# =============================================================================
+AQ_ASKED=0
+case "${1:-}" in
+    --yes | -y) AQ_ASKED=1 ;;
+    "") : ;;
+    *)
+        echo "aquarius-game-mode: the only option is --yes." >&2
+        exit 1
+        ;;
+esac
+
+if [ ! -x "${AQ_SELECT}" ]; then
+    say "ERROR: ${AQ_SELECT} is missing from this copy of AquariusOS."
+    say "That is a fault in the operating system, not in what you did."
+    exit 1
+fi
+
+# Is there a Game Mode to go to at all? If the session file is not there, the
+# login screen has nothing to log into and the switch would drop the person at
+# a login screen with a closed desktop behind them.
+if [ ! -r /usr/share/wayland-sessions/gamescope-session-steam.desktop ]; then
+    say "ERROR: Game Mode is not installed on this computer"
+    say "(/usr/share/wayland-sessions/gamescope-session-steam.desktop is missing)."
+    say "Nothing has been changed. Your desktop is still here."
+    exit 1
+fi
+
+if [ "${AQ_ASKED}" -eq 0 ]; then
+    aq_ask
+    case "$?" in
+        0) : ;;
+        2)
+            say "ERROR: there is no way to ask you first on this computer (neither"
+            say "zenity nor kdialog is installed), and this closes every window."
+            say "Refusing. To go anyway, on purpose:  aq game --yes"
+            exit 1
+            ;;
+        *)
+            say "left everything as it was."
+            exit 0
+            ;;
+    esac
+fi
+
+if ! "${AQ_SELECT}" gamescope; then
+    say "ERROR: could not set up the switch. Your desktop has NOT been closed."
+    exit 1
+fi
+
+aq_logout

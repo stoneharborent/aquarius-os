@@ -1,0 +1,47 @@
+// ===========================================================================
+// 51-aquarius-game-mode.rules — who may switch to Game Mode, and who may not
+// ===========================================================================
+// PLAIN ENGLISH
+//
+// This narrows the one privileged job AquariusOS adds for Game Mode
+// (org.aquariusos.gamemode.select, described in
+// /usr/share/polkit-1/actions/org.aquariusos.gamemode.policy) down to the only
+// person who should ever be able to do it: somebody sitting at this computer,
+// in the session that owns the screen right now, who is an administrator.
+//
+// ⚠️ AND FOR THAT ONE PERSON IT IS ALLOWED WITH NO PASSWORD. That is on
+// purpose and it is the only place on this computer where we do it. The switch
+// is pressed from the sofa with a controller in your hands, and a password box
+// cannot be typed into with a controller. The policy file above works through
+// what is and is not being risked; the short version is that this person can
+// already end their own session, and all this lets them do is choose what
+// starts next.
+//
+// Everybody else — over SSH, from a session that has been switched away from,
+// from an account that is not an administrator, from any program running as
+// anyone else — gets a flat no, and no box appears at all. `subject.active`
+// is the part that means "the session that owns the screen right now": it is
+// false the moment the screen belongs to somebody else, which is exactly when
+// this must not work.
+//
+// ⚠️ THIS FILE MUST NEVER BE WIDENED TO COVER ANYTHING ELSE. It names one
+// action id and returns NOT_HANDLED for every other question, so it cannot
+// accidentally grant something else no-password rights. If a future feature
+// needs a privileged job, it gets its own action and its own rule, and it
+// almost certainly gets a password prompt rather than this.
+// ===========================================================================
+
+polkit.addRule(function(action, subject) {
+    if (action.id != "org.aquariusos.gamemode.select") {
+        return polkit.Result.NOT_HANDLED;
+    }
+
+    // The person at the screen, in the session that owns it, who is an
+    // administrator: yes, straight away, no password.
+    if (subject.active && subject.local && subject.isInGroup("wheel")) {
+        return polkit.Result.YES;
+    }
+
+    // Anybody else: no, and do not even ask.
+    return polkit.Result.NO;
+});

@@ -1,0 +1,161 @@
+#!/usr/bin/bash
+# =============================================================================
+# aquarius-login-mode — decide, once per boot, what the login screen does
+# =============================================================================
+# WHAT THIS IS FOR
+#
+# There is one setting on this computer that says what happens when you switch
+# it on:
+#
+#     /etc/aquarius/login-mode
+#
+#       mode=desktop   show the login screen and ask who you are.
+#                      This is what both AquariusOS desktop images ship, and a
+#                      machine with this setting behaves exactly as it always
+#                      has — this program changes nothing at all.
+#
+#       mode=game      start straight into Game Mode, the way a console does.
+#                      No login screen, no password, straight to Steam.
+#
+# This program runs ONCE, at every boot, just BEFORE the login screen starts,
+# and makes the login screen match that setting. That is the whole job.
+#
+# ⚠️ WHY IT HAS TO RUN EVERY BOOT AND NOT JUST ONCE, EVER.
+#
+# Switching between the desktop and Game Mode while the computer is running
+# leaves the login screen set to "log this person straight back in" — that is
+# how the switch avoids asking for a password you cannot type on a controller.
+# If nothing ever cleaned that up, a machine that had been to Game Mode once
+# would keep logging itself in at every boot from then on, and the owner would
+# have no idea why. So at every boot this puts the login screen back to
+# whatever /etc/aquarius/login-mode says it should be — which on a normal
+# desktop image means taking the automatic login back off.
+#
+# In one sentence: what you did last Tuesday evening cannot change what your
+# computer does on Wednesday morning.
+#
+# WHICH ACCOUNT
+#   `user=` in the settings file, if it is there (that is what
+#   `aq game boot on` writes). Otherwise the ordinary account with the lowest
+#   user number — on a one-person computer, which this is, that is you.
+#
+# It is deliberately harmless. Every failure is a line in the journal and a
+# successful exit, because a login screen must never fail to appear because a
+# convenience did not work.
+#
+# Read about it in plain language: docs/restart/game-mode.md
+# =============================================================================
+
+set -uo pipefail
+
+AQ_FLAG_FILE="/etc/aquarius/login-mode"
+AQ_ROOT_HELPER="/usr/libexec/aquarius-session-root"
+AQ_GAME_SESSION="gamescope-session-steam"
+AQ_ACCOUNTS_DIR="/var/lib/AccountsService/users"
+
+say() { echo "aquarius-login-mode: $*"; }
+
+# Never be the reason the machine does not come up.
+trap 'say "something went wrong; leaving the login screen exactly as it was."; exit 0' ERR
+
+if [ ! -x "${AQ_ROOT_HELPER}" ]; then
+    say "${AQ_ROOT_HELPER} is not in this image — nothing to do."
+    exit 0
+fi
+
+# -----------------------------------------------------------------------------
+# 1. What does the setting say?
+# -----------------------------------------------------------------------------
+AQ_MODE="desktop"
+AQ_USER=""
+
+if [ -r "${AQ_FLAG_FILE}" ]; then
+    aq_read="$(sed -n 's/^[[:space:]]*mode[[:space:]]*=[[:space:]]*\([a-z]*\).*/\1/p' "${AQ_FLAG_FILE}" | tail -n 1)"
+    case "${aq_read}" in
+        desktop | game) AQ_MODE="${aq_read}" ;;
+        "") say "${AQ_FLAG_FILE} has no 'mode=' line — treating it as 'desktop'." ;;
+        *) say "${AQ_FLAG_FILE} says mode=${aq_read}, which is not a mode. Treating it as 'desktop'." ;;
+    esac
+    AQ_USER="$(sed -n 's/^[[:space:]]*user[[:space:]]*=[[:space:]]*\([A-Za-z0-9._-]*\).*/\1/p' "${AQ_FLAG_FILE}" | tail -n 1)"
+else
+    say "no ${AQ_FLAG_FILE} — treating it as 'desktop', which is the AquariusOS default."
+fi
+
+# -----------------------------------------------------------------------------
+# 2. Which account?
+# -----------------------------------------------------------------------------
+# The ordinary accounts on this computer are the ones with a user number of
+# 1000 or more. getent is the machine's own list; sorting by number and taking
+# the first gives the account that was made first, which on a personal computer
+# is its owner.
+aq_first_person() {
+    getent passwd 2> /dev/null \
+        | awk -F: '$3 >= 1000 && $3 < 65534 { print $3 ":" $1 }' \
+        | sort -t: -k1,1n | head -n 1 | cut -d: -f2
+}
+
+if [ -n "${AQ_USER}" ] && ! getent passwd "${AQ_USER}" > /dev/null 2>&1; then
+    say "${AQ_FLAG_FILE} names the account '${AQ_USER}', which is not on this computer."
+    AQ_USER=""
+fi
+[ -n "${AQ_USER}" ] || AQ_USER="$(aq_first_person)"
+
+if [ -z "${AQ_USER}" ]; then
+    say "there is no ordinary account on this computer yet, so there is nobody to log in."
+    say "Leaving the login screen exactly as it is."
+    exit 0
+fi
+
+say "the setting is '${AQ_MODE}'; the account is '${AQ_USER}'."
+
+# -----------------------------------------------------------------------------
+# 3. Make the login screen match
+# -----------------------------------------------------------------------------
+case "${AQ_MODE}" in
+
+    game)
+        # Straight into Game Mode: the session is Steam's, and the login screen
+        # logs this person in by itself one second after it appears.
+        "${AQ_ROOT_HELPER}" set-session "${AQ_USER}" "${AQ_GAME_SESSION}" \
+            || say "could not set the session — this computer will show the login screen instead, which is safe."
+        "${AQ_ROOT_HELPER}" timed-login on "${AQ_USER}" \
+            || say "could not switch the automatic login on — you will be asked who you are, which is safe."
+        ;;
+
+    desktop)
+        # The normal machine. Two things to undo, both of which are only ever
+        # left behind by a switch earlier in the life of this computer:
+        #
+        #   a) the automatic login — always taken off here;
+        #   b) a session still set to Game Mode. Leaving that would mean the
+        #      login screen quietly offering Game Mode as your default next
+        #      time, on a machine whose owner asked for the login screen. So if
+        #      the account is still pointed at Game Mode, it is pointed back at
+        #      the desktop it came from.
+        "${AQ_ROOT_HELPER}" timed-login off \
+            || say "could not switch the automatic login off — see the journal."
+
+        aq_file="${AQ_ACCOUNTS_DIR}/${AQ_USER}"
+        if [ -r "${aq_file}" ] && grep -qx "Session=${AQ_GAME_SESSION}" "${aq_file}"; then
+            # Where did they come from? The switch writes it into their own home
+            # folder. If it cannot be read — an encrypted home that is not
+            # unlocked yet, for instance — GNOME is the safe answer, because
+            # every AquariusOS image has it.
+            aq_home="$(getent passwd "${AQ_USER}" | cut -d: -f6)"
+            aq_back="gnome"
+            aq_note="${aq_home}/.local/state/aquarius/desktop-session"
+            if [ -r "${aq_note}" ]; then
+                aq_said="$(tr -d '[:space:]' < "${aq_note}" 2> /dev/null)"
+                case "${aq_said}" in
+                    gnome | plasma) aq_back="${aq_said}" ;;
+                esac
+            fi
+            say "this account was still set to start in Game Mode; putting it back to ${aq_back}."
+            "${AQ_ROOT_HELPER}" set-session "${AQ_USER}" "${aq_back}" \
+                || say "could not put the session back — the login screen will simply offer Game Mode as the default."
+        fi
+        ;;
+esac
+
+say "done."
+exit 0

@@ -1,0 +1,55 @@
+# =============================================================================
+# aquarius-login-mode.service — make the login screen match the boot setting
+# =============================================================================
+# WHAT THIS IS FOR
+#
+# AquariusOS has one setting that says what happens when you switch the
+# computer on: /etc/aquarius/login-mode. `mode=desktop` (what both desktop
+# images ship) means the login screen, exactly as always. `mode=game` means
+# straight into Game Mode, like a console.
+#
+# This service runs one small program, once, at every boot, BEFORE the login
+# screen starts — so by the time the login screen draws, it already knows what
+# it is meant to do. The program is /usr/libexec/aquarius-login-mode and its own
+# header explains the whole thing.
+#
+# ⚠️ IT RUNS ON EVERY BOOT, INCLUDING ON MACHINES THAT NEVER USE GAME MODE, AND
+# THAT IS THE POINT. Switching to Game Mode and back leaves the login screen
+# set to log you straight in (so the switch does not stop for a password you
+# cannot type on a controller). This service is what puts that back afterwards.
+# Without it, one evening of gaming would silently change how the machine starts
+# for ever. On a machine that has never been to Game Mode it finds nothing to
+# do and says so.
+#
+# WHY Before= AND NOT Wants=
+#   display-manager.service is the link systemd uses to mean "whichever login
+#   screen is switched on" — GDM, which is the only one AquariusOS has. Naming
+#   it in Before= means "if it is going to start, run me first", and says
+#   nothing about whether it should start. The same choice, for the same reason,
+#   as aquarius-gdm-display.service.
+#
+# It is deliberately harmless: every failure inside is a line in the journal and
+# a successful exit. A login screen must never fail to appear because a
+# convenience did not work.
+#
+# Plain-language guide: docs/restart/game-mode.md
+# =============================================================================
+[Unit]
+Description=Set the login screen to match this computer's boot setting (desktop or Game Mode)
+Documentation=https://github.com/stoneharborent/aquarius-os/blob/main/docs/restart/game-mode.md
+Before=display-manager.service
+After=local-fs.target accounts-daemon.service
+ConditionPathExists=/usr/libexec/aquarius-login-mode
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/aquarius-login-mode
+RemainAfterExit=no
+# The program handles its own problems and says so in the journal. A failure
+# here must never hold up the login screen, so systemd is told not to care.
+SuccessExitStatus=0 1
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical.target

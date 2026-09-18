@@ -1,0 +1,299 @@
+#!/usr/bin/bash
+# =============================================================================
+# aquarius-session-root — the four small root jobs Game Mode needs
+# =============================================================================
+# WHAT THIS IS, IN PLAIN ENGLISH
+#
+# Switching between the desktop and Game Mode means changing two things that
+# live outside your home folder, and that only an administrator may write:
+#
+#   1. WHICH SESSION THE LOGIN SCREEN WILL START FOR YOU NEXT TIME.
+#      The login screen keeps that for each account in a small file at
+#      /var/lib/AccountsService/users/<your name>, in a line that reads
+#      `Session=gnome`, `Session=plasma` or `Session=gamescope-session-steam`.
+#
+#   2. WHETHER THE LOGIN SCREEN LOGS YOU STRAIGHT BACK IN.
+#      Every switch is a full logout (that is how Steam's Game Mode works on
+#      every Linux that has it). So that you do not have to type your password
+#      each time you press "Switch to Desktop", the login screen is told, for
+#      this one switch, to log you in by itself after one second. That is the
+#      `TimedLogin` block in /etc/gdm/custom.conf.
+#
+# This program does nothing else. It is deliberately tiny and deliberately
+# suspicious of everything it is handed, because it runs as root on behalf of a
+# program that does not.
+#
+# ⚠️ IT IS NOT MEANT TO BE RUN BY HAND. The friendly front doors are:
+#       aq game                 switch to Game Mode now
+#       aq game boot on|off     start the computer in Game Mode, or not
+#     and the "Return to Game Mode" icon in the app grid.
+#
+# WHO IS ALLOWED TO ASK
+#   /usr/share/polkit-1/actions/org.aquariusos.gamemode.policy describes the
+#   job, and /usr/share/polkit-1/rules.d/51-aquarius-game-mode.rules narrows it
+#   to one answer: the person sitting at this computer, in the session that owns
+#   the screen right now, who is an administrator (the `wheel` group). For them
+#   it is allowed with NO PASSWORD — because a password box cannot be typed into
+#   from a game controller, and this switch is meant to be pressed from the
+#   couch. For everybody else — over SSH, from a switched-away session, from a
+#   non-administrator — the answer is a flat no and no box appears at all.
+#
+# ⚠️ WHY EVERY ARGUMENT IS CHECKED TWICE OVER
+#   "No password" means anything that can reach this program as the logged-in
+#   person can run it. So it must be impossible to talk it into writing
+#   something that is not one of the handful of values it is supposed to write:
+#     * the account name must be a real local account with a normal user number
+#       (1000 or above) — never root, never a system account;
+#     * the session name must be one of the session files this image actually
+#       ships in /usr/share/wayland-sessions/;
+#     * nothing is ever passed to a shell.
+#
+# WHAT IT CAN DO
+#   aquarius-session-root set-session <account> <session>
+#   aquarius-session-root timed-login on <account>
+#   aquarius-session-root timed-login off
+#   aquarius-session-root reload-gdm
+#   aquarius-session-root boot-flag desktop|game [<account>]
+#
+# Plain-language guide to the whole feature: docs/restart/game-mode.md.
+# =============================================================================
+
+set -uo pipefail
+
+AQ_ACCOUNTS_DIR="/var/lib/AccountsService/users"
+AQ_GDM_CONF="/etc/gdm/custom.conf"
+AQ_SESSION_DIR="/usr/share/wayland-sessions"
+AQ_FLAG_FILE="/etc/aquarius/login-mode"
+
+say() { echo "aquarius-session-root: $*"; }
+die() {
+    echo "aquarius-session-root: $*" >&2
+    exit 1
+}
+
+[ "$(id -u)" = "0" ] || die "this has to be run as root. Use 'aq game' instead."
+
+# -----------------------------------------------------------------------------
+# aq_check_account <name>
+# -----------------------------------------------------------------------------
+# A real, ordinary account on this computer, and nothing else. `getent passwd`
+# is the machine's own answer to "does this account exist"; the user-number test
+# keeps root (0) and every system account (1–999) out.
+aq_check_account() {
+    local name="${1:-}" line uid
+    case "${name}" in
+        "" | *[!a-zA-Z0-9._-]*) die "'${name}' is not a name an account can have." ;;
+    esac
+    line="$(getent passwd "${name}" 2> /dev/null)" || die "there is no account called '${name}' on this computer."
+    [ -n "${line}" ] || die "there is no account called '${name}' on this computer."
+    uid="$(printf '%s\n' "${line}" | cut -d: -f3)"
+    case "${uid}" in
+        "" | *[!0-9]*) die "could not read the user number for '${name}'." ;;
+    esac
+    [ "${uid}" -ge 1000 ] || die "'${name}' is a system account (number ${uid}), not a person. Refusing."
+}
+
+# -----------------------------------------------------------------------------
+# aq_check_session <name>
+# -----------------------------------------------------------------------------
+# Only a session this image really ships. On AquariusOS that is exactly three:
+# gnome, plasma, and gamescope-session-steam (Game Mode). Checking the file is
+# on disk rather than checking against a list written here means the answer
+# cannot drift away from what the login screen can actually offer.
+aq_check_session() {
+    local name="${1:-}"
+    case "${name}" in
+        "" | *[!a-zA-Z0-9._-]*) die "'${name}' is not a name a session can have." ;;
+    esac
+    [ -r "${AQ_SESSION_DIR}/${name}.desktop" ] \
+        || die "this image has no session called '${name}' (${AQ_SESSION_DIR}/${name}.desktop is not there)."
+}
+
+# -----------------------------------------------------------------------------
+# set-session <account> <session>
+# -----------------------------------------------------------------------------
+# Write the `Session=` line the login screen reads for that account. The file is
+# an ordinary INI file owned by root; if it does not exist yet — which is the
+# normal case for an account that has never chosen a desktop — it is created
+# with just the one section and the one line in it.
+aq_set_session() {
+    local account="$1" session="$2" file
+    aq_check_account "${account}"
+    aq_check_session "${session}"
+    file="${AQ_ACCOUNTS_DIR}/${account}"
+
+    mkdir -p "${AQ_ACCOUNTS_DIR}" || die "could not make ${AQ_ACCOUNTS_DIR}."
+
+    if [ -f "${file}" ]; then
+        if grep -q '^[[:space:]]*Session[[:space:]]*=' "${file}"; then
+            sed -i "s|^[[:space:]]*Session[[:space:]]*=.*|Session=${session}|" "${file}" \
+                || die "could not write ${file}."
+        elif grep -q '^\[User\]' "${file}"; then
+            sed -i "/^\[User\]/a Session=${session}" "${file}" \
+                || die "could not write ${file}."
+        else
+            printf '[User]\nSession=%s\n' "${session}" >> "${file}" \
+                || die "could not write ${file}."
+        fi
+    else
+        printf '[User]\nSession=%s\n' "${session}" > "${file}" \
+            || die "could not create ${file}."
+    fi
+    chmod 0644 "${file}" 2> /dev/null || true
+
+    # Trust content, never timestamps: read the line back out of the file.
+    if grep -qx "Session=${session}" "${file}"; then
+        say "the login screen will next start '${session}' for ${account}."
+    else
+        die "wrote ${file} but it does not say Session=${session}. Nothing was changed the way it should have been."
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# timed-login on <account>  /  timed-login off
+# -----------------------------------------------------------------------------
+# ⚠️ WHY "TIMED LOGIN" AND NOT "AUTOMATIC LOGIN". They look like the same thing
+# and they are not. GDM's plain automatic login fires ONCE per boot and is then
+# spent — so it takes you into Game Mode the first time and does nothing at all
+# on the way back, which is a machine that asks for a password halfway through a
+# switch you already started. GDM's *timed* login fires every time the login
+# screen appears, including after a logout, which is exactly what a switch is.
+# Nobara's Steam Deck edition hit this first and their script carries the same
+# one-line comment; ours carries the whole paragraph.
+#
+# The delay is one second, not zero. Zero is not allowed to mean "instantly" in
+# GDM and a zero there has historically meant "never".
+aq_timed_login() {
+    local action="$1" account="${2:-}"
+
+    [ -f "${AQ_GDM_CONF}" ] || die "${AQ_GDM_CONF} is not there — this computer's login screen is not the one AquariusOS ships."
+
+    case "${action}" in
+        on)
+            aq_check_account "${account}"
+            # Remove any block we or anybody else left, then write a clean one
+            # directly under [daemon]. Removing first means this can never end
+            # up with two TimedLogin lines, whatever state the file was in.
+            sed -i '/^[[:space:]]*TimedLoginEnable[[:space:]]*=/d; /^[[:space:]]*TimedLoginDelay[[:space:]]*=/d; /^[[:space:]]*TimedLogin[[:space:]]*=/d' \
+                "${AQ_GDM_CONF}" || die "could not edit ${AQ_GDM_CONF}."
+
+            if grep -q '^\[daemon\]' "${AQ_GDM_CONF}"; then
+                sed -i "/^\[daemon\]/a TimedLoginEnable=true\nTimedLoginDelay=1\nTimedLogin=${account}" \
+                    "${AQ_GDM_CONF}" || die "could not edit ${AQ_GDM_CONF}."
+            else
+                printf '\n[daemon]\nTimedLoginEnable=true\nTimedLoginDelay=1\nTimedLogin=%s\n' \
+                    "${account}" >> "${AQ_GDM_CONF}" || die "could not edit ${AQ_GDM_CONF}."
+            fi
+
+            if grep -qx "TimedLogin=${account}" "${AQ_GDM_CONF}" \
+                && grep -qx 'TimedLoginEnable=true' "${AQ_GDM_CONF}"; then
+                say "the login screen will log ${account} back in by itself, one second after it appears."
+            else
+                die "wrote ${AQ_GDM_CONF} but the TimedLogin lines are not in it."
+            fi
+            ;;
+        off)
+            sed -i '/^[[:space:]]*TimedLoginEnable[[:space:]]*=/d; /^[[:space:]]*TimedLoginDelay[[:space:]]*=/d; /^[[:space:]]*TimedLogin[[:space:]]*=/d' \
+                "${AQ_GDM_CONF}" || die "could not edit ${AQ_GDM_CONF}."
+            if grep -q '^[[:space:]]*TimedLogin' "${AQ_GDM_CONF}"; then
+                die "tried to remove the automatic-login lines from ${AQ_GDM_CONF} and they are still there."
+            fi
+            say "the login screen will ask who you are again, the normal way."
+            ;;
+        *)
+            die "'timed-login' takes 'on <account>' or 'off'."
+            ;;
+    esac
+}
+
+# -----------------------------------------------------------------------------
+# reload-gdm
+# -----------------------------------------------------------------------------
+# ⚠️ RELOAD, NEVER RESTART. Restarting the login screen kills every graphical
+# session on the machine at once, including the one asking for the restart, and
+# on GDM it reliably ends in a black screen rather than a new login screen.
+# Reload makes GDM re-read /etc/gdm/custom.conf — which is all we changed —
+# without pulling the floor out. This is the same choice Nobara made, with the
+# same one-line reason in their script.
+aq_reload_gdm() {
+    if ! systemctl is-active --quiet gdm.service; then
+        say "the login screen is not running, so there is nothing to reload."
+        return 0
+    fi
+    if systemctl reload gdm.service; then
+        say "the login screen has re-read its settings."
+    else
+        # Never fatal. The worst case is that the person types their password
+        # once, which is a small annoyance, not a broken machine.
+        say "WARNING: could not reload the login screen. The switch will still"
+        say "happen; you may be asked for your password once."
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# boot-flag desktop|game [<account>]
+# -----------------------------------------------------------------------------
+# The one setting that decides what a COLD BOOT does: /etc/aquarius/login-mode.
+# `desktop` (what both desktop images ship) means a cold boot is exactly as it
+# has always been — the login screen, asking who you are. `game` means this
+# computer starts straight into Game Mode, the way a console does.
+#
+# Switching between desktop and Game Mode while the computer is on NEVER
+# touches this file. That is on purpose: how you start the machine and what you
+# did last Tuesday evening are different questions.
+aq_boot_flag() {
+    local mode="$1" account="${2:-}"
+    case "${mode}" in
+        desktop | game) : ;;
+        *) die "'boot-flag' takes 'desktop' or 'game'." ;;
+    esac
+    [ -z "${account}" ] || aq_check_account "${account}"
+
+    mkdir -p "$(dirname "${AQ_FLAG_FILE}")" || die "could not make $(dirname "${AQ_FLAG_FILE}")."
+
+    {
+        echo "# AquariusOS — what this computer does when you switch it on."
+        echo "#"
+        echo "#   mode=desktop   show the login screen (the normal thing, and the default)"
+        echo "#   mode=game      start straight into Game Mode, like a console"
+        echo "#"
+        echo "# Change it with:  aq game boot on   /   aq game boot off"
+        echo "# Read about it in: docs/restart/game-mode.md"
+        echo "mode=${mode}"
+        [ -n "${account}" ] && echo "user=${account}"
+    } > "${AQ_FLAG_FILE}" || die "could not write ${AQ_FLAG_FILE}."
+
+    if grep -qx "mode=${mode}" "${AQ_FLAG_FILE}"; then
+        if [ "${mode}" = "game" ]; then
+            say "this computer will start in Game Mode from the next restart."
+        else
+            say "this computer will show the login screen when it starts, as normal."
+        fi
+    else
+        die "wrote ${AQ_FLAG_FILE} but it does not say mode=${mode}."
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# Which job?
+# -----------------------------------------------------------------------------
+case "${1:-}" in
+    set-session)
+        [ $# -eq 3 ] || die "usage: aquarius-session-root set-session <account> <session>"
+        aq_set_session "$2" "$3"
+        ;;
+    timed-login)
+        [ $# -ge 2 ] || die "usage: aquarius-session-root timed-login on <account> | off"
+        aq_timed_login "$2" "${3:-}"
+        ;;
+    reload-gdm)
+        aq_reload_gdm
+        ;;
+    boot-flag)
+        [ $# -ge 2 ] || die "usage: aquarius-session-root boot-flag desktop|game [<account>]"
+        aq_boot_flag "$2" "${3:-}"
+        ;;
+    *)
+        die "'${1:-}' is not a job this program knows. It does: set-session, timed-login, reload-gdm, boot-flag."
+        ;;
+esac

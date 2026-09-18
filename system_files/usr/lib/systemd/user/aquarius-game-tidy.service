@@ -1,0 +1,45 @@
+# =============================================================================
+# aquarius-game-tidy.service — make "Log Out" mean "Log Out" again
+# =============================================================================
+# WHAT THIS IS FOR, IN PLAIN ENGLISH
+#
+# Switching between the desktop and Game Mode works by telling the login screen
+# "log this person straight back in, one second after you appear" — otherwise
+# every switch would stop at a password box, and you cannot type a password on
+# a game controller.
+#
+# That setting does not switch itself off when the switch has finished. So
+# without this service, once you had used Game Mode even once, choosing Log Out
+# from the desktop menu would log you straight back in again — and Log Out would
+# look broken for the rest of the day.
+#
+# So: when a DESKTOP session starts, on a computer whose boot setting is
+# `desktop` (which is every AquariusOS desktop image), this takes that automatic
+# login back off. The switch has landed; it is not needed any more.
+#
+# On a machine set to start IN Game Mode it does nothing, because there the
+# automatic login is the whole point.
+#
+# It runs /usr/libexec/os-session-select --tidy, which decides all of that and
+# never fails loudly: the worst case is that the automatic login stays on until
+# the next restart, and nothing is broken.
+#
+# ⚠️ Switched on from /usr, like every AquariusOS service — see the long note in
+# build_files/aq-lib.sh about why `systemctl enable` is not used on this kind of
+# operating system.
+# =============================================================================
+[Unit]
+Description=Take the Game Mode automatic login back off once the desktop is up
+Documentation=https://github.com/stoneharborent/aquarius-os/blob/main/docs/restart/game-mode.md
+After=graphical-session.target
+PartOf=graphical-session.target
+ConditionPathExists=/usr/libexec/os-session-select
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/os-session-select --tidy
+RemainAfterExit=no
+SuccessExitStatus=0 1
+
+[Install]
+WantedBy=graphical-session.target

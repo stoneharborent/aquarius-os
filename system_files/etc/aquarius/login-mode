@@ -1,0 +1,12 @@
+# AquariusOS — what this computer does when you switch it on.
+#
+#   mode=desktop   show the login screen (the normal thing, and the default)
+#   mode=game      start straight into Game Mode, like a console
+#
+# Change it with:  aq game boot on   /   aq game boot off
+# Read about it in: docs/restart/game-mode.md
+#
+# An optional second line, `user=<account>`, says who is logged in when
+# mode=game. Without it, the computer picks its first ordinary account, which
+# on a one-person machine is the right answer. `aq game boot on` writes it.
+mode=desktop

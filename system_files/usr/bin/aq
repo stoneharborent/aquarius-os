@@ -138,6 +138,14 @@ USAGE
     aq apps search TERM Find an app: here, in what AquariusOS suggests, and on
                         Flathub. 'aq apps update --all' updates the lot.
 
+    aq game             Switch to Game Mode: Steam owning the whole screen,
+                        driven with a controller from the sofa. ⚠️ It CLOSES
+                        your desktop — you are warned and asked first. Coming
+                        back is Steam's power menu > "Switch to Desktop".
+                        'aq game boot on' starts this computer in Game Mode
+                        every time; 'aq game boot off' puts the login screen
+                        back. 'aq game status' says where you are.
+
     aq welcome          Show the AquariusOS welcome again — the three-step
                         window a new account sees at its first login: how the
                         keyboard should work, which creator apps you want, and
@@ -2328,6 +2336,214 @@ welcome() {
 }
 
 # =============================================================================
+# aq game — the desktop / Game Mode switch
+# =============================================================================
+# Game Mode is Steam owning the whole screen, driven with a controller from the
+# sofa — the same thing a Steam Deck shows. AquariusOS can start in it, or you
+# can switch into it at any time.
+#
+#   aq game              switch to Game Mode now (warns first — it closes
+#                        your desktop)
+#   aq game --yes        the same, without the warning
+#   aq game status       where am I, what will a restart do, is it installed
+#   aq game boot on      start this computer IN Game Mode from now on
+#   aq game boot off     start it at the login screen, as normal (the default)
+#
+# The doing lives in two small programs, and this is only the front door:
+#   /usr/libexec/aquarius-game-mode     warn, then switch
+#   /usr/libexec/os-session-select      write down where we are going
+#
+# Plain-English guide: docs/restart/game-mode.md
+# =============================================================================
+AQ_GAME_MODE="/usr/libexec/aquarius-game-mode"
+AQ_GAME_ROOT="/usr/libexec/aquarius-session-root"
+AQ_GAME_FLAG="/etc/aquarius/login-mode"
+AQ_GAME_SESSION_FILE="/usr/share/wayland-sessions/gamescope-session-steam.desktop"
+
+game_usage() {
+    cat << 'EOF'
+aq game — Steam's Game Mode: the whole screen, from the sofa
+
+USAGE
+    aq game             Switch to Game Mode now.
+
+                        ⚠️ This CLOSES YOUR DESKTOP. Every window shuts and
+                        anything unsaved is lost — that is how Game Mode works
+                        on every Linux that has it, not a shortcut we took.
+                        You are warned and asked first, in a window.
+
+                        You are NOT asked for your password: this computer logs
+                        you straight into Game Mode, because a password cannot
+                        be typed with a game controller.
+
+                        The same button is in the app grid as
+                        "Return to Game Mode".
+
+    aq game --yes       The same, with no warning window. For when you have
+                        already saved and you mean it.
+
+    aq game status      Which session you are in now, what this computer does
+                        when you switch it on, and whether Game Mode is
+                        installed at all.
+
+    aq game boot on     Start this computer IN Game Mode, like a console: no
+                        login screen, straight to Steam. Takes effect at the
+                        next restart.
+
+    aq game boot off    Start it at the login screen, the normal way. This is
+                        what AquariusOS ships, and what every desktop image
+                        does until you change it.
+
+COMING BACK FROM GAME MODE
+    Steam's power button, bottom-left of the screen, then "Switch to Desktop".
+    No password there either. It puts you back in whichever desktop you came
+    from — GNOME if you were in GNOME, Plasma if you were in Plasma.
+
+IF THE SCREEN IS BLACK OR SCRAMBLED IN GAME MODE
+    Ctrl+Alt+F3 gives you a text login on this machine, and from there:
+        aq game boot off
+        sudo systemctl reboot
+    puts the login screen back. The whole troubleshooting list, including the
+    safe way to try gamescope with a 60-second escape hatch, is in
+    docs/restart/game-mode.md.
+EOF
+}
+
+game_installed() {
+    [ -r "${AQ_GAME_SESSION_FILE}" ]
+}
+
+game_boot_mode() {
+    local m=""
+    [ -r "${AQ_GAME_FLAG}" ] && m="$(sed -n 's/^[[:space:]]*mode[[:space:]]*=[[:space:]]*\([a-z]*\).*/\1/p' "${AQ_GAME_FLAG}" | tail -n 1)"
+    case "${m}" in
+        game) echo game ;;
+        *) echo desktop ;;
+    esac
+}
+
+game_status() {
+    if game_installed; then
+        echo "Game Mode is installed on this computer."
+    else
+        echo "⚠️ Game Mode is NOT installed on this computer."
+        echo "   (${AQ_GAME_SESSION_FILE} is missing.) 'aq game' would have"
+        echo "   nowhere to take you. That is a fault in this image."
+        echo
+    fi
+
+    echo
+    echo -n "Right now you are in: "
+    case "${XDG_CURRENT_DESKTOP:-}" in
+        *[Gg]amescope*) echo "Game Mode." ;;
+        *[Gg][Nn][Oo][Mm][Ee]*) echo "the GNOME desktop." ;;
+        *[Kk][Dd][Ee]*) echo "the KDE Plasma desktop." ;;
+        "") echo "a terminal (nothing is telling me which desktop)." ;;
+        *) echo "${XDG_CURRENT_DESKTOP}." ;;
+    esac
+
+    echo
+    if [ "$(game_boot_mode)" = "game" ]; then
+        echo "When you switch this computer on, it goes STRAIGHT INTO GAME MODE."
+        echo "To go back to the normal login screen:  aq game boot off"
+    else
+        echo "When you switch this computer on, it shows the login screen and asks"
+        echo "who you are — the normal thing, and what AquariusOS ships."
+        echo "To start in Game Mode instead:  aq game boot on"
+    fi
+
+    # The honest extra: is the one-off automatic login still switched on? It is
+    # taken off at every boot and at every desktop login, so seeing it here is
+    # normal in the middle of a switch and worth knowing about at any other time.
+    if [ -r /etc/gdm/custom.conf ] && grep -q '^TimedLoginEnable=true' /etc/gdm/custom.conf 2> /dev/null; then
+        echo
+        echo "Note: the login screen is currently set to log you straight back in."
+        echo "That is how a switch avoids asking for a password, and it is taken"
+        echo "off again by itself — at the next restart, and when a desktop"
+        echo "session starts. Nothing to do."
+    fi
+}
+
+game_boot() {
+    local want="${1:-}"
+    case "${want}" in
+        on) want="game" ;;
+        off) want="desktop" ;;
+        "" | status) 
+            if [ "$(game_boot_mode)" = "game" ]; then
+                echo "This computer starts in Game Mode."
+            else
+                echo "This computer starts at the login screen."
+            fi
+            return 0
+            ;;
+        *)
+            echo "aq: 'aq game boot' takes 'on' or 'off'." >&2
+            return 1
+            ;;
+    esac
+
+    if [ "${want}" = "game" ] && ! game_installed; then
+        echo "aq: Game Mode is not installed on this computer, so starting in it" >&2
+        echo "    would leave you looking at nothing. Refusing." >&2
+        return 1
+    fi
+
+    if [ ! -x "${AQ_GAME_ROOT}" ]; then
+        echo "aq: ${AQ_GAME_ROOT} is missing from this copy of AquariusOS." >&2
+        echo "    That is a fault in the operating system, not in what you typed." >&2
+        return 1
+    fi
+
+    # The account is written down with the setting, so the computer does not
+    # have to guess who to log in on a machine that grows a second account
+    # later.
+    if ! pkexec "${AQ_GAME_ROOT}" boot-flag "${want}" "${USER}"; then
+        echo "aq: could not change how this computer starts. Nothing was changed." >&2
+        return 1
+    fi
+
+    echo
+    if [ "${want}" = "game" ]; then
+        echo "Done. The next time you switch this computer on it will go straight"
+        echo "into Game Mode — no login screen, no password."
+        echo "To undo it:  aq game boot off"
+        echo
+        echo "⚠️ Worth knowing before you restart: if Game Mode does not draw on"
+        echo "   your screen, Ctrl+Alt+F3 gives you a text login, and from there"
+        echo "   'aq game boot off' puts everything back."
+    else
+        echo "Done. This computer will show the login screen when it starts, the"
+        echo "normal way."
+    fi
+}
+
+game() {
+    case "${1:-}" in
+        "" ) 
+            if [ ! -x "${AQ_GAME_MODE}" ]; then
+                echo "aq: ${AQ_GAME_MODE} is missing from this copy of AquariusOS." >&2
+                echo "    That is a fault in the operating system, not in what you typed." >&2
+                return 1
+            fi
+            "${AQ_GAME_MODE}"
+            ;;
+        --yes | -y | now)
+            "${AQ_GAME_MODE}" --yes
+            ;;
+        status) game_status ;;
+        boot) shift; game_boot "${1:-}" ;;
+        -h | --help | help) game_usage ;;
+        *)
+            echo "aq: '${1}' is not something 'aq game' knows how to do." >&2
+            echo >&2
+            game_usage >&2
+            return 1
+            ;;
+    esac
+}
+
+# =============================================================================
 # aq update — check for and install a newer AquariusOS
 # =============================================================================
 # A thin front door to /usr/libexec/aquarius-updater, which is also the "Check
@@ -2770,6 +2986,10 @@ case "${1:-}" in
     welcome)
         shift
         welcome "$@"
+        ;;
+    game)
+        shift
+        game "$@"
         ;;
     update)
         shift
