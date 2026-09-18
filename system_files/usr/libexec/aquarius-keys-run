@@ -625,6 +625,83 @@ if [ ! -w /dev/uinput ]; then
 fi
 
 # =============================================================================
+# 4b. WAIT QUIETLY WHILE SOMEBODY ELSE HAS THE SCREEN
+# =============================================================================
+# ⚠️ THIS SECTION EXISTS BECAUSE OF THE BENCH TEST, 2026-09-17, AND IT IS THE
+# FIX FOR BUG 7a IN docs/game-mode-g1-spec.md.
+#
+# WHAT HAPPENED
+#   Royce switched the screen to another virtual terminal to try Game Mode.
+#   His GNOME session was still running, just not in front. A session that is
+#   not in front is not allowed to read the keyboard — that is a rule of Linux
+#   itself, and a good one: a program in a background session must not be able
+#   to watch what you type in the one you are actually using.
+#
+#   So the remapper could see no keyboard, printed "No device was selected",
+#   and exited. The service restarted it two and a half seconds later. It
+#   failed again. And again — and every attempt invented a fresh virtual
+#   keyboard on the way past, so the machine's input device list grew by one
+#   every two and a half seconds (input60 to input73 in thirty-five seconds on
+#   the bench). Thirty-five seconds of that is untidy; an evening of it is a
+#   machine full of ghost keyboards.
+#
+# WHAT THIS DOES ABOUT IT
+#   Before starting the remapper at all, ask the machine a question it can
+#   answer honestly: "is my session the one that owns the screen right now?"
+#   If the answer is no, WAIT. Quietly, forever, saying so once. Nothing is
+#   started, nothing is invented, nothing is retried, and the journal gets one
+#   line instead of a thousand.
+#
+#   The moment the screen comes back — the person switches back from Game Mode,
+#   or from a text terminal — the wait ends and everything carries on exactly as
+#   it would have. This is not a new failure mode: it is the difference between
+#   "not yet" and "broken", which the old code could not tell apart.
+#
+# HOW THE QUESTION IS ASKED
+#   logind knows which session owns the screen. `loginctl show-session <id>
+#   -p Active` answers `Active=yes` for exactly one session at a time.
+#
+#   ⚠️ AND IF WE CANNOT ASK, WE CARRY ON. A machine without loginctl, or a
+#   session id we cannot work out, must not be a machine where the keyboard
+#   silently never gets remapped. In that case this section does nothing at all
+#   and the remapper starts as it always did.
+# =============================================================================
+aq_session_id() {
+    if [ -n "${XDG_SESSION_ID:-}" ]; then
+        printf '%s\n' "${XDG_SESSION_ID}"
+        return 0
+    fi
+    # No variable: ask logind which session this process is in.
+    if command -v loginctl > /dev/null 2>&1; then
+        loginctl --property=Id --value show-session 2> /dev/null | head -n 1
+    fi
+}
+
+aq_session_is_active() {
+    local id
+    command -v loginctl > /dev/null 2>&1 || return 0   # cannot ask: carry on
+    id="$(aq_session_id)"
+    [ -n "${id}" ] || return 0                         # cannot ask: carry on
+    case "$(loginctl show-session "${id}" --property=Active --value 2> /dev/null)" in
+        yes) return 0 ;;
+        "") return 0 ;;                                # no answer: carry on
+        *) return 1 ;;
+    esac
+}
+
+if ! aq_session_is_active; then
+    say "this session does not own the screen at the moment — something else is"
+    say "in front (Game Mode, or a text terminal). A session that is not in front"
+    say "is not allowed to read the keyboard, so there is nothing to do yet."
+    say "Waiting quietly. This will carry on by itself the moment the screen"
+    say "comes back; nothing is wrong and nothing needs restarting."
+    while ! aq_session_is_active; do
+        sleep 2
+    done
+    say "the screen is back. Carrying on."
+fi
+
+# =============================================================================
 # 5. GO
 # =============================================================================
 # THE FLAGS, AND WHY EACH ONE IS THERE
@@ -789,6 +866,26 @@ done
 if [ -n "${aq_problem}" ]; then
     kill "${aq_child}" 2> /dev/null
     wait "${aq_child}" 2> /dev/null
+
+    # ⚠️ THE OTHER HALF OF THE 2026-09-17 FIX (bug 7a). The screen can be taken
+    # away AFTER the remapper has started — that is exactly what pressing
+    # "Return to Game Mode" does. When that happens the remapper loses the
+    # keyboards and reports "no device", which looks identical to a real
+    # failure. It is not one. So before complaining and restarting, ask the same
+    # question section 4b asks, and if the screen has simply gone elsewhere,
+    # wait for it quietly rather than retrying every two and a half seconds and
+    # inventing a keyboard each time round.
+    if ! aq_session_is_active; then
+        say "the screen has moved to something else (Game Mode, or a text"
+        say "terminal), so the keyboards are not ours to read at the moment."
+        say "Waiting quietly for the screen to come back. Nothing is wrong."
+        while ! aq_session_is_active; do
+            sleep 2
+        done
+        say "the screen is back. Starting again."
+        exit 1
+    fi
+
     say ""
     if [ "${aq_problem}" = "busy" ]; then
         say "PROBLEM: another program is holding the keyboard, so the shortcuts"

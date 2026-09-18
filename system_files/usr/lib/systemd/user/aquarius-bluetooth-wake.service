@@ -1,0 +1,44 @@
+# =============================================================================
+# aquarius-bluetooth-wake.service — put Bluetooth back if a session change
+#                                   knocked it out
+# =============================================================================
+# WHAT THIS IS FOR
+#
+# On the bench, on 2026-09-17, moving the screen away from the desktop and back
+# again left the Bluetooth adapter switched off about three seconds later — and
+# with it the K780 keyboard and any Bluetooth controller. Switching to Game Mode
+# does exactly that kind of move, so this had to be dealt with before Game Mode
+# could ship.
+#
+# The cause is not yet known (the program's own header sets out exactly what the
+# journal shows and what it does not). This is the repair in the meantime: at
+# every desktop login it watches for half a minute, and if the radio is off
+# while nothing has asked for it to be off, it switches it back on once.
+#
+# It is written so that on a healthy machine it does nothing and says so, and so
+# that it can never fight somebody who really did switch Bluetooth off in
+# Settings — that path blocks the radio, and a blocked radio is left alone.
+#
+# ⚠️ Switched on from /usr, like every AquariusOS service — see the long note in
+# build_files/aq-lib.sh about why `systemctl enable` is not used here.
+#
+# Plain-language guide: docs/restart/game-mode.md
+# =============================================================================
+[Unit]
+Description=Switch Bluetooth back on if a session change knocked it out
+Documentation=https://github.com/stoneharborent/aquarius-os/blob/main/docs/restart/game-mode.md
+After=graphical-session.target
+PartOf=graphical-session.target
+ConditionPathExists=/usr/libexec/aquarius-bluetooth-wake
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/aquarius-bluetooth-wake
+RemainAfterExit=no
+# It watches for up to half a minute by design. 120 seconds is a generous outer
+# bound that still guarantees it can never sit there for ever.
+TimeoutStartSec=120
+SuccessExitStatus=0 1
+
+[Install]
+WantedBy=graphical-session.target

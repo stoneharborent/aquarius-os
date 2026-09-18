@@ -1,0 +1,144 @@
+#!/usr/bin/bash
+# =============================================================================
+# aquarius-bluetooth-wake — switch Bluetooth back on if a session change
+#                           knocked it out
+# =============================================================================
+# WHAT THIS IS FOR, IN PLAIN ENGLISH
+#
+# On 17 September 2026, on Royce's PC, switching the screen away from the GNOME
+# desktop and back again left Bluetooth dead: the K780 keyboard simply stopped
+# existing, and a controller would have gone the same way. `bluetoothctl power
+# on` typed by hand fixed it. Since the keyboard you would type that command
+# with is the keyboard that just died, that is not a fix a person can use.
+#
+# So: every time a desktop session starts, this looks — a few seconds later, and
+# a few times — at whether the Bluetooth adapter is switched OFF while nothing
+# has asked for it to be off. If it is, it switches it back on, once, and says
+# so in the journal. On a healthy machine it finds everything as it should be
+# and does nothing at all.
+#
+# ------------------------------------------------------------------------------
+# WHAT WE ACTUALLY KNOW, AND WHAT WE DO NOT — please read before changing this
+# ------------------------------------------------------------------------------
+# WHAT THE JOURNAL SHOWS (bench machine, 2026-09-17, read back afterwards):
+#
+#   19:09:53  kernel: rfkill: input handler enabled
+#   19:09:56  bluetoothd: btd_adv_monitor_power_down() Unexpected NULL ...
+#   19:09:57  the "Keyboard K780 Keyboard" input device disappears
+#
+#   * The first line is NOT something switching Bluetooth off. It is the kernel
+#     saying "no program is holding /dev/rfkill any more" — which happens
+#     because the desktop's own radio service (gsd-rfkill) belongs to a session
+#     that has just lost the screen. It is a consequence, not a cause.
+#   * The second line is bluetoothd tidying up as the adapter STOPS. The
+#     function is named `power_down` and the message is a harmless complaint
+#     about an internal object, but the fact that it runs at all means the
+#     adapter really did go down. Three seconds after the screen moved.
+#   * The third line is the visible damage: the keyboard is gone.
+#
+# WHAT WE DO NOT KNOW: WHO switched it off. It is NOT an rfkill block — the
+# radio reports itself unblocked, soft and hard, before and after. So something
+# asked BlueZ, over D-Bus, to power the adapter down, and the obvious suspect
+# (GNOME's own radio service restoring a saved "airplane mode") does not fit:
+# the setting that feature used no longer exists on this version of GNOME.
+#
+# ⚠️ SO THIS IS A REPAIR, NOT A CURE, AND IT IS WRITTEN TO BE HONEST ABOUT THAT.
+# It is deliberately narrow: it only ever turns the radio ON, only when the
+# radio is not blocked (so it can never fight a person who really did switch
+# Bluetooth off in Settings — that path soft-blocks the radio, which this
+# checks for and respects), only in the first half-minute of a session, and at
+# most once. If the cause is ever found, delete this file and its service, and
+# say so in docs/restart/game-mode.md.
+# =============================================================================
+
+set -uo pipefail
+
+AQ_TRIES=10       # how many times to look
+AQ_GAP=3          # seconds between looks (so: the first half-minute)
+
+say() { echo "aquarius-bluetooth-wake: $*"; }
+
+command -v bluetoothctl > /dev/null 2>&1 || {
+    say "bluetoothctl is not in this image, so there is nothing to check."
+    exit 0
+}
+
+# -----------------------------------------------------------------------------
+# Is there an adapter at all?
+# -----------------------------------------------------------------------------
+# A desktop PC without a Bluetooth chip is a perfectly normal machine and must
+# not get a service that complains at every login.
+if ! ls -d /sys/class/bluetooth/hci* > /dev/null 2>&1; then
+    say "this computer has no Bluetooth adapter. Nothing to do."
+    exit 0
+fi
+
+# -----------------------------------------------------------------------------
+# Has somebody deliberately switched Bluetooth off?
+# -----------------------------------------------------------------------------
+# Switching Bluetooth off in GNOME's or Plasma's settings BLOCKS the radio —
+# that is what the "soft block" in rfkill is. If the radio is blocked, the
+# person meant it, and this program must keep its hands off. Turning somebody's
+# Bluetooth back on behind their back would be much worse than the bug.
+aq_blocked() {
+    local f
+    for f in /sys/class/rfkill/rfkill*/type; do
+        [ -r "${f}" ] || continue
+        [ "$(cat "${f}" 2> /dev/null)" = "bluetooth" ] || continue
+        [ "$(cat "$(dirname "${f}")/soft" 2> /dev/null)" = "1" ] && return 0
+        [ "$(cat "$(dirname "${f}")/hard" 2> /dev/null)" = "1" ] && return 0
+    done
+    return 1
+}
+
+# -----------------------------------------------------------------------------
+# Is the adapter powered?
+# -----------------------------------------------------------------------------
+# `bluetoothctl show` prints "Powered: yes" or "Powered: no". Read to a file
+# first rather than piping into grep — a pipe into `grep -q` in a script with
+# `pipefail` reports a success as a failure (the long note in
+# build_files/aq-lib.sh explains that trap in full).
+aq_powered() {
+    local tmp out
+    tmp="$(mktemp)" || return 0
+    bluetoothctl show > "${tmp}" 2> /dev/null
+    out="$(sed -n 's/^[[:space:]]*Powered:[[:space:]]*//p' "${tmp}" | head -n 1)"
+    rm -f "${tmp}"
+    case "${out}" in
+        no) return 1 ;;
+        *) return 0 ;;   # "yes", or no answer at all: assume well, do nothing
+    esac
+}
+
+aq_n=0
+while [ "${aq_n}" -lt "${AQ_TRIES}" ]; do
+    sleep "${AQ_GAP}"
+    aq_n=$((aq_n + 1))
+
+    if aq_blocked; then
+        say "Bluetooth is switched off in Settings, which somebody chose. Leaving it alone."
+        exit 0
+    fi
+
+    if aq_powered; then
+        continue
+    fi
+
+    say "the Bluetooth adapter is switched off, and nothing has asked for it to be."
+    say "This is the 2026-09-17 fault: a session change knocks the radio out and"
+    say "takes the keyboard and the controllers with it. Switching it back on."
+
+    if bluetoothctl power on > /dev/null 2>&1; then
+        sleep 2
+        if aq_powered; then
+            say "Bluetooth is on again. Your keyboard and controllers should reconnect by themselves."
+        else
+            say "asked for it to come on, and it is still off. Try by hand:  bluetoothctl power on"
+        fi
+    else
+        say "could not switch Bluetooth on. Try by hand:  bluetoothctl power on"
+    fi
+    exit 0
+done
+
+exit 0
