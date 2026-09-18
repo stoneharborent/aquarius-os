@@ -112,7 +112,11 @@ echo "  commit: ${AQ_GS_COMMIT}"
 # The hand-written list can go stale, which is why it is second and not first.
 # If it is ever the one doing the work, the build log says so loudly.
 say "The tools and libraries needed to compile it"
-aq_dnf install dnf5-plugins git meson ninja-build gcc gcc-c++ cmake glslang spirv-tools
+# pkgconf-pkg-config is named on purpose: `pkg-config` is how meson asks
+# whether a library is here, and the checks further down ask the same way. It is
+# normally dragged in by the first -devel package, but a check that depends on a
+# tool arriving by accident is not a check.
+aq_dnf install dnf5-plugins git meson ninja-build gcc gcc-c++ cmake glslang spirv-tools pkgconf-pkg-config
 
 # The source repositories, on for one command. dnf5 spells it --enable-repo and
 # dnf4 spelled it --enablerepo; the same uncertainty step 68 works around for
@@ -132,6 +136,30 @@ if [ -z "${AQ_SRC_FLAGS}" ]; then
 fi
 rm -f /tmp/aq-src-probe.txt
 
+# ------------------------------------------------------------------------------
+# ⚠️ TWO RECIPES ARE ASKED FOR, NOT ONE, AND THAT IS THE 2026-09-18 LESSON
+# ------------------------------------------------------------------------------
+# Build 35301818660 got all the way through `builddep gamescope` and then died
+# configuring, on this line:
+#
+#     wlroots| Run-time dependency xwayland found: NO
+#     ERROR: Subproject xserver is buildable: NO
+#
+# WHY, IN PLAIN ENGLISH. gamescope is built on top of wlroots, a library for
+# building compositors. Fedora's gamescope package links against the wlroots
+# that Fedora packages separately, so Fedora's gamescope recipe does not list
+# wlroots' own build requirements — it does not need them.
+#
+# OURS DOES. This commit of gamescope wants wlroots 0.19 and Fedora ships 0.20,
+# so the version does not match and meson quietly builds the copy of wlroots
+# that comes inside gamescope. That copy has to be BUILT, which means every
+# development package WLROOTS needs has to be here too — and the one that bit
+# us is the Xwayland development files, which nothing else on this list wants.
+#
+# So both recipes are asked for. `builddep wlroots` covers wlroots' whole list
+# (libseat, libinput, the xcb pieces, hwdata, lcms2, libdisplay-info, Xwayland
+# and the rest) and keeps covering it if wlroots adds to it, which is the whole
+# reason for asking Fedora rather than writing a list here.
 say "Asking Fedora what gamescope needs to be built"
 AQ_BUILDDEP_WORKED=0
 # shellcheck disable=SC2086
@@ -145,6 +173,119 @@ else
     echo "      out of Fedora's gamescope recipe on 2026-09-17."
     echo
 fi
+
+# The second recipe: what wlroots itself needs, because we build it.
+say "And asking Fedora what wlroots needs to be built, because we build that too"
+# shellcheck disable=SC2086
+if aq_dnf builddep ${AQ_SRC_FLAGS} wlroots; then
+    ok "Fedora's own build requirements for wlroots are installed"
+else
+    echo "  ⚠️  'dnf builddep wlroots' did not work. Not fatal — the written-out"
+    echo "      list below names the pieces the wlroots inside gamescope actually"
+    echo "      asks for, which were read out of its own meson.build files."
+    AQ_BUILDDEP_WORKED=0
+fi
+
+# ------------------------------------------------------------------------------
+# THE WLROOTS SUB-PROJECT'S OWN LIST, ALWAYS INSTALLED
+# ------------------------------------------------------------------------------
+# ⚠️ THIS IS NOT A FALLBACK. It runs whether or not `builddep` worked, because
+# `builddep wlroots` describes FEDORA'S wlroots (0.20) and we are building a
+# different one (0.19, the copy inside gamescope at the pinned commit). Every
+# name below was read out of that exact copy's meson.build files on 2026-09-18,
+# at submodule commit 88a869855742281c98c22cab9641b317b8d065ef, and each one was
+# checked against Fedora 44 to be sure a real package provides it.
+#
+# gamescope builds that wlroots with these options (src/meson.build at the
+# pinned commit):
+#     xwayland=enabled  backends=libinput  session=enabled
+#     renderers=[]  allocators=[]  examples=false  default_library=static
+#
+# which is why this list has the Xwayland and xcb pieces and does NOT have the
+# OpenGL, EGL or GBM ones — with no renderers and no allocators, wlroots never
+# asks for those.
+#
+#   pkgconfig(xwayland)      xwayland/meson.build:23 — THE ONE THAT FAILED.
+#                            Without it wlroots tries to build a whole X server
+#                            from a sub-project that is not there, and the error
+#                            message ("Subproject xserver is buildable: NO")
+#                            says nothing about Xwayland at all.
+#   the xcb pieces           xwayland/meson.build:2-13, the required list.
+#                            xcb-errors is the optional one and is included so
+#                            that X11 errors are readable in the journal.
+#   pkgconfig(libseat)       backend/session/meson.build:3  (session=enabled)
+#   pkgconfig(libinput)      backend/libinput/meson.build:6 (backends=libinput)
+#   pkgconfig(hwdata)        backend/drm/meson.build:1
+#   pkgconfig(libdisplay-info) backend/drm/meson.build:8
+#   pkgconfig(lcms2)         render/meson.build:61 (colour management — the
+#                            thing a video editor's desktop is actually for)
+#   pkgconfig(libudev)       backend/session/meson.build:2
+#   pkgconfig(pixman-1),
+#   pkgconfig(xkbcommon),
+#   pkgconfig(libdrm),
+#   the wayland pieces       meson.build:96-120 and protocol/meson.build
+say "The pieces the wlroots inside gamescope needs, which Fedora's gamescope does not"
+aq_dnf install \
+    "pkgconfig(xwayland)" \
+    "pkgconfig(xcb)" \
+    "pkgconfig(xcb-composite)" \
+    "pkgconfig(xcb-ewmh)" \
+    "pkgconfig(xcb-icccm)" \
+    "pkgconfig(xcb-render)" \
+    "pkgconfig(xcb-res)" \
+    "pkgconfig(xcb-xfixes)" \
+    "pkgconfig(xcb-errors)" \
+    "pkgconfig(libseat)" \
+    "pkgconfig(libinput)" \
+    "pkgconfig(libudev)" \
+    "pkgconfig(hwdata)" \
+    "pkgconfig(libdisplay-info)" \
+    "pkgconfig(lcms2)" \
+    "pkgconfig(pixman-1)" \
+    "pkgconfig(xkbcommon)" \
+    "pkgconfig(libdrm)" \
+    "pkgconfig(wayland-server)" \
+    "pkgconfig(wayland-client)" \
+    "pkgconfig(wayland-protocols)" \
+    "pkgconfig(wayland-scanner)"
+
+
+# ------------------------------------------------------------------------------
+# gamescope's own extras that its Fedora recipe gets a different way
+# ------------------------------------------------------------------------------
+# Read out of gamescope's meson.build and src/meson.build at the pinned commit.
+# Most of these `builddep gamescope` already brought; naming them is cheap and
+# means a change in Fedora's packaging cannot quietly take one away.
+#   gbm             src/meson.build:15 — the memory allocator this whole NVIDIA
+#                   fix is ABOUT, so it had better be here.
+#   libdecor-0      src/meson.build:43
+#   libcap          src/meson.build:22 (the real-time scheduling capability)
+#   luajit          src/meson.build:129
+#   libeis-1.0      src/meson.build:16
+#   libavif         src/meson.build:25
+#   pipewire, vulkan, x11, hwdata   meson.build:45-51
+say "gamescope's own libraries"
+aq_dnf install \
+    "pkgconfig(gbm)" \
+    "pkgconfig(libdecor-0)" \
+    "pkgconfig(libcap)" \
+    "pkgconfig(luajit)" \
+    "pkgconfig(libeis-1.0)" \
+    "pkgconfig(libavif)" \
+    "pkgconfig(libpipewire-0.3)" \
+    "pkgconfig(vulkan)" \
+    "pkgconfig(x11)" \
+    "pkgconfig(sdl2)" \
+    libXcursor-devel libXmu-devel libXi-devel \
+    "pkgconfig(xcomposite)" \
+    "pkgconfig(xdamage)" \
+    "pkgconfig(xext)" \
+    "pkgconfig(xfixes)" \
+    "pkgconfig(xrender)" \
+    "pkgconfig(xres)" \
+    "pkgconfig(xtst)" \
+    "pkgconfig(xxf86vm)" \
+    glm-devel spirv-headers-devel
 
 if [ "${AQ_BUILDDEP_WORKED}" -eq 0 ]; then
     say "Installing the written-out list of build requirements instead"
@@ -200,6 +341,44 @@ fi
 # come from the sub-projects fetched in section 2, and a system wlroots of the
 # wrong version is simply ignored. If `builddep` installed one anyway, no harm
 # is done.
+
+say "Proving every library is really here, the same way meson will ask"
+
+# And prove the one that failed is really here now, by name, before we spend
+# twenty minutes finding out the hard way again.
+#
+# ⚠️ ASKED THE WAY MESON ASKS IT. meson does not look in the package database;
+# it runs pkg-config. So this runs pkg-config too — the same question, of the
+# same program, so the answer here cannot disagree with the answer twenty
+# minutes into the build.
+if pkg-config --exists xwayland 2> /dev/null; then
+    ok "pkg-config can see Xwayland ($(pkg-config --modversion xwayland 2> /dev/null))"
+else
+    echo "  the pkg-config files that ARE here, in case the name has changed:"
+    ls -1 /usr/share/pkgconfig /usr/lib64/pkgconfig 2> /dev/null | grep -i 'wayland\|xorg' | sed 's/^/       /' || true
+    bad "pkg-config cannot see 'xwayland' — the wlroots inside gamescope will try to build a whole X server and stop with 'Subproject xserver is buildable: NO', which is what failed build 35301818660"
+fi
+
+# The rest of the wlroots list, asked the same way, so that a missing one is a
+# named sentence here rather than a meson error later.
+for aq_pc in xcb xcb-composite xcb-ewmh xcb-icccm xcb-render xcb-res xcb-xfixes \
+    libseat libinput libudev hwdata libdisplay-info lcms2 pixman-1 xkbcommon libdrm \
+    wayland-server wayland-client wayland-protocols; do
+    if pkg-config --exists "${aq_pc}" 2> /dev/null; then
+        ok "pkg-config can see ${aq_pc}"
+    else
+        bad "pkg-config cannot see '${aq_pc}', which the wlroots inside gamescope asks for"
+    fi
+done
+
+if [ "${AQ_FAILS}" -ne 0 ]; then
+    echo
+    echo "AQUARIUS ERROR: the libraries gamescope's own copy of wlroots needs are" >&2
+    echo "                not all here, so meson would stop a long way into the" >&2
+    echo "                build with a message about a sub-project rather than" >&2
+    echo "                about a missing package. Stopping now instead." >&2
+    aq_finish "our own gamescope"
+fi
 
 # ==============================================================================
 # 2. Fetch exactly that commit, and its sub-projects
