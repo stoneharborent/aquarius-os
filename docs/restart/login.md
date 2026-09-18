@@ -45,6 +45,110 @@ Start there. The rest of this page is the first fault, which is closed.*
 
 ---
 
+# The login screen can log you straight in — and when it does
+
+*Added 2026-09-17, with Game Mode (Phase G1).*
+
+## The short version
+
+**Nothing about a normal boot has changed.** Switch this computer on and GDM
+appears and asks who you are, exactly as it always has. If that is all you
+wanted to know, you can stop here.
+
+## What changed, and why
+
+[Game Mode](game-mode.md) — Steam owning the whole screen, driven from the sofa
+— arrived on 2026-09-17. Moving between the desktop and Game Mode is a **full
+logout** in both directions, because two of these cannot share one graphics
+card. That means the login screen appears in the middle of every switch, and
+being asked for a password there would be the end of the feature: **you cannot
+type a password with a game controller in your hands.**
+
+So, for the length of one switch, AquariusOS tells GDM to log that person
+straight back in.
+
+## ⚠️ Timed login, NOT automatic login
+
+These look like the same thing and they are not, and the difference is the whole
+reason this works:
+
+| | What it does |
+| --- | --- |
+| **Automatic login** (`AutomaticLoginEnable`) | Fires **once per boot**, then is spent. It would take you into Game Mode and then do nothing at all on the way back — a machine that asks for a password halfway through a switch you already started. |
+| **Timed login** (`TimedLoginEnable`, delay 1 second) | Fires **every time the login screen appears**, including after a logout. Which is exactly what a switch is. |
+
+Nobara — the one other distribution doing this with GDM — hit this first, and
+their script carries a one-line comment about it. Ours carries the paragraph.
+
+The delay is **one second, not zero**. Zero has historically meant "never" in
+GDM rather than "instantly".
+
+## What it looks like in the file
+
+`/etc/gdm/custom.conf` gains three lines under `[daemon]` while a switch is in
+flight:
+
+```
+[daemon]
+TimedLoginEnable=true
+TimedLoginDelay=1
+TimedLogin=<your account>
+```
+
+Which session you land in is a separate answer, in your own account's file:
+`/var/lib/AccountsService/users/<your account>`, as `Session=gnome`,
+`Session=plasma` or `Session=gamescope-session-steam`.
+
+Both are written by one small program, `/usr/libexec/aquarius-session-root`,
+behind polkit — the person at this screen, in the active session, in the `wheel`
+group, with no password; everybody else refused outright.
+
+## ⚠️ And it is taken back off again, twice
+
+This is the part that keeps a normal machine normal. Those three lines do not
+remove themselves when a switch has finished, so AquariusOS removes them:
+
+1. **At every boot**, before GDM starts, by `aquarius-login-mode.service`, on
+   any machine whose `/etc/aquarius/login-mode` says `mode=desktop` — which is
+   every desktop image. The same service also puts your account back to the
+   desktop it came from if it is still pointed at Game Mode. **So one evening of
+   gaming can never silently change how your computer starts.**
+2. **Whenever a desktop session begins**, by `aquarius-game-tidy.service`.
+   Without this, choosing **Log Out** from the desktop menu would log you
+   straight back in, and Log Out would look broken.
+
+On a machine deliberately set to start in Game Mode (`aq game boot on`) neither
+removal happens, because there the timed login is the point.
+
+## How to check
+
+```
+aq game status                       # in plain English
+grep -A3 '^\[daemon\]' /etc/gdm/custom.conf   # the actual lines
+cat /var/lib/AccountsService/users/$USER       # which session is next
+systemctl status aquarius-login-mode.service   # what it did at this boot
+```
+
+On a machine that has never been to Game Mode, `custom.conf` has no `TimedLogin`
+lines at all and `aquarius-login-mode.service` reports that it found nothing to
+do.
+
+## ⚠️ Why this is not done Valve's way
+
+Valve's `steamos-manager` does session switching properly and is installed on
+these images — but it is hard-wired to a login screen called **SDDM**, and it
+refuses to manage sessions unless an SDDM file exists. AquariusOS will not move
+to SDDM: **under SDDM, GNOME has no lock screen at all.** That is verified in
+gnome-shell's own source, which only creates a lock screen if the GDM daemon
+answers on D-Bus; under SDDM, GNOME also loses user switching and fingerprint
+unlock and says "Screen Lock disabled" at login.
+
+Losing the lock screen to gain a games menu is the wrong trade for a working
+machine. So GDM stays, Valve's session-switching half stays asleep, and the
+switch is ours — built the way Nobara built theirs.
+
+---
+
 # Booted to a text console, no login screen — 15 September 2026
 
 *Written the same night, on the bench, after the first two-desktop image

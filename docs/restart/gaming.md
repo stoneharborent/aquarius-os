@@ -246,34 +246,57 @@ own, CI says so.
 
 ---
 
+## Game Mode — added 17 September 2026
+
+**There IS a Game Mode now.** Until 17 September 2026 this section said there
+was not, under Royce's standing decision of 2 September. He reversed it that
+day: editing works, and a machine that games from the sofa is worth having.
+
+Game Mode is Steam owning the entire screen, big tiles, driven with a controller
+— the same thing a Steam Deck shows. You reach it from the app grid (**Return to
+Game Mode**) or by typing `aq game`, and you come back with Steam's power menu →
+**Switch to Desktop**. Neither direction asks for a password, and **every switch
+closes your desktop**, which is how Game Mode works on every Linux that has one.
+
+**A cold boot on these images is unchanged** — the login screen, exactly as
+before. `aq game boot on` changes that if you want it.
+
+⚠️ **On the NVIDIA image, Game Mode uses a gamescope we compiled ourselves.**
+Fedora's draws a corrupted picture on NVIDIA cards (NVIDIA's bug 5240452,
+photographed on the bench). The AMD/Intel image keeps Fedora's, because nothing
+is wrong with it there.
+
+**The whole thing, in plain language — how to switch, the boot setting, what to
+do about a black screen, and exactly how it works underneath:**
+[`game-mode.md`](game-mode.md).
+
+Steam's own **Big Picture** mode is still here too, and still the right answer
+when you just want a big interface inside your desktop without closing anything:
+it is in the app grid as *Steam (Big Picture)*.
+
+---
+
 ## What is NOT here, and why
 
-**No Game Mode session.** There is no console-style interface at the login
-screen, and the machine does not boot into Steam. Steam's own **Big Picture**
-mode does the same job for a desktop — it is in the app grid as *Steam (Big
-Picture)*, or the full-screen icon in Steam's top-right corner — and it needs no
-separate session, no automatic login and no extra plumbing to keep working.
-
 **No handheld support.** No Steam Deck, ROG Ally, Legion Go or Ayaneo device
-drivers, no gyro, no TDP sliders, no fan curves.
+drivers, no gyro, no TDP sliders, no fan curves, no InputPlumber. That is
+**phase G2**, it targets exactly one device — the ROG Ally Royce owns — and
+widening that list without the hardware on the bench is how a distribution ends
+up owning a device matrix it cannot test. Doing handhelds badly is worse than
+not doing them.
 
-This is Royce's standing decision 6, taken on 2026-09-02, and the argument is in
+The original reasoning, from the era when Game Mode was out too, is in
 [`../base-distro-reassessment-2026-09.md`](../base-distro-reassessment-2026-09.md)
-section 4. The short version: Valve's SteamOS 3.8 now installs on the Ally,
-Legion and Claw families itself, and Bazzite covers everything else. Doing
-handhelds properly means owning a device matrix and testing thirty machines we
-do not have. Doing them badly is worse than not doing them. AquariusOS is a
-creator's desktop that games extremely well, and that is the whole claim.
-
-Boot-to-Game-Mode may come back later as an *optional variant*. It is not
-cancelled; it is simply not what R4 is.
+section 4. The reversal is in
+[`../decision-2026-09-17-game-mode-and-handheld.md`](../decision-2026-09-17-game-mode-and-handheld.md).
 
 ---
 
 ## The bench checklist (the 4090 PC)
 
-*Adapted from `docs/gaming-test-checklist.md`, with the handheld and Game Mode
-rows removed — they do not apply to this line. Everything below is on the
+*Adapted from `docs/gaming-test-checklist.md`, with the handheld rows removed —
+they do not apply to this line. **Game Mode has its own bench list**, in
+[`game-mode.md`](game-mode.md). Everything below is on the
 machine already after a `bootc upgrade`; nothing needs installing first.*
 
 ### A. Steam and a real game — the core loop

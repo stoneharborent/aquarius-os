@@ -1215,6 +1215,19 @@ jobs:
           #               IMAGE AND NOT ON THE BASE ONE, that difference is the
           #               first thing to look at — the environment should be
           #               ~330 MB and step 63 fails on its own if it is not.
+          #   2026-09-17  Game Mode (Phase G1, build_files/71-game-mode.sh). The
+          #               three Terra packages are small — tens of megabytes —
+          #               and the NVIDIA image also carries one gamescope we
+          #               compiled ourselves, which is a single program of a few
+          #               megabytes, NOT the container it was built in. The
+          #               ceilings were NOT raised: the whole phase is well under
+          #               0.1 GB on either image and there is a gigabyte of head
+          #               room already. ⚠️ IF THIS CHECK STARTS FAILING SOON
+          #               AFTER A GAME MODE CHANGE, the thing to suspect is a
+          #               build stage leaking its tools into the image — the
+          #               gamescope builder is a separate stage precisely so
+          #               that its compiler and its forty development packages
+          #               never reach the finished operating system.
           BYTES="$(podman image inspect "${IMAGE_NAME}:${DEFAULT_TAG}" \
             --format '{{.Size}}' 2>/dev/null || echo 0)"
           GB="$(awk -v b="${BYTES}" 'BEGIN { printf "%.1f", b / 1000000000 }')"
@@ -6380,6 +6393,273 @@ jobs:
             --entrypoint /usr/bin/bash \
             -e EXPECTED_NVIDIA="${NVIDIA}" \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-gaming.sh
+
+      # ------------------------------------------------------------------------
+      # Game Mode (Phase G1)
+      # ------------------------------------------------------------------------
+      # ⚠️ WHAT THIS CAN AND CANNOT PROVE.
+      #
+      # A GitHub runner has no graphics card, no monitor, no controller and no
+      # login screen. Nothing here can show that Game Mode DRAWS. What it CAN
+      # show is that every piece is in the image and is the piece we meant: the
+      # session the login screen offers, the scripts Steam calls, our own half
+      # of the switch, the permission rule that lets it happen without a
+      # password, the cold-boot setting shipped the safe way round, and — on the
+      # NVIDIA image only — the gamescope we compiled ourselves with the fix for
+      # NVIDIA's scan-out bug really in it.
+      #
+      # The real proof is the bench list in docs/restart/game-mode.md.
+      - name: Check Game Mode is really in there
+        run: |
+          set -euo pipefail
+          cat > /tmp/verify-game-mode.sh <<'SCRIPT'
+          set -u
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+
+          echo "== the Game Mode packages =="
+          # terra-release is deliberately NOT in this list. Terra is a
+          # build-time source only and step 71 removes it again, for the same
+          # installer-ISO reason as step 68.
+          for pkg in gamescope-session gamescope-session-steam steamos-manager; do
+            if rpm -q "${pkg}" > /dev/null 2>&1; then
+              ok "${pkg} $(rpm -q --queryformat '%{VERSION}-%{RELEASE}' "${pkg}")"
+            else
+              bad "${pkg} is NOT installed"
+            fi
+          done
+
+          echo "== the login screen can offer Game Mode =="
+          SESSION=/usr/share/wayland-sessions/gamescope-session-steam.desktop
+          if [ -r "${SESSION}" ]; then
+            ok "$(basename "${SESSION}") is installed"
+            grep -q '^Exec=gamescope-session-plus steam$' "${SESSION}" \
+              && ok "it starts 'gamescope-session-plus steam'" \
+              || bad "the Game Mode session does not start 'gamescope-session-plus steam'"
+          else
+            bad "${SESSION} is missing — the login screen would have no Game Mode to offer"
+          fi
+          echo "     every session this image offers:"
+          ls -1 /usr/share/wayland-sessions/ 2>/dev/null | sed 's/^/       /'
+          for s in gnome plasma gamescope-session-steam; do
+            [ -r "/usr/share/wayland-sessions/${s}.desktop" ] \
+              && ok "the login screen can start '${s}'" \
+              || bad "/usr/share/wayland-sessions/${s}.desktop is missing"
+          done
+          [ -x /usr/bin/gamescope-session-plus ] \
+            && ok "/usr/bin/gamescope-session-plus is there" \
+            || bad "/usr/bin/gamescope-session-plus is missing"
+
+          echo "== GDM is still the login screen, and SDDM is nowhere near this image =="
+          # Installing Valve's session packages is exactly the kind of thing
+          # that could drag SDDM in. The day it does, GNOME silently loses its
+          # lock screen — that is verified in gnome-shell's own source and it is
+          # why AquariusOS does the switch the Nobara way instead of Valve's.
+          if rpm -q sddm > /dev/null 2>&1; then
+            bad "sddm is installed — GNOME loses its lock screen on a machine that uses it"
+          else
+            ok "sddm is NOT installed"
+          fi
+          systemctl is-enabled gdm.service > /dev/null 2>&1 \
+            && ok "GDM is still switched on" \
+            || bad "GDM is not switched on"
+
+          echo "== our own half of the switch =="
+          for f in /usr/libexec/os-session-select \
+                   /usr/libexec/aquarius-session-root \
+                   /usr/libexec/aquarius-game-mode \
+                   /usr/libexec/aquarius-login-mode \
+                   /usr/libexec/aquarius-bluetooth-wake \
+                   /usr/libexec/ogc/os-update; do
+            [ -x "$f" ] && ok "$(basename "$f") is there and can be run" || bad "$f is missing or not runnable"
+          done
+          # The hook Steam actually calls. If this ever stops pointing at our
+          # file, "Switch to Desktop" silently becomes "close Steam".
+          [ -x /usr/bin/steamos-session-select ] \
+            && ok "steamos-session-select (the script Steam calls) is there" \
+            || bad "/usr/bin/steamos-session-select is missing — Switch to Desktop would do nothing"
+          grep -q 'aquarius-session-root' /usr/libexec/os-session-select \
+            && ok "our os-session-select is ours (it uses the AquariusOS root helper)" \
+            || bad "/usr/libexec/os-session-select is not our file — a package overwrote it"
+
+          echo "== Steam is told, honestly, that it does not update this computer =="
+          # Steam's contract: 7 means "no update". Anything else and Steam
+          # either tries to update the OS or sits at a progress bar for ever.
+          [ -x /usr/bin/steamos-update ] \
+            && ok "/usr/bin/steamos-update is installed" \
+            || bad "/usr/bin/steamos-update is missing"
+          /usr/libexec/ogc/os-update check > /tmp/osu.txt 2>&1
+          code=$?
+          sed 's/^/       /' /tmp/osu.txt
+          if [ "$code" -eq 7 ]; then
+            ok "our os-update answers 7 — Steam's word for 'there is no update'"
+          else
+            bad "our os-update answered ${code}, not 7"
+          fi
+
+          echo "== the permission rule that makes the switch password-free =="
+          POLICY=/usr/share/polkit-1/actions/org.aquariusos.gamemode.policy
+          RULES=/usr/share/polkit-1/rules.d/51-aquarius-game-mode.rules
+          [ -r "$POLICY" ] && ok "$(basename "$POLICY") is there" || bad "$POLICY is missing"
+          [ -r "$RULES" ]  && ok "$(basename "$RULES") is there"  || bad "$RULES is missing"
+          grep -q 'org.aquariusos.gamemode.select' "$POLICY" 2>/dev/null \
+            && ok "it describes the one action the switch needs" \
+            || bad "the policy does not name org.aquariusos.gamemode.select"
+          # ⚠️ THE NARROWNESS IS THE POINT. This is the only no-password rule on
+          # the machine, so it must name exactly one action and refuse
+          # everything else. A rule that granted YES broadly would be a hole.
+          grep -q 'subject.active && subject.local && subject.isInGroup("wheel")' "$RULES" 2>/dev/null \
+            && ok "it is limited to an administrator at this screen, in the active session" \
+            || bad "the rule is not limited to an active, local, wheel-group person"
+          grep -q 'polkit.Result.NOT_HANDLED' "$RULES" 2>/dev/null \
+            && ok "it answers nothing except its own action" \
+            || bad "the rule does not return NOT_HANDLED for other actions — it could grant something else"
+
+          echo "== a cold boot on this image is unchanged =="
+          # ⚠️ THE MOST IMPORTANT CHECK IN THIS BLOCK. If this file ever shipped
+          # as 'game', every machine following these images would stop showing a
+          # login screen at its next restart and boot into Steam instead.
+          FLAG=/etc/aquarius/login-mode
+          if grep -qx 'mode=desktop' "$FLAG" 2>/dev/null; then
+            ok "${FLAG} ships as 'desktop' — switching this computer on shows the login screen"
+          else
+            bad "${FLAG} does not say mode=desktop. This image would change how every machine starts."
+          fi
+          grep -q '^mode=game' "$FLAG" 2>/dev/null \
+            && bad "${FLAG} says 'game' — this image would boot straight into Steam" \
+            || ok "nothing in the image asks for a boot into Game Mode"
+
+          echo "== the services, switched on from /usr =="
+          # Never through /etc: an update merges /etc and remembers deletions
+          # for ever, so a single `systemctl disable` would switch one of these
+          # off on that machine permanently. The long version is in
+          # build_files/aq-lib.sh.
+          L=/usr/lib/systemd/system/graphical.target.wants/aquarius-login-mode.service
+          if [ -L "$L" ] && [ -e "$L" ]; then
+            ok "aquarius-login-mode.service is switched on from /usr"
+          else
+            bad "$L is missing or dangling — a machine could not undo a Game Mode switch at boot"
+          fi
+          [ -e /etc/systemd/system/graphical.target.wants/aquarius-login-mode.service ] \
+            && bad "aquarius-login-mode.service is ALSO switched on through /etc" \
+            || ok "nothing switches it on through /etc"
+          for u in aquarius-game-tidy.service aquarius-bluetooth-wake.service; do
+            UL="/usr/lib/systemd/user/graphical-session.target.wants/${u}"
+            if [ -L "$UL" ] && [ -e "$UL" ]; then ok "${u} is switched on from /usr"; else bad "$UL is missing or dangling"; fi
+          done
+
+          echo "== steamos-manager is installed and ASLEEP =="
+          # It also contains Valve's own session switching, which is hard-wired
+          # to SDDM and would fight ours. It only wakes up if an SDDM holo.conf
+          # exists, so the check is that no such file does.
+          if [ -e /usr/lib/sddm/sddm.conf.d/holo.conf ] || [ -e /etc/sddm.conf.d/holo.conf ]; then
+            bad "an SDDM holo.conf is in this image — Valve's session switching would wake up"
+          else
+            ok "no SDDM holo.conf, so Valve's own session switching can never start"
+          fi
+          for u in steamos-manager.service steamos-manager-user.service; do
+            if [ -e "/usr/lib/systemd/system/graphical.target.wants/${u}" ] \
+               || [ -e "/usr/lib/systemd/system/multi-user.target.wants/${u}" ] \
+               || [ -e "/etc/systemd/system/multi-user.target.wants/${u}" ]; then
+              bad "${u} has been switched on — G1 leaves it asleep"
+            else
+              ok "${u} is not switched on"
+            fi
+          done
+
+          echo "== the way in, and the way to read about it =="
+          D=/usr/share/applications/aquarius-return-to-game-mode.desktop
+          [ -r "$D" ] && ok "the 'Return to Game Mode' launcher is in the app grid" || bad "$D is missing"
+          grep -q '^Exec=/usr/libexec/aquarius-game-mode$' "$D" 2>/dev/null \
+            && ok "it runs the program that warns first" \
+            || bad "the launcher does not run /usr/libexec/aquarius-game-mode"
+          /usr/bin/aq game --help > /tmp/aqgame.txt 2>&1 \
+            && ok "'aq game --help' runs" \
+            || bad "'aq game --help' does not run"
+          [ -r /usr/share/aquarius/gaming/game-mode.md ] \
+            && ok "the plain-language Game Mode note ships in the image" \
+            || bad "/usr/share/aquarius/gaming/game-mode.md is missing"
+
+          echo "== gamescope: Fedora's on AMD, ours on NVIDIA =="
+          # ⚠️ THIS IS THE ONE PLACE THE TWO IMAGES ARE DELIBERATELY DIFFERENT.
+          # NVIDIA's driver can back a scan-out buffer with scattered memory
+          # (NVIDIA bug 5240452), and gamescope then puts part of another
+          # program's window on your screen. AMD and Intel are unaffected. So
+          # the NVIDIA image carries a gamescope we compiled with the fix, and
+          # the AMD image must NOT carry it.
+          if [ "${EXPECTED_NVIDIA}" = "1" ]; then
+            if [ -x /usr/bin/aquarius-gamescope ]; then
+              ok "our own gamescope is installed at /usr/bin/aquarius-gamescope"
+            else
+              bad "/usr/bin/aquarius-gamescope is missing — Game Mode on this image would draw a corrupted picture"
+            fi
+            # The fix has to be IN it, not merely switched on in a file. The
+            # author's later work removed this setting and made the behaviour
+            # unconditional, so pinning the wrong commit gives a program that
+            # builds, installs, and quietly ignores the switch.
+            if strings /usr/bin/aquarius-gamescope 2>/dev/null | grep -q 'drm_gbm_scanout'; then
+              ok "our gamescope really contains the 'drm_gbm_scanout' fix"
+            else
+              bad "our gamescope has no 'drm_gbm_scanout' in it — the wrong commit was built"
+            fi
+            # Real-time scheduling, the same grant Fedora gives its own copy.
+            if command -v getcap > /dev/null 2>&1; then
+              cap="$(getcap /usr/bin/aquarius-gamescope 2>/dev/null || true)"
+              echo "     capabilities: ${cap:-(none)}"
+              case "${cap}" in
+                *cap_sys_nice*) ok "it has cap_sys_nice, like Fedora's own gamescope" ;;
+                *) bad "our gamescope has no cap_sys_nice — Game Mode would stutter" ;;
+              esac
+            else
+              echo "     (getcap is not in the image; skipping the capability check)"
+            fi
+            DROPIN=/usr/lib/systemd/user/gamescope-session-plus@.service.d/10-aquarius-nvidia.conf
+            grep -q '^Environment=GAMESCOPE_BIN=/usr/bin/aquarius-gamescope$' "$DROPIN" 2>/dev/null \
+              && ok "the Game Mode session is pointed at our gamescope" \
+              || bad "$DROPIN does not point the session at our gamescope"
+            grep -q '^Environment=gamescope_drm_gbm_scanout=1$' "$DROPIN" 2>/dev/null \
+              && ok "the NVIDIA picture fix is switched on for the session" \
+              || bad "$DROPIN does not switch the NVIDIA picture fix on"
+            # The pinned commit, written into the image so a person on the
+            # machine can say which build they are running.
+            B=/usr/share/aquarius/gaming/gamescope-build.txt
+            if [ -r "$B" ]; then
+              sed 's/^/       /' "$B"
+              grep -Eq '^commit=[0-9a-f]{40}$' "$B" \
+                && ok "the exact commit our gamescope came from is recorded in the image" \
+                || bad "$B does not record a full commit id"
+            else
+              bad "$B is missing — nothing on the machine says which gamescope this is"
+            fi
+            # And Fedora's is untouched: ours goes BESIDE it, never over it.
+            if rpm -V gamescope 2>/dev/null | grep -q '/usr/bin/gamescope'; then
+              bad "Fedora's /usr/bin/gamescope has been modified — ours is meant to sit beside it"
+            else
+              ok "Fedora's own gamescope is untouched"
+            fi
+          else
+            [ -e /usr/bin/aquarius-gamescope ] \
+              && bad "a hand-built gamescope is on the AMD/Intel image — it is only ever for NVIDIA" \
+              || ok "no hand-built gamescope on this image, as intended"
+            [ -e /usr/lib/systemd/user/gamescope-session-plus@.service.d/10-aquarius-nvidia.conf ] \
+              && bad "the NVIDIA-only Game Mode settings file is on the AMD/Intel image" \
+              || ok "the NVIDIA-only settings file is not on this image, as intended"
+            rpm -q gamescope > /dev/null 2>&1 \
+              && ok "this image uses Fedora's gamescope $(rpm -q --queryformat '%{VERSION}-%{RELEASE}' gamescope)" \
+              || bad "gamescope is not installed at all"
+          fi
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::Game Mode is incomplete."
+            exit 1
+          fi
+          echo "All Game Mode checks passed."
+          SCRIPT
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            -e EXPECTED_NVIDIA="${NVIDIA}" \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-game-mode.sh
 
       # ------------------------------------------------------------------------
       # THE INSTALLER-ISO REGRESSION GUARD
