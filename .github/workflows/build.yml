@@ -6482,6 +6482,16 @@ jobs:
           grep -q 'aquarius-session-root' /usr/libexec/os-session-select \
             && ok "our os-session-select is ours (it uses the AquariusOS root helper)" \
             || bad "/usr/libexec/os-session-select is not our file — a package overwrote it"
+          # ⚠️ THE ROOT HELPER MUST BIND ITSELF TO WHOEVER ASKED.
+          # The permission rule says yes with no password to any administrator
+          # at this screen. Without this, one of them could point SOMEBODY
+          # ELSE'S account at a session and switch on a login that needs no
+          # password — a password-free way into another person's account.
+          # pkexec puts the asking person's user number in PKEXEC_UID, and the
+          # helper refuses any account that is not theirs.
+          grep -q 'PKEXEC_UID' /usr/libexec/aquarius-session-root \
+            && ok "the root helper checks PKEXEC_UID — you can only do this to your own account" \
+            || bad "/usr/libexec/aquarius-session-root does not mention PKEXEC_UID — an administrator could switch on a password-free login for another person's account"
 
           echo "== Steam is told, honestly, that it does not update this computer =="
           # Steam's contract: 7 means "no update". Anything else and Steam

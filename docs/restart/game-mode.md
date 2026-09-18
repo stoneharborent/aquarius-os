@@ -190,6 +190,17 @@ session, from a non-administrator — it is a flat no with no prompt at all. The
 program itself refuses any account that is not an ordinary person's account and
 any session name that is not a session file this image really ships.
 
+**And you can only do it to yourself.** "No password" for any administrator at
+the screen would otherwise mean one administrator could point *another person's*
+account at a session and switch on a login that needs no password for it — a way
+into somebody else's account on a machine where they had a password precisely so
+that could not happen. pkexec tells the helper who asked (`PKEXEC_UID`), and the
+helper refuses any account that is not theirs. The only caller exempt from that
+is the boot-time service, which runs as real root before anybody has logged in
+and has no "asking person" at all. Changing the machine-wide boot setting
+(`aq game boot on|off`) is not covered, because that is a setting about the
+computer rather than about a person.
+
 ### The files, for the record
 
 | File | What it does |

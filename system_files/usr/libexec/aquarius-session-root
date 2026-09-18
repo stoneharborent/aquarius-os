@@ -74,6 +74,52 @@ die() {
 [ "$(id -u)" = "0" ] || die "this has to be run as root. Use 'aq game' instead."
 
 # -----------------------------------------------------------------------------
+# ⚠️ YOU MAY ONLY DO THIS TO YOUR OWN ACCOUNT
+# -----------------------------------------------------------------------------
+# THE HOLE THIS CLOSES, IN PLAIN ENGLISH. The permission rule for this program
+# says yes with NO PASSWORD to any administrator sitting at this computer,
+# because a switch to Game Mode has to work with a controller in your hands.
+# Without the check below, that same no-password yes would let one
+# administrator point SOMEBODY ELSE'S account at a session and switch on an
+# automatic login for it — which is a password-free way into another person's
+# account, on a machine where they had a password precisely so that could not
+# happen. A single-person machine today is a family machine next year.
+#
+# HOW WE KNOW WHO ASKED. pkexec puts the asking person's user number into the
+# environment as PKEXEC_UID before running us. It is set by pkexec itself, not
+# by the caller: pkexec builds a clean environment and this is one of the few
+# things it puts in it. So if PKEXEC_UID is there, somebody went through polkit
+# to get here, and they may only act on themselves.
+#
+# ⚠️ WHEN IT IS NOT SET, TODAY'S BEHAVIOUR IS KEPT, AND THAT IS NOT A LOOPHOLE.
+# PKEXEC_UID is absent in exactly one situation that matters: the boot-time
+# service (aquarius-login-mode.service) runs this program as real root, before
+# anybody has logged in, to set up the account the machine is configured to log
+# in. There is no "asking person" at that point. Reaching that path at all
+# already requires being root, and somebody who is root does not need this
+# program to do anything.
+#
+# `boot-flag` is deliberately NOT covered: it is a setting about the COMPUTER
+# ("does this machine start in Game Mode?"), not about a person, and an
+# administrator is exactly who should be able to change it.
+AQ_CALLER_UID="${PKEXEC_UID:-}"
+
+aq_must_be_the_caller() {
+    local name="$1" uid
+    [ -n "${AQ_CALLER_UID}" ] || return 0   # real root, not through pkexec
+
+    uid="$(getent passwd "${name}" 2> /dev/null | cut -d: -f3)"
+    [ -n "${uid}" ] || die "there is no account called '${name}' on this computer."
+
+    if [ "${uid}" != "${AQ_CALLER_UID}" ]; then
+        die "you may only change your own account. You asked to change '${name}',
+    which is somebody else's. Changing where another person's next login goes,
+    and switching on a login that needs no password, is not something this
+    computer will do for anybody — see the note in /usr/libexec/aquarius-session-root."
+    fi
+}
+
+# -----------------------------------------------------------------------------
 # aq_check_account <name>
 # -----------------------------------------------------------------------------
 # A real, ordinary account on this computer, and nothing else. `getent passwd`
@@ -119,6 +165,7 @@ aq_check_session() {
 aq_set_session() {
     local account="$1" session="$2" file
     aq_check_account "${account}"
+    aq_must_be_the_caller "${account}"
     aq_check_session "${session}"
     file="${AQ_ACCOUNTS_DIR}/${account}"
 
@@ -171,6 +218,11 @@ aq_timed_login() {
     case "${action}" in
         on)
             aq_check_account "${account}"
+            # Switching on a password-free login is the sharpest thing this
+            # program does, so it is bound to the person asking. `off` is not:
+            # taking an automatic login away can only ever make the machine ask
+            # for a password more often, which is never something to refuse.
+            aq_must_be_the_caller "${account}"
             # Remove any block we or anybody else left, then write a clean one
             # directly under [daemon]. Removing first means this can never end
             # up with two TimedLogin lines, whatever state the file was in.
@@ -260,7 +312,15 @@ aq_boot_flag() {
         echo "# Change it with:  aq game boot on   /   aq game boot off"
         echo "# Read about it in: docs/restart/game-mode.md"
         echo "mode=${mode}"
-        [ -n "${account}" ] && echo "user=${account}"
+        # ⚠️ AN `if`, NOT `[ -n ... ] && echo`. A group's exit status is the
+        # status of the LAST thing in it. Written the short way, a call with no
+        # account name ends on a test that answers "no" — the whole group then
+        # reports failure, the `|| die` below fires, and the program says it
+        # could not write a file it had just written perfectly. The fake-root
+        # test caught exactly that on 2026-09-17.
+        if [ -n "${account}" ]; then
+            echo "user=${account}"
+        fi
     } > "${AQ_FLAG_FILE}" || die "could not write ${AQ_FLAG_FILE}."
 
     if grep -qx "mode=${mode}" "${AQ_FLAG_FILE}"; then

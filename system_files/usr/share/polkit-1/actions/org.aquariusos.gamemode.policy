@@ -31,9 +31,16 @@
   not work, and the way people route around a feature that does not work is
   worse than the feature.
 
+  ⚠️ AND IT IS BOUND TO WHOEVER ASKED. `yes` here applies to any administrator
+  at the screen, so without a second check one administrator could point ANOTHER
+  person's account at a session and switch on a password-free login for it. The
+  helper will not: pkexec tells it who asked (PKEXEC_UID) and it refuses any
+  account that is not that person's. The boot-time service is the one exception,
+  because it runs as real root before anybody has logged in.
+
   WHAT IS ACTUALLY BEING RISKED, STATED PLAINLY. Somebody who can already run
   programs as the logged-in person, sitting at this computer, can change which
-  session that same person's next login starts, and can make that next login
+  session THAT SAME PERSON'S next login starts, and can make that next login
   happen without a password. They could already close the session, and they are
   already the person whose session it is. No file is read, no password is
   revealed, no other account is touched, and nothing here survives a restart
