@@ -560,12 +560,12 @@ case "${NVIDIA}" in
     1)
         say "Our own gamescope, for the NVIDIA scan-out bug"
 
-        if [ ! -x /ctx-gamescope/usr/bin/gamescope ]; then
-            bad "the builder stage produced no gamescope at /ctx-gamescope/usr/bin/gamescope — check the 'gamescope-build' stage in the Containerfile"
+        if [ ! -x /ctx-gamescope/out/usr/bin/gamescope ]; then
+            bad "the builder stage produced no gamescope at /ctx-gamescope/out/usr/bin/gamescope — check the 'gamescope-build' stage in the Containerfile"
         else
-            install -Dm755 /ctx-gamescope/usr/bin/gamescope /usr/bin/aquarius-gamescope
+            install -Dm755 /ctx-gamescope/out/usr/bin/gamescope /usr/bin/aquarius-gamescope
 
-            if cmp -s /ctx-gamescope/usr/bin/gamescope /usr/bin/aquarius-gamescope; then
+            if cmp -s /ctx-gamescope/out/usr/bin/gamescope /usr/bin/aquarius-gamescope; then
                 ok "/usr/bin/aquarius-gamescope is the program the builder stage produced"
             else
                 bad "/usr/bin/aquarius-gamescope is not the file the builder stage produced"
@@ -586,7 +586,7 @@ case "${NVIDIA}" in
             # The version record, copied from the builder stage, so the finished
             # machine can say exactly which commit it is carrying.
             mkdir -p "${AQ_NOTE_DIR}"
-            install -Dm644 /ctx-gamescope/aquarius/gamescope-build.txt \
+            install -Dm644 /ctx-gamescope/out/aquarius/gamescope-build.txt \
                 "${AQ_NOTE_DIR}/gamescope-build.txt"
             echo "  ${AQ_NOTE_DIR}/gamescope-build.txt:"
             sed 's/^/       /' "${AQ_NOTE_DIR}/gamescope-build.txt"
