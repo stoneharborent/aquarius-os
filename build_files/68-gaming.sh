@@ -348,20 +348,46 @@ aq_installed steam umu-launcher gamescope gamemode mangohud vkBasalt steam-devic
 # are gone — and makes "there is no Terra in the shipped image" a fact CI checks.
 say "Removing Terra now its packages are installed (the installer ISO needs it gone)"
 
-if rpm -q terra-release > /dev/null 2>&1; then
-    echo "  terra-release currently owns:"
-    rpm -ql terra-release | sed 's/^/       /'
-    if rpm -e terra-release 2> /tmp/aq-terra-rm.txt; then
-        ok "removed the terra-release package"
+# ⚠️ AND terra-gpg-keys COMES OUT TOO. THIS ONE LINE IS A WHOLE BUILD FAILURE,
+# SO HERE IS THE TRAP IN FULL (it stopped build 35301818660 on 2026-09-18).
+#
+# Terra arrives as TWO packages, not one. `terra-release` owns the repository
+# file; a second package, `terra-gpg-keys`, owns the signing key itself —
+# /etc/pki/rpm-gpg/RPM-GPG-KEY-terra44 — and dnf pulls it in silently as a
+# dependency. Removing only `terra-release` and then deleting the key FILE by
+# hand leaves `terra-gpg-keys` still INSTALLED, with the package database
+# believing it owns a file that is no longer on the disk.
+#
+# Nothing looks wrong at that point. The trap springs later:
+#
+#   * step 71 installs `terra-release` again, to add Terra for the Game Mode
+#     packages;
+#   * dnf looks at `terra-gpg-keys`, sees it is already installed, and does
+#     nothing — a package manager does not re-lay files for a package that is
+#     already there;
+#   * so the key file never comes back, the signing key is missing, and the
+#     step fails with "Terra's signing key for Fedora 44 is not there".
+#
+# The rule this now follows: remove BOTH packages, so the two steps leave the
+# machine in exactly the same state and the second one starts from the same
+# place the first one did.
+
+for aq_pkg in terra-release terra-gpg-keys; do
+    if rpm -q "${aq_pkg}" > /dev/null 2>&1; then
+        echo "  ${aq_pkg} currently owns:"
+        rpm -ql "${aq_pkg}" | sed 's/^/       /'
+        if rpm -e "${aq_pkg}" 2> /tmp/aq-terra-rm.txt; then
+            ok "removed the ${aq_pkg} package"
+        else
+            echo "  rpm could not remove ${aq_pkg} cleanly:"
+            sed 's/^/       /' /tmp/aq-terra-rm.txt
+            echo "  Falling back to deleting its files directly."
+        fi
+        rm -f /tmp/aq-terra-rm.txt
     else
-        echo "  rpm could not remove terra-release cleanly:"
-        sed 's/^/       /' /tmp/aq-terra-rm.txt
-        echo "  Falling back to deleting its repository file and key directly."
+        echo "  ${aq_pkg} is not installed as a package (already gone, or added by file)."
     fi
-    rm -f /tmp/aq-terra-rm.txt
-else
-    echo "  terra-release is not installed as a package (already gone, or added by file)."
-fi
+done
 
 # Belt and braces: whatever the package removal did, make sure not one Terra
 # repository file or key is left behind to trip the ISO builder.

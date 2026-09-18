@@ -105,18 +105,49 @@ AQ_NOTE_DIR="/usr/share/aquarius/gaming"
 # clean-up depending on another step's ordering — the kind of coupling that
 # breaks silently a year later when somebody moves a line in the Containerfile.
 # Re-adding costs one repository fetch and is impossible to get wrong.
+# ⚠️ AND terra-gpg-keys IS ASKED FOR BY NAME. Terra arrives as two packages:
+# `terra-release` owns the repository file, and `terra-gpg-keys` owns the
+# signing key at /etc/pki/rpm-gpg/RPM-GPG-KEY-terra${FEDORA}. dnf normally
+# brings the second one along by itself as a dependency, and on the very first
+# install it does. Naming it here anyway costs nothing and removes a whole class
+# of "it worked yesterday": if it is ever already installed for any reason, dnf
+# would install `terra-release` alone and quietly not lay the key file down —
+# which is exactly how build 35301818660 failed on 2026-09-18. The removal
+# section further down now takes both packages out for the same reason.
 say "Adding Terra again (the repository Game Mode comes from)"
 
 aq_dnf install --refresh --nogpgcheck \
     --repofrompath 'terra,https://repos.fyralabs.com/terra$releasever' \
-    terra-release
+    terra-release terra-gpg-keys
 
-aq_installed terra-release
+aq_installed terra-release terra-gpg-keys
 
+# ------------------------------------------------------------------------------
+# The key really has to be ON DISK, not merely owned by an installed package
+# ------------------------------------------------------------------------------
+# Trust content, never timestamps — and here, never the package database either.
+# A package can be installed while the file it owns has been deleted from under
+# it, and that is precisely the state a previous step's clean-up can leave.
+# So the question asked is "is the key file there", and if it is not, the answer
+# is to make dnf lay it down again with `reinstall`, which re-writes every file
+# a package owns whether or not it thinks they are missing.
 AQ_TERRA_KEY="/etc/pki/rpm-gpg/RPM-GPG-KEY-terra${FEDORA}"
+
+if [ ! -s "${AQ_TERRA_KEY}" ]; then
+    echo "  ${AQ_TERRA_KEY} is not on the disk, although its package is installed."
+    echo "  That means something deleted the file and left the package. Putting it back."
+    aq_dnf reinstall --nogpgcheck \
+        --repofrompath 'terra,https://repos.fyralabs.com/terra$releasever' \
+        terra-gpg-keys || true
+fi
+
 if [ -s "${AQ_TERRA_KEY}" ]; then
-    ok "Terra's signing key is installed (${AQ_TERRA_KEY})"
+    ok "Terra's signing key is really on the disk (${AQ_TERRA_KEY})"
 else
+    echo "  what terra-gpg-keys believes it owns:"
+    rpm -ql terra-gpg-keys 2> /dev/null | sed 's/^/       /' || true
+    echo "  what is actually in /etc/pki/rpm-gpg:"
+    ls -1 /etc/pki/rpm-gpg/ 2> /dev/null | sed 's/^/       /' || true
     bad "Terra's signing key for Fedora ${FEDORA} is not there — installs from Terra would fail their signature check"
 fi
 
@@ -201,18 +232,44 @@ aq_installed gamescope-session gamescope-session-steam steamos-manager
 # ------------------------------------------------------------------------------
 say "Removing Terra now its packages are installed (the installer ISO needs it gone)"
 
-if rpm -q terra-release > /dev/null 2>&1; then
-    if rpm -e terra-release 2> /tmp/aq-terra-rm.txt; then
-        ok "removed the terra-release package"
+# ⚠️ AND terra-gpg-keys COMES OUT TOO. THIS ONE LINE IS A WHOLE BUILD FAILURE,
+# SO HERE IS THE TRAP IN FULL (it stopped build 35301818660 on 2026-09-18).
+#
+# Terra arrives as TWO packages, not one. `terra-release` owns the repository
+# file; a second package, `terra-gpg-keys`, owns the signing key itself —
+# /etc/pki/rpm-gpg/RPM-GPG-KEY-terra44 — and dnf pulls it in silently as a
+# dependency. Removing only `terra-release` and then deleting the key FILE by
+# hand leaves `terra-gpg-keys` still INSTALLED, with the package database
+# believing it owns a file that is no longer on the disk.
+#
+# Nothing looks wrong at that point. The trap springs later:
+#
+#   * step 71 installs `terra-release` again, to add Terra for the Game Mode
+#     packages;
+#   * dnf looks at `terra-gpg-keys`, sees it is already installed, and does
+#     nothing — a package manager does not re-lay files for a package that is
+#     already there;
+#   * so the key file never comes back, the signing key is missing, and the
+#     step fails with "Terra's signing key for Fedora 44 is not there".
+#
+# The rule this now follows: remove BOTH packages, so the two steps leave the
+# machine in exactly the same state and the second one starts from the same
+# place the first one did.
+
+for aq_pkg in terra-release terra-gpg-keys; do
+    if rpm -q "${aq_pkg}" > /dev/null 2>&1; then
+        if rpm -e "${aq_pkg}" 2> /tmp/aq-terra-rm.txt; then
+            ok "removed the ${aq_pkg} package"
+        else
+            echo "  rpm could not remove ${aq_pkg} cleanly:"
+            sed 's/^/       /' /tmp/aq-terra-rm.txt
+            echo "  Falling back to deleting its files directly."
+        fi
+        rm -f /tmp/aq-terra-rm.txt
     else
-        echo "  rpm could not remove terra-release cleanly:"
-        sed 's/^/       /' /tmp/aq-terra-rm.txt
-        echo "  Falling back to deleting its repository file and key directly."
+        echo "  ${aq_pkg} is not installed as a package (already gone, or added by file)."
     fi
-    rm -f /tmp/aq-terra-rm.txt
-else
-    echo "  terra-release is not installed as a package (already gone, or added by file)."
-fi
+done
 
 rm -f /etc/yum.repos.d/terra*.repo /etc/pki/rpm-gpg/RPM-GPG-KEY-terra* 2> /dev/null || true
 
