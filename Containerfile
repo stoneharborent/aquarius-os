@@ -142,6 +142,38 @@ FROM ${AKMODS_NVIDIA_IMAGE}:main-${FEDORA_VERSION} AS nvidia-src-1
 FROM nvidia-src-${NVIDIA} AS nvidia-src
 
 # ------------------------------------------------------------------------------
+# OUR OWN GAMESCOPE — compiled, and ONLY for the NVIDIA image
+# ------------------------------------------------------------------------------
+# WHY THIS EXISTS AT ALL. gamescope is the little compositor Game Mode runs
+# inside. Fedora packages it, and on an AMD or Intel machine Fedora's copy is
+# exactly right. On an NVIDIA card it draws a corrupted picture — a staircase-
+# shaped band across the middle of Steam showing part of some other program's
+# window. That is NVIDIA's own bug 5240452, photographed on Royce's RTX 5080 on
+# 2026-09-17, and there is no fixed driver yet. Somebody has written the fix for
+# gamescope's side; it is not upstream yet, so the NVIDIA image builds its own.
+# The whole story: build_files/72-gamescope-build.sh and
+# docs/restart/game-mode.md.
+#
+# THE SAME "TWO STAGES AND A NUMBER" TRICK AS THE NVIDIA MODULES ABOVE, because
+# a Containerfile has no `if`:
+#
+#   gamescope-src-0   empty. Nothing in it at all. The AMD/Intel image takes
+#                     this one, so it never spends a minute compiling anything.
+#   gamescope-src-1   a throwaway Fedora container that compiles gamescope and
+#                     leaves it in /out.
+#   gamescope-src     whichever of the two ${NVIDIA} names.
+#
+# Nothing from the builder reaches the finished operating system except the one
+# program and a text file saying which commit it came from.
+FROM scratch AS gamescope-src-0
+FROM quay.io/fedora/fedora:${FEDORA_VERSION} AS gamescope-src-1
+ARG FEDORA_VERSION
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache/libdnf5 \
+    /ctx/build_files/72-gamescope-build.sh
+FROM gamescope-src-${NVIDIA} AS gamescope-src
+
+# ------------------------------------------------------------------------------
 # The ordinary pre-built kernel modules — fetched for BOTH images
 # ------------------------------------------------------------------------------
 # No conditional trick here, because this one is wanted either way: it carries
@@ -709,13 +741,46 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 #     2026-09-04 a mismatch here STOPS THE BUILD, exactly like the virtual
 #     camera in step 6c, because the pin means a mismatch is a real fault.
 #
-#     There is no Game Mode session and no handheld support in here, on
-#     purpose: standing decision 6, and docs/restart/gaming.md says why.
+#     There is no handheld support in here, on purpose — that is phase G2.
+#     Game Mode is no longer missing: Royce reversed standing decision 6 on
+#     2026-09-17 and it is built by step 7f, immediately below.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=nvidia-src,source=/,target=/ctx-nvidia \
     --mount=type=bind,from=akmods-src,source=/,target=/ctx-akmods \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     NVIDIA="${NVIDIA}" /ctx/build_files/68-gaming.sh
+
+# 7f. Game Mode — Steam owning the whole screen, and the switch both ways.
+#
+#     Phase G1, and the reversal of standing decision 6: Royce asked for Game
+#     Mode back on 2026-09-17 (docs/decision-2026-09-17-game-mode-and-handheld.md)
+#     because editing works now and a machine that games from the sofa is worth
+#     having. Step 7e above made games RUN; this one gives them the console-style
+#     interface and a password-free way in and out of it.
+#
+#     It takes three packages from Terra completely unmodified — the session, its
+#     Steam half, and Valve's handheld service (installed for the future ROG Ally
+#     image and left switched OFF) — and adds AquariusOS's own half of the
+#     switch, which nobody had written for us: our /usr/libexec/os-session-select,
+#     a polkit-gated root helper, a "Return to Game Mode" launcher, `aq game`, and
+#     a once-per-boot service that keeps a cold boot honest.
+#
+#     ⚠️ A COLD BOOT ON THESE IMAGES IS UNCHANGED. /etc/aquarius/login-mode ships
+#     as `desktop` and the step fails the build if it ever ships as `game`.
+#
+#     ⚠️ AFTER STEP 7e, ALWAYS. Step 7e adds Terra and then removes it again,
+#     because a Terra repository file left behind stops the installer ISO from
+#     building. This step does the same dance for itself; running it FIRST would
+#     mean step 7e re-adding Terra after this one had cleaned it up.
+#
+#     On the NVIDIA image it also installs the gamescope compiled by the builder
+#     stage near the top of this file, beside Fedora's rather than over it, and
+#     points the Game Mode session at it. The AMD/Intel image keeps Fedora's and
+#     the mount below is an empty stage for it.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=bind,from=gamescope-src,source=/,target=/ctx-gamescope \
+    --mount=type=cache,dst=/var/cache/libdnf5 \
+    NVIDIA="${NVIDIA}" /ctx/build_files/71-game-mode.sh
 
 # 7k. Homebrew — the `brew` command, on both images, because Royce asked for it.
 #

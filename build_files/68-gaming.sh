@@ -18,14 +18,22 @@
 # ------------------------------------------------------------------------------
 # WHAT IS DELIBERATELY NOT HERE
 # ------------------------------------------------------------------------------
-#   * No "Game Mode" session at the login screen, and no boot-to-Steam.
 #   * No handheld support — no Steam Deck / ROG Ally / Legion Go device
-#     drivers, no gyro, no TDP sliders, no fan curves.
+#     drivers, no gyro, no TDP sliders, no fan curves. That is phase G2, it
+#     targets exactly one device (the ROG Ally Royce owns), and it is not here.
 #
-# Both are Royce's standing decision 6 of 2026-09-02, and they are not an
-# oversight. Valve's SteamOS and Bazzite already do handhelds properly, and
-# doing it properly means testing thirty devices we do not own. The reasoning
-# is written out in docs/base-distro-reassessment-2026-09.md, section 4.
+# ⚠️ THE GAME MODE HALF OF THIS PARAGRAPH IS OUT OF DATE AND KEPT FOR THE
+# RECORD. Until 2026-09-17 this step also said "no Game Mode session at the
+# login screen, and no boot-to-Steam", under Royce's standing decision 6 of
+# 2026-09-02. He reversed that on 2026-09-17 — editing works now, and a machine
+# that games from the sofa is worth having. Game Mode is REAL and it is built by
+# the next step, build_files/71-game-mode.sh. The decision is recorded in
+# docs/decision-2026-09-17-game-mode-and-handheld.md and the plain-language
+# guide is docs/restart/game-mode.md.
+#
+# The handheld half above still stands. Doing handhelds properly means owning a
+# device matrix and testing thirty machines we do not have; the reasoning is in
+# docs/base-distro-reassessment-2026-09.md, section 4.
 #
 # ------------------------------------------------------------------------------
 # WHERE THE SOFTWARE COMES FROM, AND THE ONE RULE ABOUT IT
