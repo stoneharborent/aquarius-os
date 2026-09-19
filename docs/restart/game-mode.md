@@ -106,6 +106,25 @@ file, same two commands, opposite starting point. See
 
 ---
 
+## Plugins inside Game Mode (Decky Loader)
+
+Game Mode has a **"..."** button on the right of the screen — Steam's
+quick-access menu. **Decky Loader** adds one more tab to it, with a plug on it,
+and behind that tab is a shop of add-ons other people wrote: battery readouts,
+per-game power profiles, screen recorders, frame generation.
+
+It is **offered, not included**. Nothing of it is in the image; it arrives when
+you ask, with **Decky Loader** in the app grid or `aq decky install`, and
+`aq decky remove` takes it off again.
+
+⚠️ **Decky only exists here, in Game Mode.** Steam in a window on your desktop
+will never show the plug icon, and there is no setting that changes that. It
+also runs as an administrator in the background, and listens only to this
+computer. Both of those, and what to do when the icon is not there:
+[`decky.md`](decky.md).
+
+---
+
 ## If the screen is black, or the picture is scrambled
 
 **Press Ctrl+Alt+F3.** That is the escape hatch for any graphical problem on

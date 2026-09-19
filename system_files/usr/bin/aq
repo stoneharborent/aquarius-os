@@ -30,6 +30,9 @@
 #     aq resolve scale 1.5    how big Resolve's own interface is drawn
 #     aq apps list            which creator apps you have
 #     aq apps install ID      install one you skipped
+
+#     aq decky install        plugins for Steam's Game Mode (Decky Loader)
+#     aq decky status         is it installed, and is it running
 #
 #     aq drives               what is plugged in right now
 #     aq drives remembered    which inside drives open at every login
@@ -145,6 +148,18 @@ USAGE
                         'aq game boot on' starts this computer in Game Mode
                         every time; 'aq game boot off' puts the login screen
                         back. 'aq game status' says where you are.
+
+    aq decky install    Decky Loader: a plugins menu INSIDE Game Mode. Press
+                        the "..." button on the right of Steam's screen and
+                        there is an extra tab with a plug on it — battery
+                        readouts, per-game power profiles, screen recorders.
+                        ⚠️ It only ever appears in Game Mode; Steam in a window
+                        on your desktop will not show it. It is somebody else's
+                        program, downloaded when you ask for it, and it runs as
+                        an administrator in the background listening only to
+                        this computer. 'aq decky status' says how it is doing,
+                        'aq decky update' gets a newer one, 'aq decky remove'
+                        takes it off.
 
     aq handheld status  Only on the handheld edition of AquariusOS (the ROG
                         Xbox Ally X). Prints, in one screen, everything a bench
@@ -2574,6 +2589,561 @@ game() {
 }
 
 # =============================================================================
+# aq decky — Decky Loader, the plugin system for Steam's Game Mode
+# =============================================================================
+# WHAT THIS IS, IN PLAIN ENGLISH
+#
+# Decky Loader adds a **plugins menu inside Game Mode**. In Game Mode you press
+# the "..." button (the quick-access menu on the right of Steam's screen) and,
+# once Decky is installed, there is an extra tab with a plug on it. Behind that
+# tab is a small shop of add-ons other people wrote: a battery readout, a
+# per-game power profile, a screen-recorder, a music player, and so on.
+#
+# ⚠️ IT ONLY EXISTS IN GAME MODE. Decky works by talking to Steam's own
+# interface while Steam is drawing the WHOLE SCREEN — the `aq game` session.
+# Open Steam in a window on the desktop and Decky is simply not there. That is
+# not a fault and nothing can be configured to change it; it is what Decky is.
+#
+# WHY IT IS OFFERED AND NOT BAKED IN (standing decision 4)
+#
+# Decky downloads a 26 MB program from GitHub and runs it as a background
+# service on the machine. That is exactly the kind of thing AquariusOS offers
+# rather than decides for you: nothing of Decky is in the image, and the image
+# build fails if any of it ever is. What IS in the image is this command, the
+# "Decky Loader" launcher in the app grid, and `jq` (the small program that
+# reads GitHub's answer). Everything else arrives only when a person asks.
+#
+# ⚠️ AND IT RUNS AS ROOT. Decky's loader is a system service running as the
+# administrator, because some plugins change things only the administrator can
+# change (screen brightness on a handheld, power limits, fan speed). It listens
+# for instructions on port 1337 and ONLY on this computer's own loopback
+# address, so nothing on your network or on the internet can reach it. Anyone
+# installing Decky should know both of those sentences, which is why they are
+# also the first thing `aq decky status` prints and a whole section of the doc.
+#
+# WHAT AN INSTALL ACTUALLY DOES — the same five things Decky's own installer
+# does, written out here so nobody has to read a downloaded script:
+#
+#   1. makes ~/homebrew/services and ~/homebrew/plugins, owned by you;
+#   2. downloads the file called `PluginLoader` from Decky's newest finished
+#      release into ~/homebrew/services, makes it runnable, and writes the
+#      version number beside it in .loader.version;
+#   3. touches a flag file in Steam's own folder that lets a program talk to
+#      Steam's interface (.cef-enable-remote-debugging). Without it Decky
+#      starts and never appears;
+#   4. writes /etc/systemd/system/plugin_loader.service and switches it on, so
+#      the loader starts with the computer;
+#   5. makes /home/deck point at your home folder, IF nothing is there already
+#      — some plugins were written for a Steam Deck and have the Deck's home
+#      folder typed into them. `aq decky remove` takes that signpost away
+#      again, but only if it is the one we made.
+#
+# ⚠️ WHY STEP 4 USES /etc AND NOT THE /usr TRICK THE REST OF AquariusOS USES.
+# Everything AquariusOS itself switches on ships as a link under /usr, for the
+# reason set out at length in build_files/aq-lib.sh. Decky is the opposite
+# case: it is not part of the image at all, it is a thing THIS MACHINE was
+# asked to add, and the file even names this machine's own home folder. /etc is
+# where a machine's own decisions belong, it is writable on this kind of Linux,
+# and it survives every update. So `systemctl enable` is right here and only
+# here.
+#
+# Plain-English guide: docs/restart/decky.md
+# =============================================================================
+AQ_DECKY_HOME="${HOME:-/nonexistent}/homebrew"
+AQ_DECKY_SERVICES="${AQ_DECKY_HOME}/services"
+AQ_DECKY_LOADER="${AQ_DECKY_SERVICES}/PluginLoader"
+AQ_DECKY_VERSION_FILE="${AQ_DECKY_SERVICES}/.loader.version"
+AQ_DECKY_UNIT="/etc/systemd/system/plugin_loader.service"
+AQ_DECKY_SERVICE="plugin_loader.service"
+AQ_DECKY_RELEASES="https://api.github.com/repos/SteamDeckHomebrew/decky-loader/releases"
+AQ_DECKY_DECK_HOME="/home/deck"
+
+decky_usage() {
+    cat << 'EOF'
+aq decky — Decky Loader: plugins for Steam's Game Mode
+
+WHAT IT IS
+    A plugins menu that appears INSIDE Game Mode. Press the "..." button on
+    the right of Steam's screen and there is an extra tab with a plug on it,
+    with add-ons in it: battery readouts, per-game power profiles, screen
+    recorders, and more.
+
+    ⚠️ IT ONLY EXISTS IN GAME MODE ('aq game'). Steam in a window on your
+    desktop will not show it, no matter what you do. That is how Decky works.
+
+    ⚠️ It is not part of AquariusOS. It is somebody else's program, downloaded
+    from GitHub when you ask for it, and it runs as an administrator in the
+    background. It only listens to this computer, never to your network.
+
+USAGE
+    aq decky install    Set it up. Downloads about 26 MB, then asks for your
+                        password ONCE to switch the background service on.
+                        Steam must have been run at least once — see below.
+
+    aq decky update     Get a newer Decky if there is one. If you already have
+                        the newest, it says so and downloads nothing.
+
+    aq decky status     Is it installed, which version, is the service
+                        running, and is everything it needs in place.
+
+    aq decky remove     Take it off again: the service, the downloaded loader,
+                        and the /home/deck signpost if we made it. Any plugins
+                        you installed are left in ~/homebrew/plugins, so
+                        installing Decky again finds them.
+
+AFTER INSTALLING
+    Go to Game Mode ('aq game', or "Return to Game Mode" in the app grid),
+    press the "..." button, and look for the plug icon. If Steam was already
+    open when you installed, close it and open it again first.
+
+The whole guide, including what to do when something is wrong:
+    docs/restart/decky.md
+EOF
+}
+
+# -----------------------------------------------------------------------------
+# Is Decky on this computer?
+# -----------------------------------------------------------------------------
+# Both halves have to be there: the downloaded program AND the service file
+# that starts it. One without the other is a half-finished install, and saying
+# "installed" about that is how somebody spends an evening wondering why the
+# plug icon never appears.
+decky_installed() {
+    [ -x "${AQ_DECKY_LOADER}" ] && [ -r "${AQ_DECKY_UNIT}" ]
+}
+
+decky_have_version() {
+    if [ -r "${AQ_DECKY_VERSION_FILE}" ]; then
+        tr -d '[:space:]' < "${AQ_DECKY_VERSION_FILE}"
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# What is the newest finished Decky, and where do we get it?
+# -----------------------------------------------------------------------------
+# Prints two things separated by a tab: the version name and the address to
+# download from. Prints nothing and answers "no" if it cannot find out.
+#
+# "Finished" matters: Decky also publishes test versions (GitHub calls them
+# pre-releases) and this deliberately skips them, exactly as Decky's own
+# installer does. Somebody who wants a test version can install it by hand;
+# nobody should get one by typing 'aq decky install'.
+decky_latest() {
+    local answer tag url
+    if ! command -v curl > /dev/null 2>&1; then
+        echo "aq: curl is missing from this copy of AquariusOS." >&2
+        return 1
+    fi
+    if ! command -v jq > /dev/null 2>&1; then
+        echo "aq: jq is missing from this copy of AquariusOS. It is what reads" >&2
+        echo "    GitHub's answer, and it should have come with the system." >&2
+        return 1
+    fi
+
+    answer="$(curl -fsSL --max-time 30 "${AQ_DECKY_RELEASES}")" || {
+        echo "aq: could not ask GitHub what the newest Decky is." >&2
+        echo "    Check that this computer is on the internet and try again." >&2
+        echo "    (Nothing has been changed.)" >&2
+        return 1
+    }
+
+    # `first(...)` picks the newest entry that is NOT a test version. The asset
+    # we want is the one whose file name is exactly "PluginLoader".
+    tag="$(printf '%s' "${answer}" | jq -r 'first(.[] | select(.prerelease == false)) | .tag_name' 2> /dev/null)"
+    url="$(printf '%s' "${answer}" | jq -r 'first(.[] | select(.prerelease == false)) | .assets[].browser_download_url | select(endswith("/PluginLoader"))' 2> /dev/null | head -n 1)"
+
+    if [ -z "${tag}" ] || [ "${tag}" = "null" ] || [ -z "${url}" ]; then
+        echo "aq: GitHub answered, but not with a Decky release this understands." >&2
+        echo "    Nothing has been changed. Try again later." >&2
+        return 1
+    fi
+    printf '%s\t%s\n' "${tag}" "${url}"
+}
+
+# -----------------------------------------------------------------------------
+# Steam's own folder, and the flag file Decky needs inside it
+# -----------------------------------------------------------------------------
+# ⚠️ THIS IS THE ONE PLACE WE DO MORE THAN DECKY'S OWN INSTALLER DOES, AND HERE
+# IS WHY. Decky's installer runs `touch ~/.steam/steam/.cef-enable-remote-
+# debugging`, which only works if Steam has already been run once — Steam makes
+# that folder at its first start. On a brand-new AquariusOS machine it does not
+# exist, and `touch` fails with "No such file or directory", which is a
+# baffling thing to read when you asked to install a plugin system.
+#
+# Two ways to handle that: refuse, and tell the person to open Steam once; or
+# make the folder ourselves. We make it ourselves, because:
+#
+#   * the folder is Steam's own, documented, unchanging layout — the real files
+#     live in ~/.local/share/Steam and ~/.steam/steam is Steam's signpost to
+#     it. Steam creates exactly this shape itself;
+#   * Steam is perfectly happy to start into a folder that already exists —
+#     that is what every existing install looks like to it;
+#   * refusing would mean "install Steam, run Steam, close Steam, now run this
+#     again", which is three steps to achieve what one line of shell does.
+#
+# We still SAY SO when we had to make it, because a person who has never opened
+# Steam has a second thing to do and should be told once, plainly.
+#
+# The Flatpak copy of Steam keeps its files somewhere else entirely. AquariusOS
+# installs Steam as an ordinary system program, so that is not our case — but
+# if a Flatpak Steam is also on the machine we flag it too, exactly as Decky's
+# own installer does, so Decky works whichever Steam the person actually uses.
+decky_steam_dir() {
+    printf '%s\n' "${HOME:-/nonexistent}/.steam/steam"
+}
+
+decky_flag_cef() {
+    local dir made=0
+    dir="$(decky_steam_dir)"
+
+    if [ ! -d "${dir}" ]; then
+        # Make the real folder, then Steam's signpost to it.
+        mkdir -p "${HOME}/.local/share/Steam" || return 1
+        mkdir -p "${HOME}/.steam" || return 1
+        ln -sfn "${HOME}/.local/share/Steam" "${dir}" || return 1
+        made=1
+    fi
+
+    touch "${dir}/.cef-enable-remote-debugging" || return 1
+
+    # The Flatpak Steam, only if somebody has one.
+    if [ -d "${HOME}/.var/app/com.valvesoftware.Steam/data/Steam" ]; then
+        touch "${HOME}/.var/app/com.valvesoftware.Steam/data/Steam/.cef-enable-remote-debugging" || true
+    fi
+
+    if [ "${made}" -eq 1 ]; then
+        echo
+        echo "Note: Steam had never been opened on this account, so this made"
+        echo "      Steam's folder for it. Everything below still works, but"
+        echo "      OPEN STEAM ONCE and sign in before you look for the plug"
+        echo "      icon — Decky has nothing to attach itself to until you do."
+    fi
+    return 0
+}
+
+# -----------------------------------------------------------------------------
+# The download itself
+# -----------------------------------------------------------------------------
+# Into a temporary file first, and moved into place only when the whole thing
+# has arrived. A download interrupted halfway would otherwise leave a broken
+# PluginLoader that looks installed and starts nothing.
+decky_fetch() {
+    local tag="$1" url="$2" tmp
+    mkdir -p "${AQ_DECKY_SERVICES}" "${AQ_DECKY_HOME}/plugins" || return 1
+
+    tmp="$(mktemp "${AQ_DECKY_SERVICES}/.PluginLoader.XXXXXX")" || return 1
+    echo "Downloading Decky ${tag} (about 26 MB)…"
+    if ! curl -fL --progress-bar --max-time 900 "${url}" --output "${tmp}"; then
+        rm -f "${tmp}"
+        echo "aq: the download did not finish. Nothing has been changed." >&2
+        return 1
+    fi
+    chmod +x "${tmp}" || { rm -f "${tmp}"; return 1; }
+    mv -f "${tmp}" "${AQ_DECKY_LOADER}" || { rm -f "${tmp}"; return 1; }
+    printf '%s\n' "${tag}" > "${AQ_DECKY_VERSION_FILE}"
+    return 0
+}
+
+# -----------------------------------------------------------------------------
+# The administrator's half — ONE password prompt, everything it does in view
+# -----------------------------------------------------------------------------
+# Four things need the administrator and nothing else does: labelling the
+# downloaded program so SELinux will let it run, writing the service file into
+# /etc, switching that service on, and the /home/deck signpost. They are done
+# in ONE `sudo` so a person types their password once, the way `aq apps
+# install` gets one prompt from the desktop.
+#
+# The values are passed in as arguments rather than pasted into the text, so
+# that a home folder with a space or a quote in its name cannot turn into part
+# of the command.
+decky_root_install() {
+    echo
+    echo "Now the part that needs an administrator. You will be asked for your"
+    echo "password once. It writes ${AQ_DECKY_UNIT} and switches the service on."
+    echo
+
+    sudo /usr/bin/bash -s -- "${AQ_DECKY_HOME}" "${USER}" "${AQ_DECKY_UNIT}" "${AQ_DECKY_SERVICE}" << 'ROOTEOF'
+set -uo pipefail
+HOMEBREW="$1"
+WHO="$2"
+UNIT="$3"
+SERVICE="$4"
+
+# SELinux is switched on and enforcing on AquariusOS. A program downloaded into
+# a home folder is labelled as ordinary data, and SELinux will not let systemd
+# start ordinary data as a service. This gives it the label a program has.
+if command -v getenforce > /dev/null 2>&1 && [ "$(getenforce)" = "Enforcing" ]; then
+    chcon -t bin_t "${HOMEBREW}/services/PluginLoader" \
+        || echo "  (could not set the SELinux label — the service may refuse to start)"
+fi
+
+# The service file. This is Decky's own release unit with two lines added:
+# UNPRIVILEGED_USER, without which the loader assumes it is on a Steam Deck and
+# looks for an account called "deck" that does not exist here, and the plain
+# English description.
+cat > "${UNIT}" << UNITEOF
+[Unit]
+Description=Decky Loader (plugins for Steam Game Mode)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Restart=always
+KillMode=process
+TimeoutStopSec=15
+ExecStart=${HOMEBREW}/services/PluginLoader
+WorkingDirectory=${HOMEBREW}/services
+Environment=UNPRIVILEGED_USER=${WHO}
+Environment=UNPRIVILEGED_PATH=${HOMEBREW}
+Environment=PRIVILEGED_PATH=${HOMEBREW}
+Environment=LOG_LEVEL=INFO
+
+[Install]
+WantedBy=multi-user.target
+UNITEOF
+chmod 0644 "${UNIT}"
+
+# Some plugins were written for a Steam Deck and have "/home/deck" typed into
+# them. A signpost fixes those and costs nothing — but ONLY if nothing is
+# already at that name. We never move or replace somebody else's /home/deck.
+if [ ! -e /home/deck ] && [ ! -L /home/deck ]; then
+    HOMEDIR="$(getent passwd "${WHO}" | cut -d: -f6)"
+    if [ -n "${HOMEDIR}" ] && [ "${HOMEDIR}" != "/home/deck" ]; then
+        ln -sfn "${HOMEDIR}" /home/deck \
+            && echo "  made /home/deck point at ${HOMEDIR} (some plugins need that name)"
+    fi
+fi
+
+systemctl daemon-reload
+systemctl enable --now "${SERVICE}"
+ROOTEOF
+}
+
+decky_install() {
+    local tag url latest have
+    if decky_installed; then
+        have="$(decky_have_version)"
+        echo "Decky Loader is already installed${have:+ (${have})}."
+        echo
+        echo "To get a newer one:   aq decky update"
+        echo "To check on it:       aq decky status"
+        echo "To take it off again: aq decky remove"
+        return 0
+    fi
+
+    latest="$(decky_latest)" || return 1
+    tag="${latest%%$'\t'*}"
+    url="${latest#*$'\t'}"
+
+    decky_fetch "${tag}" "${url}" || return 1
+    decky_flag_cef || {
+        echo "aq: could not write the flag file Steam needs. Nothing is switched on." >&2
+        return 1
+    }
+    decky_root_install || {
+        echo "aq: the administrator's half did not finish, so Decky is not running." >&2
+        echo "    The downloaded loader is still at ${AQ_DECKY_LOADER};" >&2
+        echo "    'aq decky remove' tidies everything up." >&2
+        return 1
+    }
+
+    echo
+    echo "Decky Loader ${tag} is installed and running."
+    echo
+    echo "TO SEE IT: go to Game Mode — type 'aq game', or use \"Return to Game"
+    echo "Mode\" in the app grid — then press the \"...\" button on the right of"
+    echo "Steam's screen and look for the tab with a PLUG on it."
+    echo
+    echo "⚠️ It will NOT appear in Steam on your desktop. Decky only exists in"
+    echo "   Game Mode, and nothing can change that."
+    echo
+    echo "The whole guide: docs/restart/decky.md"
+}
+
+decky_update() {
+    local tag url latest have
+    if ! decky_installed; then
+        echo "Decky Loader is not installed on this computer."
+        echo "To set it up:  aq decky install"
+        return 1
+    fi
+
+    latest="$(decky_latest)" || return 1
+    tag="${latest%%$'\t'*}"
+    url="${latest#*$'\t'}"
+    have="$(decky_have_version)"
+
+    if [ -n "${have}" ] && [ "${have}" = "${tag}" ]; then
+        echo "You already have the newest Decky Loader (${have})."
+        echo "Nothing was downloaded and nothing was changed."
+        return 0
+    fi
+
+    echo "You have: ${have:-(unknown)}"
+    echo "Newest:   ${tag}"
+    echo
+    decky_fetch "${tag}" "${url}" || return 1
+
+    echo
+    echo "Now restarting the background service. You will be asked for your"
+    echo "password once."
+    # The SELinux label belongs to the FILE, and the file was just replaced, so
+    # it has to be given again — this is the step whose absence makes an update
+    # look like it worked and then refuse to start.
+    sudo /usr/bin/bash -s -- "${AQ_DECKY_LOADER}" "${AQ_DECKY_SERVICE}" << 'ROOTEOF'
+set -uo pipefail
+if command -v getenforce > /dev/null 2>&1 && [ "$(getenforce)" = "Enforcing" ]; then
+    chcon -t bin_t "$1" || echo "  (could not set the SELinux label)"
+fi
+systemctl restart "$2"
+ROOTEOF
+
+    echo
+    echo "Decky Loader is now ${tag}."
+    echo "If Steam is open, close it and open it again to see the change."
+}
+
+decky_remove() {
+    if [ ! -e "${AQ_DECKY_LOADER}" ] && [ ! -e "${AQ_DECKY_UNIT}" ]; then
+        echo "Decky Loader is not installed on this computer — nothing to remove."
+        return 0
+    fi
+
+    echo "Removing Decky Loader."
+    echo
+    echo "⚠️ Your plugins are NOT deleted. They stay in"
+    echo "   ${AQ_DECKY_HOME}/plugins, so installing Decky again finds them."
+    echo "   Delete that folder yourself if you want them gone."
+    echo
+    echo "You will be asked for your password once."
+    echo
+
+    sudo /usr/bin/bash -s -- "${AQ_DECKY_UNIT}" "${AQ_DECKY_SERVICE}" \
+        "${HOME:-/nonexistent}" "${AQ_DECKY_DECK_HOME}" << 'ROOTEOF'
+set -uo pipefail
+UNIT="$1"
+SERVICE="$2"
+HOMEDIR="$3"
+DECK="$4"
+
+systemctl disable --now "${SERVICE}" > /dev/null 2>&1
+rm -f "${UNIT}"
+systemctl daemon-reload
+
+# ⚠️ ONLY OUR OWN SIGNPOST COMES OUT. If /home/deck is a real folder, or a link
+# to somewhere that is not this person's home, it belongs to somebody else and
+# we leave it exactly where it is.
+if [ -L "${DECK}" ] && [ "$(readlink -f "${DECK}")" = "$(readlink -f "${HOMEDIR}")" ]; then
+    rm -f "${DECK}" && echo "  removed the ${DECK} signpost we made"
+fi
+ROOTEOF
+
+    rm -f "${AQ_DECKY_LOADER}" "${AQ_DECKY_VERSION_FILE}"
+    rm -f "${HOME:-/nonexistent}/.steam/steam/.cef-enable-remote-debugging"
+    rm -f "${HOME:-/nonexistent}/.var/app/com.valvesoftware.Steam/data/Steam/.cef-enable-remote-debugging" 2> /dev/null
+
+    echo
+    echo "Decky Loader is removed. Steam is untouched and your games are"
+    echo "untouched. Close Steam and open it again to see it gone."
+}
+
+decky_status() {
+    local have
+
+    if decky_installed; then
+        have="$(decky_have_version)"
+        echo "Decky Loader is INSTALLED${have:+, version ${have}}."
+    elif [ -e "${AQ_DECKY_LOADER}" ] || [ -e "${AQ_DECKY_UNIT}" ]; then
+        echo "⚠️ Decky Loader is only HALF installed on this computer."
+        echo "   'aq decky remove' tidies it up, then 'aq decky install'."
+    else
+        echo "Decky Loader is NOT installed on this computer."
+        echo "To set it up:  aq decky install"
+    fi
+
+    echo
+    echo -n "The background service:   "
+    if ! command -v systemctl > /dev/null 2>&1; then
+        echo "cannot tell (systemctl is not here)"
+    elif systemctl is-active --quiet "${AQ_DECKY_SERVICE}" 2> /dev/null; then
+        echo "running"
+    elif [ -r "${AQ_DECKY_UNIT}" ]; then
+        echo "NOT running — try: sudo systemctl restart ${AQ_DECKY_SERVICE}"
+    else
+        echo "not set up"
+    fi
+
+    echo -n "Steam's plugin flag file: "
+    if [ -e "$(decky_steam_dir)/.cef-enable-remote-debugging" ]; then
+        echo "there"
+    else
+        echo "MISSING — Decky cannot attach itself to Steam without it"
+    fi
+
+    echo -n "Steam itself:             "
+    if command -v steam > /dev/null 2>&1; then
+        echo "installed"
+    else
+        echo "NOT installed — Decky has nothing to plug into"
+    fi
+
+    echo -n "The /home/deck signpost:  "
+    if [ -L "${AQ_DECKY_DECK_HOME}" ]; then
+        echo "points at $(readlink "${AQ_DECKY_DECK_HOME}")"
+    elif [ -e "${AQ_DECKY_DECK_HOME}" ]; then
+        echo "exists and is not a signpost (left alone, not ours)"
+    else
+        echo "not there"
+    fi
+
+    echo
+    echo "⚠️ REMEMBER: Decky only appears in GAME MODE. Type 'aq game', or use"
+    echo "   \"Return to Game Mode\" in the app grid, then press the \"...\""
+    echo "   button on the right of Steam's screen and look for the plug icon."
+    echo "   Steam in a window on your desktop will never show it."
+    echo
+    echo "It runs as an administrator and listens on this computer only"
+    echo "(127.0.0.1, port 1337) — never to your network. See docs/restart/decky.md."
+}
+
+decky() {
+    # ⚠️ NOT UNDER sudo. Everything Decky installs is keyed to ONE person's home
+    # folder — the downloaded loader, the plugins, the service file that names
+    # that folder. Run under sudo, HOME would be the administrator's and the
+    # whole thing would be installed somewhere the person never looks. The same
+    # rule, for the same reason, as /usr/libexec/aquarius-appimage-install.
+    case "${1:-}" in
+        install | update | remove)
+            if [ "$(id -u)" -eq 0 ]; then
+                echo "aq: do not run 'aq decky ${1}' with sudo." >&2
+                echo >&2
+                echo "    Decky installs into YOUR home folder. As an administrator it" >&2
+                echo "    would install into the administrator's home folder instead," >&2
+                echo "    where you would never find it." >&2
+                echo >&2
+                echo "    Run it as yourself. It asks for your password when it needs it." >&2
+                return 1
+            fi
+            ;;
+    esac
+
+    case "${1:-}" in
+        install) decky_install ;;
+        update) decky_update ;;
+        remove | uninstall) decky_remove ;;
+        status | "") decky_status ;;
+        -h | --help | help) decky_usage ;;
+        *)
+            echo "aq: '${1}' is not something 'aq decky' knows how to do." >&2
+            echo >&2
+            decky_usage >&2
+            return 1
+            ;;
+    esac
+}
+
+# =============================================================================
 # aq handheld — the one-screen report for the handheld edition
 # =============================================================================
 # A thin front door to /usr/libexec/aquarius-handheld-status, exactly like
@@ -3085,6 +3655,10 @@ case "${1:-}" in
     game)
         shift
         game "$@"
+        ;;
+    decky)
+        shift
+        decky "$@"
         ;;
     handheld)
         shift

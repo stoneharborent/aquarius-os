@@ -281,6 +281,25 @@ it is in the app grid as *Steam (Big Picture)*.
 
 ---
 
+## Plugins for Game Mode (Decky Loader) — added 19 September 2026
+
+**Decky Loader** adds a plugins menu inside Game Mode: press the **"..."**
+button on the right of Steam's full-screen interface and there is an extra tab
+with a **plug** on it, holding add-ons other people wrote — battery readouts,
+per-game power profiles, screen recorders, frame generation.
+
+It is **offered, never included**. Nothing of it is in the image and the build
+fails if any of it ever is; it arrives only when you ask, from **Decky Loader**
+in the app grid or `aq decky install`. `aq decky status` says how it is doing
+and `aq decky remove` takes it off, leaving your plugins where they are.
+
+⚠️ **Game Mode only.** Steam in a window on your desktop will never show it.
+⚠️ **It runs as an administrator** in the background, listening on this computer
+alone. Both sentences, in full, plus what to do when the plug icon is not
+there: [`decky.md`](decky.md).
+
+---
+
 ## What is NOT here, and why
 
 **No handheld support — on THESE two images.** ⚠️ Updated 2026-09-19: phase G2
