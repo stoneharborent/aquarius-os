@@ -708,6 +708,19 @@ aq_link_on "${AQ_GAME_WANTS}" "${AQ_USR}" steamos-manager.service
 aq_link_on "${AQ_GAME_WANTS}" "${AQ_USR}" steamos-powerbuttond.service
 
 # And nothing of ours may be switched on through /etc.
+# The powerstation package switches itself on when it is installed (its
+# installer runs 'systemctl enable', which writes a link under /etc). We want
+# it on — but from /usr, where an update can never lose it, and that link was
+# made above. So the /etc copy comes out again; build 35433856783 failed on
+# exactly this line. Same for any other handheld package that does the same.
+for aq_unit in powerstation.service inputplumber.service steamos-manager.service; do
+    aq_etc_link="/etc/systemd/system/multi-user.target.wants/${aq_unit}"
+    if [ -L "${aq_etc_link}" ]; then
+        rm -f "${aq_etc_link}"
+        echo "  removed ${aq_etc_link} (the package's own 'enable'; the /usr link above is the one that counts)"
+    fi
+done
+
 say "Nothing is switched on through /etc"
 AQ_ETC_ON="$(find /etc/systemd \
     \( -name 'inputplumber*.service' -o -name 'steamos-*.service' -o -name 'powerstation.service' \) \
