@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  game-mode-badge.svg — the small controller badge on the Game Mode icon.
+
+  The Game Mode launcher wears Steam's own icon with this badge in its bottom-
+  right corner, the way SteamOS's "Return to Gaming Mode" wears Steam's icon
+  with a small arrow. The badge is drawn here; the finished icon is put together
+  during the OS build by build_files/aq-game-mode-icon.py, because Steam's
+  icon is Valve's and is only ever on the machine, never in this repository.
+
+  Same 64-unit grid as every other drawing in this folder. One plate: a circle
+  in aquariusBlue (#2C8FC4, branding/tokens.md) with a white ring so it stands
+  off Steam's dark plate at every size. One glyph: a gamepad in white — body,
+  a d-pad cut out on the left, four buttons cut out on the right. No gold: this
+  is a badge on somebody else's icon, not one of the nine Aquarius icons.
+
+  system_files/usr/share/aquarius/branding/game-mode-badge.png is this drawing
+  at 512 pixels, and is the file the build actually reads (that folder is the
+  one the build context carries; this one is not). Regenerate it after editing this file:
+      node branding/icons/render-badge.mjs
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <circle cx="32" cy="32" r="29" fill="#2C8FC4" stroke="#FFFFFF" stroke-width="4"/>
+  <path fill="#FFFFFF"
+        d="M22 22 h20 a9 9 0 0 1 9 9 l2 9 a5 5 0 0 1 -9 3 l-4 -5 h-16 l-4 5 a5 5 0 0 1 -9 -3 l2 -9 a9 9 0 0 1 9 -9 z"/>
+  <g fill="#2C8FC4">
+    <rect x="19.5" y="28.6" width="10" height="2.8" rx="1.2"/>
+    <rect x="23.1" y="25" width="2.8" height="10" rx="1.2"/>
+    <circle cx="39.5" cy="26.2" r="1.7"/>
+    <circle cx="43.3" cy="30" r="1.7"/>
+    <circle cx="39.5" cy="33.8" r="1.7"/>
+    <circle cx="35.7" cy="30" r="1.7"/>
+  </g>
+</svg>

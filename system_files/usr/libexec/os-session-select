@@ -29,7 +29,7 @@
 #     `exec` it — hand over to it completely. That is the hook we are filling
 #     in, and it means that on the way back ENDING THE SESSION IS OUR JOB TOO
 #     (the note above aq_end_game_session says what happened when it was not).
-#   * Our own "Return to Game Mode" icon in the app grid, and `aq game`. There
+#   * Our own "Game Mode" icon in the app grid, and `aq game`. There
 #     the caller ends the desktop itself after we return.
 #
 # WHAT IT ACTUALLY WRITES

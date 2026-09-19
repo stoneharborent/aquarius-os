@@ -869,7 +869,7 @@ if [ -n "${aq_problem}" ]; then
 
     # ⚠️ THE OTHER HALF OF THE 2026-09-17 FIX (bug 7a). The screen can be taken
     # away AFTER the remapper has started — that is exactly what pressing
-    # "Return to Game Mode" does. When that happens the remapper loses the
+    # "Game Mode" does. When that happens the remapper loses the
     # keyboards and reports "no device", which looks identical to a real
     # failure. It is not one. So before complaining and restarting, ask the same
     # question section 4b asks, and if the screen has simply gone elsewhere,

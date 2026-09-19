@@ -26,7 +26,7 @@
 # ⚠️ IT IS NOT MEANT TO BE RUN BY HAND. The friendly front doors are:
 #       aq game                 switch to Game Mode now
 #       aq game boot on|off     start the computer in Game Mode, or not
-#     and the "Return to Game Mode" icon in the app grid.
+#     and the "Game Mode" icon in the app grid.
 #
 # WHO IS ALLOWED TO ASK
 #   /usr/share/polkit-1/actions/org.aquariusos.gamemode.policy describes the

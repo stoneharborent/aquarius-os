@@ -1,10 +1,10 @@
 #!/usr/bin/bash
 # =============================================================================
-# aquarius-game-mode — the "Return to Game Mode" button
+# aquarius-game-mode — the "Game Mode" button
 # =============================================================================
 # WHAT THIS IS
 #
-# The thing that happens when you click "Return to Game Mode" in the app grid,
+# The thing that happens when you click "Game Mode" in the app grid,
 # or type `aq game`. It is three steps and a warning:
 #
 #   1. TELL YOU WHAT IS ABOUT TO HAPPEN. Switching to Game Mode closes your
