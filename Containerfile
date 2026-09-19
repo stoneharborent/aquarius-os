@@ -30,15 +30,22 @@
 # branch is ever merged into `main`.
 #
 # ------------------------------------------------------------------------------
-# TWO IMAGES COME OUT OF THIS ONE FILE
+# THREE IMAGES COME OUT OF THIS ONE FILE
 # ------------------------------------------------------------------------------
-#   aquarius-os          for AMD and Intel graphics
-#   aquarius-os-nvidia   for NVIDIA graphics
+#   aquarius-os            for AMD and Intel graphics
+#   aquarius-os-nvidia     for NVIDIA graphics
+#   aquarius-os-handheld   the AMD one, for ONE handheld: Royce's ROG Xbox
+#                          Ally X (phase G2, 2026-09-19)
 #
-# They are the same recipe. The only difference is a switch called NVIDIA:
-# 0 means "no NVIDIA driver", 1 means "install it". There is no second recipe
-# and no if-this-image-then-that anywhere in the build scripts beyond that one
-# switch, which is the house rule this project has always had.
+# They are the same recipe. The only differences are two switches:
+#
+#   NVIDIA     0 means "no NVIDIA driver", 1 means "install it"
+#   HANDHELD   0 means an ordinary PC, 1 means the Ally X: start into Game Mode,
+#              and add the device layer that handheld needs
+#
+# They are never both 1 — the Ally X has AMD graphics. There is no second recipe
+# and no if-this-image-then-that anywhere in the build scripts beyond those two
+# switches, which is the house rule this project has always had.
 #
 # The word "next" is in the names on purpose. The Bazzite-era images are called
 # `aquarius-os`, `aquarius-os-nvidia` and so on, and they are still installed on
@@ -58,6 +65,12 @@ ARG FEDORA_VERSION=44
 # 0 = AMD/Intel image, 1 = NVIDIA image. Nothing else is a valid answer;
 # build_files/60-nvidia.sh stops the build on anything else.
 ARG NVIDIA=0
+
+# 0 = an ordinary PC, 1 = the handheld image (phase G2, the ROG Xbox Ally X).
+# It is read by exactly one build step, build_files/78-handheld.sh, which on a
+# 0 does nothing except prove that none of the handheld layer arrived. That is
+# what keeps the two desktop images unchanged by this whole phase.
+ARG HANDHELD=0
 
 # Where the pre-built NVIDIA kernel modules come from. See build_files/60-nvidia.sh
 # and docs/restart/nvidia-notes.md for the whole story.
@@ -110,6 +123,12 @@ ARG XREMAP_COMMIT=7e6649e442ca445b781e4cf0e90c165f86e717db
 FROM scratch AS ctx
 COPY build_files /build_files
 COPY system_files /system_files
+# The handheld image's own files. They are kept OUT of system_files/ on purpose:
+# step 50 copies the whole of system_files onto every image with no filter, and
+# a udev rule about an ASUS handheld — or a login-mode saying "game" — must
+# never land on a desktop PC. Only build_files/78-handheld.sh copies these, and
+# only when HANDHELD=1.
+COPY handheld_files /handheld_files
 COPY ingest /ingest
 COPY tests /tests
 # The source of the KDE "Mac or Windows" settings page. The kcm-build workshop
@@ -274,8 +293,9 @@ FROM quay.io/fedora/fedora-bootc:${FEDORA_VERSION}
 # in both directions. Re-declaring them (with no value) inherits them.
 ARG FEDORA_VERSION
 ARG NVIDIA
+ARG HANDHELD
 
-# Which of the two images is this, and who publishes it. The build script writes
+# Which of the three images is this, and who publishes it. The build script writes
 # these into the OS so that `bootc upgrade` knows where to look for updates and
 # the About page knows what to call itself. The defaults mean a plain
 # `podman build .` with no arguments still produces a sensible image.
@@ -505,6 +525,7 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 # 7. Identity. The OS learns to call itself AquariusOS.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     IMAGE_NAME="${IMAGE_NAME}" IMAGE_VENDOR="${IMAGE_VENDOR}" NVIDIA="${NVIDIA}" \
+    HANDHELD="${HANDHELD}" \
     /ctx/build_files/70-image-info.sh
 
 # 7b. Aquarius Keys: Mac-style keyboard shortcuts, on by default. Installs the
@@ -781,6 +802,37 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=gamescope-src,source=/,target=/ctx-gamescope \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     NVIDIA="${NVIDIA}" /ctx/build_files/71-game-mode.sh
+
+# 7g. The handheld layer — phase G2, and the whole of the third image.
+#
+#     On the two DESKTOP images this step installs nothing at all. It runs, it
+#     checks that not one piece of the handheld layer arrived, and it stops.
+#     That is deliberate: it is the standing proof that this phase cannot change
+#     the computer Royce edits on.
+#
+#     On the HANDHELD image it adds the five things a ROG Xbox Ally X needs that
+#     a PC does not: InputPlumber (so the built-in controller reaches Steam as
+#     ONE Xbox pad, with its paddles and its gyro), Valve's steamos-manager and
+#     powerstation (so Steam's power sliders move real hardware), the power
+#     button daemon, two small udev rules about sleep, and the cold-boot setting
+#     flipped to `game` — because a handheld with no keyboard cannot get past a
+#     password box.
+#
+#     ⚠️ NO KERNEL CHANGE. Fedora's kernel already drives this machine. What it
+#     cannot do yet (rumble, dead zones, remapping) is a separate decision.
+#
+#     ⚠️ AFTER STEP 7f, ALWAYS, for two reasons. Step 7f adds Terra and removes
+#     it again — running this one first would mean 7f re-adding Terra after this
+#     had cleaned up, and a leftover Terra file stops the installer ISO from
+#     building. And this step installs Terra's `steamos-manager-powerstation`,
+#     whose RPM replaces the plain `steamos-manager` that 7f installs; doing
+#     that in the other order would put the plain one back.
+#
+#     The step is numbered 78 because 72 to 77 were already taken. It belongs
+#     here, immediately after Game Mode.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache/libdnf5 \
+    HANDHELD="${HANDHELD}" /ctx/build_files/78-handheld.sh
 
 # 7k. Homebrew — the `brew` command, on both images, because Royce asked for it.
 #

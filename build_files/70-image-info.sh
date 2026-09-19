@@ -58,9 +58,17 @@ LOGO_COLOR="0;38;2;44;143;196"
 IMAGE_NAME="${IMAGE_NAME:-aquarius-os}"
 IMAGE_VENDOR="${IMAGE_VENDOR:-stoneharborent}"
 NVIDIA="${NVIDIA:-0}"
+HANDHELD="${HANDHELD:-0}"
 
 # Which edition this is, in words, for the About page.
-if [ "${NVIDIA}" = "1" ]; then
+#
+# Three answers, because there are three images. The handheld one is checked
+# FIRST: it is an AMD image (NVIDIA=0) and would otherwise call itself the
+# Desktop Edition, which is the one thing it certainly is not. See
+# build_files/78-handheld.sh.
+if [ "${HANDHELD}" = "1" ]; then
+    IMAGE_VARIANT="Handheld Edition"
+elif [ "${NVIDIA}" = "1" ]; then
     IMAGE_VARIANT="NVIDIA Edition"
 else
     IMAGE_VARIANT="Desktop Edition"
@@ -94,6 +102,7 @@ cat > "${IMAGE_INFO}" << EOF
   "base-image-name": "quay.io/fedora/fedora-bootc:${FEDORA_VERSION}",
   "desktop": "gnome",
   "nvidia": ${NVIDIA},
+  "handheld": ${HANDHELD},
   "fedora-version": "${FEDORA_VERSION}",
   "kernel-version": "${KERNEL_VERSION}",
   "version": "${FEDORA_VERSION}.${BUILD_DATE}",

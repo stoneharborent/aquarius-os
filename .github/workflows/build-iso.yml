@@ -28,9 +28,9 @@
 #     git tag iso-nvidia-2026-09-05
 #     git push origin iso-nvidia-2026-09-05
 #
-#   The tag name says which image: it must start with `iso-base-` or
-#   `iso-nvidia-`. Anything after that is yours — a date is the obvious thing.
-#   Pushing the tag starts the build.
+#   The tag name says which image: it must start with `iso-base-`,
+#   `iso-nvidia-` or `iso-handheld-`. Anything after that is yours — a date is
+#   the obvious thing. Pushing the tag starts the build.
 #
 # Either way: wait 20-40 minutes, then download the ISO from the Artifacts
 # section at the bottom of the run's page.
@@ -67,13 +67,20 @@ on:
   workflow_dispatch:
     inputs:
       variant:
-        description: "Which one? base = AMD or Intel graphics. nvidia = any RTX card."
+        description: "Which one? base = AMD or Intel graphics. nvidia = any RTX card. handheld = the ROG Xbox Ally X."
         required: true
         default: nvidia
         type: choice
         options:
           - base
           - nvidia
+          # ⚠️ THE HANDHELD ISO IS HOW THE ALLY GETS AQUARIUSOS AT ALL. There is
+          # no other route onto that machine: it cannot boot from its SD card
+          # slot, so it has to be a USB-C stick through a dock. Nothing about the
+          # installer itself changes — same Anaconda, same artwork. The only
+          # difference is which published image it carries and points at for
+          # updates. See docs/restart/handheld.md.
+          - handheld
       tag:
         description: "Which build. Leave as 'latest' unless you want a specific dated one."
         required: false
@@ -85,6 +92,7 @@ on:
     tags:
       - 'iso-base-*'
       - 'iso-nvidia-*'
+      - 'iso-handheld-*'
 
 # ⚠️ THE VARIANT HAS TO BE IN THIS NAME. Runs that share a concurrency group
 # cancel each other, and both variants started from the button share the same
@@ -137,10 +145,11 @@ jobs:
             echo "Started by hand. Variant: ${VARIANT}"
           else
             case "${REF_NAME}" in
-              iso-base-*)   VARIANT="base" ;;
-              iso-nvidia-*) VARIANT="nvidia" ;;
+              iso-base-*)     VARIANT="base" ;;
+              iso-nvidia-*)   VARIANT="nvidia" ;;
+              iso-handheld-*) VARIANT="handheld" ;;
               *)
-                echo "::error::Tag '${REF_NAME}' does not start with iso-base- or iso-nvidia-, so there is no way to tell which image to build. Delete the tag and push one that does."
+                echo "::error::Tag '${REF_NAME}' does not start with iso-base-, iso-nvidia- or iso-handheld-, so there is no way to tell which image to build. Delete the tag and push one that does."
                 exit 1
                 ;;
             esac

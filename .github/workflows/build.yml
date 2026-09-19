@@ -386,6 +386,12 @@ on:
       # 71 reads every fix back out of the finished image. Same arrangement
       # as every side branch: builds and checks, never publishes.
       - claude/return-game-mode-bugs-tj19kv
+      # Phase G2: the third image, aquarius-os-handheld, for the one ROG Xbox
+      # Ally X Royce owns. The matrix builds all three here, and the third
+      # image's own checks run on all three — because half of what they prove is
+      # that the two desktop images are UNCHANGED by the whole phase. Same
+      # arrangement as every side branch: builds and checks, never publishes.
+      - g2-handheld
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -407,8 +413,19 @@ jobs:
         include:
           - variant: base
             nvidia: 0
+            handheld: 0
           - variant: nvidia
             nvidia: 1
+            handheld: 0
+          # The third image: phase G2. The SAME recipe as `base` — no NVIDIA
+          # driver — plus the device layer for one handheld, the ROG Xbox Ally X
+          # Royce owns, and a cold boot that goes straight into Game Mode.
+          # Everything that makes it different is in build_files/78-handheld.sh,
+          # which on the other two images installs nothing and instead proves
+          # that none of it arrived.
+          - variant: handheld
+            nvidia: 0
+            handheld: 1
     permissions:
       contents: read
       packages: write
@@ -1149,6 +1166,7 @@ jobs:
           set -euo pipefail
           IMAGE_NAME="$(just variant-image-name ${{ matrix.variant }})"
           NVIDIA="$(just variant-nvidia ${{ matrix.variant }})"
+          HANDHELD="$(just variant-handheld ${{ matrix.variant }})"
           DEFAULT_TAG="$(just generate-default-tag)"
 
           # Sanity check: the Justfile and the workflow matrix have to agree
@@ -1159,16 +1177,26 @@ jobs:
             echo "::error::The Justfile says variant '${{ matrix.variant }}' has NVIDIA=${NVIDIA}, but this workflow says ${{ matrix.nvidia }}. They must agree."
             exit 1
           fi
+          # And the same for the handheld switch, for the same reason: if the two
+          # ever drift, one image gets built as another and is published under
+          # the wrong name — and the handheld one is the image that starts
+          # straight into Steam with no login screen, so publishing it under a
+          # desktop name would take the login screen off somebody's PC.
+          if [ "${HANDHELD}" != "${{ matrix.handheld }}" ]; then
+            echo "::error::The Justfile says variant '${{ matrix.variant }}' has HANDHELD=${HANDHELD}, but this workflow says ${{ matrix.handheld }}. They must agree."
+            exit 1
+          fi
 
           echo "IMAGE_NAME=${IMAGE_NAME,,}" >> "${GITHUB_ENV}"
           echo "NVIDIA=${NVIDIA}" >> "${GITHUB_ENV}"
+          echo "HANDHELD=${HANDHELD}" >> "${GITHUB_ENV}"
           echo "DEFAULT_TAG=${DEFAULT_TAG}" >> "${GITHUB_ENV}"
           echo "IMAGE_REGISTRY=${IMAGE_REGISTRY,,}" >> "${GITHUB_ENV}"
 
       - name: Build the image
         id: build-image
         run: |
-          just build "${IMAGE_NAME}" "${DEFAULT_TAG}" "${NVIDIA}"
+          just build "${IMAGE_NAME}" "${DEFAULT_TAG}" "${NVIDIA}" "${HANDHELD}"
 
       - name: How big is it
         run: |
@@ -1240,6 +1268,16 @@ jobs:
 
           # WAS is the last size measured BEFORE the two desktops went in on
           # 2026-09-15 — the number this build should land about 1.6 GB above.
+          #   2026-09-19  The handheld image (phase G2) is the AMD image plus
+          #               four small userspace packages — InputPlumber,
+          #               steamos-manager, powerstation and the power-button
+          #               daemon — which together are well under 50 MB. It
+          #               therefore shares the AMD image's ceiling, and the
+          #               first green build is what turns this guess into a
+          #               measured number. ⚠️ IF THE HANDHELD IMAGE IS MORE THAN
+          #               ABOUT 0.1 GB BIGGER THAN THE BASE ONE, something has
+          #               been pulled in that was not asked for — start with
+          #               what steamos-manager-powerstation requires.
           if [ "${NVIDIA}" = "1" ]; then
             WAS="13.1"; CEILING=16000000000   # +1 GB on 2026-09-15: KDE Plasma is ~1.6 GB
           else
@@ -1301,7 +1339,7 @@ jobs:
           check "ANSI_COLOR is the Ice accent"  '^ANSI_COLOR="0;38;2;44;143;196"$' /etc/os-release
           check "DEFAULT_HOSTNAME is aquarius"  '^DEFAULT_HOSTNAME="aquarius"$'  /etc/os-release
           check "VARIANT_ID is aquarius-os"     '^VARIANT_ID=aquarius-os$'       /etc/os-release
-          check "VARIANT names an edition"      '^VARIANT="(NVIDIA|Desktop) Edition"$' /etc/os-release
+          check "VARIANT names an edition"      '^VARIANT="(NVIDIA|Desktop|Handheld) Edition"$' /etc/os-release
           check "HOME_URL is our repository"    '^HOME_URL="https://github\.com/' /etc/os-release
           check "ID stays fedora (deliberate)"  '^ID=fedora$'                    /etc/os-release
 
@@ -1314,7 +1352,12 @@ jobs:
 
           # The edition has to match the image being built, or we would publish
           # the AMD image under the NVIDIA name.
-          if [ "${EXPECTED_NVIDIA}" = "1" ]; then
+          # The handheld one is asked about FIRST. It is an AMD image, so it
+          # would otherwise match the Desktop branch — and the Desktop edition is
+          # the one thing it certainly is not.
+          if [ "${EXPECTED_HANDHELD}" = "1" ]; then
+            check "this is the Handheld edition" '^VARIANT="Handheld Edition"$' /etc/os-release
+          elif [ "${EXPECTED_NVIDIA}" = "1" ]; then
             check "this is the NVIDIA edition" '^VARIANT="NVIDIA Edition"$' /etc/os-release
           else
             check "this is the Desktop edition" '^VARIANT="Desktop Edition"$' /etc/os-release
@@ -1350,6 +1393,7 @@ jobs:
             --entrypoint /usr/bin/bash \
             -e EXPECTED_IMAGE_NAME="${IMAGE_NAME}" \
             -e EXPECTED_NVIDIA="${NVIDIA}" \
+            -e EXPECTED_HANDHELD="${HANDHELD}" \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-identity.sh
 
       - name: Check the software is really in there
@@ -6428,13 +6472,24 @@ jobs:
           # terra-release is deliberately NOT in this list. Terra is a
           # build-time source only and step 71 removes it again, for the same
           # installer-ISO reason as step 68.
-          for pkg in gamescope-session gamescope-session-steam steamos-manager; do
+          for pkg in gamescope-session gamescope-session-steam; do
             if rpm -q "${pkg}" > /dev/null 2>&1; then
               ok "${pkg} $(rpm -q --queryformat '%{VERSION}-%{RELEASE}' "${pkg}")"
             else
               bad "${pkg} is NOT installed"
             fi
           done
+          # ⚠️ steamos-manager IS ASKED FOR BY WHAT IT PROVIDES, NOT BY ITS NAME.
+          # On the handheld image (phase G2) the plain `steamos-manager` package
+          # is replaced by Terra's `steamos-manager-powerstation`, whose RPM says
+          # `Obsoletes: steamos-manager` — same program, same files, different
+          # package name. Asking rpm who PROVIDES the name is true on all three
+          # images and stays true if Terra renames it again.
+          if rpm -q --whatprovides steamos-manager > /dev/null 2>&1; then
+            ok "steamos-manager is provided by $(rpm -q --whatprovides steamos-manager | tr '\n' ' ')"
+          else
+            bad "nothing in this image provides steamos-manager"
+          fi
 
           echo "== the login screen can offer Game Mode =="
           SESSION=/usr/share/wayland-sessions/gamescope-session-steam.desktop
@@ -6536,15 +6591,28 @@ jobs:
           # ⚠️ THE MOST IMPORTANT CHECK IN THIS BLOCK. If this file ever shipped
           # as 'game', every machine following these images would stop showing a
           # login screen at its next restart and boot into Steam instead.
+          # ⚠️ AND IT IS ASKED THE OTHER WAY ROUND ON THE HANDHELD IMAGE. That
+          # image exists to start into Game Mode: it has no keyboard, so a
+          # password box on it is a dead end. Same check, opposite expected
+          # answer, and each image is held to exactly one of them — so a mix-up
+          # between the two can never pass.
           FLAG=/etc/aquarius/login-mode
-          if grep -qx 'mode=desktop' "$FLAG" 2>/dev/null; then
-            ok "${FLAG} ships as 'desktop' — switching this computer on shows the login screen"
+          if [ "${EXPECTED_HANDHELD}" = "1" ]; then
+            if grep -qx 'mode=game' "$FLAG" 2>/dev/null; then
+              ok "${FLAG} ships as 'game' — this handheld turns on straight into Steam, as it must"
+            else
+              bad "${FLAG} does not say mode=game on the handheld image — the Ally would stop at a password box it cannot type"
+            fi
           else
-            bad "${FLAG} does not say mode=desktop. This image would change how every machine starts."
+            if grep -qx 'mode=desktop' "$FLAG" 2>/dev/null; then
+              ok "${FLAG} ships as 'desktop' — switching this computer on shows the login screen"
+            else
+              bad "${FLAG} does not say mode=desktop. This image would change how every machine starts."
+            fi
+            grep -q '^mode=game' "$FLAG" 2>/dev/null \
+              && bad "${FLAG} says 'game' — this image would boot straight into Steam" \
+              || ok "nothing in the image asks for a boot into Game Mode"
           fi
-          grep -q '^mode=game' "$FLAG" 2>/dev/null \
-            && bad "${FLAG} says 'game' — this image would boot straight into Steam" \
-            || ok "nothing in the image asks for a boot into Game Mode"
 
           echo "== the services, switched on from /usr =="
           # Never through /etc: an update merges /etc and remembers deletions
@@ -6574,15 +6642,30 @@ jobs:
           else
             ok "no SDDM holo.conf, so Valve's own session switching can never start"
           fi
-          for u in steamos-manager.service steamos-manager-user.service; do
-            if [ -e "/usr/lib/systemd/system/graphical.target.wants/${u}" ] \
-               || [ -e "/usr/lib/systemd/system/multi-user.target.wants/${u}" ] \
-               || [ -e "/etc/systemd/system/multi-user.target.wants/${u}" ]; then
-              bad "${u} has been switched on — G1 leaves it asleep"
+          # ⚠️ ON THE HANDHELD IMAGE IT IS AWAKE, AND THAT IS THE POINT. Steam's
+          # power-limit and battery-charge sliders are what it is for, and an
+          # Ally has both. Phase G2 switches it on there and only there; the two
+          # desktop images still carry it asleep, because a desktop PC has
+          # nothing for it to manage. Valve's SESSION-switching half stays off on
+          # every image — that is the holo.conf check above, not this one.
+          if [ "${EXPECTED_HANDHELD}" = "1" ]; then
+            L=/usr/lib/systemd/system/multi-user.target.wants/steamos-manager.service
+            if [ -L "$L" ] && [ -e "$L" ]; then
+              ok "steamos-manager.service is switched on from /usr — the handheld needs its sliders"
             else
-              ok "${u} is not switched on"
+              bad "$L is missing or dangling — Steam's TDP and battery sliders would do nothing on the Ally"
             fi
-          done
+          else
+            for u in steamos-manager.service steamos-manager-user.service; do
+              if [ -e "/usr/lib/systemd/system/graphical.target.wants/${u}" ] \
+                 || [ -e "/usr/lib/systemd/system/multi-user.target.wants/${u}" ] \
+                 || [ -e "/etc/systemd/system/multi-user.target.wants/${u}" ]; then
+                bad "${u} has been switched on — G1 leaves it asleep on a desktop image"
+              else
+                ok "${u} is not switched on"
+              fi
+            done
+          fi
 
           echo "== the way in, and the way to read about it =="
           D=/usr/share/applications/aquarius-return-to-game-mode.desktop
@@ -6677,7 +6760,280 @@ jobs:
           podman run --rm --pull=never -i \
             --entrypoint /usr/bin/bash \
             -e EXPECTED_NVIDIA="${NVIDIA}" \
+            -e EXPECTED_HANDHELD="${HANDHELD}" \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-game-mode.sh
+
+      # ------------------------------------------------------------------------
+      # The handheld layer (Phase G2 — the ROG Xbox Ally X)
+      # ------------------------------------------------------------------------
+      # ⚠️ WHAT THIS CAN AND CANNOT PROVE, SAID PLAINLY.
+      #
+      # A GitHub runner is a virtual machine in a data centre. It has no ASUS
+      # handheld, no controller, no speakers, no battery and no gyro. Nothing
+      # here can show that a stick moves or that a speaker makes a sound.
+      #
+      # What it CAN show, and does, is that every piece is in the image and is
+      # the piece we meant: the packages and which version of the one version
+      # that matters, the device description that names this exact board, the two
+      # udev rules byte for byte, the services switched on from /usr rather than
+      # /etc, the firmware files on the disk, and the cold-boot setting shipped
+      # the right way round for THIS image.
+      #
+      # AND — just as important — it runs on all three images and proves the
+      # other two are untouched by the whole phase. That half is the promise that
+      # phase G2 cannot change the computer Royce edits on.
+      #
+      # The real proof is the bench list in docs/restart/handheld.md.
+      - name: Check the handheld layer is right for this image
+        run: |
+          set -euo pipefail
+          cat > /tmp/verify-handheld.sh <<'SCRIPT'
+          set -u
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+
+          # ======================================================================
+          # THE TWO DESKTOP IMAGES: none of this may be here
+          # ======================================================================
+          if [ "${EXPECTED_HANDHELD}" != "1" ]; then
+            echo "== this is a desktop image: the handheld layer must be absent =="
+            for pkg in inputplumber powerstation powerbuttond steamos-manager-powerstation opengamepadui; do
+              if rpm -q "${pkg}" > /dev/null 2>&1; then
+                bad "${pkg} is installed on a desktop image — that is handheld-only software"
+              else
+                ok "${pkg} is not on this image"
+              fi
+            done
+            for f in /usr/lib/udev/rules.d/50-ally-x-controller.rules \
+                     /usr/lib/udev/rules.d/70-aquarius-ally-mcu-powersave.rules \
+                     /usr/lib/systemd/system/inputplumber.service.d/10-aquarius-before-login.conf \
+                     /usr/libexec/aquarius-handheld-status \
+                     /usr/share/aquarius/gaming/handheld.txt; do
+              [ -e "$f" ] && bad "$f is on a desktop image" || ok "$f is not on this image"
+            done
+            # `aq` is ONE program on all three images, so `aq handheld` exists
+            # here. It must refuse politely rather than look broken.
+            if /usr/bin/aq handheld status > /tmp/hh.txt 2>&1; then
+              bad "'aq handheld status' succeeded on a desktop image"
+            else
+              ok "'aq handheld status' explains that this is not a handheld, and stops"
+            fi
+            sed 's/^/       /' /tmp/hh.txt
+            if [ "$fails" -ne 0 ]; then
+              echo "::error::Part of the handheld layer has leaked onto a desktop image. Phase G2 must not change these two images."
+              exit 1
+            fi
+            echo "All handheld-absence checks passed."
+            exit 0
+          fi
+
+          # ======================================================================
+          # THE HANDHELD IMAGE
+          # ======================================================================
+          echo "== the handheld packages =="
+          for pkg in inputplumber steamos-manager-powerstation powerbuttond powerstation; do
+            if rpm -q "${pkg}" > /dev/null 2>&1; then
+              ok "${pkg} $(rpm -q --queryformat '%{VERSION}-%{RELEASE}' "${pkg}")"
+            else
+              bad "${pkg} is NOT installed"
+            fi
+          done
+          # Terra is a build-time source only and step 78 removes it again, for
+          # the same installer-ISO reason as steps 68 and 71.
+          rpm -q terra-release > /dev/null 2>&1 \
+            && bad "terra-release is still in the finished image — the installer ISO would not build" \
+            || ok "Terra is gone from the finished image"
+          # The plain steamos-manager must have been replaced, not doubled up.
+          rpm -q steamos-manager > /dev/null 2>&1 \
+            && bad "both steamos-manager and steamos-manager-powerstation are installed" \
+            || ok "Terra's powerstation build replaced the plain steamos-manager"
+
+          echo "== which InputPlumber, and what it is known to do wrong =="
+          # ⚠️ THE ONE VERSION THAT MATTERS IN THIS WHOLE PHASE.
+          #   * below 0.79.0 the back paddles and the Armoury / Library buttons
+          #     on this exact device are mapped and labelled wrongly (fixed by
+          #     InputPlumber PR #688);
+          #   * 0.79.5 shortened the Ally X thumbstick range (issue #724).
+          # Terra publishes one version at a time, so this is NOT a build
+          # failure — it is a fact that has to be written down where the bench
+          # can read it. That is /usr/share/aquarius/gaming/handheld.txt, and
+          # this checks the note really carries the version that is installed.
+          IPV="$(rpm -q --queryformat '%{VERSION}-%{RELEASE}' inputplumber)"
+          echo "     InputPlumber in this image: ${IPV}"
+          NOTE=/usr/share/aquarius/gaming/handheld.txt
+          if grep -qF "version: ${IPV}" "$NOTE" 2>/dev/null; then
+            ok "the image's own note records exactly this version"
+          else
+            bad "$NOTE does not record InputPlumber ${IPV} — the bench would have no way to know which one it has"
+          fi
+          echo "     what the note says about it:"
+          sed 's/^/       /' "$NOTE" 2>/dev/null || true
+
+          echo "== InputPlumber knows THIS machine =="
+          Y=/usr/share/inputplumber/devices/50-rog_xbox_ally.yaml
+          if [ -r "$Y" ]; then
+            ok "the Xbox Ally device profile is in the image"
+            grep -q 'RC73XA' "$Y" \
+              && ok "it matches board RC73XA — the Xbox Ally X, which is the machine on the bench" \
+              || bad "the profile does not mention RC73XA"
+            grep -q 'product_id: 0x1b4c' "$Y" \
+              && ok "it matches the built-in controller's USB id" \
+              || bad "the profile does not match the built-in controller"
+            grep -q 'bmi323-imu' "$Y" \
+              && ok "it picks up the motion sensor, which is what gives Steam a gyro" \
+              || bad "the profile does not pick up the gyro"
+            grep -qE '^[[:space:]]*-[[:space:]]*xbox-elite$' "$Y" \
+              && ok "the controller it builds is an Xbox Elite pad" \
+              || bad "the profile does not build an xbox-elite controller"
+          else
+            bad "$Y is missing — the built-in controller would have no paddles and no gyro"
+          fi
+          [ -r /usr/share/inputplumber/capability_maps/ally_type2.yaml ] \
+            && ok "the Xbox Ally button map is in the image" \
+            || bad "ally_type2.yaml is missing — the paddles and the Armoury button would do nothing"
+
+          echo "== Steam's power-limit table knows this exact board =="
+          # There are two files mentioning an Xbox Ally and they do NOT agree:
+          # rog-xbox-ally.toml is RC73YA (the Z2 A) limited to 20 W through
+          # amdgpu's sensors; rog-ally-series.toml is the one carrying RC73XA,
+          # driven through asus-armoury, the kernel's real ASUS power knobs. If a
+          # future Terra build moved our board into the other file, the slider
+          # would look fine and cap at 20 W on a 35 W machine.
+          T=/usr/share/steamos-manager/devices/rog-ally-series.toml
+          grep -q 'RC73XA' "$T" 2>/dev/null \
+            && ok "RC73XA is in steamos-manager's device table" \
+            || bad "$T does not mention RC73XA — Steam's TDP slider would not know this machine"
+          grep -q 'attribute = "asus-armoury"' "$T" 2>/dev/null \
+            && ok "and its power limit runs through asus-armoury" \
+            || bad "$T does not use the asus-armoury power knobs"
+
+          echo "== the two udev rules =="
+          R1=/usr/lib/udev/rules.d/50-ally-x-controller.rules
+          R2=/usr/lib/udev/rules.d/70-aquarius-ally-mcu-powersave.rules
+          # ⚠️ R1 is Bazzite's, byte-identical (ublue-os/bazzite PR #5735). Do
+          # not tidy it — keeping it identical means a future upstream change is
+          # one `diff` instead of an argument.
+          grep -q 'ATTR{idProduct}=="1b4c"' "$R1" 2>/dev/null \
+            && ok "the wake-source rule is aimed at the built-in controller" \
+            || bad "$R1 is missing or does not name the built-in controller"
+          grep -q 'ATTR{power/wakeup}="disabled"' "$R1" 2>/dev/null \
+            && ok "and it stops a nudged thumbstick waking the handheld in a bag" \
+            || bad "$R1 does not disable the controller as a wake source"
+          grep -q 'KERNEL=="asus-nb-wmi"' "$R2" 2>/dev/null \
+            && ok "the controller-chip power-saving rule only fires on an ASUS machine" \
+            || bad "$R2 is missing or not limited to ASUS hardware"
+          grep -q 'ATTR{mcu_powersave}="1"' "$R2" 2>/dev/null \
+            && ok "and it switches the controller chip's power saving on" \
+            || bad "$R2 does not set mcu_powersave"
+          if command -v udevadm > /dev/null 2>&1 && udevadm verify --help > /dev/null 2>&1; then
+            for r in "$R1" "$R2"; do
+              udevadm verify "$r" > /dev/null 2>&1 \
+                && ok "udev can read $(basename "$r")" \
+                || bad "udev refuses to load $r — it would be silently ignored on the machine"
+            done
+          fi
+
+          echo "== the services, switched on from /usr and never through /etc =="
+          # /etc is merged at every update and systemd remembers a deletion
+          # there for ever, so one `systemctl disable` would switch a service off
+          # permanently on that machine. The long version is in aq-lib.sh.
+          check_link() {   # check_link <link> "<what it is for>"
+            if [ -L "$1" ] && [ -e "$1" ]; then ok "$2 — $1"
+            else bad "$2 — $1 is missing or points at nothing"; fi
+          }
+          check_link /usr/lib/systemd/system/multi-user.target.wants/inputplumber.service \
+            "the built-in controller is assembled at every boot"
+          check_link /usr/lib/systemd/system/sleep.target.wants/inputplumber-suspend.service \
+            "the controller is put back together after the handheld wakes up"
+          check_link /usr/lib/systemd/system/multi-user.target.wants/steamos-manager.service \
+            "Steam's power and battery sliders have a service to talk to"
+          check_link /usr/lib/systemd/system/multi-user.target.wants/powerstation.service \
+            "the power limit has something to write through on AMD"
+          check_link /usr/lib/systemd/user/gamescope-session-plus@steam.service.wants/steamos-manager.service \
+            "the session half of the sliders starts with OUR Game Mode session"
+          check_link /usr/lib/systemd/user/gamescope-session-plus@steam.service.wants/steamos-powerbuttond.service \
+            "a short press of the power button sleeps the handheld"
+          ETC="$(find /etc/systemd \( -name 'inputplumber*.service' -o -name 'steamos-*.service' -o -name 'powerstation.service' \) 2>/dev/null || true)"
+          if [ -z "$ETC" ]; then
+            ok "nothing is switched on through /etc"
+          else
+            echo "$ETC" | sed 's/^/       /'
+            bad "a handheld service is switched on through /etc — an update could lose it"
+          fi
+
+          echo "== Steam's first run must find the controller (bazzite #3761) =="
+          # Steam asks "is there a controller?" ONCE, very early, the first time
+          # it runs. If InputPlumber has not finished by then, Steam shows
+          # "connect a controller" on a machine whose controller is bolted to its
+          # sides. This ordering is the fix.
+          D=/usr/lib/systemd/system/inputplumber.service.d/10-aquarius-before-login.conf
+          grep -qx 'Before=display-manager.service' "$D" 2>/dev/null \
+            && ok "the login screen waits for InputPlumber" \
+            || bad "$D does not order InputPlumber before the login screen"
+
+          echo "== the firmware this machine cannot work without =="
+          # Each one fails in a way that looks like broken hardware and says
+          # nothing useful on screen. Fedora compresses firmware and has changed
+          # which compression it uses, so every possible name is tried.
+          fw() {   # fw <path-without-extension> "<what it is for>"
+            for ext in "" .xz .zst .zstd; do
+              if [ -e "$1${ext}" ]; then ok "$2 — $1${ext}"; return; fi
+            done
+            bad "$2 — no $1 in any form"
+          }
+          fw /usr/lib/firmware/TAS2XXX13840.bin "the speakers (TI TAS2781); without it the handheld is silent"
+          fw /usr/lib/firmware/mediatek/WIFI_MT7922_patch_mcu_1_1_hdr.bin "Wi-Fi firmware patch (MT7922)"
+          fw /usr/lib/firmware/mediatek/WIFI_RAM_CODE_MT7922_1.bin "Wi-Fi firmware (MT7922)"
+          fw /usr/lib/firmware/mediatek/BT_RAM_CODE_MT7922_1_1_hdr.bin "Bluetooth firmware (MT7922)"
+          fwfam() {   # fwfam <prefix> <at least> "<what it is>"
+            n="$(find /usr/lib/firmware/amdgpu -maxdepth 1 -name "$1*" \( -type f -o -type l \) 2>/dev/null | wc -l | tr -d ' ')"
+            if [ "$n" -ge "$2" ]; then ok "$3 — $n files matching $1*"
+            else bad "$3 — only $n files matching $1*, expected at least $2"; fi
+          }
+          fwfam gc_11_5  7 "the graphics engine (AMD 'Strix')"
+          fwfam psp_14_0 2 "the security processor (nothing draws without it)"
+          fwfam vcn_4_0  1 "the video decoder and encoder"
+
+          echo "== the drivers that go with them =="
+          mod() {   # mod <name> "<what it is>"
+            alt="$(printf '%s' "$1" | tr '_-' '-_')"
+            if [ -n "$(find /usr/lib/modules \( -name "$1.ko*" -o -name "${alt}.ko*" \) 2>/dev/null | head -1)" ]; then
+              ok "$2 — driver $1"
+            else
+              bad "$2 — driver $1 is MISSING; that part reports itself absent even with firmware present"
+            fi
+          }
+          mod hid-asus            "the built-in controller and the ASUS buttons"
+          mod bmi323_i2c          "the motion sensor (Steam's gyro)"
+          mod mt7921e             "Wi-Fi and Bluetooth (MT7922)"
+          mod snd-soc-tas2781-i2c "the speakers"
+          mod asus-armoury        "the power-limit knobs Steam's TDP slider moves"
+
+          echo "== the one command a bench session runs =="
+          # It has to survive a machine with none of the hardware — which is
+          # exactly what this runner is. A status command that stops half way
+          # through is worse than useless.
+          if /usr/libexec/aquarius-handheld-status > /tmp/hh.txt 2>&1; then
+            ok "aquarius-handheld-status runs and finishes even with no handheld present"
+          else
+            bad "aquarius-handheld-status stopped with an error"
+          fi
+          head -20 /tmp/hh.txt | sed 's/^/       /'
+          /usr/bin/aq handheld --help > /dev/null 2>&1 \
+            && ok "'aq handheld --help' runs" \
+            || bad "'aq handheld --help' does not run"
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::The handheld layer is incomplete. See docs/restart/handheld.md."
+            exit 1
+          fi
+          echo "All handheld checks passed."
+          SCRIPT
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            -e EXPECTED_HANDHELD="${HANDHELD}" \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-handheld.sh
 
       # ------------------------------------------------------------------------
       # THE INSTALLER-ISO REGRESSION GUARD
@@ -7095,11 +7451,13 @@ jobs:
           # trusting that the line above says what we think it says.
           # shellcheck disable=SC1091
           . ./aquarius-os.env
-          echo "IMAGE_NAME        = ${IMAGE_NAME}"
-          echo "NVIDIA_IMAGE_NAME = ${NVIDIA_IMAGE_NAME}"
+          echo "IMAGE_NAME          = ${IMAGE_NAME}"
+          echo "NVIDIA_IMAGE_NAME   = ${NVIDIA_IMAGE_NAME}"
+          echo "HANDHELD_IMAGE_NAME = ${HANDHELD_IMAGE_NAME}"
           fails=0
           [ "${IMAGE_NAME}" = "aquarius-os" ] || { echo "  FAIL IMAGE_NAME should be aquarius-os"; fails=1; }
           [ "${NVIDIA_IMAGE_NAME}" = "aquarius-os-nvidia" ] || { echo "  FAIL NVIDIA_IMAGE_NAME should be aquarius-os-nvidia"; fails=1; }
+          [ "${HANDHELD_IMAGE_NAME}" = "aquarius-os-handheld" ] || { echo "  FAIL HANDHELD_IMAGE_NAME should be aquarius-os-handheld"; fails=1; }
           # And the installer must point new machines at the same place.
           grep -q 'ghcr.io/stoneharborent/aquarius-os:latest' disk_config/iso.toml \
             || { echo "  FAIL disk_config/iso.toml does not point installed machines at ghcr.io/stoneharborent/aquarius-os:latest"; fails=1; }

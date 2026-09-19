@@ -1,0 +1,26 @@
+# AquariusOS — what this computer does when you switch it on.
+#
+#   mode=desktop   show the login screen (the normal thing, and the default)
+#   mode=game      start straight into Game Mode, like a console
+#
+# Change it with:  aq game boot on   /   aq game boot off
+# Read about it in: docs/restart/game-mode.md
+#
+# An optional second line, `user=<account>`, says who is logged in when
+# mode=game. Without it, the computer picks its first ordinary account, which
+# on a one-person machine is the right answer. `aq game boot on` writes it.
+#
+# ⚠️ THIS COPY IS THE HANDHELD ONE, AND IT SAYS `game` ON PURPOSE.
+#
+# This file ships as `mode=desktop` on the two desktop images — a PC that
+# starts at a login screen, exactly as it always has. The handheld image
+# (aquarius-os-handheld, for the ROG Xbox Ally X) ships this copy instead,
+# because a handheld with no keyboard that stops at a password box is a brick:
+# there is nothing to type a password with.
+#
+# It is still only a setting. `aq game boot off` puts the login screen back on
+# this machine, and if the screen is ever black, Ctrl+Alt+F3 gives you a text
+# login from which you can type exactly that.
+#
+# Plain-language guide: docs/restart/handheld.md
+mode=game

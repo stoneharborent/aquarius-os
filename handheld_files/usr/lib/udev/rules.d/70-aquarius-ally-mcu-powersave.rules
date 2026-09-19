@@ -1,0 +1,44 @@
+# =============================================================================
+# AquariusOS — the ROG Xbox Ally X's "let the controller chip sleep" setting
+# =============================================================================
+# WHAT THIS IS, IN PLAIN ENGLISH
+#
+# The built-in controller on an ROG Ally is not wired straight to the computer.
+# It has a little chip of its own (ASUS call it the MCU) that listens to the
+# sticks and buttons and reports them over an internal USB connection.
+#
+# That chip has a power-saving setting. When it is ON, the chip is allowed to
+# go to sleep while the handheld is suspended, and it comes back cleanly when
+# you wake the machine. When it is OFF, the chip stays half-awake, and the
+# usual symptom is a handheld that wakes up with a dead controller — the screen
+# comes back, nothing you press does anything.
+#
+# Linux exposes the setting as a single file:
+#
+#     /sys/devices/platform/asus-nb-wmi/mcu_powersave
+#
+# This rule writes `1` into that file, once, when the ASUS platform driver
+# appears at boot.
+#
+# ⚠️ WHY THIS IS A BELT AND NOT THE TROUSERS. Fedora's own kernel already turns
+# this on by itself, but only on a machine whose MCU firmware is version 313 or
+# newer (that check is inside the `hid-asus` driver). On an Ally that came out
+# of its box with older firmware the kernel deliberately leaves it alone, and
+# this rule is what sets it anyway.
+#
+# It cannot make things worse on a machine the kernel has already handled: the
+# kernel's answer for a modern MCU is the same `1` this rule writes.
+#
+# ⚠️ AND IT IS NOT A SUBSTITUTE FOR UPDATING THE FIRMWARE. If the MCU firmware
+# really is older than 313, the one complete fix is to update it — and that can
+# only be done from Windows, with ASUS's own Armoury Crate. Check it BEFORE
+# wiping Windows off the machine. docs/restart/handheld.md says how.
+#
+# `ATTR{mcu_powersave}=="?*"` means "only if this file exists and is not
+# empty". Every other machine in the world simply does not match this rule and
+# nothing happens — which is why it is harmless to ship, even though only one
+# device on earth will ever use it.
+#
+# Plain-language guide: docs/restart/handheld.md
+# =============================================================================
+ACTION=="add|change", SUBSYSTEM=="platform", KERNEL=="asus-nb-wmi", ATTR{mcu_powersave}=="?*", ATTR{mcu_powersave}="1"

@@ -16,6 +16,7 @@ set dotenv-load
 
 export image_name := env_var("IMAGE_NAME")
 export nvidia_image_name := env_var("NVIDIA_IMAGE_NAME")
+export handheld_image_name := env_var("HANDHELD_IMAGE_NAME")
 export base_image := env_var("BASE_IMAGE")
 export fedora_version := env_var("FEDORA_VERSION")
 export akmods_nvidia_image := env_var("AKMODS_NVIDIA_IMAGE")
@@ -83,8 +84,9 @@ variant-image-name variant="base":
     case "{{ variant }}" in
         base) echo "${IMAGE_NAME}" ;;
         nvidia) echo "${NVIDIA_IMAGE_NAME}" ;;
+        handheld) echo "${HANDHELD_IMAGE_NAME}" ;;
         *)
-            echo "Unknown variant '{{ variant }}' — expected 'base' or 'nvidia'." >&2
+            echo "Unknown variant '{{ variant }}' — expected 'base', 'nvidia' or 'handheld'." >&2
             exit 1
             ;;
     esac
@@ -98,8 +100,25 @@ variant-nvidia variant="base":
     case "{{ variant }}" in
         base) echo "0" ;;
         nvidia) echo "1" ;;
+        handheld) echo "0" ;;
         *)
-            echo "Unknown variant '{{ variant }}' — expected 'base' or 'nvidia'." >&2
+            echo "Unknown variant '{{ variant }}' — expected 'base', 'nvidia' or 'handheld'." >&2
+            exit 1
+            ;;
+    esac
+
+# Whether a variant is the handheld one: 0 or 1. (Phase G2 — the ROG Xbox Ally X.)
+[group('Utility')]
+variant-handheld variant="base":
+    #!/usr/bin/env bash
+
+    set -euo pipefail
+    case "{{ variant }}" in
+        base) echo "0" ;;
+        nvidia) echo "0" ;;
+        handheld) echo "1" ;;
+        *)
+            echo "Unknown variant '{{ variant }}' — expected 'base', 'nvidia' or 'handheld'." >&2
             exit 1
             ;;
     esac
@@ -145,8 +164,12 @@ tag-images $target_image=image_name $tag=default_tag tags="":
 # The build
 # ------------------------------------------------------------------------------
 
-# Build an AquariusOS image. `just build aquarius-os-nvidia latest 1`
-build $target_image=image_name $tag=default_tag $nvidia="0":
+# Build an AquariusOS image.
+#   just build aquarius-os-nvidia latest 1
+#   just build aquarius-os-handheld latest 0 1
+# The last two numbers are the two switches: NVIDIA, then HANDHELD. They are
+# never both 1 — the one handheld this image targets has AMD graphics.
+build $target_image=image_name $tag=default_tag $nvidia="0" $handheld="0":
     #!/usr/bin/env bash
 
     set -euox pipefail
@@ -157,9 +180,21 @@ build $target_image=image_name $tag=default_tag $nvidia="0":
             exit 1
             ;;
     esac
+    case "${handheld}" in
+        0 | 1) : ;;
+        *)
+            echo "just build: handheld must be 0 or 1, not '${handheld}'." >&2
+            exit 1
+            ;;
+    esac
+    if [ "${nvidia}" = "1" ] && [ "${handheld}" = "1" ]; then
+        echo "just build: there is no NVIDIA handheld. The ROG Xbox Ally X has AMD graphics." >&2
+        exit 1
+    fi
     BUILD_ARGS=()
     BUILD_ARGS+=("--build-arg" "FEDORA_VERSION={{ fedora_version }}")
     BUILD_ARGS+=("--build-arg" "NVIDIA=${nvidia}")
+    BUILD_ARGS+=("--build-arg" "HANDHELD=${handheld}")
     BUILD_ARGS+=("--build-arg" "AKMODS_NVIDIA_IMAGE={{ akmods_nvidia_image }}")
     BUILD_ARGS+=("--build-arg" "AKMODS_IMAGE={{ akmods_image }}")
     BUILD_ARGS+=("--build-arg" "IMAGE_NAME=${target_image}")

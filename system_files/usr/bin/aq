@@ -146,6 +146,15 @@ USAGE
                         every time; 'aq game boot off' puts the login screen
                         back. 'aq game status' says where you are.
 
+    aq handheld status  Only on the handheld edition of AquariusOS (the ROG
+                        Xbox Ally X). Prints, in one screen, everything a bench
+                        session needs: which machine this is, the controller
+                        chip's firmware version, whether the built-in
+                        controller has been assembled properly, what the power
+                        limit is set to right now, and whether the speakers and
+                        the radio got their firmware. It changes nothing and
+                        never asks for a password — run it and paste the lot.
+
     aq welcome          Show the AquariusOS welcome again — the three-step
                         window a new account sees at its first login: how the
                         keyboard should work, which creator apps you want, and
@@ -2565,6 +2574,71 @@ game() {
 }
 
 # =============================================================================
+# aq handheld — the one-screen report for the handheld edition
+# =============================================================================
+# A thin front door to /usr/libexec/aquarius-handheld-status, exactly like
+# `aq update` is a front door to the updater. The report itself is a separate
+# program because it only ships on ONE of the three AquariusOS images — the
+# handheld one, built for Royce's ROG Xbox Ally X — while `aq` is the same
+# program on all three.
+#
+# So `aq handheld` has two jobs: run the report where it exists, and explain
+# itself clearly where it does not. A command that simply says "not found" on a
+# desktop PC would look like a broken installation instead of what it is.
+#
+# Plain-English guide: docs/restart/handheld.md
+# =============================================================================
+AQ_HANDHELD_STATUS="/usr/libexec/aquarius-handheld-status"
+
+handheld_usage() {
+    cat << 'EOF'
+aq handheld — how this handheld is doing, in one screen
+
+    aq handheld status   Print the report. It changes nothing, it never asks
+                         for a password, and it is the first thing to run when
+                         something on the handheld is not right. Paste all of
+                         it into a bench log.
+
+This only exists on the HANDHELD edition of AquariusOS, which is built for one
+computer: the ROG Xbox Ally X. On a desktop PC there is nothing for it to
+report, and it says so.
+
+The guide, including how to install it on the Ally and what does not work yet,
+is in the repository at docs/restart/handheld.md.
+EOF
+}
+
+handheld() {
+    case "${1:-}" in
+        -h | --help | help)
+            handheld_usage
+            return 0
+            ;;
+    esac
+
+    if [ ! -x "${AQ_HANDHELD_STATUS}" ]; then
+        echo "aq: this copy of AquariusOS does not carry the handheld layer." >&2
+        echo >&2
+        echo "    'aq handheld' belongs to the HANDHELD edition, which is built for" >&2
+        echo "    one computer — the ROG Xbox Ally X — and is published as" >&2
+        echo "    aquarius-os-handheld. This machine is running one of the desktop" >&2
+        echo "    editions, so there is nothing here to report on." >&2
+        echo >&2
+        echo "    That is not a fault. Nothing is missing that should be here." >&2
+        return 1
+    fi
+
+    case "${1:-}" in
+        "" | status) "${AQ_HANDHELD_STATUS}" ;;
+        *)
+            echo "aq: '${1}' is not something 'aq handheld' knows how to do." >&2
+            echo "    It understands: status." >&2
+            return 1
+            ;;
+    esac
+}
+
+# =============================================================================
 # aq update — check for and install a newer AquariusOS
 # =============================================================================
 # A thin front door to /usr/libexec/aquarius-updater, which is also the "Check
@@ -3011,6 +3085,10 @@ case "${1:-}" in
     game)
         shift
         game "$@"
+        ;;
+    handheld)
+        shift
+        handheld "$@"
         ;;
     update)
         shift

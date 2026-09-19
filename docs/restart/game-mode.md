@@ -98,6 +98,12 @@ The setting lives in one small file, `/etc/aquarius/login-mode`, and it says
 back **never touches it**. How you start your computer and what you did last
 Tuesday evening are different questions, and the machine keeps them apart.
 
+⚠️ **There is one image where it ships the other way round.** The handheld
+image, `aquarius-os-handheld`, ships `mode=game` — because that machine is a
+ROG Xbox Ally X with no keyboard, and a password box on it is a dead end. Same
+file, same two commands, opposite starting point. See
+[`handheld.md`](handheld.md).
+
 ---
 
 ## If the screen is black, or the picture is scrambled

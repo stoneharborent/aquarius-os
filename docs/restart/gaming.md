@@ -13,9 +13,14 @@ in, install a game, and play it. There is nothing to set up and nothing to
 read first. Xbox and PlayStation controllers work. A performance overlay is
 there if you want it, and invisible if you do not.
 
-What it does **not** have is a "Game Mode" — the console-like interface a Steam
-Deck boots into — and it does not support handheld gaming PCs. That is a
-decision, not a gap, and the reasoning is at the bottom of this page.
+⚠️ **That paragraph used to end by saying there was no "Game Mode" and no
+handheld support. Both of those are now wrong.** Royce reversed the decision on
+17 September 2026. Game Mode — the console-like interface a Steam Deck boots
+into — shipped in phase G1 and is on every image: see
+[`game-mode.md`](game-mode.md). And since 19 September 2026 there is a third
+image, `aquarius-os-handheld`, built for one handheld computer, the ROG Xbox
+Ally X: see [`handheld.md`](handheld.md). What is still true is that the
+handheld list is **one device long**, on purpose.
 
 ---
 
@@ -278,12 +283,20 @@ it is in the app grid as *Steam (Big Picture)*.
 
 ## What is NOT here, and why
 
-**No handheld support.** No Steam Deck, ROG Ally, Legion Go or Ayaneo device
-drivers, no gyro, no TDP sliders, no fan curves, no InputPlumber. That is
-**phase G2**, it targets exactly one device — the ROG Ally Royce owns — and
-widening that list without the hardware on the bench is how a distribution ends
-up owning a device matrix it cannot test. Doing handhelds badly is worse than
-not doing them.
+**No handheld support — on THESE two images.** ⚠️ Updated 2026-09-19: phase G2
+shipped, and handheld support now exists, but it is a **separate, third image**
+called `aquarius-os-handheld` and it targets **exactly one device**, the ROG
+Xbox Ally X that Royce owns. See [`handheld.md`](handheld.md).
+
+Nothing of it is on the AMD/Intel or NVIDIA images: no InputPlumber, no gyro
+plumbing, no TDP sliders, no fan curves, and a cold boot on them still shows the
+login screen. The build checks that on every run, on all three images, because
+"the handheld work cannot change the computer Royce edits on" is the promise the
+whole phase was built around.
+
+Still no Steam Deck, no Legion Go, no Ayaneo. Widening that list without the
+hardware on the bench is how a distribution ends up owning a device matrix it
+cannot test. Doing handhelds badly is worse than not doing them.
 
 The original reasoning, from the era when Game Mode was out too, is in
 [`../base-distro-reassessment-2026-09.md`](../base-distro-reassessment-2026-09.md)

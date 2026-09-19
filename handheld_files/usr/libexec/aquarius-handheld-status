@@ -1,0 +1,298 @@
+#!/usr/bin/bash
+# =============================================================================
+# aquarius-handheld-status — one command that says how the handheld is doing
+# =============================================================================
+# WHAT THIS IS FOR
+#
+# This is what `aq handheld status` runs. It is a READ-ONLY report: it changes
+# nothing at all, it never asks for a password, and it is safe to run at any
+# time, including from a phone-sized terminal on the handheld itself.
+#
+# It exists so that the first bench session on Royce's ROG Xbox Ally X is ONE
+# command and one paste, instead of nine different things to look up. Every
+# line answers a question that, on this device, is genuinely in doubt:
+#
+#   Which machine is this?      The Xbox Ally X and the Xbox Ally Z2 A have the
+#                               SAME controller USB id. Only the board name
+#                               (RC73XA vs RC73YA) tells them apart, and the
+#                               power-limit sliders are configured per board.
+#   MCU firmware version        Below 313 means suspend and resume are broken,
+#                               and the only way to fix it is from Windows.
+#                               Worth knowing before anybody wipes Windows.
+#   InputPlumber                The program that turns the built-in controller
+#                               into one Xbox Elite pad with paddles and gyro.
+#                               Which version, is it running, what did it make.
+#   ppt_pl1_spl                 The processor's power limit in watts — the
+#                               number Steam's TDP slider moves. If this value
+#                               changes when the slider moves, the slider is
+#                               real.
+#   mcu_powersave               Whether the controller chip is allowed to sleep.
+#                               1 is what we want. See the udev rule.
+#   Speaker / Wi-Fi firmware    Silent speakers and "no Wi-Fi adapter" both look
+#                               like broken hardware and are usually a missing
+#                               firmware file. This says whether the kernel
+#                               loaded them.
+#
+# ⚠️ IT NEVER FAILS. Every single question is asked defensively: a missing file,
+# a missing command or a kernel log this account may not read all print a line
+# saying so and the report carries on. A status command that stops half way
+# through is worse than useless on a bench.
+#
+# Plain-language guide: docs/restart/handheld.md
+# =============================================================================
+
+set -uo pipefail
+
+AQ_NOTE="/usr/share/aquarius/gaming/handheld.txt"
+
+# -----------------------------------------------------------------------------
+# Small helpers
+# -----------------------------------------------------------------------------
+heading() {
+    echo
+    echo "── $* ────────────────────────────────────────────" | cut -c1-72
+}
+
+# say_file <label> <path>  — print a /sys or /proc value, or say why not.
+say_file() {
+    local label="$1" path="$2" value=""
+    if [ ! -e "${path}" ]; then
+        printf '  %-28s (not on this machine: %s)\n' "${label}" "${path}"
+        return
+    fi
+    value="$(cat "${path}" 2> /dev/null)"
+    if [ -z "${value}" ]; then
+        printf '  %-28s (unreadable from this account)\n' "${label}"
+    else
+        printf '  %-28s %s\n' "${label}" "${value}"
+    fi
+}
+
+# kernel_log — the boot messages, from whichever source this account can read.
+# `dmesg` is restricted to administrators on Fedora; journalctl -k is not.
+kernel_log() {
+    local out=""
+    out="$(journalctl -k --no-pager -b 2> /dev/null)"
+    if [ -n "${out}" ]; then
+        printf '%s\n' "${out}"
+        return 0
+    fi
+    dmesg 2> /dev/null || true
+}
+
+# unit_state <unit>  — "active", "inactive", or a plain note. `systemctl
+# is-active` prints its answer AND exits non-zero when the answer is not
+# "active", so it needs catching or the report prints two lines for one fact.
+unit_state() {
+    local s=""
+    s="$(systemctl is-active "$1" 2> /dev/null)"
+    [ -n "${s}" ] || s="no answer"
+    printf '%s' "${s}"
+}
+
+usage() {
+    cat << 'EOF'
+aquarius-handheld-status — how this handheld is doing, in one screen
+
+    aq handheld status     print the report (this is the usual way to run it)
+    aq handheld status --help
+
+It changes nothing and never asks for a password. Paste the whole thing into
+a bench log. The guide is docs/restart/handheld.md.
+EOF
+}
+
+case "${1:-}" in
+    -h | --help | help)
+        usage
+        exit 0
+        ;;
+esac
+
+# -----------------------------------------------------------------------------
+# 1. Which machine is this?
+# -----------------------------------------------------------------------------
+heading "Which machine is this"
+say_file "board name" /sys/class/dmi/id/board_name
+say_file "product name" /sys/class/dmi/id/product_name
+say_file "made by" /sys/class/dmi/id/sys_vendor
+say_file "BIOS version" /sys/class/dmi/id/bios_version
+
+AQ_BOARD="$(cat /sys/class/dmi/id/board_name 2> /dev/null || true)"
+case "${AQ_BOARD}" in
+    RC73XA)
+        echo "  → This is an ROG Xbox Ally X. That is the machine this image was built for."
+        ;;
+    RC73YA)
+        echo "  → This is an ROG Xbox Ally (Z2 A), NOT the X."
+        echo "    AquariusOS targets the X only. Most of it should still work, but"
+        echo "    nothing here has been tested on this board. See docs/restart/handheld.md."
+        ;;
+    RC71L | RC72LA)
+        echo "  → This is an older ROG Ally (${AQ_BOARD}), not an Xbox Ally."
+        echo "    Untested. See docs/restart/handheld.md."
+        ;;
+    *)
+        echo "  → This is not an ROG Ally at all, so most of the report below will be empty."
+        echo "    That is expected on a desktop PC."
+        ;;
+esac
+
+# -----------------------------------------------------------------------------
+# 2. The controller chip's own firmware
+# -----------------------------------------------------------------------------
+# hid-asus prints this once, at boot, and there is no file to read it from.
+# Below 313, suspend and resume are broken and only Windows can fix it.
+heading "The controller chip (MCU) firmware"
+AQ_MCU="$(kernel_log | grep -i -E 'asus.*(mcu|firmware)' | tail -5)"
+if [ -n "${AQ_MCU}" ]; then
+    printf '%s\n' "${AQ_MCU}" | sed 's/^/  /'
+    echo
+    echo "  Look for a version number in the lines above. 313 or higher is good."
+    echo "  Below 313, waking from sleep leaves the controller dead, and the only"
+    echo "  fix is ASUS's Armoury Crate in WINDOWS. See docs/restart/handheld.md."
+else
+    echo "  The kernel said nothing about the ASUS controller chip."
+    echo "  Either this is not an Ally, or this account cannot read the kernel log"
+    echo "  (try: sudo aq handheld status)."
+fi
+say_file "mcu_powersave (want 1)" /sys/devices/platform/asus-nb-wmi/mcu_powersave
+
+# -----------------------------------------------------------------------------
+# 3. InputPlumber — the thing that makes the built-in controller ONE controller
+# -----------------------------------------------------------------------------
+heading "InputPlumber (the built-in controller)"
+if command -v rpm > /dev/null 2>&1 && rpm -q inputplumber > /dev/null 2>&1; then
+    printf '  %-28s %s\n' "version" "$(rpm -q --queryformat '%{VERSION}-%{RELEASE}' inputplumber)"
+else
+    echo "  InputPlumber is not installed on this image."
+fi
+if command -v systemctl > /dev/null 2>&1; then
+    printf '  %-28s %s\n' "service" "$(unit_state inputplumber.service)"
+fi
+if [ -r /usr/share/inputplumber/devices/50-rog_xbox_ally.yaml ]; then
+    printf '  %-28s %s\n' "Xbox Ally device profile" "present"
+    printf '  %-28s %s\n' "target it should build" \
+        "$(sed -n '/^target_devices:/,/^[a-z]/p' /usr/share/inputplumber/devices/50-rog_xbox_ally.yaml \
+            | sed -n 's/^[[:space:]]*-[[:space:]]*//p' | tr '\n' ' ')"
+else
+    echo "  There is no Xbox Ally profile in this image — the built-in controller"
+    echo "  would appear as a plain gamepad with no paddles and no gyro."
+fi
+echo "  Controllers Linux can see right now:"
+if [ -d /dev/input ]; then
+    for aq_n in /sys/class/input/*/name; do
+        [ -r "${aq_n}" ] || continue
+        echo "    $(cat "${aq_n}" 2> /dev/null)"
+    done | sort -u | sed '/^    $/d'
+else
+    echo "    (no /dev/input on this machine)"
+fi
+echo "  Motion sensor (gyro):"
+if compgen -G '/sys/bus/iio/devices/iio:device*/name' > /dev/null 2>&1; then
+    cat /sys/bus/iio/devices/iio:device*/name 2> /dev/null | sed 's/^/    /'
+else
+    echo "    (none found — Steam's gyro settings would be empty)"
+fi
+
+# -----------------------------------------------------------------------------
+# 4. The power limit — the number Steam's TDP slider moves
+# -----------------------------------------------------------------------------
+heading "Power limit (Steam's TDP slider)"
+AQ_ARMOURY="/sys/class/firmware-attributes/asus-armoury/attributes"
+if [ -d "${AQ_ARMOURY}" ]; then
+    for aq_a in ppt_pl1_spl ppt_pl2_sppt ppt_pl3_fppt; do
+        if [ -r "${AQ_ARMOURY}/${aq_a}/current_value" ]; then
+            printf '  %-28s %s W   (allowed %s–%s)\n' "${aq_a}" \
+                "$(cat "${AQ_ARMOURY}/${aq_a}/current_value" 2> /dev/null)" \
+                "$(cat "${AQ_ARMOURY}/${aq_a}/min_value" 2> /dev/null)" \
+                "$(cat "${AQ_ARMOURY}/${aq_a}/max_value" 2> /dev/null)"
+        else
+            printf '  %-28s (not present)\n' "${aq_a}"
+        fi
+    done
+    echo
+    echo "  Move Steam's TDP slider (Quick Access Menu → Performance) and run this"
+    echo "  again: ppt_pl1_spl should be a different number. That is the proof the"
+    echo "  slider is really talking to the hardware."
+else
+    echo "  ${AQ_ARMOURY} does not exist, so there are no power-limit knobs here."
+    echo "  On an Ally that means the asus-armoury driver did not load."
+fi
+say_file "power profile now" /sys/firmware/acpi/platform_profile
+if command -v systemctl > /dev/null 2>&1; then
+    printf '  %-28s %s\n' "steamos-manager" "$(unit_state steamos-manager.service)"
+    printf '  %-28s %s\n' "powerstation" "$(unit_state powerstation.service)"
+fi
+
+# -----------------------------------------------------------------------------
+# 5. Screen and battery
+# -----------------------------------------------------------------------------
+heading "Screen and battery"
+if compgen -G '/sys/class/backlight/*/brightness' > /dev/null 2>&1; then
+    for aq_b in /sys/class/backlight/*; do
+        printf '  %-28s %s of %s\n' "brightness ($(basename "${aq_b}"))" \
+            "$(cat "${aq_b}/brightness" 2> /dev/null)" \
+            "$(cat "${aq_b}/max_brightness" 2> /dev/null)"
+    done
+else
+    echo "  No brightness control found — the brightness slider would do nothing."
+fi
+say_file "battery charge" /sys/class/power_supply/BAT0/capacity
+say_file "battery state" /sys/class/power_supply/BAT0/status
+
+# -----------------------------------------------------------------------------
+# 6. Did the speakers and the radio get their firmware?
+# -----------------------------------------------------------------------------
+# Both of these fail silently in a way that looks like broken hardware: no sound
+# at all, or "No Wi-Fi Adapter Found". The kernel log is the honest answer.
+heading "Speakers, Wi-Fi and Bluetooth firmware"
+AQ_LOG="$(kernel_log)"
+if [ -z "${AQ_LOG}" ]; then
+    echo "  This account cannot read the kernel log; try: sudo aq handheld status"
+else
+    if printf '%s' "${AQ_LOG}" | grep -qi 'tas27\|tas2781\|TAS2XXX'; then
+        printf '%s' "${AQ_LOG}" | grep -i 'tas27\|tas2781\|TAS2XXX' | tail -4 | sed 's/^/  /'
+    else
+        echo "  The kernel said nothing about the TI speaker amplifier."
+    fi
+    if printf '%s' "${AQ_LOG}" | grep -qi 'mt79'; then
+        printf '%s' "${AQ_LOG}" | grep -i 'mt79' | tail -4 | sed 's/^/  /'
+    else
+        echo "  The kernel said nothing about the MediaTek Wi-Fi/Bluetooth chip."
+    fi
+    if printf '%s' "${AQ_LOG}" | grep -qiE 'firmware.*(failed|not found)'; then
+        echo
+        echo "  ⚠️ Something asked for firmware that is not in this image:"
+        printf '%s' "${AQ_LOG}" | grep -iE 'firmware.*(failed|not found)' | tail -6 | sed 's/^/     /'
+    fi
+fi
+echo "  Sound cards this machine has:"
+if [ -r /proc/asound/cards ]; then
+    sed 's/^/    /' /proc/asound/cards
+else
+    echo "    (no /proc/asound/cards)"
+fi
+
+# -----------------------------------------------------------------------------
+# 7. What this image is, and what it is known not to do yet
+# -----------------------------------------------------------------------------
+heading "This image"
+if [ -r /usr/share/aquarius/image-info.json ]; then
+    sed -n 's/.*"version-pretty"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/  \1/p' \
+        /usr/share/aquarius/image-info.json
+    sed -n 's/.*"image-name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/  image: \1/p' \
+        /usr/share/aquarius/image-info.json
+fi
+if [ -r /etc/aquarius/login-mode ]; then
+    printf '  %-28s %s\n' "starts in" \
+        "$(sed -n 's/^[[:space:]]*mode[[:space:]]*=[[:space:]]*\([a-z]*\).*/\1/p' /etc/aquarius/login-mode | tail -n 1)"
+fi
+if [ -r "${AQ_NOTE}" ]; then
+    echo
+    sed 's/^/  /' "${AQ_NOTE}"
+fi
+
+echo
+echo "The full guide, including the bench list: docs/restart/handheld.md"
+exit 0
