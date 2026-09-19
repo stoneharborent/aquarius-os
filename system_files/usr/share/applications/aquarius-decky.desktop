@@ -4,7 +4,7 @@ Version=1.0
 Name=Decky Loader
 GenericName=Plugins for Steam Game Mode
 Comment=Add a plugins menu inside Game Mode — battery readouts, power profiles, screen recorders. Opens a terminal and asks for your password once.
-# ⚠️ Terminal=true, AND THAT IS ON PURPOSE. "Return to Game Mode" beside this
+# ⚠️ Terminal=true, AND THAT IS ON PURPOSE. "Game Mode" beside this
 # one runs with no terminal because its program draws its own window. This one
 # has no window of its own: it downloads 26 MB, prints what it is doing, and
 # asks for a password with `sudo`. All three of those need somewhere to be seen

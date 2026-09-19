@@ -2692,7 +2692,7 @@ USAGE
                         installing Decky again finds them.
 
 AFTER INSTALLING
-    Go to Game Mode ('aq game', or "Return to Game Mode" in the app grid),
+    Go to Game Mode ('aq game', or "Game Mode" in the app grid),
     press the "..." button, and look for the plug icon. If Steam was already
     open when you installed, close it and open it again first.
 
@@ -3099,7 +3099,7 @@ decky_status() {
 
     echo
     echo "⚠️ REMEMBER: Decky only appears in GAME MODE. Type 'aq game', or use"
-    echo "   \"Return to Game Mode\" in the app grid, then press the \"...\""
+    echo "   \"Game Mode\" in the app grid, then press the \"...\""
     echo "   button on the right of Steam's screen and look for the plug icon."
     echo "   Steam in a window on your desktop will never show it."
     echo
