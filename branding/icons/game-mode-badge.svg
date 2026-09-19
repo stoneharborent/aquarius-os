@@ -14,8 +14,9 @@
   a d-pad cut out on the left, four buttons cut out on the right. No gold: this
   is a badge on somebody else's icon, not one of the nine Aquarius icons.
 
-  game-mode-badge.png next to this file is this drawing at 512 pixels, and is
-  the file the build actually reads. Regenerate it after editing this file:
+  system_files/usr/share/aquarius/branding/game-mode-badge.png is this drawing
+  at 512 pixels, and is the file the build actually reads (that folder is the
+  one the build context carries; this one is not). Regenerate it after editing this file:
       node branding/icons/render-badge.mjs
 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">

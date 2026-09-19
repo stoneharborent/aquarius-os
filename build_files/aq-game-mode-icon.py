@@ -18,8 +18,9 @@
 # committed (the long argument is in branding/render-app-icons.sh). This one
 # cannot be: half of it is Steam's icon, which is Valve's, and it lives only in
 # the steam package on the machine — this repository does not, and should not,
-# carry a copy. So the badge is committed and reviewable (game-mode-badge.svg,
-# .png), and the one thing done here is to lay it over Valve's picture. No
+# carry a copy. So the badge is committed and reviewable (branding/icons/
+# game-mode-badge.svg, rendered to system_files/usr/share/aquarius/branding/
+# game-mode-badge.png), and the one thing done here is to lay it over Valve's picture. No
 # drawing program is installed for it: GdkPixbuf is already in every image for
 # GNOME itself.
 #

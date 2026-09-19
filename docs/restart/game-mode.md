@@ -257,7 +257,7 @@ computer rather than about a person.
 | `/usr/libexec/aquarius-login-mode` | Runs once per boot, before the login screen, and makes it match `/etc/aquarius/login-mode`. |
 | `/usr/libexec/ogc/os-update` | Answers Steam's "check for an OS update" with "no". Always. AquariusOS updates itself in one piece, from the desktop. |
 | `/usr/share/applications/aquarius-game-mode.desktop` | The icon in the app grid. |
-| `/usr/share/icons/hicolor/*/apps/aquarius-game-mode.png` | That icon's picture: Steam's own icon with a small controller badge in the corner (like SteamOS's "Return to Gaming Mode" arrow). Put together during the build by `build_files/aq-game-mode-icon.py` from the badge in `branding/icons/game-mode-badge.svg`, because Steam's icon is Valve's and is not in this repository. |
+| `/usr/share/icons/hicolor/*/apps/aquarius-game-mode.png` | That icon's picture: Steam's own icon with a small controller badge in the corner (like SteamOS's "Return to Gaming Mode" arrow). Put together during the build by `build_files/aq-game-mode-icon.py` from the badge drawn in `branding/icons/game-mode-badge.svg`, because Steam's icon is Valve's and is not in this repository. |
 | `/etc/aquarius/login-mode` | The cold-boot setting. Ships as `desktop`. |
 | `aquarius-login-mode.service` | Runs the boot-time program. |
 | `aquarius-game-tidy.service` | See "Log Out", below. |

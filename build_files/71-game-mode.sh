@@ -453,7 +453,8 @@ done
 # The app grid entry is called "Game Mode" and wears Steam's icon with a small
 # controller in the bottom-right corner — the same idea as SteamOS's "Return
 # to Gaming Mode" icon, which is Steam's with a small arrow. The badge is a
-# committed drawing (branding/icons/game-mode-badge.svg, rendered to .png);
+# committed drawing (branding/icons/game-mode-badge.svg, rendered to a PNG in
+# system_files/usr/share/aquarius/branding/ — the folder this build can reach);
 # Steam's icon is Valve's and only exists on the machine, so the two are put
 # together HERE, by build_files/aq-game-mode-icon.py, with the GdkPixbuf
 # library GNOME already has. That is the one picture in AquariusOS made during
@@ -462,7 +463,7 @@ done
 # The result goes into hicolor, which both Aquarius icon themes inherit, so it
 # shows on GNOME and on KDE Plasma without either theme listing it.
 say "The Game Mode icon: Steam's, with a controller badge"
-if python3 /ctx/build_files/aq-game-mode-icon.py /ctx/branding/icons/game-mode-badge.png /usr/share/icons \
+if python3 /ctx/build_files/aq-game-mode-icon.py /ctx/system_files/usr/share/aquarius/branding/game-mode-badge.png /usr/share/icons \
     > /tmp/aq-game-mode-icon.txt 2>&1; then
     sed 's/^/       /' /tmp/aq-game-mode-icon.txt
 else

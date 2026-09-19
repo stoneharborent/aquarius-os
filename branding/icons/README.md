@@ -57,7 +57,9 @@ launcher wears *Steam's* icon with a small controller badge in its bottom-right 
 way SteamOS's "Return to Gaming Mode" wears Steam's icon with a small arrow. Only the badge
 is drawn here — a circle in `aquariusBlue` with a white ring and a white gamepad, no gold,
 because it sits on somebody else's icon. `render-badge.mjs` turns it into
-`game-mode-badge.png` (512 px), and the OS build lays that over Valve's own `steam.png` with
+`system_files/usr/share/aquarius/branding/game-mode-badge.png` (512 px — in `system_files/`
+because that is the folder the OS build can reach, the same reason the themes are written
+there), and the OS build lays that over Valve's own `steam.png` with
 `build_files/aq-game-mode-icon.py`. It is the one picture made during a build rather than
 committed, because the other half of it is Valve's and does not belong in this repository.
 It ships in `hicolor`, not in either theme, so nothing in `icons.mjs` or the theme checks
