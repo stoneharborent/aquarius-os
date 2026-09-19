@@ -481,6 +481,24 @@ for aq_s in gnome plasma gamescope-session-steam; do
 done
 
 # ------------------------------------------------------------------------------
+# OpenGamepadUI's developer manual does not ship
+# ------------------------------------------------------------------------------
+# opengamepadui comes along as a dependency and brings its class-reference
+# manual under /usr/share/doc, which includes a page named after another
+# distribution (PlatformBazzite.md). CI's naming rule (build.yml, "RULE 1")
+# rightly refuses any file on the image named after Bazzite, and this was the
+# one path that tripped it on the very first handheld build. Nobody reads a
+# developer manual on a handheld with no keyboard, so the whole folder goes.
+say "OpenGamepadUI's developer manual is not on this image"
+rm -rf /usr/share/doc/opengamepadui
+if find / -xdev -iname '*bazzite*' 2> /dev/null | grep -q .; then
+    bad "something on this image is still named after Bazzite:"
+    find / -xdev -iname '*bazzite*' 2> /dev/null | sed 's/^/       /'
+else
+    ok "no file or folder on this image is named after Bazzite"
+fi
+
+# ------------------------------------------------------------------------------
 # Valve's own session switching is still asleep, on this image too
 # ------------------------------------------------------------------------------
 # steamos-manager contains Valve's way of switching between Game Mode and a
