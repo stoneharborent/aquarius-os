@@ -783,7 +783,7 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 #     Steam half, and Valve's handheld service (installed for the future ROG Ally
 #     image and left switched OFF) — and adds AquariusOS's own half of the
 #     switch, which nobody had written for us: our /usr/libexec/os-session-select,
-#     a polkit-gated root helper, a "Return to Game Mode" launcher, `aq game`, and
+#     a polkit-gated root helper, a "Game Mode" launcher, `aq game`, and
 #     a once-per-boot service that keeps a cold boot honest.
 #
 #     ⚠️ A COLD BOOT ON THESE IMAGES IS UNCHANGED. /etc/aquarius/login-mode ships

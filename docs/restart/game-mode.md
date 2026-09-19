@@ -22,7 +22,7 @@ somewhere you land — unless you ask for that, which is one command.
 
 ## Going to Game Mode
 
-**From the app grid:** an icon called **Return to Game Mode**.
+**From the app grid:** an icon called **Game Mode**.
 **From a terminal:** `aq game`.
 
 Either way you get a warning first, and you should read it once:
@@ -272,10 +272,11 @@ computer rather than about a person.
 | `/usr/libexec/os-session-select` | The hinge. Steam's own `steamos-session-select` looks for exactly this path and hands over to it. Writes down where you are going, and — from Game Mode — ends the session. Everything it decides goes to the journal: `journalctl -t os-session-select`. |
 | `/usr/libexec/aquarius-session-root` | The root half: the `Session=` line, the timed login (a switch), the automatic login (a boot), the GDM reload, the boot setting. Behind polkit. |
 | `/etc/gamescope-session-plus/sessions.d/steam` | Starts Game Mode at the screen's preferred resolution. Read by Terra's session script through a hook it already has. |
-| `/usr/libexec/aquarius-game-mode` | The "Return to Game Mode" button: warn, switch, log out. |
+| `/usr/libexec/aquarius-game-mode` | The "Game Mode" button: warn, switch, log out. |
 | `/usr/libexec/aquarius-login-mode` | Runs once per boot, before the login screen, and makes it match `/etc/aquarius/login-mode`. |
 | `/usr/libexec/ogc/os-update` | Answers Steam's "check for an OS update" with "no". Always. AquariusOS updates itself in one piece, from the desktop. |
-| `/usr/share/applications/aquarius-return-to-game-mode.desktop` | The icon in the app grid. |
+| `/usr/share/applications/aquarius-game-mode.desktop` | The icon in the app grid. |
+| `/usr/share/icons/hicolor/*/apps/aquarius-game-mode.png` | That icon's picture: Steam's own icon with a small controller badge in the corner (like SteamOS's "Return to Gaming Mode" arrow). Put together during the build by `build_files/aq-game-mode-icon.py` from the badge drawn in `branding/icons/game-mode-badge.svg`, because Steam's icon is Valve's and is not in this repository. |
 | `/etc/aquarius/login-mode` | The cold-boot setting. Ships as `desktop`. |
 | `aquarius-login-mode.service` | Runs the boot-time program. |
 | `aquarius-game-tidy.service` | See "Log Out", below. |
@@ -396,7 +397,7 @@ installing first.*
 
 ### B. The switch, from GNOME
 
-- [ ] Log into GNOME. Find **Return to Game Mode** in the app grid.
+- [ ] Log into GNOME. Find **Game Mode** in the app grid.
 - [ ] Click it. **A warning appears** saying this closes your desktop. Press
       *Stay here* — nothing happens, the desktop is untouched.
 - [ ] Click it again, press *Close my desktop and go*.

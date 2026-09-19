@@ -392,6 +392,10 @@ on:
       # that the two desktop images are UNCHANGED by the whole phase. Same
       # arrangement as every side branch: builds and checks, never publishes.
       - g2-handheld
+      # The launcher is called plain "Game Mode" and wears Steam's icon with a
+      # controller badge, put together during the build. Same arrangement as
+      # every side branch: builds and checks, never publishes.
+      - claude/nice-fermi-w6lk1k
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -6686,11 +6690,17 @@ jobs:
           fi
 
           echo "== the way in, and the way to read about it =="
-          D=/usr/share/applications/aquarius-return-to-game-mode.desktop
-          [ -r "$D" ] && ok "the 'Return to Game Mode' launcher is in the app grid" || bad "$D is missing"
+          D=/usr/share/applications/aquarius-game-mode.desktop
+          [ -r "$D" ] && ok "the 'Game Mode' launcher is in the app grid" || bad "$D is missing"
           grep -q '^Exec=/usr/libexec/aquarius-game-mode$' "$D" 2>/dev/null \
             && ok "it runs the program that warns first" \
             || bad "the launcher does not run /usr/libexec/aquarius-game-mode"
+          grep -q '^Name=Game Mode$' "$D" \
+            && ok "it is called plain 'Game Mode' in the app grid" \
+            || bad "the launcher is not called 'Game Mode'"
+          [ -s /usr/share/icons/hicolor/256x256/apps/aquarius-game-mode.png ] \
+            && ok "its icon — Steam's, with the controller badge — is in hicolor" \
+            || bad "aquarius-game-mode.png is missing from hicolor"
           /usr/bin/aq game --help > /tmp/aqgame.txt 2>&1 \
             && ok "'aq game --help' runs" \
             || bad "'aq game --help' does not run"

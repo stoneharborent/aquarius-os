@@ -2401,7 +2401,7 @@ USAGE
                         be typed with a game controller.
 
                         The same button is in the app grid as
-                        "Return to Game Mode".
+                        "Game Mode".
 
     aq game --yes       The same, with no warning window. For when you have
                         already saved and you mean it.

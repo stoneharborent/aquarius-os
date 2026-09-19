@@ -59,7 +59,7 @@
 # own long explanation:
 #   /usr/libexec/os-session-select     the hinge; what Steam's own script calls
 #   /usr/libexec/aquarius-session-root the root half, behind polkit
-#   /usr/libexec/aquarius-game-mode    the "Return to Game Mode" button
+#   /usr/libexec/aquarius-game-mode    the "Game Mode" button
 #   /usr/libexec/aquarius-login-mode   the once-per-boot cold-boot setting
 #
 # ------------------------------------------------------------------------------
@@ -434,7 +434,7 @@ done
 
 # The three read-only files that go with them.
 for aq_f in \
-    usr/share/applications/aquarius-return-to-game-mode.desktop \
+    usr/share/applications/aquarius-game-mode.desktop \
     usr/share/polkit-1/actions/org.aquariusos.gamemode.policy \
     usr/share/polkit-1/rules.d/51-aquarius-game-mode.rules \
     etc/aquarius/login-mode \
@@ -446,6 +446,52 @@ for aq_f in \
         bad "/${aq_f} is not the file this repository ships"
     fi
 done
+
+# ------------------------------------------------------------------------------
+# The launcher's icon: Steam's own, with a controller badge
+# ------------------------------------------------------------------------------
+# The app grid entry is called "Game Mode" and wears Steam's icon with a small
+# controller in the bottom-right corner — the same idea as SteamOS's "Return
+# to Gaming Mode" icon, which is Steam's with a small arrow. The badge is a
+# committed drawing (branding/icons/game-mode-badge.svg, rendered to a PNG in
+# system_files/usr/share/aquarius/branding/ — the folder this build can reach);
+# Steam's icon is Valve's and only exists on the machine, so the two are put
+# together HERE, by build_files/aq-game-mode-icon.py, with the GdkPixbuf
+# library GNOME already has. That is the one picture in AquariusOS made during
+# a build, and the script's header says why.
+#
+# The result goes into hicolor, which both Aquarius icon themes inherit, so it
+# shows on GNOME and on KDE Plasma without either theme listing it.
+say "The Game Mode icon: Steam's, with a controller badge"
+if python3 /ctx/build_files/aq-game-mode-icon.py /ctx/system_files/usr/share/aquarius/branding/game-mode-badge.png /usr/share/icons \
+    > /tmp/aq-game-mode-icon.txt 2>&1; then
+    sed 's/^/       /' /tmp/aq-game-mode-icon.txt
+else
+    bad "the Game Mode icon could not be made — the launcher would show a generic icon"
+    sed 's/^/       /' /tmp/aq-game-mode-icon.txt
+fi
+rm -f /tmp/aq-game-mode-icon.txt
+
+# Read the finished files back: a PNG states its own size in its first bytes,
+# and the folder it sits in must agree (the rule from build_files/56-aquarius-icons.sh).
+aq_icon_ok=0
+for aq_n in 16 24 32 48 64 128 256 512; do
+    aq_p="/usr/share/icons/hicolor/${aq_n}x${aq_n}/apps/aquarius-game-mode.png"
+    [ -s "${aq_p}" ] || continue
+    aq_wh="$(python3 -c 'import struct,sys; d=open(sys.argv[1],"rb").read(24); print(*struct.unpack(">II", d[16:24]))' "${aq_p}")"
+    if [ "${aq_wh}" = "${aq_n} ${aq_n}" ]; then
+        aq_icon_ok=$((aq_icon_ok + 1))
+    else
+        bad "${aq_p} is ${aq_wh}, not ${aq_n} ${aq_n}"
+    fi
+done
+if [ "${aq_icon_ok}" -ge 5 ]; then
+    ok "aquarius-game-mode.png exists at ${aq_icon_ok} sizes, each the size its folder says"
+else
+    bad "aquarius-game-mode.png exists at only ${aq_icon_ok} sizes — Valve ships at least five"
+fi
+aq_file_has /usr/share/applications/aquarius-game-mode.desktop '^Icon=aquarius-game-mode$' \
+    "and the Game Mode launcher asks for it by that name"
 
 # ------------------------------------------------------------------------------
 # The cold-boot setting ships as `desktop`, and that is a promise
@@ -744,7 +790,7 @@ sofa — the same thing a Steam Deck shows.
 
 ## Going there
 
-* The app grid: **Return to Game Mode**.
+* The app grid: **Game Mode**.
 * Or a terminal: `aq game`.
 
 It warns you first, because **it closes your desktop**: every window shuts and
