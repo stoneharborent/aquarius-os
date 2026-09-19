@@ -52,6 +52,17 @@ There is deliberately **no icon for "Check for Update"** (Royce, 2026-09-06): th
 Check-for-Update app, only a window the logo menu opens, and that window carries the Settings
 icon until the whole flow moves into Settings proper.
 
+**One badge that is not an icon: `game-mode-badge.svg`** (2026-09-19). The "Game Mode"
+launcher wears *Steam's* icon with a small controller badge in its bottom-right corner, the
+way SteamOS's "Return to Gaming Mode" wears Steam's icon with a small arrow. Only the badge
+is drawn here — a circle in `aquariusBlue` with a white ring and a white gamepad, no gold,
+because it sits on somebody else's icon. `render-badge.mjs` turns it into
+`game-mode-badge.png` (512 px), and the OS build lays that over Valve's own `steam.png` with
+`build_files/aq-game-mode-icon.py`. It is the one picture made during a build rather than
+committed, because the other half of it is Valve's and does not belong in this repository.
+It ships in `hicolor`, not in either theme, so nothing in `icons.mjs` or the theme checks
+knows about it.
+
 ---
 
 ## The grammar — what makes these one family

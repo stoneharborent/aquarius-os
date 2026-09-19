@@ -275,7 +275,7 @@ Royce, on the Ally. Work down it and put the answers in
 
 - [ ] Power → **Switch to Desktop** → lands in **GNOME**
 - [ ] **Touch works** in GNOME
-- [ ] **Return to Game Mode** → back into Steam
+- [ ] **Game Mode** → back into Steam
 - [ ] `aq game boot off` → restart → **login screen**
 - [ ] `aq game boot on` → restart → **Game Mode**
 

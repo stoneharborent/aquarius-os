@@ -1,12 +1,12 @@
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=Return to Game Mode
+Name=Game Mode
 GenericName=Steam Game Mode
 Comment=Give the whole screen to Steam, console-style. Warns first — this closes your desktop.
 Exec=/usr/libexec/aquarius-game-mode
 TryExec=/usr/libexec/aquarius-game-mode
-Icon=steam
+Icon=aquarius-game-mode
 Terminal=false
 StartupNotify=false
 Categories=Game;
