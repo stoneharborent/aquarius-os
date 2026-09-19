@@ -834,6 +834,42 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     HANDHELD="${HANDHELD}" /ctx/build_files/78-handheld.sh
 
+# 7h. Decky Loader — OFFERED, never baked. Phase G3.
+#
+#     Decky Loader adds a plugins menu INSIDE Game Mode: in Steam's full-screen
+#     interface you press the "..." button on the right and there is an extra
+#     tab with a plug on it — battery readouts, per-game power profiles, screen
+#     recorders, written by other people. ⚠️ It only ever appears in Game Mode.
+#     Steam in a window on the desktop will never show it, and nothing can be
+#     configured to change that.
+#
+#     ⚠️ THIS STEP INSTALLS NO DECKY. Standing decision 4 — apps live outside
+#     the image where they can — and Decky is the clearest case of it: it is
+#     somebody else's program, downloaded from GitHub, it runs as a background
+#     service AS THE ADMINISTRATOR, and the file that starts it names ONE
+#     person's home folder. So the step adds exactly three things: `jq` (the
+#     small program that reads GitHub's answer about which release is newest),
+#     and read-back checks on the `aq decky` command and the "Decky Loader"
+#     launcher, both of which arrived with system_files at step 5.
+#
+#     Most of the step then PROVES THE ABSENCE of everything else — no
+#     plugin_loader.service, no /home/deck, no downloaded PluginLoader, no
+#     ~/homebrew — and stops the build if any of it is ever there. That check
+#     is the whole safety of "offered, never baked".
+#
+#     ⚠️ NOT GATED, unlike step 7g. The handheld layer is switched off on the
+#     desktop images because it must be unable to change the computer Royce
+#     edits on. Decky is three files and one 400 KB package, it is useful on
+#     every image that has Game Mode, and every image has Game Mode — so it is
+#     offered on all three and each person decides for themselves.
+#
+#     After step 7f because it is a Game Mode feature and its checks read the
+#     image Game Mode built; nothing in it touches Terra, the kernel or the
+#     graphics driver.
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache/libdnf5 \
+    /ctx/build_files/81-decky.sh
+
 # 7k. Homebrew — the `brew` command, on both images, because Royce asked for it.
 #
 #     Homebrew is a software shop you use by typing rather than by clicking:

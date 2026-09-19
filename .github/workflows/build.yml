@@ -548,6 +548,24 @@ jobs:
         run: ./tests/test-keys-toggle.sh
 
       # ------------------------------------------------------------------------
+      # `aq decky` tells the truth before it changes anything
+      # ------------------------------------------------------------------------
+      # Decky Loader is OFFERED, never baked (standing decision 4), so the real
+      # install cannot be rehearsed here: it downloads 26 MB from GitHub and
+      # switches on a service that runs as the administrator. Every DECISION it
+      # makes before touching anything can be, and those are where the damage
+      # would be — "already installed", "half installed", the version it claims,
+      # and the refusal to run under sudo (which would install Decky into the
+      # administrator's home folder, where nobody would find it).
+      #
+      # It points HOME at a throwaway folder and builds each situation out of
+      # empty files. Nothing downloads, nothing asks for a password. The real
+      # install is a bench job — the list is at the bottom of
+      # docs/restart/decky.md.
+      - name: Check the aq decky command
+        run: ./tests/test-decky.sh
+
+      # ------------------------------------------------------------------------
       # The app icons are all present, and are the sizes they claim
       # ------------------------------------------------------------------------
       # Before the build, because it takes a second and reads the same files the
