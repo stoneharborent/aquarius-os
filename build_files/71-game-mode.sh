@@ -437,7 +437,8 @@ for aq_f in \
     usr/share/applications/aquarius-return-to-game-mode.desktop \
     usr/share/polkit-1/actions/org.aquariusos.gamemode.policy \
     usr/share/polkit-1/rules.d/51-aquarius-game-mode.rules \
-    etc/aquarius/login-mode; do
+    etc/aquarius/login-mode \
+    etc/gamescope-session-plus/sessions.d/steam; do
     install -Dm644 "/ctx/system_files/${aq_f}" "/${aq_f}"
     if cmp -s "/ctx/system_files/${aq_f}" "/${aq_f}"; then
         ok "/${aq_f} is ours, byte for byte"
@@ -494,6 +495,47 @@ fi
 # All three shipped as links in system_files/ at step 50; this proves the links
 # really are there and really point at something. The long explanation of why
 # AquariusOS never uses `systemctl enable` is in build_files/aq-lib.sh.
+# ------------------------------------------------------------------------------
+# The 2026-09-19 fixes, read back out of the image
+# ------------------------------------------------------------------------------
+# Four things went wrong on the first real use of the switch (docs/restart/
+# game-mode.md, "What went wrong on 2026-09-19"). Each fix is checked here by
+# reading the finished file, not by trusting the copy step.
+say "The way back from Game Mode ends the session (the 2026-09-19 hang)"
+# Steam's own script `exec`s ours, so ours has to be the one that ends Game
+# Mode. If that line ever goes, "Switch to Desktop" hangs on its card for ever.
+aq_file_has /usr/bin/steamos-session-select 'os-session-select' \
+    "Steam's steamos-session-select hands over to an os-session-select hook"
+aq_file_has /usr/bin/steamos-session-select '/usr/libexec/os-session-select' \
+    "and it looks in /usr/libexec, which is where ours is"
+aq_file_has /usr/libexec/os-session-select '^aq_end_game_session\(\)' \
+    "our os-session-select knows how to end Game Mode itself"
+aq_file_has /usr/libexec/os-session-select 'steam -shutdown' \
+    "and asks Steam to close, the way Steam's own script would have"
+
+say "Game Mode starts at the screen's own resolution"
+aq_file_has /etc/gamescope-session-plus/sessions.d/steam '^[[:space:]]*SCREEN_WIDTH=' \
+    "the session file works out SCREEN_WIDTH from the connected screen"
+aq_file_has /usr/share/gamescope-session-plus/gamescope-session-plus 'CLIENT_CONFIG_DIR_ETC=/etc/gamescope-session-plus/sessions.d' \
+    "and Terra's session script really reads /etc/gamescope-session-plus/sessions.d"
+aq_file_has /usr/share/gamescope-session-plus/gamescope-session-plus 'SCREEN_WIDTH' \
+    "and really turns SCREEN_WIDTH into a gamescope size"
+if bash -n /etc/gamescope-session-plus/sessions.d/steam; then
+    ok "the session file is valid shell (it is sourced, so a typo there would break Game Mode)"
+else
+    bad "the session file does not parse — Game Mode would fail to start"
+fi
+
+say "Starting IN Game Mode uses the login GDM honours at boot"
+aq_file_has /usr/libexec/aquarius-session-root '^aq_auto_login\(\)' \
+    "the root helper can write AutomaticLogin (boot) as well as TimedLogin (switch)"
+aq_file_has /usr/libexec/aquarius-login-mode 'auto-login on' \
+    "and the boot-time program uses it for mode=game"
+
+say "The login screen's own account does not run the tidy service"
+aq_file_has /usr/lib/systemd/user/aquarius-game-tidy.service '^ConditionUser=!@system$' \
+    "aquarius-game-tidy.service is for people's accounts only, not gdm's"
+
 say "The Game Mode services are switched on, in the way an update cannot lose"
 aq_unit_is_on_from_usr aquarius-login-mode.service \
     "makes the login screen match /etc/aquarius/login-mode at every boot"
