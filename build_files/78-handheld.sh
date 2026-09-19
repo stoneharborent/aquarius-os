@@ -397,7 +397,12 @@ fi
 # it; the old name is still a `Provides:`, which is checked below so that a
 # future rename is noticed here rather than on the bench.
 say "The handheld services, with Terra switched on for this one command"
-aq_dnf install "${AQ_TERRA_FLAG}" steamos-manager-powerstation powerbuttond
+# `install` alone refuses this: the plain steamos-manager that step 71 put in
+# "conflicts with" the powerstation build, and dnf will not remove a package
+# to satisfy a plain install (build 35431665659 died exactly here). `swap`
+# is dnf's word for "take this one out and put that one in, in one go".
+aq_dnf swap "${AQ_TERRA_FLAG}" steamos-manager steamos-manager-powerstation
+aq_dnf install "${AQ_TERRA_FLAG}" powerbuttond
 
 say "Where the handheld packages came from"
 rpm -q --queryformat '       %{NAME}-%{VERSION}-%{RELEASE}  (packaged by: %{VENDOR})\n' \
