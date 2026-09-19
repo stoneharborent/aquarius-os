@@ -2462,6 +2462,27 @@ game_status() {
         echo "off again by itself — at the next restart, and when a desktop"
         echo "session starts. Nothing to do."
     fi
+
+    # And, for the day a switch goes wrong: exactly what the login screen has
+    # been told, and where the switch wrote its notes. This is what to paste
+    # into a bug report.
+    echo
+    echo "What the login screen has been told (for a bug report):"
+    local f="/var/lib/AccountsService/users/${USER}"
+    if [ -r "${f}" ]; then
+        echo "   next session for ${USER}:  $(sed -n 's/^Session=//p' "${f}" | tail -n 1)"
+    else
+        echo "   next session for ${USER}:  (not readable from here, or never set)"
+    fi
+    if [ -r /etc/gdm/custom.conf ]; then
+        echo "   timed login (a switch):    $(grep -E '^TimedLogin(Enable)?=' /etc/gdm/custom.conf 2> /dev/null | tr '\n' ' ')"
+        echo "   automatic login (a boot):  $(grep -E '^AutomaticLogin(Enable)?=' /etc/gdm/custom.conf 2> /dev/null | tr '\n' ' ')"
+    fi
+    local note="${XDG_STATE_HOME:-${HOME}/.local/state}/aquarius/desktop-session"
+    if [ -r "${note}" ]; then
+        echo "   desktop to come back to:   $(tr -d '[:space:]' < "${note}")"
+    fi
+    echo "   what the last switch said: journalctl -t os-session-select -t aquarius-session-root"
 }
 
 game_boot() {

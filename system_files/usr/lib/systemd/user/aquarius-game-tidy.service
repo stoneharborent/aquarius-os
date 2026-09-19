@@ -27,6 +27,15 @@
 # ⚠️ Switched on from /usr, like every AquariusOS service — see the long note in
 # build_files/aq-lib.sh about why `systemctl enable` is not used on this kind of
 # operating system.
+#
+# ⚠️ ConditionUser=!@system — NOT FOR THE LOGIN SCREEN ITSELF. The login screen
+# is a GNOME Shell too, run by the system account "gdm", and it reaches
+# graphical-session.target like any desktop. Without this line the login
+# screen would run this service the moment it appeared, see "GNOME" and try
+# to take the automatic login off — in the middle of the very switch that
+# automatic login exists for. polkit refuses the gdm account, so it never
+# actually managed to, but "it fails, so it is fine" is not a design. Only
+# people's accounts run this.
 # =============================================================================
 [Unit]
 Description=Take the Game Mode automatic login back off once the desktop is up
@@ -34,6 +43,7 @@ Documentation=https://github.com/stoneharborent/aquarius-os/blob/main/docs/resta
 After=graphical-session.target
 PartOf=graphical-session.target
 ConditionPathExists=/usr/libexec/os-session-select
+ConditionUser=!@system
 
 [Service]
 Type=oneshot

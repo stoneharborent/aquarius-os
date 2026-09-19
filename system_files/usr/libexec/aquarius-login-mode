@@ -115,11 +115,23 @@ case "${AQ_MODE}" in
 
     game)
         # Straight into Game Mode: the session is Steam's, and the login screen
-        # logs this person in by itself one second after it appears.
+        # logs this person in by itself.
+        #
+        # ⚠️ AUTOMATIC login here, TIMED login for a switch — they are not
+        # interchangeable. GDM builds the first login screen of a boot with
+        # timed login disallowed (that is in gdm-local-display-factory.c), so
+        # a TimedLogin block does nothing at boot; it is AutomaticLogin that
+        # GDM honours then. Until 2026-09-19 this wrote TimedLogin and a
+        # machine set to start in Game Mode stopped at a password box.
+        # A switch later in the day still uses TimedLogin, because after a
+        # logout it is the other way round: automatic login is spent, timed
+        # login works.
         "${AQ_ROOT_HELPER}" set-session "${AQ_USER}" "${AQ_GAME_SESSION}" \
             || say "could not set the session — this computer will show the login screen instead, which is safe."
-        "${AQ_ROOT_HELPER}" timed-login on "${AQ_USER}" \
+        "${AQ_ROOT_HELPER}" auto-login on "${AQ_USER}" \
             || say "could not switch the automatic login on — you will be asked who you are, which is safe."
+        # A timed login left behind by yesterday's switch is not needed on top.
+        "${AQ_ROOT_HELPER}" timed-login off > /dev/null 2>&1 || true
         ;;
 
     desktop)
@@ -133,6 +145,8 @@ case "${AQ_MODE}" in
         #      the account is still pointed at Game Mode, it is pointed back at
         #      the desktop it came from.
         "${AQ_ROOT_HELPER}" timed-login off \
+            || say "could not switch the timed login off — see the journal."
+        "${AQ_ROOT_HELPER}" auto-login off \
             || say "could not switch the automatic login off — see the journal."
 
         aq_file="${AQ_ACCOUNTS_DIR}/${AQ_USER}"

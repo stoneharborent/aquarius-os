@@ -26,8 +26,11 @@
 #   * Steam, from its power menu → "Switch to Desktop". Steam runs
 #     `steamos-session-select desktop`, a script that comes with the Game Mode
 #     package, and the only thing that script does is look for THIS file and
-#     hand over to it. That is the hook we are filling in.
-#   * Our own "Return to Game Mode" icon in the app grid, and `aq game`.
+#     `exec` it — hand over to it completely. That is the hook we are filling
+#     in, and it means that on the way back ENDING THE SESSION IS OUR JOB TOO
+#     (the note above aq_end_game_session says what happened when it was not).
+#   * Our own "Return to Game Mode" icon in the app grid, and `aq game`. There
+#     the caller ends the desktop itself after we return.
 #
 # WHAT IT ACTUALLY WRITES
 #   1. Which session the login screen should start for you next time
@@ -55,9 +58,18 @@ AQ_STATE_DIR="${XDG_STATE_HOME:-${HOME:-/tmp}/.local/state}/aquarius"
 AQ_REMEMBERED="${AQ_STATE_DIR}/desktop-session"
 AQ_FLAG_FILE="/etc/aquarius/login-mode"
 
-say() { echo "os-session-select: $*"; }
+# ⚠️ EVERYTHING SAID HERE ALSO GOES TO THE JOURNAL. This runs while the screen
+# is being taken away — from a desktop that is closing, or from inside Steam,
+# where there is no terminal at all. On 2026-09-19 a switch went wrong and the
+# only record of what this program had decided was in nobody's hands. Now it is
+# in `journalctl -t os-session-select`.
+say() {
+    echo "os-session-select: $*"
+    logger -t os-session-select -- "$*" 2> /dev/null || true
+}
 die() {
     echo "os-session-select: $*" >&2
+    logger -t os-session-select -p user.err -- "ERROR: $*" 2> /dev/null || true
     exit 1
 }
 
@@ -183,11 +195,65 @@ aq_tidy() {
     exit 0
 }
 
+# -----------------------------------------------------------------------------
+# Ending Game Mode, when it is Game Mode that called us
+# -----------------------------------------------------------------------------
+# ⚠️ THE 2026-09-19 BUG, AND WHY THIS EXISTS.
+#
+# "Switch to Desktop" in Steam's power menu sat on its "Switching to Desktop…"
+# card for ever, and the machine had to be rebooted. The reason is in Steam's
+# own script: `steamos-session-select` looks for this file and does
+#
+#     exec /usr/libexec/os-session-select desktop
+#
+# `exec` — it REPLACES ITSELF with us. Nothing runs after we return. The only
+# other line in that script, `steam -shutdown`, is what runs when this file is
+# NOT there; the moment we exist, ending the session is our job, and this
+# program used to write two settings and stop. Steam waited for a session end
+# that nobody had asked for.
+#
+# On the desktop side this was never a problem: aquarius-game-mode logs the
+# desktop out itself after calling us. So the two directions are made to match:
+# whoever is on the far side of a switch, the switch ends the session it was
+# called from.
+#
+# HOW GAME MODE ENDS. `steam -shutdown` asks the running Steam to quit, the
+# same thing Steam's own script would have done. When Steam exits, the session
+# script (gamescope-session-plus) closes gamescope and returns, the systemd
+# unit behind the session stops, and the session is over — the login screen
+# then reads what we wrote and brings the desktop back. If Steam is not there
+# to ask, the unit is stopped directly; if even that fails, logind ends the
+# session, which is blunt but always works.
+aq_end_game_session() {
+    if command -v steam > /dev/null 2>&1 && pgrep -x steam > /dev/null 2>&1; then
+        say "asking Steam to close, which ends Game Mode."
+        if steam -shutdown > /dev/null 2>&1; then
+            return 0
+        fi
+        say "Steam did not take the request; stopping the session directly."
+    fi
+    if command -v systemctl > /dev/null 2>&1 \
+        && systemctl --user is-active --quiet gamescope-session-plus@steam.service 2> /dev/null; then
+        say "stopping the Game Mode session unit."
+        systemctl --user stop --no-block gamescope-session-plus@steam.service && return 0
+    fi
+    if command -v loginctl > /dev/null 2>&1; then
+        say "ending this session through logind."
+        loginctl terminate-session "${XDG_SESSION_ID:-self}" && return 0
+    fi
+    say "WARNING: could not end Game Mode from here. Hold the power button, or"
+    say "press Ctrl+Alt+F3 for a text login and run: loginctl terminate-user ${USER}"
+    return 1
+}
+
 # =============================================================================
 # Here we go
 # =============================================================================
 aq_target="${1:-gamescope}"
 [ "${aq_target}" = "--tidy" ] && aq_tidy
+
+# Where am I calling from? Empty means "not a desktop" — inside Game Mode.
+aq_from="$(aq_current_desktop)"
 
 # Steam's script is a SteamOS script and speaks SteamOS's words. `plasma` and
 # the two `*-persistent` spellings all mean the same thing on this computer:
@@ -195,7 +261,7 @@ aq_target="${1:-gamescope}"
 case "${aq_target}" in
     gamescope | game)
         aq_session="${AQ_GAME_SESSION}"
-        aq_remember_desktop "$(aq_current_desktop)"
+        aq_remember_desktop "${aq_from}"
         ;;
     desktop | plasma | plasma-wayland-persistent | plasma-x11-persistent | gnome)
         aq_session="$(aq_remembered_desktop)"
@@ -210,7 +276,7 @@ case "${aq_target}" in
         ;;
 esac
 
-say "next session: ${aq_session}"
+say "asked for '${aq_target}' from '${aq_from:-Game Mode}'; next session: ${aq_session}"
 
 # -----------------------------------------------------------------------------
 # The two root jobs
@@ -221,7 +287,23 @@ if ! pkexec --disable-internal-agent "${AQ_ROOT_HELPER}" set-session "${USER}" "
     die "could not tell the login screen which session to start. Nothing has been changed."
 fi
 
+# ⚠️ WHAT HAPPENS IF THE PASSWORD-FREE LOGIN CANNOT BE SWITCHED ON depends on
+# which way we are going, and the difference is deliberate.
+#
+#   * FROM A DESKTOP, this is fatal. The person is at a keyboard, nothing has
+#     been closed yet, and the message can be read. Going ahead would close
+#     every window and then stop at a password box — which is exactly what
+#     happened on 2026-09-19, when this was a warning printed to a terminal
+#     that was about to disappear.
+#   * FROM GAME MODE, it is a warning and we go on. The alternative to "type
+#     your password once" is "stay stuck in Steam", and that is worse.
 if ! pkexec --disable-internal-agent "${AQ_ROOT_HELPER}" timed-login on "${USER}"; then
+    if [ -n "${aq_from}" ]; then
+        # Put the session back the way it was, so a half-done switch does not
+        # quietly change what the login screen offers next time.
+        pkexec --disable-internal-agent "${AQ_ROOT_HELPER}" set-session "${USER}" "${aq_from}" > /dev/null 2>&1 || true
+        die "could not switch on the password-free login, so the switch would have stopped at a password box. Nothing has been closed. The reason is in: journalctl -t aquarius-session-root -t polkitd"
+    fi
     say "WARNING: could not switch the automatic login on. The switch will still"
     say "work — you will be asked for your password once at the login screen."
 fi
@@ -234,13 +316,32 @@ fi
 # distribution that does this switch with GDM, and the source of this whole
 # mechanism — the reload happens in a script that runs as the session is torn
 # down. AquariusOS does it here instead, one moment earlier, because that is the
-# last point at which OUR code is running: everything after this belongs to
-# Steam's own scripts, and forking those to add one line is exactly the kind of
-# thing this project does not do.
+# last point at which OUR code is running before the session goes.
 #
 # Reloading while the session is still alive is safe — reload does not touch
-# running sessions, it only re-reads settings — and by the time the login screen
-# next appears, which is a second or two from now, it has the new ones.
+# running sessions, it only re-reads settings (a SIGHUP, which GDM answers by
+# re-reading custom.conf; that is in GDM's own main.c) — and by the time the
+# login screen next appears, which is a second or two from now, it has the new
+# ones.
 pkexec --disable-internal-agent "${AQ_ROOT_HELPER}" reload-gdm || true
+
+# -----------------------------------------------------------------------------
+# Now end the session, if we are the one who has to
+# -----------------------------------------------------------------------------
+# From a desktop: not us. aquarius-game-mode called us and logs the desktop
+# out itself, in the desktop's own language, once we return. From Game Mode:
+# us — see aq_end_game_session for why.
+if [ -z "${aq_from}" ]; then
+    case "${aq_session}" in
+        "${AQ_GAME_SESSION}")
+            say "already in Game Mode and asked for Game Mode; nothing to end."
+            ;;
+        *)
+            say "done. Ending Game Mode; the login screen will take you to ${aq_session}."
+            aq_end_game_session
+            ;;
+    esac
+    exit 0
+fi
 
 say "done. This session is about to end, and the login screen will take you to ${aq_session}."

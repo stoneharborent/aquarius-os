@@ -155,8 +155,22 @@ if [ "${AQ_ASKED}" -eq 0 ]; then
     esac
 fi
 
+# ⚠️ IF THE SWITCH CANNOT BE SET UP, SAY SO ON SCREEN. This is started from an
+# icon in the app grid, where there is no terminal; an error that only goes to
+# stderr is an error nobody sees, and "I clicked it and nothing happened" is
+# what they would report instead. The reason itself is in the journal.
 if ! "${AQ_SELECT}" gamescope; then
     say "ERROR: could not set up the switch. Your desktop has NOT been closed."
+    AQ_FAIL="Game Mode could not be set up, so your desktop has been left exactly as it is.
+
+Nothing was closed. The reason is in the journal:
+
+    journalctl -t os-session-select -t aquarius-session-root"
+    if command -v kdialog > /dev/null 2>&1; then
+        kdialog --title "${AQ_TITLE}" --error "${AQ_FAIL}" > /dev/null 2>&1 || true
+    elif command -v zenity > /dev/null 2>&1; then
+        zenity --error --title="${AQ_TITLE}" --width=460 --text="${AQ_FAIL}" > /dev/null 2>&1 || true
+    fi
     exit 1
 fi
 

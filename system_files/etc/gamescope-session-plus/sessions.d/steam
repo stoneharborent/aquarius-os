@@ -1,0 +1,73 @@
+# =============================================================================
+# /etc/gamescope-session-plus/sessions.d/steam — Game Mode at the screen's own
+#                                               resolution
+# =============================================================================
+# WHAT THIS IS
+#
+# The Game Mode session script (gamescope-session-plus, from Terra, unmodified)
+# reads three files named "steam" in turn, each allowed to add to the last:
+#
+#     /usr/share/gamescope-session-plus/sessions.d/steam    the package's own
+#     /etc/gamescope-session-plus/sessions.d/steam          THIS ONE — the OS's
+#     ~/.config/gamescope-session-plus/sessions.d/steam     yours, if you make it
+#
+# They are sourced by bash, so this is a small program, not a settings file.
+# Anything you set in the third file wins over this one.
+#
+# WHAT IT FIXES
+#
+# On 2026-09-19, Game Mode came up at 1920x1080 on a 3840x2160 screen (a
+# Samsung Odyssey Ark) and looked blurry. gamescope itself does the right
+# thing when nothing tells it a size: it takes the mode the screen calls its
+# preferred one. But the package script passes no size at all, and Steam in
+# its console mode then chooses its own default for a screen that is not a
+# handheld's — 1080p — and asks gamescope for it. So this file works out what
+# the connected screen's preferred mode is, from the kernel's own list, and
+# hands it to the session as the size to run at. That is exactly what the
+# SCREEN_WIDTH / SCREEN_HEIGHT knobs in the package script exist for.
+#
+# HOW IT KNOWS. Every display connector the kernel knows about has a folder
+# under /sys/class/drm/, with a "status" file ("connected" or not) and a "modes"
+# file listing the modes the screen offers. The kernel sorts that list so the
+# screen's PREFERRED mode — its native one — is the first line. No display
+# tools, no X, nothing that could be missing: two files, read with the shell.
+#
+# WHAT IT DOES NOT DO. It does not touch the games. Steam's per-game
+# resolution setting still works, and Steam can still ask gamescope for a
+# different mode; this only sets what Game Mode STARTS at. If you set
+# SCREEN_WIDTH and SCREEN_HEIGHT yourself, in ~/.config/environment.d or the
+# third file above, this file leaves them alone.
+#
+# Plain-language guide: docs/restart/game-mode.md
+# =============================================================================
+
+if [ -z "${SCREEN_WIDTH:-}" ] && [ -z "${SCREEN_HEIGHT:-}" ]; then
+    aq_native=""
+    # A built-in panel (eDP) first, the way gamescope itself prefers it, then
+    # whichever connected screen comes first.
+    for aq_c in /sys/class/drm/card*-eDP-* /sys/class/drm/card*-*; do
+        [ -r "${aq_c}/status" ] || continue
+        [ "$(cat "${aq_c}/status" 2> /dev/null)" = "connected" ] || continue
+        aq_native="$(head -n 1 "${aq_c}/modes" 2> /dev/null)"
+        case "${aq_native}" in
+            [0-9]*x[0-9]*) break ;;
+            *) aq_native="" ;;
+        esac
+    done
+    case "${aq_native}" in
+        [0-9]*x[0-9]*)
+            SCREEN_WIDTH="${aq_native%%x*}"
+            SCREEN_HEIGHT="${aq_native#*x}"
+            SCREEN_HEIGHT="${SCREEN_HEIGHT%%[!0-9]*}"   # "2160i" → "2160"
+            # The picture Steam draws (-w/-h) is made the same size as the
+            # screen, so the Steam UI itself is not drawn small and stretched.
+            INTERNAL_WIDTH="${INTERNAL_WIDTH:-${SCREEN_WIDTH}}"
+            INTERNAL_HEIGHT="${INTERNAL_HEIGHT:-${SCREEN_HEIGHT}}"
+            echo "aquarius: Game Mode will run at the screen's own ${SCREEN_WIDTH}x${SCREEN_HEIGHT} (from ${aq_c##*/})."
+            ;;
+        *)
+            echo "aquarius: could not read a connected screen's preferred mode; leaving the size to gamescope."
+            ;;
+    esac
+    unset aq_native aq_c
+fi

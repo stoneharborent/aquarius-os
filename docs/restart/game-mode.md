@@ -53,6 +53,36 @@ It puts you back in **the desktop you came from** — GNOME if you were in GNOME
 Plasma if you were in Plasma. AquariusOS writes that down on the way out and
 reads it on the way back. No password there either.
 
+Steam shows a "Switching to Desktop…" card while that happens. It should be
+gone within a few seconds. If it is not — see "What went wrong on
+2026-09-19" below, which is exactly that — press **Ctrl+Alt+F3** for a text
+login and run `loginctl terminate-user <your name>`; the login screen comes
+back and takes you to the desktop.
+
+### The resolution
+
+Game Mode starts at **your screen's own resolution** — the mode the screen
+itself calls preferred. Steam's own default for a screen that is not a
+handheld's is 1080p, which on a 4K screen is a blurry picture; AquariusOS
+reads the preferred mode from the kernel and hands it to the session
+(`/etc/gamescope-session-plus/sessions.d/steam`). Steam's per-game resolution
+setting still works on top of that. To choose something else for the whole
+session, put `SCREEN_WIDTH=` and `SCREEN_HEIGHT=` in a file under
+`~/.config/environment.d/`.
+
+### The button pictures
+
+Steam draws its button hints for **whichever input it saw last**: keyboard and
+mouse hints when you are on those, and a controller's own buttons — Xbox,
+PlayStation, Nintendo — the moment that controller speaks. If you see
+PlayStation buttons and did not pick up a PlayStation controller, one is
+connected and Steam can hear it: a DualSense on a USB cable, or a paired one
+that Bluetooth reconnected on its own (AquariusOS switches Bluetooth back on
+after a session change, precisely so paired controllers come back). Steam's
+**Settings → Controller** lists every controller it can see. There is no
+setting in AquariusOS for this, because there is nothing to set: it is
+Steam's own behaviour, and it is the right one.
+
 ---
 
 ## Starting the computer in Game Mode
@@ -176,10 +206,19 @@ does this with GDM. Three moving parts:
    person in one second after the login screen appears". Not GDM's *automatic*
    login, which looks like the same thing and is not: automatic login fires once
    per boot and is then spent, so it would take you into Game Mode and do
-   nothing on the way back.
+   nothing on the way back. (The mirror image is true at boot: GDM builds the
+   first login screen of a boot with timed login *disallowed*, so `aq game
+   boot on` writes the automatic one. Both facts are in GDM's own source —
+   `gdm-local-display-factory.c` — and both were learned the hard way.)
 3. **`systemctl reload gdm`** so GDM re-reads that. Reload, never restart —
    restarting the login screen kills every session on the machine at once and
-   reliably ends in a black screen.
+   reliably ends in a black screen. (A reload is a SIGHUP, and GDM's `main.c`
+   answers it by re-reading `custom.conf`; that was checked, not assumed.)
+4. **Ending the session you are in.** From the desktop, the button does it in
+   the desktop's own language. From Game Mode, Steam's `steamos-session-select`
+   *replaces itself* with our script (`exec`), so ending Game Mode is our job
+   too: we ask Steam to close (`steam -shutdown`), and the session ends with
+   it.
 
 Steps 1 and 2 need administrator rights, so they go through one tiny program,
 `/usr/libexec/aquarius-session-root`, behind polkit. **For the person sitting at
@@ -205,8 +244,9 @@ computer rather than about a person.
 
 | File | What it does |
 | --- | --- |
-| `/usr/libexec/os-session-select` | The hinge. Steam's own `steamos-session-select` looks for exactly this path and hands over to it. Writes down where you are going. |
-| `/usr/libexec/aquarius-session-root` | The root half: the `Session=` line, the timed login, the GDM reload, the boot setting. Behind polkit. |
+| `/usr/libexec/os-session-select` | The hinge. Steam's own `steamos-session-select` looks for exactly this path and hands over to it. Writes down where you are going, and — from Game Mode — ends the session. Everything it decides goes to the journal: `journalctl -t os-session-select`. |
+| `/usr/libexec/aquarius-session-root` | The root half: the `Session=` line, the timed login (a switch), the automatic login (a boot), the GDM reload, the boot setting. Behind polkit. |
+| `/etc/gamescope-session-plus/sessions.d/steam` | Starts Game Mode at the screen's preferred resolution. Read by Terra's session script through a hook it already has. |
 | `/usr/libexec/aquarius-game-mode` | The "Return to Game Mode" button: warn, switch, log out. |
 | `/usr/libexec/aquarius-login-mode` | Runs once per boot, before the login screen, and makes it match `/etc/aquarius/login-mode`. |
 | `/usr/libexec/ogc/os-update` | Answers Steam's "check for an OS update" with "no". Always. AquariusOS updates itself in one piece, from the desktop. |
@@ -222,6 +262,41 @@ AquariusOS behaviour is added alongside, through hooks those packages already
 provide. A forked session script is a fork we would maintain for ever, and the
 first upstream fix we missed would be a bench day nobody could explain.
 
+### What went wrong on 2026-09-19
+
+The first real use of the switch, on the bench machine with the Samsung
+Odyssey Ark, found four things. Each is fixed; each is written down here so
+the next person does not rediscover it.
+
+1. **"Switch to Desktop" hung on its card and the machine had to be
+   rebooted.** Steam's script does `exec /usr/libexec/os-session-select
+   desktop` — it replaces itself with ours and nothing runs afterwards. Ours
+   wrote the two settings and stopped, believing Steam's script would end the
+   session; Steam's script had already ceased to exist. Now `os-session-select`
+   ends Game Mode itself on the way back, by asking Steam to close.
+2. **Game Mode came up at 1080p on a 4K screen.** gamescope was never told a
+   size, and Steam's console mode picks 1080p for any screen it does not
+   recognise as a handheld's. The session now starts at the screen's own
+   preferred mode, read from `/sys/class/drm`.
+3. **The login screen asked for a password on the way in.** Not reproduced
+   from the source: GDM's timed login is allowed on a post-logout login screen
+   and the reload does re-read the file — both checked in GDM's code. What the
+   code *did* do was print a warning to a terminal that was about to close if
+   the timed login could not be switched on, and go ahead anyway. That is now
+   a hard stop on the desktop side (nothing is closed, the reason is on screen
+   and in the journal), and every decision the switch makes is in the journal.
+   If it happens again, `aq game status` and `journalctl -t os-session-select
+   -t aquarius-session-root -t polkitd` are the two things to paste into the
+   report.
+4. **PlayStation button hints with no controller in hand.** Not a fault in the
+   switch — see "The button pictures" above. Worth checking whether a paired
+   controller came back when Bluetooth was switched back on.
+
+And one thing found in the source while looking, not on the bench: **`aq game
+boot on` could never have worked**, because it wrote a *timed* login and GDM
+disallows timed login on the first login screen of a boot. It now writes the
+*automatic* one, which is what GDM honours there.
+
 ### Why "Log Out" still works
 
 The automatic login stays switched on after a switch has finished. Left alone,
@@ -230,7 +305,8 @@ back in — Log Out would look broken for the rest of the day.
 
 So it is taken back off twice: once at every boot (`aquarius-login-mode.service`,
 on a machine set to `mode=desktop`) and once whenever a desktop session starts
-(`aquarius-game-tidy.service`). If you ever see `aq game status` mention that the
+(`aquarius-game-tidy.service` — for people's accounts only; the login screen
+is itself a GNOME Shell run by the `gdm` account, and it is kept out). If you ever see `aq game status` mention that the
 automatic login is on, that is normal in the middle of a switch and it will clear
 itself; nothing needs doing.
 
@@ -306,6 +382,21 @@ installing first.*
 - [ ] Steam's power menu → **Switch to Desktop** → back in **GNOME**, no
       password. Resolve opens and sees the graphics card.
 - [ ] Repeat the round trip **five times** with no freeze.
+
+### B2. The way back, from Game Mode (added 2026-09-19)
+
+- [ ] Steam's power menu → **Switch to Desktop**: the "Switching to Desktop…"
+      card is gone within ten seconds and the desktop you came from is back,
+      with no password box.
+- [ ] `journalctl -t os-session-select` shows "asked for 'desktop' from 'Game
+      Mode'" and "asking Steam to close".
+- [ ] On the Ark, Game Mode's picture is sharp: Steam's **Settings → Display**
+      shows 3840x2160, and the journal for the session
+      (`journalctl --user -u gamescope-session-plus@steam`) says "Game Mode
+      will run at the screen's own 3840x2160".
+- [ ] With no controller in hand, Steam's button hints are keyboard and mouse.
+      If they are not, **Settings → Controller** names the controller Steam is
+      hearing.
 
 ### C. The same from Plasma
 

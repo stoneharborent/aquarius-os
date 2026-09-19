@@ -1,6 +1,6 @@
 #!/usr/bin/bash
 # =============================================================================
-# aquarius-session-root — the four small root jobs Game Mode needs
+# aquarius-session-root — the five small root jobs Game Mode needs
 # =============================================================================
 # WHAT THIS IS, IN PLAIN ENGLISH
 #
@@ -52,6 +52,8 @@
 #   aquarius-session-root set-session <account> <session>
 #   aquarius-session-root timed-login on <account>
 #   aquarius-session-root timed-login off
+#   aquarius-session-root auto-login on <account>     (the boot-time service only)
+#   aquarius-session-root auto-login off
 #   aquarius-session-root reload-gdm
 #   aquarius-session-root boot-flag desktop|game [<account>]
 #
@@ -137,6 +139,9 @@ aq_check_account() {
         "" | *[!0-9]*) die "could not read the user number for '${name}'." ;;
     esac
     [ "${uid}" -ge 1000 ] || die "'${name}' is a system account (number ${uid}), not a person. Refusing."
+    # "nobody" sits at 65534, above every person; the fake-root test of
+    # 2026-09-19 got it past the line above. Nobody is not a person either.
+    [ "${uid}" -lt 65534 ] || die "'${name}' (number ${uid}) is not a person's account. Refusing."
 }
 
 # -----------------------------------------------------------------------------
@@ -259,6 +264,67 @@ aq_timed_login() {
 }
 
 # -----------------------------------------------------------------------------
+# auto-login on <account>  /  auto-login off
+# -----------------------------------------------------------------------------
+# ⚠️ THE OTHER HALF OF THE "TIMED, NOT AUTOMATIC" STORY ABOVE — and the reason
+# `aq game boot on` needs this one and not that one.
+#
+# GDM's timed login is what a SWITCH needs, because it works on every login
+# screen GDM shows after a logout. But GDM's own source (gdm-local-display-
+# factory.c, the "Creating local display" path) builds the FIRST login screen
+# of a boot with allow-timed-login switched OFF: at boot, the only password-
+# free login GDM will do is the plain AutomaticLogin one. So a machine set to
+# start in Game Mode with only TimedLogin written would stop at the login
+# screen every morning and ask for a password — the opposite of a console.
+#
+# So: a switch writes TimedLogin (above); the boot-time service writes
+# AutomaticLogin (this). The two blocks live side by side in custom.conf and
+# each is removed in full before being written, so neither can be doubled.
+#
+# ⚠️ ONLY THE BOOT-TIME SERVICE CALLS `on`. It runs as real root, before
+# anybody has logged in. Through pkexec this is still bound to the person
+# asking, the same as timed-login, so it cannot be turned against somebody
+# else's account.
+aq_auto_login() {
+    local action="$1" account="${2:-}"
+
+    [ -f "${AQ_GDM_CONF}" ] || die "${AQ_GDM_CONF} is not there — this computer's login screen is not the one AquariusOS ships."
+
+    case "${action}" in
+        on)
+            aq_check_account "${account}"
+            aq_must_be_the_caller "${account}"
+            sed -i '/^[[:space:]]*AutomaticLoginEnable[[:space:]]*=/d; /^[[:space:]]*AutomaticLogin[[:space:]]*=/d' \
+                "${AQ_GDM_CONF}" || die "could not edit ${AQ_GDM_CONF}."
+            if grep -q '^\[daemon\]' "${AQ_GDM_CONF}"; then
+                sed -i "/^\[daemon\]/a AutomaticLoginEnable=true\nAutomaticLogin=${account}" \
+                    "${AQ_GDM_CONF}" || die "could not edit ${AQ_GDM_CONF}."
+            else
+                printf '\n[daemon]\nAutomaticLoginEnable=true\nAutomaticLogin=%s\n' \
+                    "${account}" >> "${AQ_GDM_CONF}" || die "could not edit ${AQ_GDM_CONF}."
+            fi
+            if grep -qx "AutomaticLogin=${account}" "${AQ_GDM_CONF}" \
+                && grep -qx 'AutomaticLoginEnable=true' "${AQ_GDM_CONF}"; then
+                say "at the next boot the login screen will log ${account} in by itself."
+            else
+                die "wrote ${AQ_GDM_CONF} but the AutomaticLogin lines are not in it."
+            fi
+            ;;
+        off)
+            sed -i '/^[[:space:]]*AutomaticLoginEnable[[:space:]]*=/d; /^[[:space:]]*AutomaticLogin[[:space:]]*=/d' \
+                "${AQ_GDM_CONF}" || die "could not edit ${AQ_GDM_CONF}."
+            if grep -q '^[[:space:]]*AutomaticLogin' "${AQ_GDM_CONF}"; then
+                die "tried to remove the automatic-login lines from ${AQ_GDM_CONF} and they are still there."
+            fi
+            say "the login screen will ask who you are at boot, the normal way."
+            ;;
+        *)
+            die "'auto-login' takes 'on <account>' or 'off'."
+            ;;
+    esac
+}
+
+# -----------------------------------------------------------------------------
 # reload-gdm
 # -----------------------------------------------------------------------------
 # ⚠️ RELOAD, NEVER RESTART. Restarting the login screen kills every graphical
@@ -346,6 +412,10 @@ case "${1:-}" in
         [ $# -ge 2 ] || die "usage: aquarius-session-root timed-login on <account> | off"
         aq_timed_login "$2" "${3:-}"
         ;;
+    auto-login)
+        [ $# -ge 2 ] || die "usage: aquarius-session-root auto-login on <account> | off"
+        aq_auto_login "$2" "${3:-}"
+        ;;
     reload-gdm)
         aq_reload_gdm
         ;;
@@ -354,6 +424,6 @@ case "${1:-}" in
         aq_boot_flag "$2" "${3:-}"
         ;;
     *)
-        die "'${1:-}' is not a job this program knows. It does: set-session, timed-login, reload-gdm, boot-flag."
+        die "'${1:-}' is not a job this program knows. It does: set-session, timed-login, auto-login, reload-gdm, boot-flag."
         ;;
 esac
