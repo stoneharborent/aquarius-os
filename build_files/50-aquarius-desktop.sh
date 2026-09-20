@@ -887,6 +887,27 @@ if [ -e /var/lib/aquarius/gdm-display-optin ] \
     /usr/libexec/aquarius-gdm-display || true
 fi
 
+# -----------------------------------------------------------------------------
+# The login-loop guard (added after the 2026-09-20 bench)
+# -----------------------------------------------------------------------------
+# On that bench a switch out of Game Mode put the computer in a circle: the
+# login screen logged Royce straight in, the desktop refused to start, the
+# session ended, and the login screen logged him straight in again. Forty-five
+# times in ninety seconds, with no moment long enough to click anything. He had
+# to hold the power button.
+#
+# This is the place that can see it happening, because it is the one piece of
+# AquariusOS that runs at EVERY session end. The program below counts recent
+# logouts for this person and, if three of them land inside a minute, switches
+# the password-free login off so the next attempt stops at a password box. A
+# password box is a computer you can still use.
+#
+# `|| true`, like everything else here: a logout hook that fails is a session
+# that never lets go.
+if [ -x /usr/libexec/aquarius-login-loop-guard ]; then
+    /usr/libexec/aquarius-login-loop-guard "${1:-}" || true
+fi
+
 exit 0
 EOF
 chmod 0755 /etc/gdm/PostSession/Default
@@ -899,6 +920,43 @@ aq_file_has /etc/gdm/PostSession/Default 'gdm-display-optin' \
     "the logout hook does nothing unless somebody switched the copy on"
 aq_file_has /etc/gdm/PostSession/Default '^exit 0$' \
     "the logout hook always succeeds (a failing one would trap a session)"
+
+# ------------------------------------------------------------------------------
+# The login-loop guard, read back out of the image
+# ------------------------------------------------------------------------------
+# ⚠️ CHECKED HERE, NOT IN STEP 71 (the Game Mode step), even though the bug that
+# produced it was a Game Mode bug. The reason is that THIS step is the one that
+# writes /etc/gdm/PostSession/Default; a check for a line in a file living in
+# another step is a check that quietly stops matching the day this heredoc is
+# edited. The fix belongs next to the file it changes.
+say "The login-loop guard (the 2026-09-20 forty-five-logins bench)"
+aq_file_has /etc/gdm/PostSession/Default '/usr/libexec/aquarius-login-loop-guard' \
+    "the logout hook calls the login-loop guard"
+if [ -f /usr/libexec/aquarius-login-loop-guard ]; then
+    ok "/usr/libexec/aquarius-login-loop-guard is in the finished image"
+else
+    bad "/usr/libexec/aquarius-login-loop-guard is missing — a failing login could loop for ever"
+fi
+if [ -x /usr/libexec/aquarius-login-loop-guard ]; then
+    ok "and it can be run (the logout hook would skip it in silence otherwise)"
+else
+    bad "/usr/libexec/aquarius-login-loop-guard is not executable"
+fi
+if bash -n /usr/libexec/aquarius-login-loop-guard; then
+    ok "and it is valid shell"
+else
+    bad "/usr/libexec/aquarius-login-loop-guard does not parse as shell"
+fi
+aq_file_has /usr/libexec/aquarius-login-loop-guard '^AQ_LOOP_COUNT=3$' \
+    "three failed logins is what counts as a loop"
+aq_file_has /usr/libexec/aquarius-login-loop-guard '^AQ_LOOP_WINDOW=60$' \
+    "inside sixty seconds"
+aq_file_has /usr/libexec/aquarius-login-loop-guard 'switch-login off' \
+    "and the answer is to put the password box back in the way"
+aq_file_has /usr/libexec/aquarius-login-loop-guard 'you will be asked for your password' \
+    "with a plain sentence in the journal saying what happened and why"
+aq_file_has /usr/libexec/aquarius-login-loop-guard '/run/aquarius/login-loop-' \
+    "and it keeps its count under /run, which every restart wipes"
 if bash -n /etc/gdm/PostSession/Default; then
     ok "the logout hook is valid shell"
 else

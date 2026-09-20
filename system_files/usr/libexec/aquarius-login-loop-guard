@@ -1,0 +1,202 @@
+#!/usr/bin/bash
+# =============================================================================
+# aquarius-login-loop-guard — the thing that stops a login loop at three tries
+# =============================================================================
+# WHAT THIS IS, IN PLAIN ENGLISH
+#
+# On 2026-09-20 Royce pressed "Switch to Desktop" in Game Mode and the computer
+# started chasing its own tail. The login screen appeared, faded out to log him
+# in, the desktop refused to start, the session ended, and the login screen
+# appeared again — because the password-free login for that one switch was
+# still switched on, so it logged him straight back in, so the desktop refused
+# again. Forty-five times in ninety seconds. There was no way to stop it from
+# the screen: the login screen never stayed long enough to click anything. He
+# had to hold the power button down.
+#
+# The underlying fault is fixed elsewhere (see
+# /usr/libexec/os-session-select and docs/restart/game-mode.md, "Bench 4"). But
+# "a login that fails can repeat for ever" is a shape of bug that will come
+# back wearing different clothes, so this program makes that shape impossible.
+#
+# WHAT IT DOES
+#
+# GDM runs one script as root every time any session ends:
+# /etc/gdm/PostSession/Default. That script calls this one. Every time it runs,
+# this program writes down the time, for that person, in a small file under
+# /run (which is wiped at every restart — this is not a history, just a recent
+# memory).
+#
+# Then it asks one question: have THREE of this person's sessions ended within
+# the last SIXTY SECONDS?
+#
+#   * No — which is the answer on every normal day, because a person does not
+#     log out three times a minute. Nothing happens.
+#   * Yes — something is looping. It switches the password-free login OFF, so
+#     the very next attempt stops at a password box instead of charging
+#     straight back into whatever is failing. A password box is a computer you
+#     can still use; a loop is not.
+#
+# It also tries to REPAIR the usual cause before it ever gets that far. When a
+# person's last session has ended, the leftovers of that session are told to
+# stop in that person's own systemd manager (`graphical-session.target` and
+# `graphical-session-pre.target`). Normally the manager would have shut down
+# and taken them with it, but on an account with LINGERING switched on the
+# manager lives from switch-on to switch-off, and a leftover signpost saying "a
+# graphical session is already running" is exactly what made GNOME refuse to
+# start. This nudges it down so the NEXT login can succeed — before the guard
+# ever needs to trip.
+#
+# ⚠️ THE ONE RULE. GDM runs this while somebody is logging out. A program that
+# fails or hangs here is a computer that will not let go of a session. So every
+# step is fenced, nothing waits on anything, and this always exits 0.
+#
+# Plain-language guide: docs/restart/game-mode.md
+# =============================================================================
+
+set -u
+
+AQ_ROOT_HELPER="/usr/libexec/aquarius-session-root"
+AQ_RUN_DIR="/run/aquarius"
+
+# How many session-ends, inside how many seconds, counts as a loop.
+AQ_LOOP_COUNT=3
+AQ_LOOP_WINDOW=60
+
+# Everything this says goes to the journal under its own name, because there is
+# no terminal anywhere near a logout:  journalctl -t aquarius-login-loop-guard
+say() {
+    logger -t aquarius-login-loop-guard -- "$*" 2> /dev/null || true
+}
+
+# The person whose session just ended. GDM hands the account name in as the
+# first argument; if it ever stops doing that, there is nothing useful to do.
+aq_user="${1:-${USER:-}}"
+case "${aq_user}" in
+    "" | root | gdm | gdm-greeter)
+        # The login screen's own account ends sessions too. Counting those
+        # would trip the guard on a computer that is working perfectly.
+        exit 0
+        ;;
+esac
+# Only real people have accounts here. Anything else is a service.
+if ! id -u "${aq_user}" > /dev/null 2>&1; then
+    exit 0
+fi
+
+# -----------------------------------------------------------------------------
+# The repair: lower the leftover signposts in that person's systemd manager
+# -----------------------------------------------------------------------------
+# ⚠️ ONLY WHEN THEY HAVE NO SESSION LEFT. If somebody is logged in twice — a
+# second screen, a text login on Ctrl+Alt+F3 — stopping their graphical-session
+# targets would pull the rug from under the session they are still using. So
+# this asks logind first and does nothing if any session of theirs remains.
+#
+# ⚠️ AND WHICH SPELLING REACHES A USER MANAGER FROM ROOT. systemd offers
+# `systemctl --user -M <account>@` for exactly this. Some versions want the
+# longer `<account>@.host`. Rather than guess at the version on the machine,
+# this tries them in order and writes down which one answered — so the next
+# person reading the journal knows, instead of re-deriving it.
+aq_sessions_left() {
+    loginctl list-sessions --no-legend 2> /dev/null \
+        | awk -v u="${aq_user}" '$3 == u { n++ } END { print n + 0 }'
+}
+
+aq_lower_signposts() {
+    local spelling
+    if ! command -v systemctl > /dev/null 2>&1; then
+        return 0
+    fi
+    if [ "$(aq_sessions_left)" != "0" ]; then
+        say "${aq_user} still has a session open, so the leftovers are left alone."
+        return 0
+    fi
+    for spelling in "${aq_user}@" "${aq_user}@.host"; do
+        if systemctl --user -M "${spelling}" --no-block \
+            stop graphical-session.target graphical-session-pre.target > /dev/null 2>&1; then
+            say "told ${aq_user}'s systemd manager the graphical session is over (spelling: -M ${spelling})."
+            return 0
+        fi
+    done
+    # A machine with no lingering manager has nothing to talk to, which is the
+    # normal, healthy case. Not worth a warning.
+    say "no running systemd manager for ${aq_user} to tidy (normal when lingering is off)."
+    return 0
+}
+
+# -----------------------------------------------------------------------------
+# The count: how many of this person's sessions ended in the last minute
+# -----------------------------------------------------------------------------
+# One file per person, e.g. /run/aquarius/login-loop-rorobeckley — a list of
+# the times their sessions ended, newest first, with anything older than the
+# window thrown away each time. /run is emptied by every restart, which is
+# exactly the memory we want: a loop is a thing that happens now.
+aq_note_file="${AQ_RUN_DIR}/login-loop-${aq_user}"
+
+aq_record_and_count() {
+    local now kept line count=0
+    now="$(date +%s 2> /dev/null)" || return 1
+    mkdir -p "${AQ_RUN_DIR}" 2> /dev/null || return 1
+    chmod 0700 "${AQ_RUN_DIR}" 2> /dev/null || true
+
+    kept="${now}"
+    if [ -r "${aq_note_file}" ]; then
+        while read -r line; do
+            case "${line}" in
+                "" | *[!0-9]*) continue ;;
+            esac
+            if [ $((now - line)) -lt "${AQ_LOOP_WINDOW}" ]; then
+                kept="${kept}
+${line}"
+            fi
+        done < "${aq_note_file}"
+    fi
+    printf '%s\n' "${kept}" > "${aq_note_file}" 2> /dev/null || return 1
+    chmod 0600 "${aq_note_file}" 2> /dev/null || true
+
+    count="$(printf '%s\n' "${kept}" | grep -c '^[0-9]')"
+    printf '%s\n' "${count}"
+}
+
+# -----------------------------------------------------------------------------
+# Tripping the guard
+# -----------------------------------------------------------------------------
+# Switching the password-free login off is the whole point: it puts a password
+# box in the way of the next attempt, which breaks the circle. GDM is then told
+# to re-read its settings, because it reads that file when it is asked to and
+# not continuously.
+aq_break_the_loop() {
+    say "${AQ_LOOP_COUNT} of ${aq_user}'s sessions ended within ${AQ_LOOP_WINDOW} seconds — that is a login loop."
+    if [ -x "${AQ_ROOT_HELPER}" ]; then
+        # We are already root here: PostSession runs as root, so there is no
+        # pkexec and no password box in the way.
+        if "${AQ_ROOT_HELPER}" switch-login off > /dev/null 2>&1; then
+            say "the password-free login was switched off because logging in kept failing; you will be asked for your password. See docs/restart/game-mode.md"
+        else
+            say "WARNING: could not switch the password-free login off. The loop may continue; hold the power button and read docs/restart/game-mode.md."
+        fi
+        "${AQ_ROOT_HELPER}" reload-gdm > /dev/null 2>&1 || true
+    else
+        say "WARNING: ${AQ_ROOT_HELPER} is missing, so the password-free login could not be switched off."
+    fi
+    # Start counting again from nothing, so one trip does not keep re-tripping.
+    rm -f "${aq_note_file}" 2> /dev/null || true
+}
+
+# =============================================================================
+# Here we go
+# =============================================================================
+aq_lower_signposts
+
+aq_count="$(aq_record_and_count 2> /dev/null)" || aq_count=""
+case "${aq_count}" in
+    "" | *[!0-9]*)
+        say "could not keep the count of recent logouts; doing nothing."
+        exit 0
+        ;;
+esac
+
+if [ "${aq_count}" -ge "${AQ_LOOP_COUNT}" ]; then
+    aq_break_the_loop
+fi
+
+exit 0
