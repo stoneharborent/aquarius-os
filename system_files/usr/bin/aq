@@ -2666,6 +2666,15 @@ AQ_DECKY_UNIT="/etc/systemd/system/plugin_loader.service"
 AQ_DECKY_SERVICE="plugin_loader.service"
 AQ_DECKY_RELEASES="https://api.github.com/repos/SteamDeckHomebrew/decky-loader/releases"
 AQ_DECKY_DECK_HOME="/home/deck"
+# The little program that gives the downloaded loader the SELinux label of a
+# program, so systemd is allowed to start it. It is a separate file, and not
+# four lines typed into the two places below, for three reasons: the whole
+# explanation of what SELinux is doing lives in one place; both the install and
+# the update run exactly the same code, so an update can never be labelled
+# differently from an install; and it can be tested on its own with stand-in
+# commands (tests/test-decky.sh), which a few lines inside a `sudo` heredoc
+# never could. See docs/restart/decky.md.
+AQ_DECKY_LABEL="/usr/libexec/aquarius-decky-label"
 
 decky_usage() {
     cat << 'EOF'
@@ -2967,7 +2976,8 @@ decky_root_install() {
     echo
 
     sudo /usr/bin/bash -s -- "${AQ_DECKY_HOME}" "${USER}" "${AQ_DECKY_UNIT}" \
-        "${AQ_DECKY_SERVICE}" "${AQ_DECKY_VERSION_FILE}" "${tag}" << 'ROOTEOF'
+        "${AQ_DECKY_SERVICE}" "${AQ_DECKY_VERSION_FILE}" "${tag}" \
+        "${AQ_DECKY_LABEL}" << 'ROOTEOF'
 set -uo pipefail
 HOMEBREW="$1"
 WHO="$2"
@@ -2975,13 +2985,35 @@ UNIT="$3"
 SERVICE="$4"
 VERSION_FILE="$5"
 TAG="$6"
+LABELER="$7"
 
-# SELinux is switched on and enforcing on AquariusOS. A program downloaded into
-# a home folder is labelled as ordinary data, and SELinux will not let systemd
-# start ordinary data as a service. This gives it the label a program has.
-if command -v getenforce > /dev/null 2>&1 && [ "$(getenforce)" = "Enforcing" ]; then
+# ⚠️ THE SELINUX LABEL COMES FIRST, AND IT IS ALLOWED TO STOP THE INSTALL.
+#
+# SELinux is the guard that decides which programs are allowed to be programs.
+# A file downloaded into a home folder is labelled "one of this person's
+# documents", and SELinux will not let systemd start a document as a service.
+# Without the right label the install finishes with no errors at all, and then
+# Decky never appears in Game Mode — which is exactly what happened on the
+# bench on 20 September 2026 (`status=203/EXEC`, `avc: denied { execute }`).
+#
+# So this runs BEFORE the service file is written, and a failure ends the
+# administrator's half here. Better to stop and say why than to switch on a
+# service that cannot possibly start. The whole explanation, and what the
+# labelling actually does, is in the program itself and in
+# docs/restart/decky.md.
+echo "The SELinux label — what lets the computer run Decky as a program:"
+if [ -x "${LABELER}" ]; then
+    if ! "${LABELER}" "${HOMEBREW}/services/PluginLoader"; then
+        echo "  the downloaded Decky cannot be started by the system service," >&2
+        echo "  so nothing was switched on. Nothing else has been changed." >&2
+        exit 1
+    fi
+else
+    echo "  ${LABELER} is missing from this copy of AquariusOS." >&2
+    echo "  That is a fault in the operating system. Falling back to a one-off" >&2
+    echo "  label that nothing remembers:" >&2
     chcon -t bin_t "${HOMEBREW}/services/PluginLoader" \
-        || echo "  (could not set the SELinux label — the service may refuse to start)"
+        || echo "  (that did not work either — the service will refuse to start)" >&2
 fi
 
 # The service file. This is Decky's own release unit with two lines added:
@@ -3148,16 +3180,28 @@ decky_update() {
     # our old unchecked write into it is exactly what made an update announce a
     # version it had not managed to record.
     if ! sudo /usr/bin/bash -s -- "${AQ_DECKY_LOADER}" "${AQ_DECKY_SERVICE}" \
-        "${AQ_DECKY_VERSION_FILE}" "${tag}" "${USER}" << 'ROOTEOF'
+        "${AQ_DECKY_VERSION_FILE}" "${tag}" "${USER}" "${AQ_DECKY_LABEL}" << 'ROOTEOF'
 set -uo pipefail
 LOADER="$1"
 SERVICE="$2"
 VERSION_FILE="$3"
 TAG="$4"
 WHO="$5"
+LABELER="$6"
 
-if command -v getenforce > /dev/null 2>&1 && [ "$(getenforce)" = "Enforcing" ]; then
-    chcon -t bin_t "${LOADER}" || echo "  (could not set the SELinux label)"
+# The label belongs to the FILE, and the file has just been replaced, so it has
+# to be given again — and, as in the install, a failure stops here rather than
+# restarting a service that SELinux will not let start.
+echo "The SELinux label — what lets the computer run Decky as a program:"
+if [ -x "${LABELER}" ]; then
+    if ! "${LABELER}" "${LOADER}"; then
+        echo "  the new Decky cannot be started by the system service, so the" >&2
+        echo "  service was NOT restarted. The old Decky is still running." >&2
+        exit 1
+    fi
+else
+    echo "  ${LABELER} is missing from this copy of AquariusOS." >&2
+    chcon -t bin_t "${LOADER}" || echo "  (could not set the SELinux label)" >&2
 fi
 
 if ! systemctl restart "${SERVICE}"; then
@@ -3221,16 +3265,29 @@ decky_remove() {
     echo
 
     sudo /usr/bin/bash -s -- "${AQ_DECKY_UNIT}" "${AQ_DECKY_SERVICE}" \
-        "${HOME:-/nonexistent}" "${AQ_DECKY_DECK_HOME}" << 'ROOTEOF'
+        "${HOME:-/nonexistent}" "${AQ_DECKY_DECK_HOME}" "${AQ_DECKY_LABEL}" \
+        "${AQ_DECKY_LOADER}" << 'ROOTEOF'
 set -uo pipefail
 UNIT="$1"
 SERVICE="$2"
 HOMEDIR="$3"
 DECK="$4"
+LABELER="$5"
+LOADER="$6"
 
 systemctl disable --now "${SERVICE}" > /dev/null 2>&1
 rm -f "${UNIT}"
 systemctl daemon-reload
+
+# The install wrote an SELinux rule saying "the file at
+# ~/homebrew/services/PluginLoader is a program". Nothing else uses that rule,
+# so it comes out with everything else: leaving rules behind for things that
+# have been removed is how a computer's security policy slowly stops meaning
+# anything. It is harmless either way, which is why nothing here stops if it
+# cannot be done.
+if [ -x "${LABELER}" ]; then
+    "${LABELER}" --forget "${LOADER}" || true
+fi
 
 # ⚠️ ONLY OUR OWN SIGNPOST COMES OUT. If /home/deck is a real folder, or a link
 # to somewhere that is not this person's home, it belongs to somebody else and
@@ -3263,6 +3320,61 @@ decky_status_version_note() {
     fi
 }
 
+# -----------------------------------------------------------------------------
+# When the service is down, show the computer's own reason for it
+# -----------------------------------------------------------------------------
+# ⚠️ WHY THIS IS WORTH THE SPACE. A service that will not start prints nothing
+# where anyone would look. The reason is in the system journal, in two lines
+# that mean nothing unless you already know what they mean:
+#
+#   ... plugin_loader.service: Failed at step EXEC ... status=203/EXEC
+#   ... avc: denied { execute } ... tcontext=...:user_home_t:s0 tclass=file
+#
+# `203/EXEC` means "I could not run the program". `avc: denied { execute }`
+# means SELinux is the one who stopped it. Together they are the whole answer,
+# and copying them into a bench log is exactly what Royce needs to do. So
+# `aq decky status` fetches them rather than leaving a person to learn
+# `journalctl`.
+#
+# It needs no password on a machine where the person can read the system
+# journal (on AquariusOS an administrator can). Where they cannot, it says so
+# and gives the command to try with `sudo`, rather than printing nothing and
+# looking like there was no reason at all.
+decky_status_exec_note() { # decky_status_exec_note <1 if the service is down>
+    local down="${1:-0}" log
+
+    [ "${down}" -eq 1 ] || return 0
+    command -v journalctl > /dev/null 2>&1 || return 0
+
+    log="$(journalctl -b -u "${AQ_DECKY_SERVICE}" --no-pager 2> /dev/null || true)"
+    if [ -z "${log}" ]; then
+        echo
+        echo "   The computer's own note of why it did not start could not be read"
+        echo "   from here. Try:"
+        echo "     sudo journalctl -b -u ${AQ_DECKY_SERVICE}"
+        return 0
+    fi
+
+    if printf '%s\n' "${log}" | grep -q '203/EXEC'; then
+        echo
+        echo "   ⚠️ WHY IT DID NOT START: the computer could not run the program"
+        echo "      at all (systemd calls that 203/EXEC). Its own last words:"
+        printf '%s\n' "${log}" | grep '203/EXEC' | tail -n 1 | sed 's/^/        /'
+
+        # The refusal itself lives in the whole-system journal, not in the
+        # service's own, so this is a second look in a different place.
+        local avc
+        avc="$(journalctl -b --no-pager 2> /dev/null | grep -i 'avc.*PluginLoader' | tail -n 1 || true)"
+        if [ -n "${avc}" ]; then
+            echo "      And the refusal behind it:"
+            printf '%s\n' "${avc}" | sed 's/^/        /'
+            echo "      Read that as: systemd (init_t) tried to run this file, and"
+            echo "      SELinux said no because of the label it is wearing."
+        fi
+        echo "      The fix is the SELinux label line above."
+    fi
+}
+
 decky_status() {
     local have
 
@@ -3284,15 +3396,52 @@ decky_status() {
 
     echo
     echo -n "The background service:   "
+    local svc_down=0
     if ! command -v systemctl > /dev/null 2>&1; then
         echo "cannot tell (systemctl is not here)"
     elif systemctl is-active --quiet "${AQ_DECKY_SERVICE}" 2> /dev/null; then
         echo "running"
     elif [ -r "${AQ_DECKY_UNIT}" ]; then
         echo "NOT running — try: sudo systemctl restart ${AQ_DECKY_SERVICE}"
+        svc_down=1
     else
         echo "not set up"
     fi
+
+    # The SELinux label of the downloaded program. This is in the ordinary
+    # report, not hidden behind a fault, because it is the single most useful
+    # thing to see when Decky is installed and simply never appears: `bin_t`
+    # means "the computer may run this as a program", `user_home_t` means "this
+    # is one of your documents" and the service can never start. See
+    # docs/restart/decky.md.
+    echo -n "The SELinux label:        "
+    if [ ! -e "${AQ_DECKY_LOADER}" ]; then
+        echo "nothing to label (Decky is not downloaded)"
+    else
+        local ctx type
+        ctx="$(stat -c %C "${AQ_DECKY_LOADER}" 2> /dev/null || true)"
+        type="$(printf '%s' "${ctx}" | awk -F: '{ print $3 }')"
+        case "${type}" in
+            bin_t)
+                echo "bin_t — a program, which is right"
+                ;;
+            "")
+                echo "cannot tell (SELinux may be switched off on this computer)"
+                ;;
+            *)
+                echo "${type} — ⚠️ WRONG"
+                echo "   A file with this label is one of your documents, and the"
+                echo "   computer will refuse to start a document as a service. This"
+                echo "   is why Decky installs and then never appears in Game Mode."
+                echo "   Put it right with:"
+                echo "     aq decky update       (or, if there is nothing newer:)"
+                echo "     sudo /usr/libexec/aquarius-decky-label \"${AQ_DECKY_LOADER}\""
+                echo "     sudo systemctl restart ${AQ_DECKY_SERVICE}"
+                ;;
+        esac
+    fi
+
+    decky_status_exec_note "${svc_down}"
 
     echo -n "Steam's plugin flag file: "
     if [ -e "$(decky_steam_dir)/.cef-enable-remote-debugging" ]; then

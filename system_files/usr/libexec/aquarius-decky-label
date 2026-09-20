@@ -1,0 +1,331 @@
+#!/usr/bin/bash
+# =============================================================================
+# aquarius-decky-label — let systemd start Decky's downloaded program
+# =============================================================================
+# WHAT THIS IS FOR, IN PLAIN ENGLISH
+#
+# Fedora — and so AquariusOS — runs a guard called **SELinux**. Every file on
+# the computer wears a little label saying what kind of thing it is, and
+# SELinux decides, from those labels, who is allowed to do what. A file you
+# download into your home folder is labelled `user_home_t`, which means "one of
+# this person's documents". That is the right answer for a photo. It is the
+# wrong answer for Decky.
+#
+# Decky's `PluginLoader` is a program, and it is started by **systemd**, the
+# part of Linux that runs background services. SELinux flatly refuses to let
+# systemd run one of your documents as a service. So the install finishes, the
+# service is switched on, and then nothing happens — and the only trace is a
+# line in the system journal that looks like this:
+#
+#   plugin_loader.service: Failed at step EXEC ... status=203/EXEC
+#   avc: denied { execute } for comm="(PluginLoader)" name="PluginLoader"
+#       scontext=system_u:system_r:init_t:s0
+#       tcontext=unconfined_u:object_r:user_home_t:s0 tclass=file permissive=0
+#
+# Read that last line as: "something labelled `init_t` (systemd) tried to run
+# something labelled `user_home_t` (your documents), and I said no."
+#
+# ⚠️ THAT IS EXACTLY WHAT HAPPENED ON ROYCE'S BENCH PC on 20 September 2026,
+# with a Decky that had installed with no errors at all. Decky's own installer
+# never meets this because it was written for SteamOS and Bazzite, which do not
+# guard home folders the way Fedora does.
+#
+# This program gives the file the label `bin_t` — "this is a program" — which
+# systemd is allowed to run.
+#
+# -----------------------------------------------------------------------------
+# WHY THIS IS NOT JUST ONE `chcon` LINE
+# -----------------------------------------------------------------------------
+# `chcon` changes the label on a file right now, and that is all it does.
+# Nothing remembers the decision. The next time anything runs `restorecon` over
+# your home folder — a system update, a relabel after a policy change, a tool
+# putting file labels back the way the rules say they should be — the file goes
+# straight back to `user_home_t` and Decky silently stops starting again.
+#
+# So this writes a **rule** instead, with `semanage fcontext`: "any file at
+# `/home/<somebody>/homebrew/services/PluginLoader` is a program." Then it runs
+# `restorecon`, which is the command that reads the rules and puts the label the
+# rules ask for on the file. From then on a relabel is what KEEPS Decky working
+# rather than what breaks it.
+#
+# `chcon` is still here, as a fallback, for a machine where `semanage` is
+# missing or refuses — a label that works today beats no label at all, and the
+# message says plainly that it is the weaker of the two.
+#
+# -----------------------------------------------------------------------------
+# ⚠️ /home AND /var/home ARE THE SAME PLACE, AND THAT MATTERS HERE
+# -----------------------------------------------------------------------------
+# AquariusOS is an "image mode" Fedora, where `/home` is a signpost pointing at
+# `/var/home`. Your real home folder is `/var/home/royce`, and `/home/royce` is
+# another way of saying it.
+#
+# SELinux knows this. Fedora ships an **equivalency**: "treat `/var/home` as if
+# it were `/home`". You can see it with `semanage fcontext -l` (look at the very
+# bottom, under the equivalency heading). Because of it, the rule to write is
+# the `/home/...` spelling — that is the one the rules are written in, and
+# `restorecon /var/home/royce/homebrew/services/PluginLoader` finds it through
+# the equivalency.
+#
+# Writing the `/var/home/...` spelling instead is the trap: on many machines
+# `semanage` accepts it, and then it never matches anything, because everything
+# under `/var/home` is looked up as `/home` before the rules are consulted.
+#
+# This program therefore tries the `/home/...` spelling FIRST, checks the file's
+# real label afterwards, and only if that did not work falls back to the
+# `/var/home/...` spelling and then to `chcon`. It never trusts that a command
+# that printed no error did the job: it reads the label back off the file.
+#
+# -----------------------------------------------------------------------------
+# HOW IT IS USED
+# -----------------------------------------------------------------------------
+#   aquarius-decky-label <path to PluginLoader>     give it the program label
+#   aquarius-decky-label --forget <path>            take our rule away again
+#
+# ⚠️ IT MUST RUN AS THE ADMINISTRATOR. `aq decky install`, `aq decky update`
+# and `aq decky remove` call it from inside the one `sudo` they already ask for,
+# so nobody is asked for a password twice.
+#
+# It exits 0 only when the file really is labelled a program, or when SELinux is
+# switched off on this machine and there is nothing to do. Any other outcome is
+# a non-zero exit and a plain-English explanation, so that `aq decky install`
+# can refuse to call the install finished.
+#
+# Plain-English guide: docs/restart/decky.md
+# =============================================================================
+
+set -uo pipefail
+
+# The rule we write. It is a regular expression, which is `semanage`'s language:
+# `[^/]+` means "one folder name here", so this covers every person on the
+# computer without naming any of them.
+LABEL="bin_t"
+SPEC_HOME='/home/[^/]+/homebrew/services/PluginLoader'
+SPEC_VAR='/var/home/[^/]+/homebrew/services/PluginLoader'
+
+usage() {
+    cat << 'EOF'
+aquarius-decky-label — let systemd start Decky's downloaded program
+
+    aquarius-decky-label <path to PluginLoader>
+        Give the file the SELinux label of a program (bin_t), so the
+        plugin_loader service can start it. Run as the administrator.
+
+    aquarius-decky-label --forget <path to PluginLoader>
+        Take our labelling rule away again. Used by 'aq decky remove'.
+
+Why this exists, and what 203/EXEC means, is in docs/restart/decky.md.
+EOF
+}
+
+FORGET=0
+case "${1:-}" in
+    -h | --help | help)
+        usage
+        exit 0
+        ;;
+    --forget)
+        FORGET=1
+        shift
+        ;;
+esac
+
+TARGET="${1:-}"
+if [ -z "${TARGET}" ]; then
+    echo "aquarius-decky-label: no file was named." >&2
+    echo >&2
+    usage >&2
+    exit 2
+fi
+
+# -----------------------------------------------------------------------------
+# The real path, with every signpost followed
+# -----------------------------------------------------------------------------
+# `restorecon` and `stat` both want the real file, not a path that goes through
+# a signpost. On this system that turns /home/royce/... into /var/home/royce/...
+REAL="${TARGET}"
+if command -v realpath > /dev/null 2>&1; then
+    REAL="$(realpath "${TARGET}" 2> /dev/null || printf '%s' "${TARGET}")"
+elif command -v readlink > /dev/null 2>&1; then
+    REAL="$(readlink -f "${TARGET}" 2> /dev/null || printf '%s' "${TARGET}")"
+fi
+
+# -----------------------------------------------------------------------------
+# --forget: take the rule away
+# -----------------------------------------------------------------------------
+# Both spellings, because a machine may have either one depending on which of
+# the tries below succeeded when Decky was installed. Neither being there is
+# the ordinary case and is not an error — this says nothing at all about it.
+if [ "${FORGET}" -eq 1 ]; then
+    if command -v semanage > /dev/null 2>&1; then
+        SPEC_REAL="$(printf '%s' "${REAL}" \
+            | sed -E 's![^/]+/homebrew/services/PluginLoader$![^/]+/homebrew/services/PluginLoader!')"
+        for spec in "${SPEC_HOME}" "${SPEC_VAR}" "${SPEC_REAL}"; do
+            if semanage fcontext -l 2> /dev/null | grep -qF "${spec}"; then
+                if semanage fcontext -d "${spec}" 2> /dev/null; then
+                    echo "  removed the SELinux rule for ${spec}"
+                else
+                    echo "  (could not remove the SELinux rule for ${spec} — harmless:" >&2
+                    echo "   it only ever applied to a file that is now gone)" >&2
+                fi
+            fi
+        done
+    fi
+    exit 0
+fi
+
+if [ ! -e "${REAL}" ]; then
+    echo "aquarius-decky-label: there is no file at ${REAL}," >&2
+    echo "    so there is nothing to label. Nothing has been changed." >&2
+    exit 1
+fi
+
+# -----------------------------------------------------------------------------
+# Is SELinux even switched on?
+# -----------------------------------------------------------------------------
+# On AquariusOS it is, and it is Enforcing — that is Fedora's default and we
+# have not changed it. But a person can turn it off, and on a machine where it
+# is off there is no label to read and nothing to fix, so saying "failed" would
+# be a lie. Permissive counts as ON here: the label still needs to be right, and
+# the machine may well be put back to Enforcing later.
+if command -v getenforce > /dev/null 2>&1; then
+    STATE="$(getenforce 2> /dev/null || echo Unknown)"
+    if [ "${STATE}" = "Disabled" ]; then
+        echo "  SELinux is switched off on this computer, so there is no label to set."
+        exit 0
+    fi
+fi
+
+# -----------------------------------------------------------------------------
+# What label does the file wear right now?
+# -----------------------------------------------------------------------------
+# A label looks like `unconfined_u:object_r:user_home_t:s0`. The part that
+# matters is the third piece — the TYPE. That is what SELinux's rules talk
+# about, and the only piece this program tries to change.
+current_type() {
+    local ctx
+    ctx="$(stat -c %C "${REAL}" 2> /dev/null || true)"
+    if [ -z "${ctx}" ] || [ "${ctx}" = "?" ]; then
+        printf '%s' ""
+        return 0
+    fi
+    printf '%s' "${ctx}" | awk -F: '{ print $3 }'
+}
+
+WAS="$(current_type)"
+echo "  the file is labelled: ${WAS:-(no label at all)}"
+if [ "${WAS}" = "${LABEL}" ]; then
+    echo "  that is already the label of a program — nothing to do."
+    exit 0
+fi
+
+# -----------------------------------------------------------------------------
+# Try 1 and 2: a rule that lasts, written with semanage
+# -----------------------------------------------------------------------------
+# `-a` adds a rule and `-m` changes one that is already there. Adding one twice
+# is an error ("already defined"), so this looks first rather than adding and
+# hoping. Then `restorecon` is what actually puts the label on the file.
+add_rule() { # add_rule <spec>
+    local spec="$1"
+    if semanage fcontext -l 2> /dev/null | grep -qF "${spec}"; then
+        semanage fcontext -m -t "${LABEL}" "${spec}" 2>&1 | sed 's/^/    /'
+    else
+        semanage fcontext -a -t "${LABEL}" "${spec}" 2>&1 | sed 's/^/    /'
+    fi
+}
+
+try_spec() { # try_spec <spec> — returns 0 if the file ends up labelled bin_t
+    local spec="$1" now
+    echo "  writing the rule: ${spec}  ->  ${LABEL}"
+    add_rule "${spec}"
+    if command -v restorecon > /dev/null 2>&1; then
+        restorecon -v "${REAL}" 2>&1 | sed 's/^/    /'
+    else
+        echo "    (restorecon is missing from this image, so the rule cannot be applied)"
+    fi
+    now="$(current_type)"
+    echo "  the file is now labelled: ${now:-(no label at all)}"
+    [ "${now}" = "${LABEL}" ]
+}
+
+DONE=0
+LASTING=0
+if command -v semanage > /dev/null 2>&1; then
+    # The /home spelling first: see the long note at the top about why that is
+    # the one that matches, even though the file really lives under /var/home.
+    if try_spec "${SPEC_HOME}"; then
+        DONE=1
+        LASTING=1
+    else
+        # It did not take. On a machine without Fedora's /var/home equivalency
+        # the rule has to name the file's own real path instead. That spelling
+        # is worked out from the real path by replacing just the person's name
+        # with "any one folder name", so this is right whatever the machine
+        # calls its home folders — normally /var/home/[^/]+/homebrew/services/
+        # PluginLoader, which is what SPEC_VAR spells out for a reader.
+        SPEC_REAL="$(printf '%s' "${REAL}" \
+            | sed -E 's![^/]+/homebrew/services/PluginLoader$![^/]+/homebrew/services/PluginLoader!')"
+        if [ "${SPEC_REAL}" != "${SPEC_HOME}" ] && [ "${SPEC_REAL}" != "${REAL}" ]; then
+            echo "  the /home spelling did not reach this file; trying its real path"
+            echo "  (on this system that is normally: ${SPEC_VAR})"
+            if try_spec "${SPEC_REAL}"; then
+                DONE=1
+                LASTING=1
+            fi
+        fi
+    fi
+else
+    echo "  semanage is not in this image, so no lasting rule can be written."
+fi
+
+# -----------------------------------------------------------------------------
+# Try 3: chcon — right now, but not remembered
+# -----------------------------------------------------------------------------
+if [ "${DONE}" -eq 0 ]; then
+    if command -v chcon > /dev/null 2>&1; then
+        echo "  falling back to chcon, which labels the file but writes no rule"
+        chcon -t "${LABEL}" "${REAL}" 2>&1 | sed 's/^/    /'
+        if [ "$(current_type)" = "${LABEL}" ]; then
+            DONE=1
+        fi
+    else
+        echo "  chcon is not in this image either." >&2
+    fi
+fi
+
+# -----------------------------------------------------------------------------
+# Read the answer back off the file. Never trust a command's silence.
+# -----------------------------------------------------------------------------
+NOW="$(current_type)"
+if [ "${DONE}" -eq 1 ] && [ "${NOW}" = "${LABEL}" ]; then
+    if [ "${LASTING}" -eq 1 ]; then
+        echo "  ✅ ${REAL}"
+        echo "     is labelled ${LABEL} — a program — and a rule says so, so a"
+        echo "     future relabel will put it back rather than undo it."
+    else
+        echo "  ⚠️ ${REAL}"
+        echo "     is labelled ${LABEL} — a program — so Decky will start. But this"
+        echo "     was done with chcon and NOTHING REMEMBERS IT. If Decky stops"
+        echo "     starting after a system update, run:"
+        echo "       sudo chcon -t ${LABEL} \"${REAL}\""
+        echo "       sudo systemctl restart plugin_loader.service"
+    fi
+    exit 0
+fi
+
+echo >&2
+echo "aquarius-decky-label: could not give ${REAL}" >&2
+echo "    the label of a program. It is still: ${NOW:-(no label at all)}" >&2
+echo >&2
+echo "    WHAT THIS MEANS: SELinux will not let the background service start" >&2
+echo "    Decky, and the service will fail with '203/EXEC'. Decky would install" >&2
+echo "    and then never appear in Game Mode." >&2
+echo >&2
+echo "    To see the refusal for yourself:" >&2
+echo "      sudo journalctl -b | grep -i 'avc.*PluginLoader'" >&2
+echo >&2
+echo "    To try the label by hand:" >&2
+echo "      sudo semanage fcontext -a -t ${LABEL} '${SPEC_HOME}'" >&2
+echo "      sudo restorecon -v \"${REAL}\"" >&2
+echo >&2
+echo "    The whole story is in docs/restart/decky.md." >&2
+exit 1
