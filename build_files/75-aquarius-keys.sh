@@ -401,6 +401,14 @@ aq_file_has "${UNIT}" '^PartOf=graphical-session\.target$' \
 # Windows mode".
 aq_file_has "${UNIT}" '^ConditionUser=!@system$' \
     "the LOGIN SCREEN does not run this — the 2026-09-03 root cause (a system account's remapper held the keyboards)"
+# ⚠️ AND THE GDM 50 HALF OF THAT, FOUND ON THE BENCH ON 2026-09-19. GDM 50 runs
+# the login screen as a systemd DYNAMIC user called `gdm-greeter`, whose user
+# number comes from the 61184-65519 range — ABOVE the ordinary range, so
+# `!@system` does not catch it, and the 2026-09-03 bug had quietly come back:
+# the bench journal has this service running at the login screen, saying
+# `desktop is 'GNOME-Greeter:GNOME'`.
+aq_file_has "${UNIT}" '^ConditionUser=!gdm-greeter$' \
+    "and GDM 50's dynamic greeter account does not run it either"
 aq_file_has "${UNIT}" '^Restart=always$' \
     "it keeps trying — a keyboard that is busy for a few seconds must not cost you your shortcuts for the whole session"
 aq_file_has "${UNIT}" '^RestartSec=2$' \

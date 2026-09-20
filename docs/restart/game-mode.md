@@ -394,6 +394,47 @@ both correct:
   about a second and it logs you in by itself. That is the timed login, which
   now works because the automatic keys are there beside it.
 
+#### Bug 2 — the login screen was running the tidy service
+
+**What it looked like.** Nothing, on screen. In the journal, twelve seconds
+after every logout and four seconds after every boot:
+
+```
+systemd[13964]: Starting aquarius-game-tidy.service - Take the Game Mode
+automatic login back off once the desktop is up...
+pkexec[16481]: gdm-greeter: The value for the SHELL variable was not found in
+the /etc/shells file [USER=root] [CWD=/run/gdm/home/gdm-greeter]
+[COMMAND=/usr/libexec/aquarius-session-root switch-login off]
+os-session-select[16456]: NOTE: could not switch the automatic login back off.
+```
+
+**What it was.** The tidy service — the one that makes **Log Out** mean Log Out
+again after a switch — is meant for people, never for the login screen, and it
+was kept out with `ConditionUser=!@system`. That line stopped working at GDM
+50. GDM 50 no longer runs the login screen as an account called `gdm`: it runs
+it as a systemd **dynamic user** named `gdm-greeter`, with a throwaway home
+under `/run/gdm` and a user number handed out from the 61184–65519 range. That
+is *above* the ordinary range, not below it, so "not a system account" does not
+catch it.
+
+It only ever failed because pkexec refuses an account whose shell is not in
+`/etc/shells`. After bug 1's fix it would no longer have failed — and it would
+have taken the password-free login off *in the middle of the switch that login
+exists for*, putting the password box straight back.
+
+**The fix.** Two belts. The unit gets a second `ConditionUser=!gdm-greeter`
+(several of those lines are ANDed), and `os-session-select --tidy` refuses,
+before doing anything, for a caller whose user number is outside 1000–59999,
+whose `$HOME` is under `/run/gdm`, or whose desktop calls itself a Greeter.
+
+**And the same hole in Aquarius Keys.** The keyboard remapper is kept out of
+the login screen by the same `!@system` line, for the 2026-09-03 reason (two
+remappers fighting over the keyboard, which looks exactly like "Mac mode
+stopped working"). The bench journal shows it running at the GDM 50 login
+screen again — `aquarius-keys: desktop is 'GNOME-Greeter:GNOME'` — so
+`aquarius-keys.service` gets the same second line. This was never intentional:
+the unit's own comments say the login screen must not run it.
+
 ### Why "Log Out" still works
 
 The automatic login stays switched on after a switch has finished. Left alone,
@@ -402,8 +443,9 @@ back in — Log Out would look broken for the rest of the day.
 
 So it is taken back off twice: once at every boot (`aquarius-login-mode.service`,
 on a machine set to `mode=desktop`) and once whenever a desktop session starts
-(`aquarius-game-tidy.service` — for people's accounts only; the login screen
-is itself a GNOME Shell run by the `gdm` account, and it is kept out). If you ever see `aq game status` mention that the
+(`aquarius-game-tidy.service` — for people's accounts only; the login screen is
+itself a GNOME Shell, run since GDM 50 by a throwaway account called
+`gdm-greeter`, and it is kept out twice over — see Bench 2, bug 2). If you ever see `aq game status` mention that the
 automatic login is on, that is normal in the middle of a switch and it will clear
 itself; nothing needs doing.
 

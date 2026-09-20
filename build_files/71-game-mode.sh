@@ -609,9 +609,42 @@ say "'aq game status' no longer calls the timed login 'a switch' on its own"
 aq_file_has /usr/bin/aq 'a switch sets both; a boot into Game Mode sets the automatic ones' \
     "aq game status explains that a switch sets both sets of lines"
 
+# ------------------------------------------------------------------------------
+# Bench 2, 2026-09-19 — bug 2: the login screen must not run the tidy service
+# ------------------------------------------------------------------------------
+# GDM 50 runs the login screen as a systemd DYNAMIC user, `gdm-greeter`, whose
+# user number comes from the 61184-65519 range — above the ordinary range, so
+# `ConditionUser=!@system` does not catch it. The greeter was starting the
+# tidy service twelve seconds after every logout and only failing because
+# pkexec refused it. Two belts now: the unit's conditions, and a test inside
+# --tidy itself.
 say "The login screen's own account does not run the tidy service"
 aq_file_has /usr/lib/systemd/user/aquarius-game-tidy.service '^ConditionUser=!@system$' \
-    "aquarius-game-tidy.service is for people's accounts only, not gdm's"
+    "aquarius-game-tidy.service is for people's accounts only (GDM 49 and before)"
+aq_file_has /usr/lib/systemd/user/aquarius-game-tidy.service '^ConditionUser=!gdm-greeter$' \
+    "and not for GDM 50's dynamic greeter account either"
+aq_file_has /usr/libexec/os-session-select '^aq_not_a_person\(\)' \
+    "and --tidy refuses to run for a caller who is not a person, whatever started it"
+aq_file_has /usr/libexec/os-session-select '/run/gdm/\*' \
+    "it knows the greeter's throwaway home folder"
+aq_file_has /usr/libexec/os-session-select 'Gg\]\[Rr\]\[Ee\]\[Ee\]\[Tt\]\[Ee\]\[Rr\]' \
+    "and a desktop that calls itself a Greeter"
+# systemd's own opinion of the file, reported honestly: a container where the
+# manager cannot start is said out loud rather than counted as a green tick
+# nobody earned. The content checks above are what really guard this unit.
+# (Same shape as step 79's check — see the note there.)
+if aq_have systemd-analyze; then
+    aq_tidy_verdict="$(systemd-analyze verify --user /usr/lib/systemd/user/aquarius-game-tidy.service 2>&1 || true)"
+    printf '%s\n' "${aq_tidy_verdict}" | sed 's/^/  /'
+    if printf '%s' "${aq_tidy_verdict}" | grep -Eqi "failed to initialize manager|failed to lookup runtimedirectory"; then
+        echo "  note   systemd-analyze could not start inside this container, so it"
+        echo "         did not read the file. The checks above are what guard it."
+    elif printf '%s' "${aq_tidy_verdict}" | grep -Eqi "unknown (key|lvalue)|failed to parse"; then
+        bad "systemd cannot understand part of aquarius-game-tidy.service (see above)"
+    else
+        ok "systemd read the tidy service and understood every line, both ConditionUser= lines included"
+    fi
+fi
 
 say "The Game Mode services are switched on, in the way an update cannot lose"
 aq_unit_is_on_from_usr aquarius-login-mode.service \

@@ -177,7 +177,47 @@ aq_boot_mode() {
 # This runs from a small service at every login (aquarius-game-tidy.service).
 # On a machine set to boot INTO Game Mode, nothing is taken off, because there
 # the automatic login is the point.
+# ⚠️ AND IT MUST NEVER RUN FOR THE LOGIN SCREEN. This is the second half of
+# the 2026-09-19 fix; the first half is the two ConditionUser= lines in
+# aquarius-game-tidy.service. GDM 50 runs the login screen as a systemd
+# DYNAMIC user called `gdm-greeter`, whose user number comes from the
+# 61184–65519 range — so it is not caught by "no system accounts", and the
+# greeter really was starting this twelve seconds after every logout. If it
+# ever succeeded it would take the password-free login off in the middle of
+# the switch that login exists for, and the password box would come straight
+# back. So this asks three questions, any one of which is a flat no:
+#
+#   * is the caller's user number outside the ordinary range for a person
+#     (1000–59999)? Dynamic users are above it; service accounts are below it.
+#   * is the caller's home folder under /run/gdm? That is where GDM puts the
+#     greeter's throwaway home.
+#   * does the desktop call itself a Greeter? GDM's own login screen says
+#     "GNOME-Greeter:GNOME".
+#
+# It exits 0, because there is nothing wrong: this simply is not that
+# service's business. The one line it prints is in the journal for the day
+# somebody wonders why nothing happened.
+aq_not_a_person() {
+    local uid
+    uid="$(id -u 2> /dev/null)"
+    case "${uid}" in
+        "" | *[!0-9]*) return 1 ;;
+    esac
+    [ "${uid}" -ge 1000 ] && [ "${uid}" -le 59999 ] || return 0
+    case "${HOME:-}" in
+        /run/gdm | /run/gdm/*) return 0 ;;
+    esac
+    case "${XDG_CURRENT_DESKTOP:-}" in
+        *[Gg][Rr][Ee][Ee][Tt][Ee][Rr]*) return 0 ;;
+    esac
+    return 1
+}
+
 aq_tidy() {
+    if aq_not_a_person; then
+        say "this is the login screen (or another account that is not a person's), so there is nothing to tidy."
+        exit 0
+    fi
     if [ "$(aq_boot_mode)" = "game" ]; then
         say "this computer is set to start in Game Mode, so the automatic login stays switched on."
         exit 0

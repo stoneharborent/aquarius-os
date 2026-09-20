@@ -28,14 +28,39 @@
 # build_files/aq-lib.sh about why `systemctl enable` is not used on this kind of
 # operating system.
 #
-# ⚠️ ConditionUser=!@system — NOT FOR THE LOGIN SCREEN ITSELF. The login screen
-# is a GNOME Shell too, run by the system account "gdm", and it reaches
-# graphical-session.target like any desktop. Without this line the login
-# screen would run this service the moment it appeared, see "GNOME" and try
-# to take the automatic login off — in the middle of the very switch that
-# automatic login exists for. polkit refuses the gdm account, so it never
-# actually managed to, but "it fails, so it is fine" is not a design. Only
-# people's accounts run this.
+# ⚠️ ConditionUser= — NOT FOR THE LOGIN SCREEN ITSELF. The login screen is a
+# GNOME Shell too, and it reaches graphical-session.target like any desktop.
+# Without these lines it would run this service the moment it appeared, see
+# "GNOME", and try to take the password-free login off — in the middle of the
+# very switch that login exists for, which would put the password box straight
+# back.
+#
+# TWO lines are needed, and several ConditionUser= lines are ANDed together:
+#
+#   !@system         keeps out every ordinary service account (user number
+#                    below 1000). That was the whole answer up to GDM 49,
+#                    when the login screen ran as a real account called `gdm`.
+#
+#   !gdm-greeter     keeps out the login screen on GDM 50 and later, which is
+#                    where this went wrong on 2026-09-19. GDM 50 runs the
+#                    greeter as a systemd DYNAMIC user called `gdm-greeter`,
+#                    with a home folder under /run/gdm and a user number
+#                    handed out from the 61184–65519 range — which is NOT
+#                    @system, so the line above does not catch it. The greeter
+#                    really did start this service, twelve seconds after every
+#                    logout, and only failed because pkexec refused it:
+#
+#                        pkexec[16481]: gdm-greeter: The value for the SHELL
+#                        variable was not found in the /etc/shells file
+#                        [USER=root] [COMMAND=/usr/libexec/aquarius-session-root
+#                        switch-login off]
+#
+#                    "It fails, so it is fine" is not a design — and after the
+#                    GDM 50 login fix it would no longer have failed.
+#
+# There is a second belt inside os-session-select --tidy itself, which refuses
+# to run for a caller whose user number is outside the ordinary range, whose
+# home folder is under /run/gdm, or whose desktop calls itself a Greeter.
 # =============================================================================
 [Unit]
 Description=Take the Game Mode automatic login back off once the desktop is up
@@ -44,6 +69,7 @@ After=graphical-session.target
 PartOf=graphical-session.target
 ConditionPathExists=/usr/libexec/os-session-select
 ConditionUser=!@system
+ConditionUser=!gdm-greeter
 
 [Service]
 Type=oneshot
