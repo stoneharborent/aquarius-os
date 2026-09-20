@@ -3055,7 +3055,10 @@ decky_status() {
         have="$(decky_have_version)"
         echo "Decky Loader is INSTALLED${have:+, version ${have}}."
     elif [ -e "${AQ_DECKY_LOADER}" ] || [ -e "${AQ_DECKY_UNIT}" ]; then
-        echo "⚠️ Decky Loader is only HALF installed on this computer."
+        # Say which version was downloaded, if one was: a person who got as far
+        # as the download and no further deserves to know what is sitting there.
+        have="$(decky_have_version)"
+        echo "⚠️ Decky Loader is only HALF installed on this computer${have:+ (version ${have} was downloaded)}."
         echo "   'aq decky remove' tidies it up, then 'aq decky install'."
     else
         echo "Decky Loader is NOT installed on this computer."
