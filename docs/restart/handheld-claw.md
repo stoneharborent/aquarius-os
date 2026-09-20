@@ -174,11 +174,35 @@ pieces when Fedora does, and not before.
 | Gyro | **none, and none is coming soon** — nothing on Linux exposes a motion sensor on this machine. Steam's gyro settings will be empty. |
 | Sound | the Intel sound driver loads; **whether the speakers make a sound is a bench question** — the exact amplifier chip is not identified in any source |
 | Wi-Fi and Bluetooth | **works** |
-| **Steam's TDP / power slider** | **does nothing** — the kernel knob it writes through is an unmerged patch series. The raw power readings are visible in `aq handheld status`. |
+| **Steam's TDP / power slider** | **does nothing** — see the note directly below. The raw power readings are visible in `aq handheld status`. |
 | Fans | run themselves, from the machine's own firmware. Speed can be read; fan curves are not possible. |
 | Lights (RGB), rumble strength, button remapping | **waits for kernel 7.3** plus userspace work |
 | Sleep and wake | works in principle; ⚠️ watch for a known Lunar Lake problem where the processor sits at 400 MHz for a while after a long sleep, and for Wi-Fi or the controller not coming back |
 | Variable refresh rate (VRR) | **unverified** — the screen advertises it; nobody has confirmed it under Linux |
+
+### ⚠️ About the power slider, precisely — found by the first build
+
+Steam's side of this *does* know the machine. The first Claw build read the
+finished image and found that `steamos-manager` ships a file called
+`msi-claw-intel.toml` which names **this exact board**:
+
+    dmi.board_name = "MS-1T52"
+    variant        = "Claw 8 AI+ A2VM"
+    [tdp_limit]
+    method         = "firmware_attribute"
+    [tdp_limit.firmware_attribute]
+    attribute      = "msi-wmi-platform"
+
+That is good news and it changes nothing today. It means the moment the kernel
+grows the missing piece, the slider should start working with no change from
+us. But the piece it names — the `msi-wmi-platform` **firmware attributes** —
+is the patch series that has not been accepted upstream, so on kernel 7.2 there
+is simply nothing at that address for Steam to write to. `aq handheld status`
+prints whether those attributes exist; today it prints "absent (expected)".
+
+**For the bench:** confirm the slider does nothing, and confirm
+`aq handheld status` says the `msi-wmi-platform` knobs are absent. If it ever
+says they are present, that is news.
 
 ### The one sentence to remember
 
