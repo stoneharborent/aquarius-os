@@ -2718,6 +2718,60 @@ decky_have_version() {
     fi
 }
 
+# Is there a version file we are NOT allowed to read? That is a different
+# answer from "there is no version file", and `status` must not blur the two:
+# saying nothing at all would look like a clean install when it is actually a
+# file we cannot see into.
+decky_version_unreadable() {
+    [ -e "${AQ_DECKY_VERSION_FILE}" ] && [ ! -r "${AQ_DECKY_VERSION_FILE}" ]
+}
+
+# -----------------------------------------------------------------------------
+# Can we actually put a new loader in place? Ask BEFORE downloading 26 MB
+# -----------------------------------------------------------------------------
+# ⚠️ WHY THIS EXISTS. Decky's own installer, the one people ran before
+# AquariusOS had this command, hands ~/homebrew/services over to the
+# administrator: the folder and PluginLoader stay yours, but files inside can
+# end up owned by root. On a machine like that an update used to download the
+# whole thing, fail to write one small file, and still announce success.
+#
+# So we check the two things OUR half genuinely needs — a folder we can write
+# into, and a PluginLoader we are allowed to replace — and we stop here, before
+# the download and before the password box, if either is missing.
+#
+# .loader.version is deliberately NOT checked here. Even if it is root-owned,
+# the administrator's half further down rewrites it and hands it back to you
+# (chown), so a root-owned version file is something we repair rather than
+# something we refuse over.
+decky_preflight() {
+    local dir="${AQ_DECKY_SERVICES}"
+
+    if ! mkdir -p "${dir}" "${AQ_DECKY_HOME}/plugins" 2> /dev/null; then
+        echo "aq: could not make ${dir}." >&2
+        echo "    Nothing was downloaded and nothing on this computer changed." >&2
+        return 1
+    fi
+
+    if [ ! -w "${dir}" ]; then
+        echo "aq: ${dir} is not a folder you are allowed to write into, so the" >&2
+        echo "    new Decky cannot be put there." >&2
+        echo "    Nothing was downloaded and nothing on this computer changed." >&2
+        echo "    Give the folder back to yourself and try again:" >&2
+        echo "      sudo chown -R \"\$USER\" \"${AQ_DECKY_SERVICES}\"" >&2
+        return 1
+    fi
+
+    if [ -e "${AQ_DECKY_LOADER}" ] && { [ ! -f "${AQ_DECKY_LOADER}" ] || [ ! -w "${AQ_DECKY_LOADER}" ]; }; then
+        echo "aq: ${AQ_DECKY_LOADER} is there but you are not allowed to replace it." >&2
+        echo "    Nothing was downloaded and nothing on this computer changed." >&2
+        echo "    Give it back to yourself and try again:" >&2
+        echo "      sudo chown -R \"\$USER\" \"${AQ_DECKY_SERVICES}\"" >&2
+        return 1
+    fi
+
+    return 0
+}
+
 # -----------------------------------------------------------------------------
 # What is the newest finished Decky, and where do we get it?
 # -----------------------------------------------------------------------------
@@ -2827,20 +2881,53 @@ decky_flag_cef() {
 # Into a temporary file first, and moved into place only when the whole thing
 # has arrived. A download interrupted halfway would otherwise leave a broken
 # PluginLoader that looks installed and starts nothing.
+#
+# ⚠️ THIS DOES NOT WRITE THE VERSION FILE ANY MORE. It used to, with a plain
+# `printf > file` whose result nobody looked at — so on a machine where that
+# file belongs to the administrator the write failed, the command carried on,
+# and the last line still said "Decky Loader is now v3.2.9" while the file on
+# disk still said v3.2.6. The version is now written by the administrator's
+# half, AFTER the service has actually restarted, so the number on disk only
+# ever means "this is the Decky that is running".
 decky_fetch() {
     local tag="$1" url="$2" tmp
-    mkdir -p "${AQ_DECKY_SERVICES}" "${AQ_DECKY_HOME}/plugins" || return 1
+    if ! mkdir -p "${AQ_DECKY_SERVICES}" "${AQ_DECKY_HOME}/plugins" 2> /dev/null; then
+        echo "aq: could not make ${AQ_DECKY_SERVICES}. Nothing has been changed." >&2
+        return 1
+    fi
 
-    tmp="$(mktemp "${AQ_DECKY_SERVICES}/.PluginLoader.XXXXXX")" || return 1
+    if ! tmp="$(mktemp "${AQ_DECKY_SERVICES}/.PluginLoader.XXXXXX" 2> /dev/null)"; then
+        echo "aq: could not make a temporary file in ${AQ_DECKY_SERVICES}," >&2
+        echo "    so the download was not even started. Nothing has been changed." >&2
+        return 1
+    fi
+
     echo "Downloading Decky ${tag} (about 26 MB)…"
     if ! curl -fL --progress-bar --max-time 900 "${url}" --output "${tmp}"; then
         rm -f "${tmp}"
         echo "aq: the download did not finish. Nothing has been changed." >&2
         return 1
     fi
-    chmod +x "${tmp}" || { rm -f "${tmp}"; return 1; }
-    mv -f "${tmp}" "${AQ_DECKY_LOADER}" || { rm -f "${tmp}"; return 1; }
-    printf '%s\n' "${tag}" > "${AQ_DECKY_VERSION_FILE}"
+
+    if ! chmod +x "${tmp}"; then
+        rm -f "${tmp}"
+        echo "aq: the download arrived but could not be marked runnable." >&2
+        echo "    It has been thrown away. Nothing has been changed." >&2
+        return 1
+    fi
+
+    # The one moment the old loader is replaced. If this fails, the OLD Decky
+    # is still there and still running, which is the safe end of the two.
+    if ! mv -f "${tmp}" "${AQ_DECKY_LOADER}"; then
+        rm -f "${tmp}"
+        echo "aq: the download arrived but could not be moved into place at" >&2
+        echo "    ${AQ_DECKY_LOADER}. The download has been thrown away and the" >&2
+        echo "    Decky you already had is untouched and still running." >&2
+        echo "    Usually this means the file belongs to the administrator:" >&2
+        echo "      sudo chown -R \"\$USER\" \"${AQ_DECKY_SERVICES}\"" >&2
+        return 1
+    fi
+
     return 0
 }
 
@@ -2856,18 +2943,29 @@ decky_fetch() {
 # The values are passed in as arguments rather than pasted into the text, so
 # that a home folder with a space or a quote in its name cannot turn into part
 # of the command.
+#
+# It also writes .loader.version and hands it back to you (chown), for the
+# reason in decky_fetch: on a machine set up by Decky's own installer that file
+# belongs to the administrator, and only the administrator can put it right.
+# Writing it here, last, also means the number on disk is never ahead of
+# reality — it is written only once the service really started.
 decky_root_install() {
+    local tag="$1"
+
     echo
     echo "Now the part that needs an administrator. You will be asked for your"
     echo "password once. It writes ${AQ_DECKY_UNIT} and switches the service on."
     echo
 
-    sudo /usr/bin/bash -s -- "${AQ_DECKY_HOME}" "${USER}" "${AQ_DECKY_UNIT}" "${AQ_DECKY_SERVICE}" << 'ROOTEOF'
+    sudo /usr/bin/bash -s -- "${AQ_DECKY_HOME}" "${USER}" "${AQ_DECKY_UNIT}" \
+        "${AQ_DECKY_SERVICE}" "${AQ_DECKY_VERSION_FILE}" "${tag}" << 'ROOTEOF'
 set -uo pipefail
 HOMEBREW="$1"
 WHO="$2"
 UNIT="$3"
 SERVICE="$4"
+VERSION_FILE="$5"
+TAG="$6"
 
 # SELinux is switched on and enforcing on AquariusOS. A program downloaded into
 # a home folder is labelled as ordinary data, and SELinux will not let systemd
@@ -2915,8 +3013,23 @@ if [ ! -e /home/deck ] && [ ! -L /home/deck ]; then
     fi
 fi
 
-systemctl daemon-reload
-systemctl enable --now "${SERVICE}"
+if ! systemctl daemon-reload; then
+    echo "  the service file was written, but systemd would not re-read it" >&2
+    exit 1
+fi
+
+if ! systemctl enable --now "${SERVICE}"; then
+    echo "  the service file was written, but the service would not start" >&2
+    exit 1
+fi
+
+# Last, and only now: the version number. See the note above decky_fetch.
+if ! printf '%s\n' "${TAG}" > "${VERSION_FILE}"; then
+    echo "  the service is running, but ${VERSION_FILE} could not be written" >&2
+    exit 1
+fi
+chown "${WHO}" "${VERSION_FILE}" 2> /dev/null || true
+chmod 0644 "${VERSION_FILE}" 2> /dev/null || true
 ROOTEOF
 }
 
@@ -2932,6 +3045,9 @@ decky_install() {
         return 0
     fi
 
+    # Ask whether we can write, before 26 MB and before a password box.
+    decky_preflight || return 1
+
     latest="$(decky_latest)" || return 1
     tag="${latest%%$'\t'*}"
     url="${latest#*$'\t'}"
@@ -2939,14 +3055,30 @@ decky_install() {
     decky_fetch "${tag}" "${url}" || return 1
     decky_flag_cef || {
         echo "aq: could not write the flag file Steam needs. Nothing is switched on." >&2
+        echo "    The downloaded loader is at ${AQ_DECKY_LOADER} and does nothing" >&2
+        echo "    until the rest is done; 'aq decky remove' tidies it up." >&2
         return 1
     }
-    decky_root_install || {
+    decky_root_install "${tag}" || {
         echo "aq: the administrator's half did not finish, so Decky is not running." >&2
         echo "    The downloaded loader is still at ${AQ_DECKY_LOADER};" >&2
         echo "    'aq decky remove' tidies everything up." >&2
         return 1
     }
+
+    # Trust content, never timestamps: read the version back off the disk
+    # before saying a word about which Decky is on this computer.
+    have="$(decky_have_version)"
+    if [ "${have}" != "${tag}" ]; then
+        echo >&2
+        echo "aq: Decky ${tag} was downloaded and the service was switched on," >&2
+        echo "    but ${AQ_DECKY_VERSION_FILE} does not say ${tag}" >&2
+        echo "    (it says: ${have:-nothing at all}). Decky is running; only the" >&2
+        echo "    note of its version is wrong, so 'aq decky status' and the next" >&2
+        echo "    'aq decky update' will be confused. Put it right with:" >&2
+        echo "      sudo chown -R \"\$USER\" \"${AQ_DECKY_SERVICES}\"" >&2
+        return 1
+    fi
 
     echo
     echo "Decky Loader ${tag} is installed and running."
@@ -2969,10 +3101,19 @@ decky_update() {
         return 1
     fi
 
+    # Ask whether we can write, before 26 MB and before a password box.
+    decky_preflight || return 1
+
     latest="$(decky_latest)" || return 1
     tag="${latest%%$'\t'*}"
     url="${latest#*$'\t'}"
     have="$(decky_have_version)"
+
+    if decky_version_unreadable; then
+        echo "Note: ${AQ_DECKY_VERSION_FILE} is there but cannot be read, so"
+        echo "      there is no telling which Decky you have. Updating anyway."
+        echo
+    fi
 
     if [ -n "${have}" ] && [ "${have}" = "${tag}" ]; then
         echo "You already have the newest Decky Loader (${have})."
@@ -2991,13 +3132,64 @@ decky_update() {
     # The SELinux label belongs to the FILE, and the file was just replaced, so
     # it has to be given again — this is the step whose absence makes an update
     # look like it worked and then refuse to start.
-    sudo /usr/bin/bash -s -- "${AQ_DECKY_LOADER}" "${AQ_DECKY_SERVICE}" << 'ROOTEOF'
+    #
+    # The version file is written HERE, by the administrator, after the restart
+    # worked, and then handed back to you. See the note above decky_fetch: on a
+    # machine set up by Decky's own installer that file belongs to root, and
+    # our old unchecked write into it is exactly what made an update announce a
+    # version it had not managed to record.
+    if ! sudo /usr/bin/bash -s -- "${AQ_DECKY_LOADER}" "${AQ_DECKY_SERVICE}" \
+        "${AQ_DECKY_VERSION_FILE}" "${tag}" "${USER}" << 'ROOTEOF'
 set -uo pipefail
+LOADER="$1"
+SERVICE="$2"
+VERSION_FILE="$3"
+TAG="$4"
+WHO="$5"
+
 if command -v getenforce > /dev/null 2>&1 && [ "$(getenforce)" = "Enforcing" ]; then
-    chcon -t bin_t "$1" || echo "  (could not set the SELinux label)"
+    chcon -t bin_t "${LOADER}" || echo "  (could not set the SELinux label)"
 fi
-systemctl restart "$2"
+
+if ! systemctl restart "${SERVICE}"; then
+    echo "  the service would not restart" >&2
+    exit 1
+fi
+
+if ! printf '%s\n' "${TAG}" > "${VERSION_FILE}"; then
+    echo "  the service restarted, but ${VERSION_FILE} could not be written" >&2
+    exit 1
+fi
+chown "${WHO}" "${VERSION_FILE}" 2> /dev/null || true
+chmod 0644 "${VERSION_FILE}" 2> /dev/null || true
 ROOTEOF
+    then
+        echo >&2
+        echo "aq: the administrator's half did not finish." >&2
+        echo "    WHERE THIS COMPUTER IS NOW: the new Decky (${tag}) is in place at" >&2
+        echo "    ${AQ_DECKY_LOADER}, but the background service was not" >&2
+        echo "    restarted, so the Decky still running is the old one — and the" >&2
+        echo "    version note on disk still says ${have:-nothing at all}." >&2
+        echo "    Finish it by hand with:" >&2
+        echo "      sudo systemctl restart ${AQ_DECKY_SERVICE}" >&2
+        echo "    then run 'aq decky status' to see where you got to." >&2
+        return 1
+    fi
+
+    # Trust content, never timestamps. "Decky Loader is now vX" is only printed
+    # when the file on disk really says vX.
+    have="$(decky_have_version)"
+    if [ "${have}" != "${tag}" ]; then
+        echo >&2
+        echo "aq: the new Decky (${tag}) is in place and the service restarted," >&2
+        echo "    but ${AQ_DECKY_VERSION_FILE} does not say ${tag}" >&2
+        echo "    (it says: ${have:-nothing at all}). Decky itself is fine; only" >&2
+        echo "    the note of its version is wrong, which will confuse" >&2
+        echo "    'aq decky status' and the next update. Put it right with:" >&2
+        echo "      sudo chown -R \"\$USER\" \"${AQ_DECKY_SERVICES}\"" >&2
+        echo "      aq decky update" >&2
+        return 1
+    fi
 
     echo
     echo "Decky Loader is now ${tag}."
@@ -3048,18 +3240,34 @@ ROOTEOF
     echo "untouched. Close Steam and open it again to see it gone."
 }
 
+# A version we cannot read is not the same as no version. Say which it is,
+# rather than leaving a silence that reads like "there is nothing here".
+decky_status_version_note() {
+    if decky_version_unreadable; then
+        echo "   ⚠️ The version cannot be read: ${AQ_DECKY_VERSION_FILE} is there"
+        echo "      but you are not allowed to read it, so the version above is"
+        echo "      unknown rather than absent. Put it right with:"
+        echo "        sudo chown -R \"\$USER\" \"${AQ_DECKY_SERVICES}\""
+    elif [ ! -e "${AQ_DECKY_VERSION_FILE}" ]; then
+        echo "   (No version was noted down, so there is no telling which Decky"
+        echo "    this is. 'aq decky update' writes the note again.)"
+    fi
+}
+
 decky_status() {
     local have
 
     if decky_installed; then
         have="$(decky_have_version)"
         echo "Decky Loader is INSTALLED${have:+, version ${have}}."
+        decky_status_version_note
     elif [ -e "${AQ_DECKY_LOADER}" ] || [ -e "${AQ_DECKY_UNIT}" ]; then
         # Say which version was downloaded, if one was: a person who got as far
         # as the download and no further deserves to know what is sitting there.
         have="$(decky_have_version)"
         echo "⚠️ Decky Loader is only HALF installed on this computer${have:+ (version ${have} was downloaded)}."
         echo "   'aq decky remove' tidies it up, then 'aq decky install'."
+        decky_status_version_note
     else
         echo "Decky Loader is NOT installed on this computer."
         echo "To set it up:  aq decky install"

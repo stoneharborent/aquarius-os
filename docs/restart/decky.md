@@ -180,6 +180,24 @@ account has to be an administrator (on a machine you installed yourself, it is).
 folder, and under `sudo` that would be the administrator's home folder, where
 you would never find it. The command refuses to run that way and says so.
 
+### "not allowed to write" — a Decky that Decky's own installer put there
+
+If you installed Decky yourself before AquariusOS had this command, by running
+Decky's installer script, some files in `~/homebrew/services` belong to the
+**administrator** rather than to you — that installer hands them over. `aq
+decky update` will stop before it downloads anything and tell you so, rather
+than half-updating and claiming it worked. Give the folder back to yourself
+and run the update again:
+
+```
+sudo chown -R "$USER" ~/homebrew/services
+aq decky update
+```
+
+From then on `aq` keeps that folder yours: the administrator's half of an
+install or an update writes the version file last, once the service has really
+restarted, and hands it straight back to you.
+
 ---
 
 ## What this is made of, for the record

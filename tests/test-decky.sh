@@ -209,6 +209,103 @@ run_aq decky status
 says 'v9.9.9-aquarius-test' "status reports the version written in .loader.version, and no other"
 
 # -----------------------------------------------------------------------------
+# 3b. A folder we cannot write into: refuse EARLY, and never claim success
+# -----------------------------------------------------------------------------
+# ⚠️ THE BUG THIS EXISTS FOR, found on Royce's own desktop in September 2026.
+#
+# Decky's own installer — the one people ran before AquariusOS had this command
+# — hands parts of ~/homebrew/services to the administrator. On that machine
+# `aq decky update` downloaded 26 MB, could not write .loader.version because
+# the file was root's, said "Permission denied", carried on regardless, and
+# finished with "Decky Loader is now v3.2.9" while the file still said v3.2.6.
+# Two separate holes: an unchecked write, and a success message printed without
+# checking anything at all.
+#
+# So: when our half cannot write where it needs to, the command must stop
+# BEFORE the download and BEFORE the password box, say what did not happen, and
+# never print "is now v...".
+#
+# This is checked through `install` rather than `update` because `update` first
+# insists the service file in /etc is there, and /etc cannot be pretended at
+# (see the note near the top). `install` runs the same writability check first,
+# and on a fake HOME it reaches it on every machine, CI included.
+echo ""
+echo "-- the services folder belongs to somebody else --"
+if [ "$(id -u)" -eq 0 ]; then
+    echo "  (skipped: running as root, which can write into any folder —"
+    echo "   CI runs an unprivileged copy of this test, which does exercise it)"
+else
+    fresh_home
+    mkdir -p "${WORK}/home/homebrew/services"
+    chmod 0555 "${WORK}/home/homebrew/services"
+
+    run_aq decky install
+    rc=$?
+    chmod 0755 "${WORK}/home/homebrew/services"
+
+    if [ "${rc}" -ne 0 ]; then
+        ok "'aq decky install' stops when it cannot write into ~/homebrew/services"
+    else
+        bad "'aq decky install' carried on with a folder it cannot write into"
+    fi
+    says 'not a folder you are allowed to write into' "and says plainly what is wrong"
+    says 'nothing on this computer changed' "and says what state the machine is in"
+    says 'chown' "and gives the one command that fixes it"
+    says_not 'Downloading Decky' "and refuses BEFORE downloading 26 MB"
+    says_not 'password' "and BEFORE asking for a password"
+    says_not 'is installed and running' "and never claims success"
+    says_not 'is now v' "and never prints the false 'Decky Loader is now vX' line"
+
+    # The same thing one level down: the folder is ours, the loader inside it
+    # is not. This is the shape Decky's own installer actually leaves behind.
+    fresh_home
+    mkdir -p "${WORK}/home/homebrew/services"
+    : > "${WORK}/home/homebrew/services/PluginLoader"
+    chmod 0444 "${WORK}/home/homebrew/services/PluginLoader"
+    printf 'v3.2.6\n' > "${WORK}/home/homebrew/services/.loader.version"
+    chmod 0444 "${WORK}/home/homebrew/services/.loader.version"
+
+    run_aq decky install
+    rc=$?
+    chmod 0644 "${WORK}/home/homebrew/services/PluginLoader" \
+        "${WORK}/home/homebrew/services/.loader.version"
+
+    if [ "${rc}" -ne 0 ]; then
+        ok "'aq decky install' stops when PluginLoader cannot be replaced"
+    else
+        bad "'aq decky install' carried on with a PluginLoader it cannot replace"
+    fi
+    says 'not allowed to replace it' "and says which file is in the way"
+    says_not 'Downloading Decky' "and again refuses before the download"
+    says_not 'is now v' "and again never prints the false success line"
+fi
+
+# -----------------------------------------------------------------------------
+# 3c. A version file we are not allowed to read
+# -----------------------------------------------------------------------------
+# `status` must never let an unreadable version file look like a clean machine
+# with no version noted down. Those are different answers and only one of them
+# means "something here needs fixing".
+echo ""
+echo "-- a version file that cannot be read --"
+if [ "$(id -u)" -eq 0 ]; then
+    echo "  (skipped: running as root, which can read any file)"
+else
+    fresh_home
+    mkdir -p "${WORK}/home/homebrew/services"
+    : > "${WORK}/home/homebrew/services/PluginLoader"
+    chmod +x "${WORK}/home/homebrew/services/PluginLoader"
+    printf 'v3.2.6\n' > "${WORK}/home/homebrew/services/.loader.version"
+    chmod 0000 "${WORK}/home/homebrew/services/.loader.version"
+
+    run_aq decky status
+    chmod 0644 "${WORK}/home/homebrew/services/.loader.version"
+
+    says 'version cannot be read' "status says the version is unknown, not absent"
+    says_not 'v3\.2\.6' "and does not report a version it could not read"
+fi
+
+# -----------------------------------------------------------------------------
 # 4. Under sudo it refuses, and refuses BEFORE it does anything
 # -----------------------------------------------------------------------------
 # Run as root, `aq decky install` would put Decky in the administrator's home
