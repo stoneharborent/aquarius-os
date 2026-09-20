@@ -30,22 +30,28 @@
 # branch is ever merged into `main`.
 #
 # ------------------------------------------------------------------------------
-# THREE IMAGES COME OUT OF THIS ONE FILE
+# FOUR IMAGES COME OUT OF THIS ONE FILE
 # ------------------------------------------------------------------------------
-#   aquarius-os            for AMD and Intel graphics
-#   aquarius-os-nvidia     for NVIDIA graphics
-#   aquarius-os-handheld   the AMD one, for ONE handheld: Royce's ROG Xbox
-#                          Ally X (phase G2, 2026-09-19)
+#   aquarius-os                for AMD and Intel graphics
+#   aquarius-os-nvidia         for NVIDIA graphics
+#   aquarius-os-handheld       the AMD one, for ONE handheld: Royce's ROG Xbox
+#                              Ally X (phase G2, 2026-09-19)
+#   aquarius-os-handheld-claw  and again, for the OTHER handheld he owns: the
+#                              MSI Claw 8 AI+ (phase G4, 2026-09-20)
 #
-# They are the same recipe. The only differences are two switches:
+# They are the same recipe. The only differences are three switches:
 #
-#   NVIDIA     0 means "no NVIDIA driver", 1 means "install it"
-#   HANDHELD   0 means an ordinary PC, 1 means the Ally X: start into Game Mode,
-#              and add the device layer that handheld needs
+#   NVIDIA           0 means "no NVIDIA driver", 1 means "install it"
+#   HANDHELD         0 means an ordinary PC, 1 means a handheld: start into Game
+#                    Mode, and add the device layer that handheld needs
+#   HANDHELD_TARGET  WHICH handheld, when it is one: `ally` or `claw`. It is
+#                    only ever read when HANDHELD=1, and anything other than
+#                    those two words stops the build with a sentence saying so.
 #
-# They are never both 1 — the Ally X has AMD graphics. There is no second recipe
-# and no if-this-image-then-that anywhere in the build scripts beyond those two
-# switches, which is the house rule this project has always had.
+# NVIDIA and HANDHELD are never both 1 — neither handheld has an NVIDIA graphics
+# card. There is no second recipe and no if-this-image-then-that anywhere in the
+# build scripts beyond those switches, which is the house rule this project has
+# always had.
 #
 # The word "next" is in the names on purpose. The Bazzite-era images are called
 # `aquarius-os`, `aquarius-os-nvidia` and so on, and they are still installed on
@@ -66,11 +72,24 @@ ARG FEDORA_VERSION=44
 # build_files/60-nvidia.sh stops the build on anything else.
 ARG NVIDIA=0
 
-# 0 = an ordinary PC, 1 = the handheld image (phase G2, the ROG Xbox Ally X).
-# It is read by exactly one build step, build_files/78-handheld.sh, which on a
-# 0 does nothing except prove that none of the handheld layer arrived. That is
-# what keeps the two desktop images unchanged by this whole phase.
+# 0 = an ordinary PC, 1 = a handheld image (phase G2, the ROG Xbox Ally X; phase
+# G4, the MSI Claw 8 AI+). It is read by exactly one build step,
+# build_files/78-handheld.sh, which on a 0 does nothing except prove that none of
+# the handheld layer arrived. That is what keeps the two desktop images unchanged
+# by this whole phase.
 ARG HANDHELD=0
+
+# WHICH handheld, when HANDHELD=1. `ally` is the ROG Xbox Ally X (board RC73XA);
+# `claw` is the MSI Claw 8 AI+ A2VM (board MS-1T52). The default is `ally`
+# because that image came first and nothing that builds it passes this in.
+#
+# ⚠️ IT IS ONLY READ WHEN HANDHELD=1, and any other value stops the build. The
+# two machines share most of the layer and differ in a handful of clearly marked
+# places — which InputPlumber version, which device profile, which udev rules,
+# which firmware. Getting this wrong would put ASUS udev rules on an MSI machine
+# and publish it under the wrong name, so a typo fails the build rather than
+# quietly falling back.
+ARG HANDHELD_TARGET=ally
 
 # Where the pre-built NVIDIA kernel modules come from. See build_files/60-nvidia.sh
 # and docs/restart/nvidia-notes.md for the whole story.
@@ -123,11 +142,19 @@ ARG XREMAP_COMMIT=7e6649e442ca445b781e4cf0e90c165f86e717db
 FROM scratch AS ctx
 COPY build_files /build_files
 COPY system_files /system_files
-# The handheld image's own files. They are kept OUT of system_files/ on purpose:
+# The handheld images' own files. They are kept OUT of system_files/ on purpose:
 # step 50 copies the whole of system_files onto every image with no filter, and
 # a udev rule about an ASUS handheld — or a login-mode saying "game" — must
 # never land on a desktop PC. Only build_files/78-handheld.sh copies these, and
 # only when HANDHELD=1.
+#
+# ⚠️ THE FOLDER HAS THREE PARTS (phase G4, 2026-09-20):
+#     handheld_files/          files BOTH handhelds get
+#     handheld_files/ally/     only the ROG Xbox Ally X
+#     handheld_files/claw/     only the MSI Claw 8 AI+
+# The per-machine folders are laid out from the root of the finished machine, so
+# handheld_files/ally/usr/lib/... becomes /usr/lib/... on the Ally image and is
+# on no other image at all. HANDHELD_TARGET is what picks between them.
 COPY handheld_files /handheld_files
 COPY ingest /ingest
 COPY tests /tests
@@ -294,6 +321,7 @@ FROM quay.io/fedora/fedora-bootc:${FEDORA_VERSION}
 ARG FEDORA_VERSION
 ARG NVIDIA
 ARG HANDHELD
+ARG HANDHELD_TARGET
 
 # Which of the three images is this, and who publishes it. The build script writes
 # these into the OS so that `bootc upgrade` knows where to look for updates and
@@ -803,23 +831,35 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     NVIDIA="${NVIDIA}" /ctx/build_files/71-game-mode.sh
 
-# 7g. The handheld layer — phase G2, and the whole of the third image.
+# 7g. The handheld layer — phases G2 and G4, and the whole of the third and
+#     fourth images.
 #
 #     On the two DESKTOP images this step installs nothing at all. It runs, it
 #     checks that not one piece of the handheld layer arrived, and it stops.
 #     That is deliberate: it is the standing proof that this phase cannot change
 #     the computer Royce edits on.
 #
-#     On the HANDHELD image it adds the five things a ROG Xbox Ally X needs that
-#     a PC does not: InputPlumber (so the built-in controller reaches Steam as
-#     ONE Xbox pad, with its paddles and its gyro), Valve's steamos-manager and
-#     powerstation (so Steam's power sliders move real hardware), the power
-#     button daemon, two small udev rules about sleep, and the cold-boot setting
-#     flipped to `game` — because a handheld with no keyboard cannot get past a
-#     password box.
+#     On a HANDHELD image it adds the five things a handheld needs that a PC
+#     does not: InputPlumber (so the built-in controller reaches Steam as ONE
+#     Xbox pad, with whatever extra buttons that machine has), Valve's
+#     steamos-manager and powerstation (so Steam's power sliders have something
+#     to talk to), the power button daemon, small udev rules about sleep, and the
+#     cold-boot setting flipped to `game` — because a handheld with no keyboard
+#     cannot get past a password box.
 #
-#     ⚠️ NO KERNEL CHANGE. Fedora's kernel already drives this machine. What it
-#     cannot do yet (rumble, dead zones, remapping) is a separate decision.
+#     HANDHELD_TARGET says which of the two machines it is building for. The
+#     Ally and the Claw share most of the layer; where they differ, the
+#     difference is a clearly marked `case` inside 78-handheld.sh and nothing
+#     else. The ASUS udev rules never reach the MSI machine and the MSI one
+#     never reaches the ASUS machine, and each image proves the other's are
+#     absent.
+#
+#     ⚠️ NO KERNEL CHANGE. On the ALLY, Fedora's kernel already drives the
+#     machine; what it cannot do yet (rumble, dead zones, remapping) is a
+#     separate decision. On the CLAW rather more waits: the `hid-msi` driver
+#     (M1/M2, mode switching, lights, rumble) is merged for kernel 7.3 and is
+#     not in 7.2, and power limits need an unmerged series. Round one of the
+#     Claw image ships what 7.2 can do and says what it cannot.
 #
 #     ⚠️ AFTER STEP 7f, ALWAYS, for two reasons. Step 7f adds Terra and removes
 #     it again — running this one first would mean 7f re-adding Terra after this
@@ -832,7 +872,8 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 #     here, immediately after Game Mode.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
-    HANDHELD="${HANDHELD}" /ctx/build_files/78-handheld.sh
+    HANDHELD="${HANDHELD}" HANDHELD_TARGET="${HANDHELD_TARGET}" \
+    /ctx/build_files/78-handheld.sh
 
 # 7h. Decky Loader — OFFERED, never baked. Phase G3.
 #

@@ -38,6 +38,9 @@
 # ------------------------------------------------------------------------------
 # ⚠️ THIS FILE IS OURS, AND IT IS UNTESTED UNTIL THE BENCH
 # ------------------------------------------------------------------------------
+# In one line, so it is never lost: this rule is AquariusOS's own and it is
+# untested until the bench.
+#
 # The equivalent rule for the ROG Ally is copied byte-for-byte from Bazzite,
 # which has years of mileage on that hardware. There is no such rule for the
 # Claw anywhere: no distribution ships one. This file is AquariusOS's own, built

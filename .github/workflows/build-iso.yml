@@ -29,8 +29,13 @@
 #     git push origin iso-nvidia-2026-09-05
 #
 #   The tag name says which image: it must start with `iso-base-`,
-#   `iso-nvidia-` or `iso-handheld-`. Anything after that is yours — a date is
-#   the obvious thing. Pushing the tag starts the build.
+#   `iso-nvidia-`, `iso-handheld-` or `iso-handheld-claw-`. Anything after that
+#   is yours — a date is the obvious thing. Pushing the tag starts the build.
+#
+#   ⚠️ `iso-handheld-claw-` IS TESTED BEFORE `iso-handheld-`, in the code below.
+#   The Claw's prefix begins with the Ally's, so a case that asked "does it
+#   start with iso-handheld-?" first would answer "the Ally" to a Claw tag and
+#   quietly build the wrong ISO. Never reorder those two.
 #
 # Either way: wait 20-40 minutes, then download the ISO from the Artifacts
 # section at the bottom of the run's page.
@@ -67,7 +72,7 @@ on:
   workflow_dispatch:
     inputs:
       variant:
-        description: "Which one? base = AMD or Intel graphics. nvidia = any RTX card. handheld = the ROG Xbox Ally X."
+        description: "Which one? base = AMD or Intel graphics. nvidia = any RTX card. handheld = the ROG Xbox Ally X. handheld-claw = the MSI Claw 8 AI+."
         required: true
         default: nvidia
         type: choice
@@ -81,6 +86,10 @@ on:
           # difference is which published image it carries and points at for
           # updates. See docs/restart/handheld.md.
           - handheld
+          # ⚠️ AND THE SAME IS TRUE OF THE CLAW. The MSI Claw 8 AI+ is installed
+          # over a USB-C dock with a keyboard plugged in, and this is the ISO
+          # that does it. See docs/restart/handheld-claw.md.
+          - handheld-claw
       tag:
         description: "Which build. Leave as 'latest' unless you want a specific dated one."
         required: false
@@ -93,6 +102,10 @@ on:
       - 'iso-base-*'
       - 'iso-nvidia-*'
       - 'iso-handheld-*'
+      # `iso-handheld-claw-*` already matches the line above, so it is not
+      # listed again here — a tag only has to match one of these patterns to
+      # start a run. Which IMAGE it builds is decided further down, where the
+      # Claw's prefix is deliberately tested first.
 
 # ⚠️ THE VARIANT HAS TO BE IN THIS NAME. Runs that share a concurrency group
 # cancel each other, and both variants started from the button share the same
@@ -144,12 +157,20 @@ jobs:
             VARIANT="${INPUT_VARIANT}"
             echo "Started by hand. Variant: ${VARIANT}"
           else
+            # ⚠️ THE ORDER OF THESE LINES MATTERS AND IS NOT ALPHABETICAL.
+            # `iso-handheld-claw-2026-09-20` also starts with `iso-handheld-`,
+            # so it MUST be tested first. A shell `case` takes the first branch
+            # that matches; put the Ally's line above the Claw's and every Claw
+            # tag would quietly build an Ally ISO, which would install the wrong
+            # operating system on the machine and then follow the wrong image
+            # for updates for ever. Never reorder these two.
             case "${REF_NAME}" in
-              iso-base-*)     VARIANT="base" ;;
-              iso-nvidia-*)   VARIANT="nvidia" ;;
-              iso-handheld-*) VARIANT="handheld" ;;
+              iso-base-*)          VARIANT="base" ;;
+              iso-nvidia-*)        VARIANT="nvidia" ;;
+              iso-handheld-claw-*) VARIANT="handheld-claw" ;;
+              iso-handheld-*)      VARIANT="handheld" ;;
               *)
-                echo "::error::Tag '${REF_NAME}' does not start with iso-base-, iso-nvidia- or iso-handheld-, so there is no way to tell which image to build. Delete the tag and push one that does."
+                echo "::error::Tag '${REF_NAME}' does not start with iso-base-, iso-nvidia-, iso-handheld- or iso-handheld-claw-, so there is no way to tell which image to build. Delete the tag and push one that does."
                 exit 1
                 ;;
             esac
