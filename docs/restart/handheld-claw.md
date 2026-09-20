@@ -150,6 +150,7 @@ and the fix is in Windows.
 | **steamos-manager** (Terra's powerstation build) | What Steam's Quick Access Menu talks to for the power limit and the battery charge limit. It is switched on here. ⚠️ On this machine, on this kernel, it has nothing to write to — see below. |
 | **steamos-powerbuttond** | Makes the power button behave like a console's: a short press sleeps through Steam, a long press opens the power menu. |
 | **One udev rule** | Stops a nudged thumbstick waking the handheld in your bag. ⚠️ **This rule is ours and it is untested until the bench.** No distribution ships one for this machine; we wrote it on the same idea as the Ally's. |
+| **`kernel-modules-extra`** | ⚠️ The one surprise of this phase. In XInput mode the Claw's pad *is* an Xbox controller as far as Linux is concerned, and the driver that reads one is called **`xpad`** — which Fedora files in a package that **is not in the base image**. Without it the sticks, buttons, triggers and D-pad do nothing at all. The Ally never needed it, because its pad is driven by `hid-asus`, which is in the ordinary kernel modules. This image installs it, at exactly the version of the kernel the image is already pinned to, from the same place the kernel itself comes from. It is a stock Fedora package — **not a kernel change and not a patch**. |
 
 Plus the one-line setting that makes it start in Game Mode, and
 `aq handheld status`.

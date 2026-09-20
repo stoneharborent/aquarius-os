@@ -870,7 +870,17 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 #
 #     The step is numbered 78 because 72 to 77 were already taken. It belongs
 #     here, immediately after Game Mode.
+#     ⚠️ WHY THE MODULE BOX IS MOUNTED HERE (added 2026-09-20). The Claw's
+#     built-in controller is an Xbox controller as far as Linux is concerned,
+#     and the driver that reads one is `xpad` — which Fedora files in a package
+#     called `kernel-modules-extra` that is NOT in the base image. Nothing had
+#     ever needed it: the Ally's pad is driven by `hid-asus`, which is in the
+#     ordinary `kernel-modules`. So the Claw image installs it, from the very
+#     same box step 5.8 takes the pinned kernel from, at exactly that kernel's
+#     version. It is a stock Fedora package, not a kernel change and not a
+#     patch, and the step refuses to install one built for a different kernel.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=bind,from=akmods-src,source=/,target=/ctx-akmods \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     HANDHELD="${HANDHELD}" HANDHELD_TARGET="${HANDHELD_TARGET}" \
     /ctx/build_files/78-handheld.sh

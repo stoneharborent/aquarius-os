@@ -1352,10 +1352,14 @@ jobs:
           #               what steamos-manager-powerstation requires.
           #   2026-09-20  The Claw handheld image (phase G4) is the same again:
           #               the AMD/Intel image plus the same handful of small
-          #               userspace packages, plus one udev rule and minus two.
-          #               It shares the same ceiling, and the same warning
-          #               applies — if it is more than about 0.1 GB bigger than
-          #               the base image, something arrived uninvited.
+          #               userspace packages, plus one udev rule and minus two,
+          #               plus `kernel-modules-extra` (which carries the `xpad`
+          #               driver its controller needs and is not in the base
+          #               image). That package is tens of megabytes, not
+          #               hundreds. It shares the same ceiling, and the same
+          #               warning applies — if it is more than about 0.2 GB
+          #               bigger than the base image, something arrived
+          #               uninvited.
           if [ "${NVIDIA}" = "1" ]; then
             WAS="13.1"; CEILING=16000000000   # +1 GB on 2026-09-15: KDE Plasma is ~1.6 GB
           else
@@ -7244,6 +7248,21 @@ jobs:
             fwfam /usr/lib/firmware iwlwifi-bz-b0-fm-c0 1 "the Wi-Fi chip's program (Intel BE201)"
 
             echo "== the drivers that go with them =="
+            # ⚠️ xpad IS THE ONE THIS MACHINE CANNOT DO WITHOUT, and it is not in
+            # Fedora's base image: it lives in `kernel-modules-extra`, which
+            # step 78 installs on this image only, from the same box the kernel
+            # pin comes from. Without it the sticks, buttons, triggers and D-pad
+            # do nothing at all. Found the hard way on the first Claw build.
+            if rpm -q kernel-modules-extra > /dev/null 2>&1; then
+              KME="$(rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-modules-extra)"
+              KC="$(rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core)"
+              ok "kernel-modules-extra is installed (${KME})"
+              [ "${KME}" = "${KC}" ] \
+                && ok "and it is the same kernel as the rest of the image" \
+                || bad "kernel-modules-extra is ${KME} but the kernel is ${KC} — the driver would never load"
+            else
+              bad "kernel-modules-extra is not installed — xpad would be missing and the built-in controller would do nothing at all"
+            fi
             mod xe                    "graphics (Intel Arc 140V)"
             mod xpad                  "the built-in controller in XInput mode"
             mod iwlwifi               "Wi-Fi (Intel BE201)"

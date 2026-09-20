@@ -1329,6 +1329,94 @@ case "${HANDHELD_TARGET}" in
         aq_fw_family /usr/lib/firmware iwlwifi-bz-b0-fm-c0 1 \
             "the Wi-Fi chip's program; without it the desktop says there is no Wi-Fi adapter"
 
+        # ----------------------------------------------------------------------
+        # ⚠️ xpad — THE ONE DRIVER THIS MACHINE'S CONTROLLER CANNOT DO
+        # WITHOUT, AND IT IS NOT IN THE BASE IMAGE
+        # ----------------------------------------------------------------------
+        # Found on the first Claw build, 2026-09-20, by this step failing.
+        #
+        # In XInput mode the Claw's built-in pad IS an Xbox controller as far as
+        # Linux is concerned, and the driver that reads one is called `xpad`.
+        # Without it the sticks, the face buttons, the triggers and the D-pad do
+        # nothing at all — which on a handheld is the whole machine.
+        #
+        # Fedora files `xpad` in a package called `kernel-modules-extra`, and
+        # THAT PACKAGE IS NOT IN FEDORA'S BASE IMAGE. Nothing had ever needed it
+        # before: the Ally's pad is driven by `hid-asus`, which is in the
+        # ordinary `kernel-modules`.
+        #
+        # So this image installs it — and only this image. It is not a kernel
+        # change and it is not a patch: it is a stock Fedora package, at exactly
+        # the version of the kernel this image is already pinned to, taken from
+        # the very same box the pin step takes the kernel from (Universal Blue's
+        # module box, mounted at /ctx-akmods). A kernel module belongs to one
+        # exact kernel, so the version is checked against the installed
+        # kernel-core before anything is installed, and the driver is then read
+        # back off the disk.
+        say "The Xbox controller driver (xpad), which this machine's pad cannot work without"
+        AQ_KVER="$(rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core)"
+        echo "  the kernel in this image: ${AQ_KVER}"
+
+        if rpm -q kernel-modules-extra > /dev/null 2>&1; then
+            ok "kernel-modules-extra is already installed: $(rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-modules-extra)"
+        else
+            echo "  kernel-modules-extra is not in this image yet. Looking for the"
+            echo "  matching one in Universal Blue's module box."
+            AQ_KRPMS="/ctx-akmods/kernel-rpms"
+            if [ ! -d "${AQ_KRPMS}" ]; then
+                echo "AQUARIUS ERROR: ${AQ_KRPMS} is not mounted." >&2
+                echo "                The Claw image needs kernel-modules-extra for the xpad" >&2
+                echo "                driver, and that folder is where the matching package" >&2
+                echo "                lives. Step 7g in the Containerfile must mount the" >&2
+                echo "                akmods box, exactly as steps 5.8 and 6c do." >&2
+                exit 1
+            fi
+
+            # Pick the file by asking each RPM what it is, not by trusting its
+            # name. A name is a guess; the version inside an RPM is a fact
+            # written by the tool that built it.
+            AQ_KME_FILE=""
+            while IFS= read -r aq_rpm; do
+                [ -n "${aq_rpm}" ] || continue
+                aq_rv="$(rpm -qp --queryformat '%{NAME} %{VERSION}-%{RELEASE}.%{ARCH}' "${aq_rpm}" 2> /dev/null || true)"
+                echo "       ${aq_rv}  ($(basename "${aq_rpm}"))"
+                if [ "${aq_rv}" = "kernel-modules-extra ${AQ_KVER}" ]; then
+                    AQ_KME_FILE="${aq_rpm}"
+                fi
+            done < <(find "${AQ_KRPMS}" -maxdepth 1 -name 'kernel-modules-extra-*.rpm' 2> /dev/null | sort)
+
+            if [ -z "${AQ_KME_FILE}" ]; then
+                echo "AQUARIUS ERROR: there is no kernel-modules-extra for ${AQ_KVER} in" >&2
+                echo "                ${AQ_KRPMS}. A kernel module belongs to ONE exact" >&2
+                echo "                kernel, so installing a different version would" >&2
+                echo "                produce a driver the kernel refuses to load." >&2
+                echo "                The listing above shows what IS there." >&2
+                exit 1
+            fi
+
+            echo "  installing $(basename "${AQ_KME_FILE}")"
+            aq_dnf install "${AQ_KME_FILE}"
+            aq_installed kernel-modules-extra
+        fi
+
+        # It has to be the SAME kernel as everything else, or the module sits in
+        # a second folder under /usr/lib/modules — which is an image that does
+        # not publish — and never loads.
+        AQ_KME_VER="$(rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-modules-extra)"
+        if [ "${AQ_KME_VER}" = "${AQ_KVER}" ]; then
+            ok "kernel-modules-extra is the same kernel as the rest of the image (${AQ_KVER})"
+        else
+            bad "kernel-modules-extra is ${AQ_KME_VER} but this image's kernel is ${AQ_KVER} — the driver would never load"
+        fi
+        AQ_MODDIRS="$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d 2> /dev/null | sort)"
+        echo "  kernel folders under /usr/lib/modules:"
+        printf '%s\n' "${AQ_MODDIRS}" | sed 's|.*/|       |'
+        if [ "$(printf '%s\n' "${AQ_MODDIRS}" | grep -c .)" = "1" ]; then
+            ok "still exactly one kernel folder, which is what a bootable image must have"
+        else
+            bad "there is more than one kernel folder under /usr/lib/modules — this image would not publish"
+        fi
+
         say "The drivers that go with them"
         aq_have_module xe "graphics (Intel Arc 140V)"
         aq_have_module xpad "the built-in controller in XInput mode — this is what makes the sticks and buttons work at all"
