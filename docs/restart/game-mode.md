@@ -484,6 +484,91 @@ keyboard remapper has no business in Game Mode at all: there is no desktop
 there to remap for. It now recognises a gamescope session, says so in one
 line, and stops in the way that tells systemd not to start it again.
 
+### Bench 3, 2026-09-20 — Switch to Desktop always landed in Plasma
+
+The third bench run, on an image carrying the bench 2 fixes. **The good half
+first: the machine cold-booted straight into Game Mode and it worked
+perfectly** — no login screen, no password, Steam on the whole screen. That is
+the G1 promise, and it held.
+
+Then Royce pressed Steam's power button → **Switch to Desktop**. He had come
+from GNOME, and his machine remembered that correctly. It logged him into
+**KDE Plasma** anyway — and Plasma, on his dual-graphics PC, could not put a
+picture on any screen at all. Both outputs of the RTX 5080 went black and the
+only way out was to restart with the monitor plugged into the motherboard.
+
+Those are **two separate problems**, and only the first one is ours to fix
+here.
+
+#### Bug 1 — `plasma` is SteamOS's word for "the desktop", not for Plasma
+
+**What it looked like.** Switch to Desktop put you in Plasma whatever desktop
+you had left. The "remember where you came from" feature looked as though it
+had never been written.
+
+**What it was.** Steam's power menu has exactly one button out of Game Mode.
+It never asks which desktop you want. But the script behind it comes from
+SteamOS, where the desktop is *always* KDE Plasma, so the word it hands down is
+hard-coded: `plasma`. In SteamOS's vocabulary that word simply means "the
+desktop". Here is the line from Royce's journal (boot `9541937c`), where our
+own program says out loud what it was told and what it decided:
+
+```
+09:02:34 steam[12934]: os-session-select: asked for 'plasma' from 'Game Mode'; next session: plasma
+```
+
+`os-session-select` had a branch that said, in effect, "if Steam names a
+desktop and that desktop exists on this computer, believe the name". On a
+SteamOS machine that branch never fires, because only one desktop is
+installed. On AquariusOS **both** desktops ship, so `plasma.desktop` always
+exists — and the branch fired on every single switch, overwriting the
+remembered `gnome` with `plasma`.
+
+**The fix.** All five words Steam can pass — `desktop`, `plasma`,
+`plasma-wayland-persistent`, `plasma-x11-persistent`, `gnome` — now mean the
+same thing: *the desktop I came from*. The note in
+`~/.local/state/aquarius/desktop-session` is the only thing that decides, and
+GNOME is the fallback when there is nothing written down. The literal-name
+branch is gone, and `build_files/71-game-mode.sh` now fails the build if
+anything like it comes back, because it is exactly the sort of line a future
+reader would add thinking it was an improvement. The long version is in the
+header comment inside `os-session-select` itself, with that journal line
+quoted, so the next person recognises the symptom instead of rediscovering it.
+
+Nothing in AquariusOS asks `os-session-select` for a desktop by name — `aq
+game` and the app-grid launcher only ever go the other way, into Game Mode —
+so no flag was invented to replace it. If a by-name switch is ever wanted, it
+gets a spelling Steam cannot produce (`--to gnome`), never a bare word.
+
+#### Bug 2 — Plasma itself lit no screen on this PC. OPEN, not fixed here.
+
+Once he landed in Plasma, Plasma failed. This is a **Plasma-on-this-machine**
+problem and it has nothing to do with Game Mode; it would have happened just
+as much if he had chosen Plasma at the login screen. It is written down here
+because it is what turned bug 1 from "wrong desktop" into "black monitor and a
+hard restart".
+
+The bench PC has two graphics chips: an **NVIDIA RTX 5080** with the monitor
+on it, and the **AMD graphics built into the processor**. KWin — Plasma's
+window manager — tried to drive the AMD one and was refused by the kernel:
+
+```
+09:02:41 kernel: amdgpu 0000:71:00.0: [drm] *ERROR* Unsupported screen format RA24 little-endian (0x34324152)
+09:02:41 kwin_wayland[18846]: Atomic modeset commit failed! Invalid argument
+```
+
+In plain language: KWin asked for a picture in a pixel format that this AMD
+chip does not accept, the kernel said no, and KWin then had no working screen
+to put anything on — so both of the 5080's outputs stayed dark too.
+
+**This is an open item for the Plasma bench, not for Game Mode.** Nobody
+should try to fix it from the Game Mode side. When Plasma gets its own bench
+session, the things to try are: whether Plasma behaves with the iGPU switched
+off in the firmware, whether it behaves with only one monitor cable, and what
+`KWIN_DRM_DEVICES` pinned to the NVIDIA card does. Until then, GNOME is the
+desktop that is known to work on this machine, and it is also what a cold
+Game Mode boot now returns to.
+
 ### Why "Log Out" still works
 
 The automatic login stays switched on after a switch has finished. Left alone,
@@ -641,6 +726,49 @@ program has to run once with the new code before the rest of this is honest.*
       once you are settled in the desktop, and both filled in during a switch.
 - [ ] Its wording no longer suggests the timed login alone is what a switch
       uses.
+
+### B4. Switch to Desktop goes back where you came from (added 2026-09-20)
+
+*This is the bench 3 fix. It needs both desktops, so do it in two halves.*
+
+**From GNOME**
+
+- [ ] Log into **GNOME**. Press **Game Mode** in the app grid and let it take
+      you to Steam.
+- [ ] Steam's power menu → **Switch to Desktop**. You land back in **GNOME**.
+      (Before the fix this always landed in Plasma.)
+
+**From Plasma**
+
+- [ ] Log into **KDE Plasma**. Switch to Game Mode and back the same way. You
+      land back in **Plasma**.
+- [ ] ⚠️ If Plasma gives you a black screen rather than a desktop, that is the
+      *other* bench 3 finding and it is not this fix failing — see Bench 3,
+      bug 2. Check where you actually landed with the next item instead of
+      judging by what you can see.
+
+**What the machine thinks it remembers**
+
+- [ ] `aq game status` prints a line reading `desktop to come back to:` and it
+      names the desktop you last used — `gnome` or `plasma`. That single line
+      is the whole feature; if it is right and you still land somewhere else,
+      the bug is back.
+- [ ] `journalctl -t os-session-select -b` shows the switch's own sentence,
+      e.g. `asked for 'plasma' from 'Game Mode'; next session: gnome`. **The
+      word after `next session:` is the one that matters** — it should match
+      the desktop you came from, *not* the word Steam asked for.
+
+**The controller, and a dongle that is not a controller**
+
+- [ ] With the Raiju's **2.4 GHz dongle plugged in but the pad switched off**,
+      Steam lists no controller. **That is correct, not a fault.** The dongle
+      on its own (USB id `1532:1027`) announces itself to Linux as a keyboard,
+      a mouse and a touchpad — it has no gamepad part at all until a pad is
+      powered on and paired to it. There is nothing for Steam to list.
+- [ ] Switch the **pad** on and pair it to the dongle. Now Steam lists it and
+      it drives the Steam interface.
+- [ ] Plug the pad in **with its cable** instead (id `1532:1026`): Linux calls
+      it a `USB HID Gamepad` and Steam drives it there too.
 
 ### C. The same from Plasma
 

@@ -298,21 +298,49 @@ aq_target="${1:-gamescope}"
 # Where am I calling from? Empty means "not a desktop" — inside Game Mode.
 aq_from="$(aq_current_desktop)"
 
-# Steam's script is a SteamOS script and speaks SteamOS's words. `plasma` and
-# the two `*-persistent` spellings all mean the same thing on this computer:
-# take me back to my desktop.
+# -----------------------------------------------------------------------------
+# ⚠️ THE WORD `plasma` FROM STEAM IS NOT A CHOICE. (Bench 3, 2026-09-20.)
+# -----------------------------------------------------------------------------
+# This is the trap that cost us a bench run, and it looks like a feature.
+#
+# Steam's power menu has ONE button out of Game Mode: "Switch to Desktop". It
+# does not ask you which desktop. But the SteamOS script it runs was written
+# for a computer where the desktop is always KDE Plasma, so the word it passes
+# down to us is hard-coded — it is always one of:
+#
+#     desktop   plasma   plasma-wayland-persistent   plasma-x11-persistent
+#
+# In SteamOS's vocabulary `plasma` IS the word for "the desktop". It is not the
+# user picking Plasma over GNOME; the user was never asked.
+#
+# This program used to take the word literally whenever the named session file
+# existed — and on AquariusOS BOTH desktops ship, so `plasma.desktop` always
+# exists. The result: Switch to Desktop always landed in Plasma, no matter
+# which desktop you had left. Royce hit it on 2026-09-20 with GNOME remembered:
+#
+#     steam[12934]: os-session-select: asked for 'plasma' from 'Game Mode'; next session: plasma
+#
+# and Plasma then failed to light any screen on his NVIDIA + AMD-iGPU machine,
+# so the bug arrived as a black monitor rather than as "wrong desktop".
+#
+# SO: EVERY WORD STEAM CAN PASS MEANS "THE DESKTOP I CAME FROM". There is no
+# literal-name branch here any more, deliberately, and there must not be one
+# added back — the memory in ~/.local/state/aquarius/desktop-session is the
+# only thing that decides, with GNOME as the fallback when there is nothing
+# written down. Nothing in AquariusOS asks this program for a desktop by name:
+# `aq game` and the app-grid launcher only ever go the other way, into Game
+# Mode (`/usr/libexec/aquarius-game-mode` calls us with `gamescope`). If a
+# by-name switch is ever wanted for a person, give it a spelling Steam cannot
+# produce — a `--to gnome` / `--to plasma` flag — never a bare word.
+# -----------------------------------------------------------------------------
 case "${aq_target}" in
     gamescope | game)
         aq_session="${AQ_GAME_SESSION}"
         aq_remember_desktop "${aq_from}"
         ;;
     desktop | plasma | plasma-wayland-persistent | plasma-x11-persistent | gnome)
+        # All five words mean the same thing: take me back to my desktop.
         aq_session="$(aq_remembered_desktop)"
-        # If Steam asked for a desktop by name and that desktop is on this
-        # computer, honour the name rather than the memory.
-        case "${aq_target}" in
-            gnome | plasma) [ -r "/usr/share/wayland-sessions/${aq_target}.desktop" ] && aq_session="${aq_target}" ;;
-        esac
         ;;
     *)
         die "'${aq_target}' is not a session this computer knows. The answers are 'gamescope' and 'desktop'."

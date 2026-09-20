@@ -145,6 +145,19 @@ Royce's **Razer Raiju V3 Pro** is in there, in both of its identities —
 changes id live when its mode switch is moved. It was found dead in Game Mode
 on 2026-09-19 for exactly this reason.
 
+**And the opposite trap: Steam lists NOTHING, and that is correct.** If your
+pad uses a little 2.4 GHz USB dongle, plugging the dongle in is not the same as
+connecting the pad. Royce's Raiju's dongle, on its own with the pad switched
+off, tells Linux it is a keyboard, a mouse and a touchpad — and nothing else.
+There is no gamepad in it until a pad is actually powered on and paired to it,
+so Steam has nothing to show and is right to show nothing. Switch the pad on
+and it appears. (Plugged in with its cable instead, the same pad announces
+itself as a plain `USB HID Gamepad`, which is why the wired mode has always
+looked simpler.) If you want to see this for yourself, `lsusb` lists the dongle
+either way — `1532:1027` for the dongle, `1532:1026` wired — but
+`ls /dev/input/by-id/` is the honest test: no `*-event-joystick` entry means no
+pad, whatever `lsusb` says.
+
 **If a new controller behaves this way**, run `lsusb`, find its `1234:5678`
 pair, and add it to that file in the same shape as the entries already there —
 the file's own header says how, and `build_files/68-gaming.sh` is where the
