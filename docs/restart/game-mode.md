@@ -291,6 +291,8 @@ computer rather than about a person.
 | `aquarius-login-mode.service` | Runs the boot-time program. |
 | `aquarius-game-tidy.service` | See "Log Out", below. |
 | `aquarius-bluetooth-wake.service` | See "Bluetooth", below. |
+| `/usr/lib/systemd/user/gamescope-session-plus@.service.d/50-aquarius-stop-targets.conf` | One extra line added on top of Terra's unit (their file is untouched): when Game Mode's unit stops, lower `graphical-session.target` and `graphical-session-pre.target`. Without it, a leftover signpost stops GNOME from starting — see "Bench 4", below. |
+| `/usr/libexec/aquarius-login-loop-guard` | Called as root by `/etc/gdm/PostSession/Default` at every session end. If three of your sessions end inside a minute, it switches the password-free login off so the next attempt stops at a password box instead of looping. `journalctl -t aquarius-login-loop-guard`. |
 
 Everything from Terra — the session itself, its Steam half, and Valve's handheld
 service — is taken **completely unmodified**. Not one line is patched. Every
@@ -569,6 +571,158 @@ off in the firmware, whether it behaves with only one monitor cable, and what
 desktop that is known to work on this machine, and it is also what a cold
 Game Mode boot now returns to.
 
+### Bench 4, 2026-09-20 — the login screen that logged him in forty-five times
+
+The fourth bench run, on image `2eed3fd` with every fix so far. Bench 3's fix
+held: Steam's `plasma` was correctly read as "the desktop I came from", and the
+journal says so in its own words. What happened next was new, and it was the
+worst failure this switch has produced, because there was no way out of it from
+the screen.
+
+Royce pressed **Switch to Desktop**. The login screen appeared, faded out to
+log him in, and faded straight back to the login screen. Then it did it again.
+**Forty-five times in ninety seconds**, until he held the power button down. He
+filmed it.
+
+Here is one loop, from the journal (boot `c2e63ce6`), with the useful lines
+only:
+
+```
+15:41:00 steam[13689]: os-session-select: asked for 'plasma' from 'Game Mode'; next session: gnome
+15:41:00 os-session-select: asking Steam to close, which ends Game Mode.
+15:41:03 steam: Shutdown;  gamescope-wl SEGV on exit (our patched NVIDIA gamescope; mangoapp ABRT)
+15:41:04 systemd[1989]: gamescope-session-plus@steam.service: Consumed 42s CPU ...
+15:41:06 gdm-autologin: session opened for user rorobeckley
+15:41:07 gnome-session-i[18098]: A graphical session is already running!   → gnome-session-init-worker ABRT
+15:41:07 Session 6 logged out … and GDM's greeter comes back, timed login fires again, ×45
+```
+
+Read it top to bottom and everything is right until the second-to-last line.
+The bench 3 fix worked (`next session: gnome`). Steam shut down. The Game Mode
+unit stopped and said how much processor time it had used, which is what a unit
+says when it is over. The password-free login worked. And then GNOME said a
+graphical session was already running — and it was not.
+
+The crash on the third line is our patched gamescope falling over as it exits,
+with mangoapp behind it. **That one is cosmetic.** It happens after Game Mode
+is already finished, it happened on the benches that worked too, and nothing
+downstream depends on a clean exit. Ignore it; it is written here only so the
+next reader does not chase it.
+
+#### What was actually wrong: a signpost nobody took down
+
+Your computer runs a small manager of its own for your account — systemd's
+*user manager*. That manager keeps a set of switches called **targets** that
+describe what state you are in. One of them, `graphical-session.target`, means
+"this person has a graphical session on the screen right now". Anything that
+should only run while you can see a screen hangs off it.
+
+`gnome-session` looks at that switch before it starts. If it is already on, it
+refuses — and it is right to refuse, because two graphical sessions fighting
+over one screen is worse than none.
+
+In Royce's user manager, `graphical-session.target` went on at 15:39:48 when
+Game Mode started, **and it never went off again**. There is no "Stopped target
+graphical-session.target" anywhere between then and the reboot. Every one of
+the forty-five attempts walked into the same standing signpost.
+
+#### Why nothing took it down: `BindsTo` points the other way
+
+Terra's Game Mode unit, `gamescope-session-plus@.service`, contains:
+
+```
+BindsTo=graphical-session.target
+Before=graphical-session.target
+```
+
+This is the whole bug, and it reads like the opposite of what it says.
+`BindsTo` points **from the service to the target**: it means *"if the TARGET
+stops, stop ME as well."* It does not mean the reverse. Nothing anywhere says
+"when Game Mode ends, take the signpost down".
+
+The launcher script does not do it either — `gamescope-session-plus` only runs
+`systemctl --user --wait start gamescope-session-plus@steam.service` and has a
+trap that stops that one unit. The target is never mentioned.
+
+GNOME's own logout, by contrast, stops everything: that is what the 15:39:48
+lines show when Royce left GNOME for Game Mode in the first place.
+
+#### Why it only started failing now: lingering
+
+This is the part that makes the bug look like it appeared from nowhere.
+
+Until this week the user manager died a few seconds after the last session
+closed — last night's journal even shows `Stopped target
+graphical-session.target` eleven seconds after a session ended — and the next
+login got a **brand-new manager** with no stale switches in it. The bug was
+there all along; the manager's death was quietly cleaning up after it.
+
+Since **2026-09-20 00:43** this account has **lingering** switched on
+(`/var/lib/systemd/linger/rorobeckley`). Lingering means the account keeps its
+manager running from switch-on to switch-off, whether you are logged in or not.
+The journal does not record who switched it on; the likely candidates are
+Homebrew's services or Decky, both of which want a manager that outlives a
+session. Nothing was wrong with switching it on. It simply meant that manager
+pid 1989 lived from boot to reboot and carried the stale signpost across the
+switch.
+
+Plasma never noticed because `startplasma` reloads the manager on the way in.
+GNOME checks. GNOME was right.
+
+#### The fix, in three layers
+
+Nothing here changes lingering. It is a reasonable setting, something else on
+the machine wants it, and a fix that depends on it being off would break again
+the next time something switches it on.
+
+**1. Our own switch ends Game Mode properly.**
+`/usr/libexec/os-session-select` now waits for Steam to *actually be gone* (up
+to ten seconds, rather than walking away the moment the request is accepted),
+then stops `graphical-session.target`, `graphical-session-pre.target` and —
+where the image has one — `gamescope-session.target`. Stopping
+`graphical-session.target` also stops Game Mode's own unit, because of that
+`BindsTo`, and it is the unit stopping that ends the logind session. Then it
+**reads back** whether the target really stopped; if it has not after five
+seconds it says so loudly, in the journal and on standard error, and falls back
+to `loginctl terminate-session` exactly as before.
+
+**2. Terra's unit does it too, however the session ended.** Our program is not
+the only way out of Game Mode: Steam has its own paths, and Steam can crash. So
+a drop-in,
+`/usr/lib/systemd/user/gamescope-session-plus@.service.d/50-aquarius-stop-targets.conf`,
+adds one line to Terra's unit:
+
+```
+[Service]
+ExecStopPost=-/usr/bin/systemctl --user --no-block stop graphical-session.target graphical-session-pre.target
+```
+
+The leading `-` means a failure there is not a failure of the unit, and
+`--no-block` means we ask rather than stand and wait — a stop path that can hang
+is a machine that will not let go of a session.
+
+**3. A login can no longer loop.** The deepest problem on the bench was not the
+refused desktop; it was that the computer kept trying and never stayed on screen
+long enough to click anything. GDM runs `/etc/gdm/PostSession/Default` as root
+at every session end, and that script now calls
+`/usr/libexec/aquarius-login-loop-guard`. The guard notes the time under
+`/run/aquarius/login-loop-<user>` and, if **three sessions end inside sixty
+seconds**, switches the password-free login off and tells GDM to re-read its
+settings, leaving one plain sentence in the journal:
+
+> the password-free login was switched off because logging in kept failing; you
+> will be asked for your password. See docs/restart/game-mode.md
+
+A password box is a computer you can still use. The guard also attempts the
+repair first: when that person has no session left, it tells their own systemd
+manager to lower the two targets, so the *next* login succeeds before the guard
+ever needs to trip.
+
+**And `aq game status` now tells you both facts** that decided this: whether the
+account lingers, in plain words, and whether `graphical-session.target` is on in
+the user manager right now. They are the first two things anyone will want when
+a switch misbehaves, and both are awkward to look up by hand.
+
 ### Why "Log Out" still works
 
 The automatic login stays switched on after a switch has finished. Left alone,
@@ -769,6 +923,84 @@ program has to run once with the new code before the rest of this is honest.*
       it drives the Steam interface.
 - [ ] Plug the pad in **with its cable** instead (id `1532:1026`): Linux calls
       it a `USB HID Gamepad` and Steam drives it there too.
+
+### B5. The switch leaves nothing behind (added 2026-09-20)
+
+*This is the bench 4 fix: the run where the login screen logged Royce in
+forty-five times in ninety seconds. Every item here is about the same thing —
+whether ending Game Mode really ends it.*
+
+**The plain round trip, twice**
+
+- [ ] Log into **GNOME**. Press **Game Mode** in the app grid, let Steam take
+      the screen, then Steam's power menu → **Switch to Desktop**. You land in
+      GNOME. **Once.** No second login screen, no flicker back.
+- [ ] Do exactly the same thing again without restarting in between. It has to
+      work the second time too — the bug lived in leftovers from the first
+      round.
+- [ ] After each round trip:
+      `journalctl --user -b | grep graphical-session.target`
+      must show a **Stopped** line, not only a **Reached** line.
+- [ ] `journalctl -t os-session-select -b` shows the new sentences: *asking
+      Steam to close*, *Steam has closed*, *telling your account's systemd
+      manager the graphical session is over*, and *the graphical session is
+      properly over*. If instead it says **WARNING: graphical-session.target is
+      STILL running**, the fix did not take — write down everything after that
+      line.
+
+**With lingering deliberately switched on**
+
+*This is the condition that made the bug appear. It has to pass here.*
+
+- [ ] `loginctl enable-linger $USER`, then restart the computer so the manager
+      really starts at boot.
+- [ ] `aq game status` says **Lingering for <you>: yes**.
+- [ ] Do the GNOME round trip above, twice. It must behave identically.
+- [ ] When you are done, put it back the way you found it if you want to:
+      `loginctl disable-linger $USER`. (Leaving it on is fine — that is the
+      point of the fix.)
+
+**Pull the rug out from under Steam**
+
+*The normal way out is Steam → Power → Switch to Desktop; do that first. Then
+prove the ugly paths also come back.*
+
+- [ ] In Game Mode, from a text login (Ctrl+Alt+F3) or over SSH:
+      `systemctl --user kill gamescope-session-plus@steam.service`
+- [ ] The desktop comes back and **stays**. This is the drop-in doing the work,
+      not `os-session-select` — our program never ran.
+- [ ] `journalctl --user -b | grep graphical-session.target` again shows a
+      **Stopped** line.
+- [ ] Log in to the desktop afterwards and confirm it starts normally, with no
+      *A graphical session is already running!* in `journalctl -b`.
+
+**The loop guard: a login that fails must stop asking**
+
+- [ ] Break a login on purpose, by re-creating the exact bench-4 condition —
+      and nothing else, because this is fully reversible and touches no files.
+      From a text login (Ctrl+Alt+F3) or over SSH, with lingering on:
+      `loginctl enable-linger $USER`, then
+      `systemctl --user start graphical-session.target`, then
+      `sudo /usr/libexec/aquarius-session-root switch-login on $USER` and
+      `sudo /usr/libexec/aquarius-session-root reload-gdm`.
+      That leaves the signpost standing and tells the login screen to log you
+      straight in — which is precisely what GNOME refuses to start next to.
+- [ ] Watch what happens. After **three** failed logins inside a minute the
+      login screen must **stop** at a password box and stay there.
+- [ ] `journalctl -t aquarius-login-loop-guard -b` shows the sentence *the
+      password-free login was switched off because logging in kept failing*.
+- [ ] Undo it: back at the text login,
+      `systemctl --user stop graphical-session.target graphical-session-pre.target`.
+      Then type your password at the login screen and confirm the desktop comes
+      back normally. Nothing was edited, so there is nothing else to put back.
+
+**Nothing normal got caught by the guard**
+
+- [ ] Log out and back in three times in a row *deliberately and successfully*,
+      at a human pace. Nothing should happen — the guard counts session **ends**
+      within sixty seconds, and three successful logins a minute apart are not a
+      loop. Confirm with `journalctl -t aquarius-login-loop-guard -b` that it
+      said nothing about switching anything off.
 
 ### C. The same from Plasma
 
