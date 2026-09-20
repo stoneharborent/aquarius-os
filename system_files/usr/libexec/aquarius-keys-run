@@ -118,6 +118,53 @@ if ! grep -Eq '^[[:space:]]*-[[:space:]]+(name|remap):' "${AQ_PROFILE}"; then
 fi
 
 # =============================================================================
+# 2a. NOT IN GAME MODE
+# =============================================================================
+# ⚠️ THIS SECTION EXISTS BECAUSE OF THE BENCH RUN OF 2026-09-19.
+#
+# Game Mode is Steam owning the whole screen, driven from the sofa with a
+# controller. There is no desktop there: no windows, no "which app is
+# focused?", nothing for a keyboard remapper to remap FOR. But Game Mode is a
+# graphical session like any other, so systemd started this service inside it,
+# and the journal of that evening shows what happened next — it waited thirty
+# seconds for "the desktop's screen", gave up, started the remapper anyway
+# with no Wayland connection to talk to, and took exclusive hold of four
+# keyboards. One of them was the KEYBOARD interface of Royce's game controller.
+#
+# (That was not what killed the controller — the remapper never touched its
+# gamepad interface, and the real cause was a missing permission on the pad's
+# raw device; see docs/restart/gaming.md. But holding a controller's keyboard
+# interface for no reason, while a game is running, is a place bugs come from.)
+#
+# So: recognise Game Mode and stop. The exit status matters — 64 is one of the
+# two statuses named in RestartPreventExitStatus= in aquarius-keys.service, so
+# systemd takes this as "stopped on purpose, do not start it again" instead of
+# restarting it every two seconds for the whole gaming session.
+#
+# HOW GAME MODE NAMES ITSELF. The gamescope session sets XDG_CURRENT_DESKTOP
+# to "gamescope". As everywhere else in this script that variable may not have
+# reached us yet, so systemd's own copy is asked as well, and finally whether
+# gamescope is simply running.
+# =============================================================================
+aq_in_game_mode() {
+    local d="${XDG_CURRENT_DESKTOP:-}"
+    if [ -z "${d}" ] && command -v systemctl > /dev/null 2>&1; then
+        d="$(systemctl --user show-environment 2> /dev/null \
+            | sed -n 's/^XDG_CURRENT_DESKTOP=//p' | tail -n 1)"
+    fi
+    case "${d}" in
+        *[Gg][Aa][Mm][Ee][Ss][Cc][Oo][Pp][Ee]*) return 0 ;;
+    esac
+    [ -z "${d}" ] && pgrep -x gamescope > /dev/null 2>&1 && return 0
+    return 1
+}
+
+if aq_in_game_mode; then
+    say "this is Game Mode, not a desktop — there are no keys to remap here."
+    exit "${AQ_EXIT_NOTHING_TO_DO}"
+fi
+
+# =============================================================================
 # 2b. WAIT UNTIL THERE IS ACTUALLY A DESKTOP TO ATTACH TO
 # =============================================================================
 # ⚠️ THIS SECTION EXISTS BECAUSE OF THE BENCH TEST, 2026-09-03.

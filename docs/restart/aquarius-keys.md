@@ -594,6 +594,25 @@ remapped" has a place to start.
 
 ---
 
+## Game Mode does not get remapped (added 2026-09-19)
+
+In Game Mode there is no desktop — Steam owns the whole screen and a
+controller drives it — so there is nothing for Mac-style shortcuts to apply
+to, and Aquarius Keys stops as soon as it recognises the gamescope session.
+It says one line in the journal (`this is Game Mode, not a desktop`) and does
+not try again for the rest of that session.
+
+Before this, on the bench of 2026-09-19, it waited thirty seconds for a
+desktop screen that was never coming, started anyway, and took exclusive hold
+of four keyboards — including the keyboard interface built into a game
+controller. Nothing broke, but a remapper holding a controller while a game is
+running is not a place to leave things.
+
+Your keys are exactly as they were the moment you come back to the desktop:
+the service starts again with the session.
+
+---
+
 ## The Aquarius Session (labwc) — gap now closed
 
 **On GNOME — which is what AquariusOS boots into today — everything above

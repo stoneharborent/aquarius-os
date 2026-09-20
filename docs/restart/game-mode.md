@@ -228,13 +228,23 @@ does this with GDM. Three moving parts:
    `/var/lib/AccountsService/users/<your name>`, as `Session=gnome`,
    `Session=plasma` or `Session=gamescope-session-steam`. GDM reads it.
 2. **Getting back in without a password** uses GDM's *timed* login — "log this
-   person in one second after the login screen appears". Not GDM's *automatic*
-   login, which looks like the same thing and is not: automatic login fires once
-   per boot and is then spent, so it would take you into Game Mode and do
-   nothing on the way back. (The mirror image is true at boot: GDM builds the
-   first login screen of a boot with timed login *disallowed*, so `aq game
-   boot on` writes the automatic one. Both facts are in GDM's own source —
-   `gdm-local-display-factory.c` — and both were learned the hard way.)
+   person in one second after the login screen appears" — **together with**
+   GDM's *automatic* login, for the same person. Both, every time, since
+   2026-09-19. They are different things and both are needed:
+
+   * the *timed* login is the one that fires on a login screen shown after a
+     logout, which is what a switch is;
+   * the *automatic* login is what GDM honours at boot (`aq game boot on`),
+     because GDM builds the first login screen of a boot with timed login
+     *disallowed* (`gdm-local-display-factory.c`);
+   * and since **GDM 50**, the daemon **refuses the timed login unless the
+     automatic-login keys are set for that same person**. Writing only the
+     timed ones — Nobara's recipe, and ours until 2026-09-19 — gives you a
+     password box that also flickers, because the login screen retries every
+     couple of seconds. See "Bench 2" below for the journal line that says so.
+
+   All five lines are written by one job, `switch-login on <you>`, and all five
+   are taken off by `switch-login off`.
 3. **`systemctl reload gdm`** so GDM re-reads that. Reload, never restart —
    restarting the login screen kills every session on the machine at once and
    reliably ends in a black screen. (A reload is a SIGHUP, and GDM's `main.c`
@@ -270,7 +280,7 @@ computer rather than about a person.
 | File | What it does |
 | --- | --- |
 | `/usr/libexec/os-session-select` | The hinge. Steam's own `steamos-session-select` looks for exactly this path and hands over to it. Writes down where you are going, and — from Game Mode — ends the session. Everything it decides goes to the journal: `journalctl -t os-session-select`. |
-| `/usr/libexec/aquarius-session-root` | The root half: the `Session=` line, the timed login (a switch), the automatic login (a boot), the GDM reload, the boot setting. Behind polkit. |
+| `/usr/libexec/aquarius-session-root` | The root half: the `Session=` line, the password-free login for a switch (`switch-login`, which writes the timed **and** automatic blocks), the automatic login on its own for a cold boot (`auto-login`), the GDM reload, the boot setting. Behind polkit. |
 | `/etc/gamescope-session-plus/sessions.d/steam` | Starts Game Mode at the screen's preferred resolution. Read by Terra's session script through a hook it already has. |
 | `/usr/libexec/aquarius-game-mode` | The "Game Mode" button: warn, switch, log out. |
 | `/usr/libexec/aquarius-login-mode` | Runs once per boot, before the login screen, and makes it match `/etc/aquarius/login-mode`. |
@@ -288,7 +298,7 @@ AquariusOS behaviour is added alongside, through hooks those packages already
 provide. A forked session script is a fork we would maintain for ever, and the
 first upstream fix we missed would be a bench day nobody could explain.
 
-### What went wrong on 2026-09-19
+### Bench 1, 2026-09-19 — what went wrong the first time
 
 The first real use of the switch, on the bench machine with the Samsung
 Odyssey Ark, found four things. Each is fixed; each is written down here so
@@ -323,6 +333,157 @@ boot on` could never have worked**, because it wrote a *timed* login and GDM
 disallows timed login on the first login screen of a boot. It now writes the
 *automatic* one, which is what GDM honours there.
 
+### Bench 2, 2026-09-19 — the password box that flickered, and a dead controller
+
+The second bench run, on image `44.20260920` with GDM 50.3 on Fedora 44. The
+switch out of the desktop worked — the desktop logged out properly, which is
+bench 1's fix holding — and then three separate things went wrong. All three
+are fixed; here is what each one was, in plain language, so that the next
+person recognises it instead of rediscovering it.
+
+#### Bug 1 — the login screen asked for a password, and the box kept going dead
+
+**What it looked like.** Pressing the "Game Mode" launcher logged the desktop
+out and landed on the login screen asking for a password. While Royce typed,
+the password box went inactive for a moment, twice.
+
+**What it was.** GDM 50 changed the rule. The login screen asks the GDM daemon
+to begin the timed login, and the daemon now checks the **automatic**-login
+settings before agreeing (`daemon/gdm-session.c`,
+`gdm_session_handle_client_begin_auto_login`):
+
+```c
+gdm_settings_direct_get_boolean (GDM_KEY_AUTO_LOGIN_ENABLE, &enabled);
+gdm_settings_direct_get_string  (GDM_KEY_AUTO_LOGIN_USER, &allowed);
+if (!enabled || allowed == NULL || g_strcmp0 (allowed, username) != 0) {
+        ... "Autologin not permitted for user %s"
+```
+
+AquariusOS wrote only the `TimedLogin*` lines — Nobara's recipe, which worked
+on older GDM. So the countdown fired, the daemon said no, and the login screen
+tried again about every two seconds. Every keypress restarted its timer, and
+each time the timer fired the password box was disabled for a moment while the
+refusal came back. That is the flicker. In the greeter's journal it is this
+line, over and over:
+
+```
+gnome-shell[14056]: Exception in callback for signal: release: Gio.DBusError:
+GDBus.Error:org.freedesktop.DBus.Error.AccessDenied: Autologin not permitted
+for user rorobeckley
+```
+
+Everything else in the mechanism was fine and was checked in GDM's source: the
+reload really is a SIGHUP and really does re-read `custom.conf`
+(`daemon/main.c`, `on_sighup_cb`), and timed login is allowed on an ordinary
+login screen.
+
+**The fix.** A switch now writes **all five lines** — the three `TimedLogin*`
+ones and the two `AutomaticLogin*` ones — in one job, `switch-login on <you>`,
+and takes all five off again with `switch-login off`. (That job used to be
+called `timed-login`; the name stopped being true.)
+
+**What you will actually see.** Two different things, both password-free, and
+both correct:
+
+* the **first** switch after a boot where you typed your password lands you
+  straight in the new session with no login screen at all. GDM allows its
+  direct automatic login once in the life of the running GDM, on any login
+  screen on this seat — not only the first of a boot
+  (`daemon/gdm-manager.c`, `get_automatic_login_details`);
+* **after that** it is spent, so later switches show the login screen for
+  about a second and it logs you in by itself. That is the timed login, which
+  now works because the automatic keys are there beside it.
+
+#### Bug 2 — the login screen was running the tidy service
+
+**What it looked like.** Nothing, on screen. In the journal, twelve seconds
+after every logout and four seconds after every boot:
+
+```
+systemd[13964]: Starting aquarius-game-tidy.service - Take the Game Mode
+automatic login back off once the desktop is up...
+pkexec[16481]: gdm-greeter: The value for the SHELL variable was not found in
+the /etc/shells file [USER=root] [CWD=/run/gdm/home/gdm-greeter]
+[COMMAND=/usr/libexec/aquarius-session-root switch-login off]
+os-session-select[16456]: NOTE: could not switch the automatic login back off.
+```
+
+**What it was.** The tidy service — the one that makes **Log Out** mean Log Out
+again after a switch — is meant for people, never for the login screen, and it
+was kept out with `ConditionUser=!@system`. That line stopped working at GDM
+50. GDM 50 no longer runs the login screen as an account called `gdm`: it runs
+it as a systemd **dynamic user** named `gdm-greeter`, with a throwaway home
+under `/run/gdm` and a user number handed out from the 61184–65519 range. That
+is *above* the ordinary range, not below it, so "not a system account" does not
+catch it.
+
+It only ever failed because pkexec refuses an account whose shell is not in
+`/etc/shells`. After bug 1's fix it would no longer have failed — and it would
+have taken the password-free login off *in the middle of the switch that login
+exists for*, putting the password box straight back.
+
+**The fix.** Two belts. The unit gets a second `ConditionUser=!gdm-greeter`
+(several of those lines are ANDed), and `os-session-select --tidy` refuses,
+before doing anything, for a caller whose user number is outside 1000–59999,
+whose `$HOME` is under `/run/gdm`, or whose desktop calls itself a Greeter.
+
+**And the same hole in Aquarius Keys.** The keyboard remapper is kept out of
+the login screen by the same `!@system` line, for the 2026-09-03 reason (two
+remappers fighting over the keyboard, which looks exactly like "Mac mode
+stopped working"). The bench journal shows it running at the GDM 50 login
+screen again — `aquarius-keys: desktop is 'GNOME-Greeter:GNOME'` — so
+`aquarius-keys.service` gets the same second line. This was never intentional:
+the unit's own comments say the login screen must not run it.
+
+#### Bug 3 — the controller was seen by Steam and did nothing
+
+**What it looked like.** In Game Mode, the Razer Raiju V3 Pro was listed by
+Steam, lit up, and completely dead. No error message anywhere.
+
+**What it was.** A controller shows up as two things at once. The simple view
+(`/dev/input/event*`) is buttons and sticks, and Linux hands it to whoever is
+at the screen automatically — that part was fine, and it is why the pad looked
+present. The raw view (`/dev/hidraw*`) is the real conversation with the pad's
+chip, and Linux keeps it for root unless a rule says otherwise. Steam drives
+this pad over the raw view. On the bench machine:
+
+```
+/dev/hidraw5   crw------- root root  HID_ID=0003:00001532:00001027  (no ACL)
+/dev/hidraw10  crw------- root root  HID_ID=0003:00001532:00001027  (no ACL)
+/dev/input/event20  TAGS=:uaccess:seat:  user:rorobeckley:rw-        (fine)
+```
+
+Steam's own log says the same story from its side: it fell back to the simple
+view with a generic mapping, could not read the pad's serial number
+("Controller has an Invalid or missing unit serial number"), and then
+"Controller device closed after hid_read failure" at the exact second the
+kernel logged the pad re-appearing with a different product id — 1026 became
+1027, because the mode switch on the pad had been moved.
+
+Valve's list (`steam-devices`, which the image installs) covers Razer 0401,
+1000, 1004, 1007, 1008, 1009, 100A and 100b. Not 1026 or 1027. The community
+`game-devices-udev` rules do not have them either, and no such package exists
+in Fedora 44 or in Terra, so there was nothing to install.
+
+**The fix.** AquariusOS now ships its own rule file,
+`/usr/lib/udev/rules.d/70-aquarius-controllers.rules`, with both of the
+Raiju's ids in both of the shapes a rule needs — the USB one and the Bluetooth
+one — each tagged `uaccess`, which is how Linux says "this belongs to whoever
+is logged in at this screen". That file's header explains what hidraw is and
+how to add the next controller; `build_files/68-gaming.sh` reads every id back
+out of the finished image and runs `udevadm verify` over the file, because
+udev ignores a rule file it cannot parse and says nothing about it.
+
+#### And one thing that was not a bug: Aquarius Keys in Game Mode
+
+In Game Mode the keyboard remapper waited thirty seconds for "the desktop's
+screen", gave up, started anyway with no Wayland connection, and took hold of
+four keyboards — including the Raiju's own keyboard interface. It did **not**
+touch the pad's gamepad interface, so it was not the cause of bug 3. But a
+keyboard remapper has no business in Game Mode at all: there is no desktop
+there to remap for. It now recognises a gamescope session, says so in one
+line, and stops in the way that tells systemd not to start it again.
+
 ### Why "Log Out" still works
 
 The automatic login stays switched on after a switch has finished. Left alone,
@@ -331,8 +492,9 @@ back in — Log Out would look broken for the rest of the day.
 
 So it is taken back off twice: once at every boot (`aquarius-login-mode.service`,
 on a machine set to `mode=desktop`) and once whenever a desktop session starts
-(`aquarius-game-tidy.service` — for people's accounts only; the login screen
-is itself a GNOME Shell run by the `gdm` account, and it is kept out). If you ever see `aq game status` mention that the
+(`aquarius-game-tidy.service` — for people's accounts only; the login screen is
+itself a GNOME Shell, run since GDM 50 by a throwaway account called
+`gdm-greeter`, and it is kept out twice over — see Bench 2, bug 2). If you ever see `aq game status` mention that the
 automatic login is on, that is normal in the middle of a switch and it will clear
 itself; nothing needs doing.
 
@@ -423,6 +585,62 @@ installing first.*
 - [ ] With no controller in hand, Steam's button hints are keyboard and mouse.
       If they are not, **Settings → Controller** names the controller Steam is
       hearing.
+
+### B3. No password, no greeter service, a live controller (added 2026-09-19)
+
+*After `bootc upgrade` and a restart. The restart matters: the boot-time
+program has to run once with the new code before the rest of this is honest.*
+
+**The switch, twice each way, with no password**
+
+- [ ] Press **Game Mode** in the app grid. You arrive in Steam without typing
+      anything. (The first switch after a boot may skip the login screen
+      entirely; that is the automatic login, and it is correct.)
+- [ ] Steam's power menu → **Switch to Desktop**. You arrive back in the
+      desktop you came from, without typing anything.
+- [ ] Do both again, straight away. The second round trip is the one that used
+      to ask: this time the login screen appears for about a second and logs
+      you in by itself.
+- [ ] At no point does the password box appear and go grey, appear and go
+      grey. If it ever does again, `journalctl -b -u gdm` at the login screen
+      is where "Autologin not permitted for user" would be.
+
+**Log Out still means Log Out**
+
+- [ ] From the desktop, choose **Log Out**. The login screen appears and asks
+      who you are — it does NOT log you straight back in.
+- [ ] Restart the machine. The login screen asks who you are. (Both of these
+      prove the password-free login really was taken off again.)
+
+**The login screen is not running our services**
+
+- [ ] `journalctl -b | grep gdm-greeter` mentions **no** pkexec line about
+      `aquarius-session-root`, and no `aquarius-game-tidy`.
+- [ ] `journalctl -b -t aquarius-keys | grep Greeter` is empty — the remapper
+      no longer starts at the login screen.
+
+**The Raiju, in both of its modes**
+
+- [ ] Plug the Raiju in **with its cable**, in Game Mode. Steam's
+      **Settings → Controller** lists it, and it actually moves the Steam
+      interface — sticks, buttons, the lot.
+- [ ] Move it to its **wireless dongle**. It works there too, without
+      unplugging anything else or restarting Steam.
+- [ ] From a terminal, with the pad connected:
+      `ls -l /dev/hidraw*` shows its file, and
+      `getfacl /dev/hidrawN` names you with `rw-`. (Root-only means the rule
+      did not fire; `udevadm info /dev/hidrawN` prints the ids to check
+      against `/usr/lib/udev/rules.d/70-aquarius-controllers.rules`.)
+- [ ] Play something with it for a few minutes. The pad does not go dead when
+      it re-connects.
+
+**The status command**
+
+- [ ] `aq game status` prints, under "What the login screen has been told",
+      both "timed login lines" and "automatic login lines" — **both empty**
+      once you are settled in the desktop, and both filled in during a switch.
+- [ ] Its wording no longer suggests the timed login alone is what a switch
+      uses.
 
 ### C. The same from Plasma
 
