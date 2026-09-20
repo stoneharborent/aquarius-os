@@ -404,6 +404,16 @@ on:
       # controller badge, put together during the build. Same arrangement as
       # every side branch: builds and checks, never publishes.
       - claude/nice-fermi-w6lk1k
+      # The Decky bench bug, 2026-09-20: Decky installed cleanly and then never
+      # appeared in Game Mode, because SELinux will not let systemd run a file
+      # that is labelled as one of a person's documents (`203/EXEC`, `avc:
+      # denied { execute }`). The install now writes a LASTING SELinux rule for
+      # the downloaded loader and reads the label back before it calls itself
+      # finished. Step 81 reads the whole of that back out of the finished
+      # image — the two SELinux packages, the labelling program, and the fact
+      # that `aq decky` really calls it. Same arrangement as every side branch:
+      # builds and checks, never publishes.
+      - fix/decky-selinux
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
