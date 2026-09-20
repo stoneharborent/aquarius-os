@@ -710,6 +710,14 @@ aq_file_has /usr/libexec/os-session-select "asked for 'plasma' from 'Game Mode'"
     "with the 2026-09-20 journal line written down beside it, so the next reader recognises it"
 
 say "'aq game status' no longer calls the timed login 'a switch' on its own"
+say "'aq game status' reports the two facts that decided the bench-4 loop"
+aq_file_has /usr/bin/aq 'loginctl show-user "\$\{USER\}" -p Linger --value' \
+    "'aq game status' says whether this account lingers"
+aq_file_has /usr/bin/aq 'Lingering means your account keeps a small manager of its own' \
+    "and explains, in plain words, what lingering means for the switch"
+aq_file_has /usr/bin/aq 'is-active --quiet graphical-session\.target' \
+    "and whether a graphical session is still marked as running"
+
 aq_file_has /usr/bin/aq 'a switch sets both; a boot into Game Mode sets the automatic ones' \
     "aq game status explains that a switch sets both sets of lines"
 
