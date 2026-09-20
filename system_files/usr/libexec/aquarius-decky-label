@@ -27,8 +27,8 @@
 #
 # ⚠️ THAT IS EXACTLY WHAT HAPPENED ON ROYCE'S BENCH PC on 20 September 2026,
 # with a Decky that had installed with no errors at all. Decky's own installer
-# never meets this because it was written for SteamOS and Bazzite, which do not
-# guard home folders the way Fedora does.
+# never meets this because it was written for SteamOS and the gaming systems
+# built on it, which do not guard home folders the way Fedora does.
 #
 # This program gives the file the label `bin_t` — "this is a program" — which
 # systemd is allowed to run.
