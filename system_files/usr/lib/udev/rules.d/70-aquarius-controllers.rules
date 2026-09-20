@@ -1,0 +1,80 @@
+# =============================================================================
+# AquariusOS — controllers Steam's own rules do not cover
+# =============================================================================
+# WHAT THIS IS, IN PLAIN ENGLISH
+#
+# A game controller plugged into Linux shows up as more than one thing at once.
+# Two of them matter here:
+#
+#   /dev/input/event*   THE SIMPLE VIEW. "Button 3 went down, left stick moved
+#                       to here." Every game and every desktop can read this,
+#                       and Linux hands it to whoever is sitting at the screen
+#                       automatically.
+#
+#   /dev/hidraw*        THE RAW VIEW. The actual conversation with the pad's
+#                       own chip: which model are you, what is your serial
+#                       number, set the light bar to this colour, rumble like
+#                       that, here is the gyroscope. Linux does NOT hand this
+#                       out automatically. By default it is root's alone.
+#
+# Steam drives every modern controller — PlayStation-class pads, and the many
+# pads that pretend to be one — over the raw view. So a pad whose /dev/hidraw*
+# file is root-only is a pad Steam can SEE and cannot USE. That is the exact
+# shape of the fault: the controller appears in Steam's list, and nothing you
+# press does anything. There is no error message anywhere, because from Linux's
+# point of view nothing went wrong — Steam asked for something it is not
+# allowed to have, and stopped asking.
+#
+# WHAT `TAG+="uaccess"` DOES. It tells systemd "this device belongs to whoever
+# is logged in at this screen". systemd then adds that person to the file's
+# permissions, and takes it away again when they log out. It is the same
+# mechanism that gives you your webcam and your sound card, and it is what
+# Valve's own rules use.
+#
+# WHY WE SHIP THIS AT ALL. The `steam-devices` package (installed by
+# build_files/68-gaming.sh) carries Valve's list, and it is long — but it is a
+# list of exact USB ids, and a pad that is not on it gets nothing. Valve's
+# Razer entries stop at product id 0x100b. The community `game-devices-udev`
+# rules do not have these either, and as of Fedora 44 no such package exists in
+# Fedora or Terra. So this file is ours.
+#
+# ⚠️ THIS IS WHERE A NEW CONTROLLER GOES. When a pad is seen by Steam but does
+# nothing, look it up with `lsusb` (or `udevadm info /dev/hidraw5`), find the
+# `1234:5678` pair, and add a stanza here in the same shape. Two lines per
+# device — one for the cable or dongle, one for Bluetooth — and one comment
+# line saying what the device is in words. Then add its ids to the read-back in
+# build_files/68-gaming.sh, so a future edit cannot quietly lose it.
+#
+# FOUND ON THE BENCH, 2026-09-19. Royce's Razer Raiju V3 Pro was listed by
+# Steam in Game Mode and did nothing at all. Its /dev/hidraw files were
+# `crw------- root root` with no permission handed to him, while its
+# /dev/input/event file was tagged `uaccess` and perfectly usable — which is
+# why the pad looked present. Steam's own log says the rest: it read the pad
+# through the simple view with a generic mapping, could not read its serial
+# number ("Controller has an Invalid or missing unit serial number"), and then
+# "Controller device closed after hid_read failure" at the exact second the
+# pad changed mode and re-appeared with a different product id.
+#
+# THE PAD HAS TWO IDENTITIES, AND BOTH ARE HERE. The Raiju V3 Pro reports
+# 1532:1026 in wired mode and 1532:1027 over its HyperSpeed wireless dongle —
+# and it switches between them live, as the mode switch on the pad is moved.
+# A rule for only one of them is a controller that works until it does not.
+#
+# Plain-language guide: docs/restart/gaming.md
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Razer Raiju V3 Pro
+# -----------------------------------------------------------------------------
+# Wired mode (USB cable), and the HyperSpeed wireless dongle. `ACTION!="remove"`
+# means "whenever this device appears or changes, but not as it goes away",
+# which is the form every rule in Valve's own file uses.
+ACTION!="remove", KERNEL=="hidraw*", ATTRS{idVendor}=="1532", ATTRS{idProduct}=="1026", MODE="0660", TAG+="uaccess"
+ACTION!="remove", KERNEL=="hidraw*", ATTRS{idVendor}=="1532", ATTRS{idProduct}=="1027", MODE="0660", TAG+="uaccess"
+
+# The same pad over Bluetooth. A Bluetooth device has no USB vendor and product
+# attributes to match on — the ids live in the name of the parent device
+# instead, which is why this shape looks different for the same pad. Valve's
+# rules do exactly this for their other Razer entries.
+ACTION!="remove", KERNEL=="hidraw*", KERNELS=="*1532:1026*", MODE="0660", TAG+="uaccess"
+ACTION!="remove", KERNEL=="hidraw*", KERNELS=="*1532:1027*", MODE="0660", TAG+="uaccess"

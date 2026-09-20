@@ -435,6 +435,45 @@ screen again — `aquarius-keys: desktop is 'GNOME-Greeter:GNOME'` — so
 `aquarius-keys.service` gets the same second line. This was never intentional:
 the unit's own comments say the login screen must not run it.
 
+#### Bug 3 — the controller was seen by Steam and did nothing
+
+**What it looked like.** In Game Mode, the Razer Raiju V3 Pro was listed by
+Steam, lit up, and completely dead. No error message anywhere.
+
+**What it was.** A controller shows up as two things at once. The simple view
+(`/dev/input/event*`) is buttons and sticks, and Linux hands it to whoever is
+at the screen automatically — that part was fine, and it is why the pad looked
+present. The raw view (`/dev/hidraw*`) is the real conversation with the pad's
+chip, and Linux keeps it for root unless a rule says otherwise. Steam drives
+this pad over the raw view. On the bench machine:
+
+```
+/dev/hidraw5   crw------- root root  HID_ID=0003:00001532:00001027  (no ACL)
+/dev/hidraw10  crw------- root root  HID_ID=0003:00001532:00001027  (no ACL)
+/dev/input/event20  TAGS=:uaccess:seat:  user:rorobeckley:rw-        (fine)
+```
+
+Steam's own log says the same story from its side: it fell back to the simple
+view with a generic mapping, could not read the pad's serial number
+("Controller has an Invalid or missing unit serial number"), and then
+"Controller device closed after hid_read failure" at the exact second the
+kernel logged the pad re-appearing with a different product id — 1026 became
+1027, because the mode switch on the pad had been moved.
+
+Valve's list (`steam-devices`, which the image installs) covers Razer 0401,
+1000, 1004, 1007, 1008, 1009, 100A and 100b. Not 1026 or 1027. The community
+`game-devices-udev` rules do not have them either, and no such package exists
+in Fedora 44 or in Terra, so there was nothing to install.
+
+**The fix.** AquariusOS now ships its own rule file,
+`/usr/lib/udev/rules.d/70-aquarius-controllers.rules`, with both of the
+Raiju's ids in both of the shapes a rule needs — the USB one and the Bluetooth
+one — each tagged `uaccess`, which is how Linux says "this belongs to whoever
+is logged in at this screen". That file's header explains what hidraw is and
+how to add the next controller; `build_files/68-gaming.sh` reads every id back
+out of the finished image and runs `udevadm verify` over the file, because
+udev ignores a rule file it cannot parse and says nothing about it.
+
 ### Why "Log Out" still works
 
 The automatic login stays switched on after a switch has finished. Left alone,
@@ -536,6 +575,62 @@ installing first.*
 - [ ] With no controller in hand, Steam's button hints are keyboard and mouse.
       If they are not, **Settings → Controller** names the controller Steam is
       hearing.
+
+### B3. No password, no greeter service, a live controller (added 2026-09-19)
+
+*After `bootc upgrade` and a restart. The restart matters: the boot-time
+program has to run once with the new code before the rest of this is honest.*
+
+**The switch, twice each way, with no password**
+
+- [ ] Press **Game Mode** in the app grid. You arrive in Steam without typing
+      anything. (The first switch after a boot may skip the login screen
+      entirely; that is the automatic login, and it is correct.)
+- [ ] Steam's power menu → **Switch to Desktop**. You arrive back in the
+      desktop you came from, without typing anything.
+- [ ] Do both again, straight away. The second round trip is the one that used
+      to ask: this time the login screen appears for about a second and logs
+      you in by itself.
+- [ ] At no point does the password box appear and go grey, appear and go
+      grey. If it ever does again, `journalctl -b -u gdm` at the login screen
+      is where "Autologin not permitted for user" would be.
+
+**Log Out still means Log Out**
+
+- [ ] From the desktop, choose **Log Out**. The login screen appears and asks
+      who you are — it does NOT log you straight back in.
+- [ ] Restart the machine. The login screen asks who you are. (Both of these
+      prove the password-free login really was taken off again.)
+
+**The login screen is not running our services**
+
+- [ ] `journalctl -b | grep gdm-greeter` mentions **no** pkexec line about
+      `aquarius-session-root`, and no `aquarius-game-tidy`.
+- [ ] `journalctl -b -t aquarius-keys | grep Greeter` is empty — the remapper
+      no longer starts at the login screen.
+
+**The Raiju, in both of its modes**
+
+- [ ] Plug the Raiju in **with its cable**, in Game Mode. Steam's
+      **Settings → Controller** lists it, and it actually moves the Steam
+      interface — sticks, buttons, the lot.
+- [ ] Move it to its **wireless dongle**. It works there too, without
+      unplugging anything else or restarting Steam.
+- [ ] From a terminal, with the pad connected:
+      `ls -l /dev/hidraw*` shows its file, and
+      `getfacl /dev/hidrawN` names you with `rw-`. (Root-only means the rule
+      did not fire; `udevadm info /dev/hidrawN` prints the ids to check
+      against `/usr/lib/udev/rules.d/70-aquarius-controllers.rules`.)
+- [ ] Play something with it for a few minutes. The pad does not go dead when
+      it re-connects.
+
+**The status command**
+
+- [ ] `aq game status` prints, under "What the login screen has been told",
+      both "timed login lines" and "automatic login lines" — **both empty**
+      once you are settled in the desktop, and both filled in during a switch.
+- [ ] Its wording no longer suggests the timed login alone is what a switch
+      uses.
 
 ### C. The same from Plasma
 

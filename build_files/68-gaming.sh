@@ -722,6 +722,72 @@ else
     bad "steam-devices installed no udev rules — controllers would need administrator rights"
 fi
 
+# ------------------------------------------------------------------------------
+# Our own rules, for the controllers Valve's list does not have
+# ------------------------------------------------------------------------------
+# ⚠️ WHY THIS FILE EXISTS, FOUND ON THE BENCH ON 2026-09-19. Steam drives
+# modern controllers over the RAW view of the device (/dev/hidraw*), not the
+# simple button-and-stick view (/dev/input/event*). Linux hands the simple view
+# to whoever is at the screen automatically; it does NOT hand out the raw view.
+# So a pad that is not in some udev rule is a pad Steam lists and cannot use —
+# no error anywhere, it just does nothing. Royce's Razer Raiju V3 Pro was
+# exactly that: its /dev/hidraw files were root-only while its event file was
+# fine. Valve's Razer ids stop at 0x100b; the Raiju is 1026 (wired) and 1027
+# (wireless dongle), and it moves between the two live.
+#
+# The file is copied in wholesale with the rest of system_files at step 50;
+# this puts it in again on purpose, so that this step owns the thing it checks
+# and a reordering of the build cannot quietly leave it out.
+say "Our own controller rules, for the pads Valve's list does not cover"
+install -Dm644 /ctx/system_files/usr/lib/udev/rules.d/70-aquarius-controllers.rules \
+    /usr/lib/udev/rules.d/70-aquarius-controllers.rules
+if cmp -s /ctx/system_files/usr/lib/udev/rules.d/70-aquarius-controllers.rules \
+    /usr/lib/udev/rules.d/70-aquarius-controllers.rules; then
+    ok "/usr/lib/udev/rules.d/70-aquarius-controllers.rules is ours, byte for byte"
+else
+    bad "/usr/lib/udev/rules.d/70-aquarius-controllers.rules is not the file this repository ships"
+fi
+
+AQ_CONTROLLER_RULES="/usr/lib/udev/rules.d/70-aquarius-controllers.rules"
+# Both of the Raiju's identities, in both of the two shapes a rule can take:
+# the USB one (ATTRS{idVendor}/{idProduct}) and the Bluetooth one (KERNELS).
+aq_file_has "${AQ_CONTROLLER_RULES}" 'ATTRS\{idVendor\}=="1532", ATTRS\{idProduct\}=="1026"' \
+    "the Razer Raiju V3 Pro in wired mode (1532:1026) gets the raw device"
+aq_file_has "${AQ_CONTROLLER_RULES}" 'ATTRS\{idVendor\}=="1532", ATTRS\{idProduct\}=="1027"' \
+    "and in wireless mode (1532:1027), which is a different id on the same pad"
+aq_file_has "${AQ_CONTROLLER_RULES}" 'KERNELS=="\*1532:1026\*"' \
+    "the same pad over Bluetooth, wired-mode id"
+aq_file_has "${AQ_CONTROLLER_RULES}" 'KERNELS=="\*1532:1027\*"' \
+    "the same pad over Bluetooth, wireless-mode id"
+AQ_UACCESS_LINES="$(grep -c 'TAG+="uaccess"' "${AQ_CONTROLLER_RULES}" || true)"
+if [ "${AQ_UACCESS_LINES}" -ge 4 ] 2> /dev/null; then
+    ok "every rule in the file hands the device to the person at the screen (${AQ_UACCESS_LINES} of them)"
+else
+    bad "only ${AQ_UACCESS_LINES} rule(s) carry TAG+=\"uaccess\" — a rule without it changes nothing"
+fi
+
+# udev refuses to load a rule file it cannot parse, at runtime, with nothing on
+# screen to say so. `udevadm verify` is systemd's own checker for exactly that
+# — the same gate steps 78 and 82 put in front of their own rules.
+if aq_have udevadm && udevadm verify --help > /dev/null 2>&1; then
+    if udevadm verify "${AQ_CONTROLLER_RULES}" > /tmp/aq-udev.txt 2>&1; then
+        ok "udev can read ${AQ_CONTROLLER_RULES}"
+    else
+        sed 's/^/       /' /tmp/aq-udev.txt
+        bad "udev refuses to load ${AQ_CONTROLLER_RULES} — it would be silently ignored on the machine"
+    fi
+    rm -f /tmp/aq-udev.txt
+else
+    echo "  note   udevadm verify is not available in this build; the content checks above are the answer"
+fi
+
+# ⚠️ AND THE PACKAGE WE DELIBERATELY DO NOT INSTALL. `game-devices-udev` (the
+# community rule set that covers hundreds of other pads) was looked for on
+# 2026-09-19 in Fedora 44 and in Terra, and is in neither. There is therefore
+# no conditional install here and nothing to switch on if it ever appears —
+# somebody will have to add it on purpose, and this note is the reminder that
+# it was considered.
+
 # ==============================================================================
 # 7. Settings — and the two we deliberately do NOT change
 # ==============================================================================

@@ -119,6 +119,37 @@ package extracts it during their build, so it should already be in the image; if
 your dongle is not detected, that is the first thing to check and the driver
 prints a message about it in the system log.
 
+### When Steam lists a controller and it does nothing
+
+This is the strangest-looking controller fault there is, so it is worth knowing
+the shape of it: the pad appears in Steam's controller list, the lights are on,
+and nothing you press does anything. No error, anywhere.
+
+The reason is that a pad shows up as two things at once. The simple view
+(`/dev/input/event*`) is buttons and sticks, and Linux hands it to whoever is
+sitting at the screen automatically. The raw view (`/dev/hidraw*`) is the real
+conversation with the pad's chip — model, serial number, rumble, light bar,
+gyroscope — and Linux keeps that for root unless a rule says otherwise. Steam
+drives modern controllers over the raw view. So a pad with no rule is seen and
+unusable.
+
+Most pads are covered by Valve's own list, which AquariusOS installs
+(`steam-devices`). The ones that are not are covered by ours:
+
+```
+/usr/lib/udev/rules.d/70-aquarius-controllers.rules
+```
+
+Royce's **Razer Raiju V3 Pro** is in there, in both of its identities —
+`1532:1026` wired and `1532:1027` on its wireless dongle, because the pad
+changes id live when its mode switch is moved. It was found dead in Game Mode
+on 2026-09-19 for exactly this reason.
+
+**If a new controller behaves this way**, run `lsusb`, find its `1234:5678`
+pair, and add it to that file in the same shape as the entries already there —
+the file's own header says how, and `build_files/68-gaming.sh` is where the
+build checks it.
+
 **Did the Xbox drivers make it into your image?**
 
 ```
