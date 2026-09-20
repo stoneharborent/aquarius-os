@@ -1,0 +1,56 @@
+# =============================================================================
+# AquariusOS — the MSI Claw 8 AI+'s "the controller may not wake the machine"
+# =============================================================================
+# WHAT THIS IS, IN PLAIN ENGLISH
+#
+# The Claw's built-in controller is wired to the computer over an internal USB
+# connection, exactly like a gamepad you would plug in. Linux lets a USB device
+# wake a sleeping computer, and a gamepad bolted to the sides of a machine that
+# lives in a bag is the worst possible thing to give that power to: a thumbstick
+# nudged by a jacket wakes the handheld, the screen comes on inside the bag, and
+# the battery is gone by the time you get there.
+#
+# Worse, it can wake the machine WHILE it is still going to sleep, which leaves
+# it half-suspended — neither awake nor asleep, fans on, nothing on screen.
+#
+# This rule tells Linux that this one USB device is not allowed to wake
+# anything. Putting the handheld to sleep with the power button, or from Steam,
+# still works exactly as before, and the power button still wakes it.
+#
+# ------------------------------------------------------------------------------
+# WHY THREE PRODUCT NUMBERS
+# ------------------------------------------------------------------------------
+# The Claw's controller changes its USB identity depending on which mode its own
+# little chip is in. All of them are the same physical pad:
+#
+#     0db0:1901   XInput mode   — the one AquariusOS expects, and the one to set
+#                                 in MSI Center M in Windows before wiping it
+#     0db0:1902   DInput mode   — an older style of gamepad
+#     0db0:1903   Desktop mode  — the pad pretends to be a mouse and keyboard
+#
+# (There is a fourth, 0db0:1904, which only appears while the machine is in its
+# BIOS screen. Nothing is asleep then, so it is not listed.)
+#
+# On Fedora's kernel 7.2 nothing on Linux can switch between these modes — the
+# driver that does it (`hid-msi`) arrives in kernel 7.3. So the rule covers all
+# three, and whichever one the pad happens to be in is covered.
+#
+# ------------------------------------------------------------------------------
+# ⚠️ THIS FILE IS OURS, AND IT IS UNTESTED UNTIL THE BENCH
+# ------------------------------------------------------------------------------
+# The equivalent rule for the ROG Ally is copied byte-for-byte from Bazzite,
+# which has years of mileage on that hardware. There is no such rule for the
+# Claw anywhere: no distribution ships one. This file is AquariusOS's own, built
+# on the same idea and the same syntax as the Ally rule, and it has never run on
+# a Claw. The first bench session is what turns it from a reasonable guess into
+# a tested fact — the bench list in docs/restart/handheld-claw.md has the line
+# for it ("a stick twitch does not wake it").
+#
+# If it turns out to cause trouble, deleting it changes nothing else: the
+# machine simply goes back to letting the pad wake it.
+#
+# Plain-language guide: docs/restart/handheld-claw.md
+# =============================================================================
+ACTION=="add", SUBSYSTEM=="usb", DRIVER=="usb", ATTR{idVendor}=="0db0", ATTR{idProduct}=="1901", ATTR{power/wakeup}="disabled"
+ACTION=="add", SUBSYSTEM=="usb", DRIVER=="usb", ATTR{idVendor}=="0db0", ATTR{idProduct}=="1902", ATTR{power/wakeup}="disabled"
+ACTION=="add", SUBSYSTEM=="usb", DRIVER=="usb", ATTR{idVendor}=="0db0", ATTR{idProduct}=="1903", ATTR{power/wakeup}="disabled"

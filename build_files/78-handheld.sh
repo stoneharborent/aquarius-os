@@ -1,21 +1,45 @@
 #!/usr/bin/bash
 # ==============================================================================
-# STEP 7g — the handheld layer (Phase G2): the ROG Xbox Ally X
+# STEP 7g — the handheld layer (phases G2 and G4): the two handhelds
 # ==============================================================================
 # WHAT THIS STEP IS FOR, IN PLAIN ENGLISH
 #
-# AquariusOS is built three times from this one recipe:
+# AquariusOS is built four times from this one recipe:
 #
-#   aquarius-os            a desktop PC with AMD or Intel graphics
-#   aquarius-os-nvidia     the same, plus NVIDIA's driver
-#   aquarius-os-handheld   the AMD one again — but for ONE handheld computer,
-#                          the ROG Xbox Ally X that sits on Royce's desk
+#   aquarius-os                  a desktop PC with AMD or Intel graphics
+#   aquarius-os-nvidia           the same, plus NVIDIA's driver
+#   aquarius-os-handheld         the AMD one again — but for ONE handheld
+#                                computer, the ROG Xbox Ally X (phase G2)
+#   aquarius-os-handheld-claw    and again — for the OTHER handheld Royce owns,
+#                                the MSI Claw 8 AI+ (phase G4, 2026-09-20)
 #
-# This step is the whole of that third image. Everything else in the build runs
-# exactly as it does for the other two; this file adds the handful of things a
-# handheld needs and nothing else. On the two desktop images it installs
-# nothing at all, and instead PROVES that none of it arrived — which is the
-# only way to be sure a change here can never reach a desktop machine.
+# This step is the whole of those last two images. Everything else in the build
+# runs exactly as it does for the two desktop images; this file adds the handful
+# of things a handheld needs and nothing else. On the two desktop images it
+# installs nothing at all, and instead PROVES that none of it arrived — which is
+# the only way to be sure a change here can never reach a desktop machine.
+#
+# ------------------------------------------------------------------------------
+# TWO SWITCHES, NOT ONE
+# ------------------------------------------------------------------------------
+#   HANDHELD=0 or 1          is this a handheld image at all?
+#   HANDHELD_TARGET=ally     WHICH handheld, when it is one.
+#                   or claw
+#
+# HANDHELD_TARGET is only ever read when HANDHELD=1. Anything other than those
+# two words stops the build on the spot, with a sentence saying so.
+#
+# The two machines share most of this file — the same InputPlumber, the same
+# Terra dance, the same power-button daemon, the same cold-boot setting. Where
+# they differ, the difference is in a clearly marked `case` and nothing else:
+#
+#   * which InputPlumber version is the right one;
+#   * which device description InputPlumber has to carry;
+#   * which udev rules go on the image (the ASUS ones must NEVER reach the MSI
+#     machine, and the MSI one must never reach the ASUS machine);
+#   * which power-limit story is true, which on the Claw today is "there is not
+#     one yet";
+#   * which firmware and which drivers have to be on the disk.
 #
 # ------------------------------------------------------------------------------
 # WHAT A HANDHELD NEEDS THAT A PC DOES NOT — five things, and that is all
@@ -23,48 +47,62 @@
 #
 #   1. IT MUST TURN ON INTO GAME MODE. There is no keyboard. A handheld that
 #      stops at a password box is a brick, because there is nothing to type
-#      with. So this image — and only this image — ships
+#      with. So these images — and only these images — ship
 #      /etc/aquarius/login-mode saying `game`. The machinery is already there
 #      from phase G1; this is the flag flipped. `aq game boot off` still puts
 #      the login screen back.
 #
-#   2. THE BUILT-IN CONTROLLER MUST LOOK LIKE ONE CONTROLLER. Linux sees the
-#      Ally's built-in pad as three separate devices: two raw USB gadgets (one
-#      for the sticks and buttons, one for the paddles and the Armoury and
-#      Library buttons) and a motion sensor on a completely different bus. Left
-#      alone, Steam shows you a gamepad with no paddles and no gyro.
+#   2. THE BUILT-IN CONTROLLER MUST LOOK LIKE ONE CONTROLLER. Linux sees a
+#      handheld's built-in pad as several separate devices — on the Ally, two
+#      raw USB gadgets (one for the sticks and buttons, one for the paddles and
+#      the Armoury and Library buttons) and a motion sensor on a completely
+#      different bus; on the Claw, a plain Xbox-style pad plus a set of extra
+#      keys that arrive as keyboard presses. Left alone, Steam shows you a
+#      gamepad with no paddles and no Guide button.
 #      **InputPlumber** is the program that stitches them into one Xbox Elite
 #      controller. It is the single most important package in this file.
 #
-#   3. THE SLIDERS IN STEAM MUST DO SOMETHING. Steam's Quick Access Menu has a
+#   3. THE SLIDERS IN STEAM SHOULD DO SOMETHING. Steam's Quick Access Menu has a
 #      power-limit ("TDP") slider and a battery-charge limit. They talk to a
-#      service called **steamos-manager**, which on this image is Terra's
+#      service called **steamos-manager**, which on these images is Terra's
 #      powerstation build, switched ON — on the desktop images it is installed
 #      and left asleep, because a desktop PC has nothing for it to manage.
+#      ⚠️ On the CLAW, on Fedora's kernel 7.2, there is no power-limit knob for
+#      the service to reach at all. That is not a bug in this file; it is the
+#      kernel, and this step says so out loud rather than pretending. See
+#      section 3b.
 #
 #   4. THE POWER BUTTON MUST BEHAVE LIKE A CONSOLE'S. A short press should put
 #      the machine to sleep through Steam; a long press should open the power
 #      menu. That is **steamos-powerbuttond**.
 #
-#   5. TWO SMALL RULES ABOUT SLEEP. One stops a nudged thumbstick waking the
-#      machine in your bag; the other lets the controller's own little chip
-#      sleep properly so the pad is alive again after a resume.
+#   5. SMALL RULES ABOUT SLEEP. On both machines, one that stops a nudged
+#      thumbstick waking the computer in your bag. On the Ally, a second one
+#      that lets the controller's own little chip sleep properly so the pad is
+#      alive again after a resume.
 #
 # ------------------------------------------------------------------------------
 # ⚠️ WHAT IS DELIBERATELY NOT HERE
 # ------------------------------------------------------------------------------
-#   * NO KERNEL CHANGE OF ANY KIND. Fedora's own kernel already drives this
-#     machine's controller, gyro, speakers, power limits and radios. The things
+#   * NO KERNEL CHANGE OF ANY KIND. On the ALLY, Fedora's own kernel already
+#     drives the controller, gyro, speakers, power limits and radios; the things
 #     it cannot do yet — rumble strength, stick dead zones, button remapping,
 #     and the tidiest controller re-initialisation after a sleep — live in a
-#     patch series that is still being reviewed upstream (`hid-asus` v6). If
-#     the bench says we need them, that is a separate decision with its own
-#     spec. Nothing in this file touches a kernel.
-#   * NO SECOND DEVICE. This targets the ROG Xbox Ally X (board `RC73XA`) and
-#     only that, because that is the only one on the bench. Widening the list
-#     without hardware in front of us is how a "supported device" becomes a
-#     bug report.
-#   * No OpenGamepadUI, and no fan curves.
+#     patch series still being reviewed upstream (`hid-asus` v6). On the CLAW,
+#     rather more waits: the `hid-msi` driver (the M1/M2 paddles, switching the
+#     pad between its modes, the lights, rumble strength) is merged for kernel
+#     **7.3** and is simply not in 7.2, and power limits and fan curves need a
+#     series that is still unmerged. Round one of the Claw image ships what 7.2
+#     can do and names what it cannot. If the bench says we need more, that is a
+#     separate decision with its own spec. Nothing in this file touches a kernel.
+#   * NO THIRD DEVICE. This targets the ROG Xbox Ally X (board `RC73XA`) and the
+#     MSI Claw 8 AI+ A2VM (board `MS-1T52`), because those are the two machines
+#     on the bench. Widening the list without hardware in front of us is how a
+#     "supported device" becomes a bug report. In particular the other Claws —
+#     `MS-1T41`, `MS-1T42`, `MS-1T8K`, `MS-1T91` — are different computers with
+#     different processors and are NOT targeted.
+#   * No OpenGamepadUI, no fan curves, no gyro on the Claw (nothing on Linux
+#     exposes one), and no Handheld Daemon.
 #
 # ------------------------------------------------------------------------------
 # WHY THE HANDHELD-ONLY FILES LIVE IN handheld_files/ AND NOT system_files/
@@ -75,11 +113,21 @@
 # belong everywhere.
 #
 # The files in this phase do not belong everywhere. A udev rule about an ASUS
-# handheld has no business on a desktop PC's image, and `login-mode` saying
-# `game` on a desktop image would stop every machine following these images
-# from ever showing a login screen again. So they live in their own folder,
-# `handheld_files/`, laid out exactly as they sit on the finished machine, and
-# this step is the only thing that ever copies them.
+# handheld has no business on a desktop PC's image — or on an MSI one — and
+# `login-mode` saying `game` on a desktop image would stop every machine
+# following these images from ever showing a login screen again. So they live in
+# their own folder, `handheld_files/`, laid out exactly as they sit on the
+# finished machine, and this step is the only thing that ever copies them.
+#
+# ⚠️ AND THAT FOLDER HAS THREE PARTS (changed 2026-09-20, phase G4):
+#
+#     handheld_files/          files BOTH handhelds get, at the top
+#     handheld_files/ally/     files only the ROG Xbox Ally X gets
+#     handheld_files/claw/     files only the MSI Claw 8 AI+ gets
+#
+# The per-machine folders are laid out from the root of the finished machine in
+# exactly the same way, so `handheld_files/ally/usr/lib/udev/rules.d/x.rules`
+# becomes `/usr/lib/udev/rules.d/x.rules` — on the Ally image and nowhere else.
 #
 # ------------------------------------------------------------------------------
 # THE RULE THIS STEP LIVES BY
@@ -90,8 +138,10 @@
 # repository, the firmware file is looked for on the disk, the "switched on"
 # link is followed to see whether it points at anything.
 #
-# Plain-language guide: docs/restart/handheld.md
-# Spec: ../docs/game-mode-g2-spec.md   Decision: ../docs/decision-2026-09-17-game-mode-and-handheld.md
+# Plain-language guides: docs/restart/handheld.md (the Ally)
+#                        docs/restart/handheld-claw.md (the Claw)
+# Specs: ../docs/game-mode-g2-spec.md   ../docs/game-mode-g4-spec.md
+# Decision: ../docs/decision-2026-09-17-game-mode-and-handheld.md
 # ==============================================================================
 
 set -euo pipefail
@@ -102,15 +152,43 @@ source /ctx/build_files/aq-lib.sh
 FEDORA="$(rpm -E %fedora)"
 HANDHELD="${HANDHELD:-0}"
 
+# WHICH handheld. Only meaningful when HANDHELD=1; on a desktop image it is
+# never read and never checked. `ally` is the default because the Ally image
+# came first and nothing that builds it passes this in.
+HANDHELD_TARGET="${HANDHELD_TARGET:-ally}"
+
 AQ_NOTE_DIR="/usr/share/aquarius/gaming"
 AQ_HANDHELD_NOTE="${AQ_NOTE_DIR}/handheld.txt"
 AQ_SRC="/ctx/handheld_files"
 
-# The two udev rules, by name, so the copy and the read-back cannot drift.
-AQ_UDEV_RULES=(
+# ------------------------------------------------------------------------------
+# The udev rules, by name, so the copy and the read-back cannot drift
+# ------------------------------------------------------------------------------
+# These names are written down ONCE and used three times: to copy the file in,
+# to read it back out of the finished image, and — on the images that must NOT
+# have it — to prove it is absent. A rule that were named in only two of those
+# three places is exactly how one would quietly go missing.
+#
+# The paths are written from the root of the finished machine. In this
+# repository each one lives under its machine's own folder, so
+#   handheld_files/ally/usr/lib/udev/rules.d/50-ally-x-controller.rules
+# becomes
+#   /usr/lib/udev/rules.d/50-ally-x-controller.rules
+# on the Ally image, and is on no other image at all.
+AQ_ALLY_RULES=(
     usr/lib/udev/rules.d/50-ally-x-controller.rules
     usr/lib/udev/rules.d/70-aquarius-ally-mcu-powersave.rules
 )
+AQ_CLAW_RULES=(
+    usr/lib/udev/rules.d/50-aquarius-claw-controller.rules
+)
+# Every rule this whole step can ever install, whichever machine it is building
+# for. This is the list the DESKTOP images check the absence of — and it is also
+# what each handheld image uses to prove the OTHER handheld's rules did not come
+# along. An ASUS rule on an MSI machine would be harmless but wrong; a rule
+# arriving on an image nobody asked for it on is the kind of drift this whole
+# file exists to catch.
+AQ_ALL_RULES=("${AQ_ALLY_RULES[@]}" "${AQ_CLAW_RULES[@]}")
 
 # ==============================================================================
 # 0. The two desktop images: install nothing, and prove nothing arrived
@@ -140,9 +218,13 @@ if [ "${HANDHELD}" != "1" ]; then
     aq_file_has /etc/aquarius/login-mode '^mode=desktop$' \
         "/etc/aquarius/login-mode still ships as 'desktop' — switching this computer on shows the login screen"
 
-    for aq_f in "${AQ_UDEV_RULES[@]}"; do
+    # ⚠️ EVERY rule this step can install, from BOTH handhelds — the two ASUS
+    # ones and the MSI one. Extended on 2026-09-20 when phase G4 added the Claw:
+    # a list that only named one machine's rules would let the other machine's
+    # leak onto a desktop image without a word.
+    for aq_f in "${AQ_ALL_RULES[@]}"; do
         if [ -e "/${aq_f}" ]; then
-            bad "/${aq_f} is on a desktop image — it is a rule about an ASUS handheld and has no business here"
+            bad "/${aq_f} is on a desktop image — it is a rule about a handheld's built-in controller and has no business here"
         else
             ok "/${aq_f} is not on this image, as intended"
         fi
@@ -174,9 +256,49 @@ if [ "${HANDHELD}" != "1" ]; then
 fi
 
 # ==============================================================================
-# From here on: THE HANDHELD IMAGE
+# From here on: A HANDHELD IMAGE — but WHICH ONE?
 # ==============================================================================
-say "Building the handheld image (ROG Xbox Ally X, board RC73XA)"
+# Everything below this line runs on a handheld image only. The first thing it
+# does is settle which of the two machines this build is for, because almost
+# every check further down needs the answer.
+#
+# ⚠️ AN UNKNOWN NAME STOPS THE BUILD HERE, ON PURPOSE. The alternative — quietly
+# falling back to the Ally — would build an ASUS image, publish it under an MSI
+# name, and put two ASUS udev rules on a machine that has never seen one. A typo
+# in a workflow file should cost fifteen minutes of a build machine, not a
+# wrongly-built operating system.
+case "${HANDHELD_TARGET}" in
+    ally | claw) : ;;
+    *)
+        echo "AQUARIUS ERROR: HANDHELD_TARGET is '${HANDHELD_TARGET}', which is not a handheld this recipe knows." >&2
+        echo "                It must be 'ally' (the ROG Xbox Ally X, board RC73XA) or 'claw'" >&2
+        echo "                (the MSI Claw 8 AI+ A2VM, board MS-1T52). Check the --build-arg in" >&2
+        echo "                the Justfile and the matrix in .github/workflows/build.yml." >&2
+        exit 1
+        ;;
+esac
+
+# The facts about this machine, gathered in one place so the rest of the file
+# reads the same for both: what it is called, which board name identifies it,
+# and which of the two folders under handheld_files/ its own files come from.
+case "${HANDHELD_TARGET}" in
+    ally)
+        AQ_HH_NAME="ROG Xbox Ally X"
+        AQ_HH_BOARD="RC73XA"
+        AQ_UDEV_RULES=("${AQ_ALLY_RULES[@]}")
+        AQ_OTHER_RULES=("${AQ_CLAW_RULES[@]}")
+        ;;
+    claw)
+        AQ_HH_NAME="MSI Claw 8 AI+ (A2VM)"
+        AQ_HH_BOARD="MS-1T52"
+        AQ_UDEV_RULES=("${AQ_CLAW_RULES[@]}")
+        AQ_OTHER_RULES=("${AQ_ALLY_RULES[@]}")
+        ;;
+esac
+
+say "Building the handheld image (${AQ_HH_NAME}, board ${AQ_HH_BOARD})"
+echo "  HANDHELD_TARGET=${HANDHELD_TARGET}"
+echo "  its own files come from handheld_files/${HANDHELD_TARGET}/"
 
 # ==============================================================================
 # 1. Terra — added, used, and taken back out again
@@ -261,68 +383,123 @@ rm -f /tmp/aq-terra-probe.txt
 # ==============================================================================
 # WHAT INPUTPLUMBER IS, ONCE MORE, BECAUSE IT MATTERS MOST
 #
-# The Ally's built-in controller is not one device. It is two raw USB gadgets
-# and a motion sensor, and Steam has no idea they belong together. InputPlumber
-# reads all three, applies a description of this exact machine
-# (`50-rog_xbox_ally.yaml`, which matches on the board name RC73XA) and creates
-# ONE virtual Xbox Elite controller with the paddles and the gyro attached.
-# That virtual pad is what Steam sees.
+# A handheld's built-in controller is not one device.
+#
+#   On the ALLY it is two raw USB gadgets and a motion sensor, and Steam has no
+#   idea they belong together. InputPlumber reads all three, applies a
+#   description of that exact machine (`50-rog_xbox_ally.yaml`, which matches on
+#   the board name RC73XA) and creates ONE virtual Xbox Elite controller with
+#   the paddles and the gyro attached.
+#
+#   On the CLAW it is a plain Xbox-style pad (which Linux drives all by itself
+#   with the `xpad` driver) PLUS a scattering of extra buttons that arrive as
+#   ordinary keyboard presses — the Guide button is an F15 keypress from a
+#   device called "MSI WMI hotkeys", the Quick Access button is F16, and so on.
+#   Steam would see a gamepad with no Guide button and a keyboard that
+#   mysteriously types F-keys. InputPlumber applies
+#   `50-msi_claw8_a2vm.yaml` (which matches on the board name MS-1T52), gathers
+#   the pad and the key presses together and again presents ONE virtual Xbox
+#   Elite controller. There is no gyro on this machine — nothing on Linux
+#   exposes one — so that part is simply absent.
+#
+# That virtual pad is what Steam sees, on both machines.
 #
 # ------------------------------------------------------------------------------
-# ⚠️ THE VERSION MATTERS, AND HERE IS THE WHOLE STORY
+# ⚠️ THE VERSION MATTERS, AND THE TWO MACHINES WANT DIFFERENT VERSIONS
 # ------------------------------------------------------------------------------
-#   * Before 0.79.0, the paddles and the Armoury and Library buttons on THIS
+# THE ALLY wants "at least 0.79.0 and below 0.79.5":
+#   * Before 0.79.0, the paddles and the Armoury and Library buttons on that
 #     device were mapped wrongly and labelled wrongly in Steam. The fix is
 #     InputPlumber PR #688, released in 0.79.0 on 3 September 2026.
 #   * 0.79.5 introduced a regression on Ally X hardware: the thumbsticks stop
 #     reporting their full range (InputPlumber issue #724).
 #
-# So the version we would choose, if we could choose, is "at least 0.79.0 and
-# below 0.79.5". Terra publishes ONE version of this package at a time, so most
-# days there is no choice to make. The code below therefore does the honest
-# thing rather than the wishful thing:
+# THE CLAW wants "at least 0.80.0", and has no ceiling:
+#   * Before 0.80.0 the Guide button on the Claw did nothing at all — the F15
+#     keypress was not turned into a Guide press, so there was no way to open
+#     Steam's menu from the pad. The fix is InputPlumber PR #714, merged
+#     14 September 2026 and released the same day in 0.80.0 and 0.81.0.
+#   * The 0.79.5 stick regression is an ALLY problem, on ASUS hardware, and
+#     does not apply here. Do not copy the Ally's ceiling onto this machine —
+#     it would rule out every version that has the Guide fix.
+#
+# Terra publishes ONE version of this package at a time, so most days there is
+# no choice to make. The code below therefore does the honest thing rather than
+# the wishful thing:
 #
 #   * it asks Terra what versions exist;
-#   * if one of them is in the good window, it installs exactly that one;
+#   * if one of them is in the window THIS machine wants, it installs exactly
+#     that one;
 #   * if not, it installs what there is, SAYS SO in the build log, and writes
 #     the version and the known issue into the image itself, at
 #     /usr/share/aquarius/gaming/handheld.txt, so the first person to wonder why
-#     a stick feels short can read the answer on the machine.
+#     a stick feels short — or why the Guide button does nothing — can read the
+#     answer on the machine.
 #
 # It does NOT fail the build for being outside the window. A handheld image with
 # a slightly odd stick range is still a working handheld image; a handheld image
 # that does not exist is not.
+
+# aq_ver_ge <version> <minimum> — is the first version at least the second?
+#
+# `sort -V` is the shell's own version-aware sort, which for version numbers
+# this simple makes the same comparison rpm would. The output is captured into a
+# variable and the first line taken with plain text-trimming rather than piping
+# into `head`: a pipe into `head` can kill `sort` with a broken-pipe signal, and
+# `set -o pipefail` (on in every script here) then reports the whole thing as
+# failed. That trap is written out at length in build_files/aq-lib.sh.
+aq_ver_ge() {
+    local both lowest
+    both="$(printf '%s\n%s\n' "$1" "$2" | sort -V)"
+    lowest="${both%%$'\n'*}"
+    [ "${lowest}" = "$2" ]
+}
+
+case "${HANDHELD_TARGET}" in
+    ally) AQ_IP_WINDOW="at least 0.79.0 and below 0.79.5" ;;
+    claw) AQ_IP_WINDOW="0.80.0 or newer (no upper limit)" ;;
+esac
+
 say "Which versions of InputPlumber Terra has today"
+echo "  the window this machine (${AQ_HH_NAME}) wants: ${AQ_IP_WINDOW}"
 aq_dnf repoquery "${AQ_TERRA_FLAG}" --showduplicates \
     --queryformat '%{version}-%{release}\n' inputplumber \
     > /tmp/aq-ip-versions.txt 2>&1 || true
 sed 's/^/       /' /tmp/aq-ip-versions.txt
 
-# The good window: >= 0.79.0 and < 0.79.5. `sort -V` is the shell's own
-# version-aware sort, which is exactly the comparison rpm would make for
-# version numbers this simple.
 AQ_IP_WANTED=""
 while IFS= read -r aq_evr; do
     [ -n "${aq_evr}" ] || continue
     aq_ver="${aq_evr%%-*}"
-    case "${aq_ver}" in
-        0.79.*) : ;;
-        *) continue ;;
-    esac
-    # 0.79.0 .. 0.79.4 only
-    aq_patch="${aq_ver##*.}"
-    case "${aq_patch}" in
-        0 | 1 | 2 | 3 | 4) AQ_IP_WANTED="${aq_evr}" ;;
+    case "${HANDHELD_TARGET}" in
+        ally)
+            # 0.79.0 .. 0.79.4 only.
+            case "${aq_ver}" in
+                0.79.*) : ;;
+                *) continue ;;
+            esac
+            aq_patch="${aq_ver##*.}"
+            case "${aq_patch}" in
+                0 | 1 | 2 | 3 | 4) AQ_IP_WANTED="${aq_evr}" ;;
+            esac
+            ;;
+        claw)
+            # Anything from 0.80.0 upwards. The list is walked in version order,
+            # so the last one that matches is the newest one Terra has.
+            if aq_ver_ge "${aq_ver}" 0.80.0; then
+                AQ_IP_WANTED="${aq_evr}"
+            fi
+            ;;
     esac
 done < <(grep -E '^[0-9]' /tmp/aq-ip-versions.txt | sort -V)
 rm -f /tmp/aq-ip-versions.txt
 
 if [ -n "${AQ_IP_WANTED}" ]; then
-    say "Installing InputPlumber ${AQ_IP_WANTED} — inside the known-good window (>= 0.79.0, < 0.79.5)"
+    say "Installing InputPlumber ${AQ_IP_WANTED} — inside the window this machine wants (${AQ_IP_WINDOW})"
     aq_dnf install "${AQ_TERRA_FLAG}" "inputplumber-${AQ_IP_WANTED}"
 else
-    say "Terra offers no InputPlumber in the known-good window — taking what it has"
-    echo "  The window we would have picked is 0.79.0 up to (not including) 0.79.5."
+    say "Terra offers no InputPlumber in the window this machine wants — taking what it has"
+    echo "  The window we would have picked is ${AQ_IP_WINDOW}."
     echo "  Terra publishes one version at a time, so this is normal, not a fault."
     echo "  Whatever goes in is written into the image's own note so the bench can"
     echo "  read it: ${AQ_HANDHELD_NOTE}"
@@ -336,37 +513,85 @@ echo "  InputPlumber in this image: ${AQ_IP_EVR}"
 
 # What it is known to do wrong, in one line, for the note that ships in the OS.
 AQ_IP_NOTE="no known issues recorded for this version"
-case "${AQ_IP_VERSION}" in
-    0.79.0 | 0.79.1 | 0.79.2 | 0.79.3 | 0.79.4)
-        AQ_IP_NOTE="inside the known-good window — paddles and button labels are correct (PR #688) and the stick-range regression of 0.79.5 is not in it"
+case "${HANDHELD_TARGET}" in
+    ally)
+        case "${AQ_IP_VERSION}" in
+            0.79.0 | 0.79.1 | 0.79.2 | 0.79.3 | 0.79.4)
+                AQ_IP_NOTE="inside the known-good window — paddles and button labels are correct (PR #688) and the stick-range regression of 0.79.5 is not in it"
+                ;;
+            0.7[0-8].*)
+                AQ_IP_NOTE="OLDER than 0.79.0: the back paddles and the Armoury/Library buttons may be mapped and labelled wrongly in Steam (fixed upstream by PR #688)"
+                ;;
+            *)
+                AQ_IP_NOTE="NEWER than 0.79.4: watch the thumbsticks. 0.79.5 shipped a regression that shortened the Ally X stick range (InputPlumber issue #724). If a stick feels like it will not reach the corners, that is the first thing to suspect — and it is a userspace package, so it can be changed without rebuilding anything else"
+                ;;
+        esac
         ;;
-    0.7[0-8].*)
-        AQ_IP_NOTE="OLDER than 0.79.0: the back paddles and the Armoury/Library buttons may be mapped and labelled wrongly in Steam (fixed upstream by PR #688)"
-        ;;
-    *)
-        AQ_IP_NOTE="NEWER than 0.79.4: watch the thumbsticks. 0.79.5 shipped a regression that shortened the Ally X stick range (InputPlumber issue #724). If a stick feels like it will not reach the corners, that is the first thing to suspect — and it is a userspace package, so it can be changed without rebuilding anything else"
+    claw)
+        if aq_ver_ge "${AQ_IP_VERSION}" 0.80.0; then
+            AQ_IP_NOTE="0.80.0 or newer, which is what this machine needs — it carries the Guide-button fix (PR #714, 14 September 2026), so the Xbox button in the middle of the pad really opens Steam's menu"
+        else
+            AQ_IP_NOTE="OLDER than 0.80.0: the Guide button (the Xbox button in the middle of the pad) will do NOTHING, because the fix that turns this machine's F15 keypress into a Guide press is PR #714, first released in 0.80.0. Everything else still works. It is a userspace package, so it can be changed without rebuilding anything else"
+        fi
         ;;
 esac
 echo "  What that means: ${AQ_IP_NOTE}"
 
-# The device description for THIS machine has to be in the package, or
-# InputPlumber will happily run and do nothing useful.
-AQ_IP_YAML="/usr/share/inputplumber/devices/50-rog_xbox_ally.yaml"
-aq_file_has "${AQ_IP_YAML}" 'RC73XA' \
-    "InputPlumber's profile matches this exact board (RC73XA — the Xbox Ally X)"
-aq_file_has "${AQ_IP_YAML}" 'product_id: 0x1b4c' \
-    "and it matches the built-in controller's USB id"
-aq_file_has "${AQ_IP_YAML}" 'name: bmi323-imu' \
-    "and it picks up the motion sensor, which is what gives Steam a gyro"
-aq_file_has "${AQ_IP_YAML}" '^[[:space:]]*-[[:space:]]*xbox-elite$' \
-    "and the controller it builds is an Xbox Elite pad, which Steam understands"
-aq_file_has "${AQ_IP_YAML}" 'capability_map_id: aly2' \
-    "and it uses the Xbox Ally button map"
-if [ -r /usr/share/inputplumber/capability_maps/ally_type2.yaml ]; then
-    ok "the Xbox Ally button map (ally_type2.yaml) is in the image"
-else
-    bad "/usr/share/inputplumber/capability_maps/ally_type2.yaml is missing — the paddles and the Armoury button would do nothing"
-fi
+# ------------------------------------------------------------------------------
+# The device description for THIS machine has to be in the package
+# ------------------------------------------------------------------------------
+# InputPlumber will happily run with no description of the computer it is on,
+# and do nothing useful. The description is a plain text file inside the
+# package, one per supported machine, and it is matched to the computer by the
+# board name the motherboard reports. So the check is: is the right file there,
+# and does it name this board?
+case "${HANDHELD_TARGET}" in
+    ally)
+        say "InputPlumber knows this machine (the ROG Xbox Ally X)"
+        AQ_IP_YAML="/usr/share/inputplumber/devices/50-rog_xbox_ally.yaml"
+        aq_file_has "${AQ_IP_YAML}" 'RC73XA' \
+            "InputPlumber's profile matches this exact board (RC73XA — the Xbox Ally X)"
+        aq_file_has "${AQ_IP_YAML}" 'product_id: 0x1b4c' \
+            "and it matches the built-in controller's USB id"
+        aq_file_has "${AQ_IP_YAML}" 'name: bmi323-imu' \
+            "and it picks up the motion sensor, which is what gives Steam a gyro"
+        aq_file_has "${AQ_IP_YAML}" '^[[:space:]]*-[[:space:]]*xbox-elite$' \
+            "and the controller it builds is an Xbox Elite pad, which Steam understands"
+        aq_file_has "${AQ_IP_YAML}" 'capability_map_id: aly2' \
+            "and it uses the Xbox Ally button map"
+        if [ -r /usr/share/inputplumber/capability_maps/ally_type2.yaml ]; then
+            ok "the Xbox Ally button map (ally_type2.yaml) is in the image"
+        else
+            bad "/usr/share/inputplumber/capability_maps/ally_type2.yaml is missing — the paddles and the Armoury button would do nothing"
+        fi
+        ;;
+    claw)
+        say "InputPlumber knows this machine (the MSI Claw 8 AI+)"
+        # ⚠️ THE BOARD NAME IS THE WHOLE IDENTIFICATION, and MSI sell
+        # several machines called "Claw" that are different computers inside:
+        #   MS-1T52  the Claw 8 AI+ A2VM — Intel Lunar Lake — THIS ONE
+        #   MS-1T41  the A1M (Meteor Lake)       MS-1T42  the Claw 7 AI+
+        #   MS-1T8K  the Claw A8 (AMD)           MS-1T91  the Claw 8 EX AI+
+        # Only MS-1T52 is on the bench and only MS-1T52 is targeted.
+        AQ_IP_YAML="/usr/share/inputplumber/devices/50-msi_claw8_a2vm.yaml"
+        aq_file_has "${AQ_IP_YAML}" 'MS-1T52' \
+            "InputPlumber's profile matches this exact board (MS-1T52 — the Claw 8 AI+ A2VM)"
+        aq_file_has "${AQ_IP_YAML}" '^[[:space:]]*-[[:space:]]*xbox-elite$' \
+            "and the controller it builds is an Xbox Elite pad, which Steam understands"
+        aq_file_has "${AQ_IP_YAML}" 'capability_map_id: claw1' \
+            "and it uses the MSI Claw button map, which is what turns the Guide and Quick Access keypresses into real controller buttons"
+        if [ -r /usr/share/inputplumber/capability_maps/msiclaw_type1.yaml ]; then
+            ok "the MSI Claw button map (msiclaw_type1.yaml) is in the image"
+        else
+            bad "/usr/share/inputplumber/capability_maps/msiclaw_type1.yaml is missing — the Guide button and the Quick Access button would do nothing"
+        fi
+        # There is no gyro line to look for: this machine has no motion sensor
+        # Linux can reach, and the profile's IMU section is empty upstream.
+        echo "  (There is deliberately no gyro check here. Nothing on Linux exposes a"
+        echo "   motion sensor on this machine, so Steam's gyro settings will be empty."
+        echo "   That is expected, not a fault — see docs/restart/handheld-claw.md.)"
+        ;;
+esac
 
 # ==============================================================================
 # 3. The sliders and the power button
@@ -451,14 +676,107 @@ fi
 # If a future Terra build ever moved RC73XA into the other file, Steam's slider
 # would appear to work and would be limited to 20 W on a machine that can take
 # 35. So the board name is looked for, by hand, in the file that must contain it.
-say "Steam's power-limit table knows this exact board"
 AQ_SMDEV="/usr/share/steamos-manager/devices"
-aq_file_has "${AQ_SMDEV}/rog-ally-series.toml" 'RC73XA' \
-    "the ROG Xbox Ally X (RC73XA) is in steamos-manager's device table"
-aq_file_has "${AQ_SMDEV}/rog-ally-series.toml" 'attribute = "asus-armoury"' \
-    "and its power limit is driven through asus-armoury, the kernel's own ASUS knobs"
-echo "  the whole entry, for the record:"
-sed -n '/RC73XA/,/^$/p' "${AQ_SMDEV}/rog-ally-series.toml" | sed 's/^/       /'
+
+# AQ_TDP_NOTE is one sentence about whether Steam's power slider can work on
+# this machine at all. It ends up in the note that ships inside the image, so
+# that somebody holding the handheld can read the answer without a computer.
+AQ_TDP_NOTE=""
+
+case "${HANDHELD_TARGET}" in
+    ally)
+        say "Steam's power-limit table knows this exact board"
+        aq_file_has "${AQ_SMDEV}/rog-ally-series.toml" 'RC73XA' \
+            "the ROG Xbox Ally X (RC73XA) is in steamos-manager's device table"
+        aq_file_has "${AQ_SMDEV}/rog-ally-series.toml" 'attribute = "asus-armoury"' \
+            "and its power limit is driven through asus-armoury, the kernel's own ASUS knobs"
+        echo "  the whole entry, for the record:"
+        sed -n '/RC73XA/,/^$/p' "${AQ_SMDEV}/rog-ally-series.toml" | sed 's/^/       /'
+        AQ_TDP_NOTE="driven through asus-armoury (steamos-manager device table: rog-ally-series.toml). Steam's TDP slider moves real hardware."
+        ;;
+    claw)
+        # ------------------------------------------------------------------
+        # ⚠️ ON THIS MACHINE, TODAY, THERE IS PROBABLY NO POWER SLIDER
+        # ------------------------------------------------------------------
+        # This is the one place where the Claw image is honestly different from
+        # the Ally image, and it must not be papered over.
+        #
+        # steamos-manager moves a power limit by writing to a knob the KERNEL
+        # provides. On the Ally that knob is `asus-armoury`, which is in
+        # Fedora's kernel and works. On the Claw the equivalent knob lives in a
+        # patch series for the `msi-wmi-platform` driver that has been waiting
+        # to be accepted upstream since May 2025 and that its own author
+        # described as stuck in February 2026. It is not in Fedora's kernel
+        # 7.2, and we do not carry kernel patches (standing decision 1).
+        #
+        # So: Steam's TDP slider on the Claw is expected to do NOTHING. The
+        # machine still runs at its normal power, decided by its own firmware,
+        # which is a perfectly good handheld — it just is not adjustable from
+        # Steam yet.
+        #
+        # This check therefore does not demand a table entry. It LOOKS for one,
+        # says what it found, and passes either way. If a future Terra build of
+        # steamos-manager starts shipping a table for this board, this is where
+        # we will see it, on the next build, by name.
+        say "Is there a power-limit table for this board? (expected: no, and that is fine)"
+        echo "  Looking through every device file steamos-manager ships for the"
+        echo "  board name MS-1T52 or the word Claw."
+
+        # The whole list first, so the log shows what there was to look at.
+        AQ_SM_TOMLS="$(find "${AQ_SMDEV}" -maxdepth 1 -name '*.toml' 2> /dev/null | sort || true)"
+        if [ -n "${AQ_SM_TOMLS}" ]; then
+            echo "  device files in ${AQ_SMDEV}:"
+            printf '%s\n' "${AQ_SM_TOMLS}" | sed 's|.*/|       |'
+        else
+            echo "  ${AQ_SMDEV} has no .toml files in it at all."
+        fi
+
+        # grep -l over the found files, with no pipe into anything that could
+        # stop early — a pipe into `head` can kill the writer with a broken-pipe
+        # signal and `set -o pipefail` then reports a found match as a failure.
+        # The long version of that trap is in build_files/aq-lib.sh.
+        AQ_SM_HIT=""
+        if [ -n "${AQ_SM_TOMLS}" ]; then
+            while IFS= read -r aq_toml; do
+                [ -n "${aq_toml}" ] || continue
+                if grep -qE 'MS-1T52|Claw|claw' "${aq_toml}" 2> /dev/null; then
+                    AQ_SM_HIT="${AQ_SM_HIT}${aq_toml}
+"
+                fi
+            done <<< "${AQ_SM_TOMLS}"
+        fi
+
+        if [ -n "${AQ_SM_HIT}" ]; then
+            ok "steamos-manager DOES ship a device file mentioning this machine:"
+            printf '%s' "${AQ_SM_HIT}" | sed 's/^/       /'
+            echo "  what those files say about it, and which method they name:"
+            AQ_TDP_METHOD=""
+            while IFS= read -r aq_toml; do
+                [ -n "${aq_toml}" ] || continue
+                grep -nE 'MS-1T52|Claw|claw|attribute|tdp|TdpLimit|method' "${aq_toml}" 2> /dev/null \
+                    | sed "s|^|       $(basename "${aq_toml}"): |" || true
+                AQ_TDP_METHOD="${AQ_TDP_METHOD}$(basename "${aq_toml}") "
+            done <<< "${AQ_SM_HIT}"
+            echo
+            echo "  WHAT TO DO WITH THAT: this is NEW since the image was designed."
+            echo "  Read the method named above. If it is a firmware attribute, it still"
+            echo "  needs the kernel series that is not merged, so the slider will still"
+            echo "  do nothing. If it names a helper daemon, that is worth a round two."
+            AQ_TDP_NOTE="steamos-manager ships a device file naming this machine (${AQ_TDP_METHOD}). Whether the slider actually moves anything is a bench question — on kernel 7.2 the firmware-attribute method has nothing to write to."
+        else
+            ok "no TDP backend for this device on kernel 7.2 — Steam's power slider will not work; expected."
+            echo "  This is not a fault and not a missing package. The knob Steam would"
+            echo "  write through does not exist in Fedora's kernel for this machine, and"
+            echo "  AquariusOS does not carry kernel patches. The machine runs at the"
+            echo "  power its own firmware chooses, which is fine — it just cannot be"
+            echo "  changed from Steam yet. It becomes possible when the msi-wmi-platform"
+            echo "  firmware-attributes series is merged upstream."
+            echo "  The raw Intel power readings ARE visible, and 'aq handheld status'"
+            echo "  prints them, so the bench can at least see what the machine is doing."
+            AQ_TDP_NOTE="NONE on kernel 7.2. Steam's TDP slider will not move anything: the kernel knob it writes through (msi-wmi-platform firmware attributes) is an unmerged patch series. Raw readings only, via /sys/class/powercap/intel-rapl."
+        fi
+        ;;
+esac
 
 # The extra login-screen entry that came along with the dependency, named out
 # loud so it is never a surprise.
@@ -587,12 +905,28 @@ done
 # files. It cannot be fooled by a date.
 say "Our own handheld files"
 
+# WARNING: THE UDEV RULES COME FROM THIS MACHINE'S OWN FOLDER, NOT THE SHARED
+# ONE. handheld_files/ally/... for the Ally, handheld_files/claw/... for the
+# Claw. That separation is the whole reason the folder was split on 2026-09-20:
+# the ASUS rules name an ASUS controller and an ASUS platform driver, and they
+# have no business on an MSI machine (and the other way round).
 for aq_f in "${AQ_UDEV_RULES[@]}"; do
-    install -Dm644 "${AQ_SRC}/${aq_f}" "/${aq_f}"
-    if cmp -s "${AQ_SRC}/${aq_f}" "/${aq_f}"; then
+    install -Dm644 "${AQ_SRC}/${HANDHELD_TARGET}/${aq_f}" "/${aq_f}"
+    if cmp -s "${AQ_SRC}/${HANDHELD_TARGET}/${aq_f}" "/${aq_f}"; then
         ok "/${aq_f} is ours, byte for byte"
     else
         bad "/${aq_f} is not the file this repository ships — something replaced it"
+    fi
+done
+
+# And the OTHER handheld's rules are not here. This is the same promise the
+# desktop images make, asked from inside a handheld image: a rule that belongs
+# to one machine must never arrive on the other.
+for aq_f in "${AQ_OTHER_RULES[@]}"; do
+    if [ -e "/${aq_f}" ]; then
+        bad "/${aq_f} is on the ${AQ_HH_NAME} image — that rule belongs to the other handheld and must not be here"
+    else
+        ok "/${aq_f} is not on this image, as intended (it belongs to the other handheld)"
     fi
 done
 
@@ -614,36 +948,75 @@ for aq_f in \
 done
 
 # ------------------------------------------------------------------------------
-# The wake-source rule is Bazzite's, unchanged, on purpose
+# What each machine's rules must actually say
 # ------------------------------------------------------------------------------
-# ⚠️ DO NOT "TIDY" 50-ally-x-controller.rules. It is copied byte-identically
-# from ublue-os/bazzite (PR #5735, 6 September 2026) because it is the exact
-# rule that has been tested on this hardware by the distribution with the most
-# Ally mileage. Keeping it identical means a future upstream change can be
-# compared with one `diff` instead of being reasoned about.
-#
-# What it does: it tells Linux that the built-in controller may NOT wake the
-# machine. Without it, a thumbstick nudged in a bag wakes the handheld up — and
-# worse, it can wake it in the middle of going to sleep, which leaves the
-# machine in a half-suspended state that eats the battery.
-say "The wake-source rule really says what Bazzite's says"
-aq_file_has /usr/lib/udev/rules.d/50-ally-x-controller.rules \
-    'ATTR\{idVendor\}=="0b05", ATTR\{idProduct\}=="1b4c"' \
-    "it is aimed at the built-in controller and nothing else"
-aq_file_has /usr/lib/udev/rules.d/50-ally-x-controller.rules \
-    'ATTR\{power/wakeup\}="disabled"' \
-    "and it stops that controller waking the machine"
+case "${HANDHELD_TARGET}" in
+    ally)
+        # ----------------------------------------------------------------------
+        # The wake-source rule is Bazzite's, unchanged, on purpose
+        # ----------------------------------------------------------------------
+        # ⚠️ DO NOT "TIDY" 50-ally-x-controller.rules. It is copied
+        # byte-identically from ublue-os/bazzite (PR #5735, 6 September 2026)
+        # because it is the exact rule that has been tested on this hardware by
+        # the distribution with the most Ally mileage. Keeping it identical
+        # means a future upstream change can be compared with one `diff`
+        # instead of being reasoned about.
+        #
+        # What it does: it tells Linux that the built-in controller may NOT wake
+        # the machine. Without it, a thumbstick nudged in a bag wakes the
+        # handheld up — and worse, it can wake it in the middle of going to
+        # sleep, which leaves the machine in a half-suspended state that eats
+        # the battery.
+        say "The wake-source rule really says what Bazzite's says"
+        aq_file_has /usr/lib/udev/rules.d/50-ally-x-controller.rules \
+            'ATTR\{idVendor\}=="0b05", ATTR\{idProduct\}=="1b4c"' \
+            "it is aimed at the built-in controller and nothing else"
+        aq_file_has /usr/lib/udev/rules.d/50-ally-x-controller.rules \
+            'ATTR\{power/wakeup\}="disabled"' \
+            "and it stops that controller waking the machine"
 
-say "The controller-chip power-saving rule"
-aq_file_has /usr/lib/udev/rules.d/70-aquarius-ally-mcu-powersave.rules \
-    'KERNEL=="asus-nb-wmi"' \
-    "it only ever fires on an ASUS machine"
-aq_file_has /usr/lib/udev/rules.d/70-aquarius-ally-mcu-powersave.rules \
-    'ATTR\{mcu_powersave\}=="\?\*"' \
-    "and only when the setting actually exists, so every other computer ignores it"
-aq_file_has /usr/lib/udev/rules.d/70-aquarius-ally-mcu-powersave.rules \
-    'ATTR\{mcu_powersave\}="1"' \
-    "and it switches the controller chip's power saving on"
+        say "The controller-chip power-saving rule"
+        aq_file_has /usr/lib/udev/rules.d/70-aquarius-ally-mcu-powersave.rules \
+            'KERNEL=="asus-nb-wmi"' \
+            "it only ever fires on an ASUS machine"
+        aq_file_has /usr/lib/udev/rules.d/70-aquarius-ally-mcu-powersave.rules \
+            'ATTR\{mcu_powersave\}=="\?\*"' \
+            "and only when the setting actually exists, so every other computer ignores it"
+        aq_file_has /usr/lib/udev/rules.d/70-aquarius-ally-mcu-powersave.rules \
+            'ATTR\{mcu_powersave\}="1"' \
+            "and it switches the controller chip's power saving on"
+        ;;
+    claw)
+        # ----------------------------------------------------------------------
+        # The Claw's wake-source rule is OURS, and it is untested until the bench
+        # ----------------------------------------------------------------------
+        # No distribution ships a wake-source rule for this machine — not
+        # Bazzite, not SteamOS, nobody. This one is AquariusOS's own, written on
+        # the same idea and in the same shape as the Ally's: the built-in
+        # controller may not wake the computer, so a thumbstick nudged inside a
+        # bag cannot switch the handheld on and flatten it.
+        #
+        # It names three USB product numbers because the Claw's pad changes its
+        # identity with its mode: 1901 XInput, 1902 DInput, 1903 Desktop. On
+        # kernel 7.2 nothing on Linux can switch between them, so the rule
+        # covers whichever one the machine happens to be in.
+        #
+        # It is a reasonable guess, not a tested fact. The bench list in
+        # docs/restart/handheld-claw.md has the line that turns it into one.
+        say "The Claw's wake-source rule (ours, and untested until the bench)"
+        AQ_CLAW_RULE=/usr/lib/udev/rules.d/50-aquarius-claw-controller.rules
+        aq_file_has "${AQ_CLAW_RULE}" 'ATTR\{idVendor\}=="0db0"' \
+            "it is aimed at MSI's built-in controller and nothing else"
+        for aq_pid in 1901 1902 1903; do
+            aq_file_has "${AQ_CLAW_RULE}" "ATTR\{idProduct\}==\"${aq_pid}\"" \
+                "and it covers the pad in its ${aq_pid} mode, because kernel 7.2 cannot switch modes"
+        done
+        aq_file_has "${AQ_CLAW_RULE}" 'ATTR\{power/wakeup\}="disabled"' \
+            "and it stops that controller waking the machine"
+        aq_file_has "${AQ_CLAW_RULE}" 'untested until the bench' \
+            "and the file says out loud that it is ours and has never run on a Claw"
+        ;;
+esac
 
 # udev refuses to load a rule file it cannot parse, at runtime, with nothing on
 # screen to say so. `udevadm verify` is systemd's own checker for exactly that
@@ -810,24 +1183,17 @@ aq_file_has /usr/bin/aq 'aq game boot off' \
     "and the command's own help says how to put the login screen back"
 
 # ==============================================================================
-# 7. The firmware this machine cannot work without, proven on the disk
+# 7. The firmware and drivers this machine cannot work without
 # ==============================================================================
-# ⚠️ WHY THIS IS A BUILD FAILURE AND NOT A WARNING. Every one of these failures
-# looks like broken hardware and none of them says anything useful on screen:
-#
-#   TAS2XXX13840.bin   the speakers' own program. Without it the Ally is silent
-#                      — not quiet, silent — and nothing in the volume settings
-#                      hints at why.
-#   MT7922 files       the Wi-Fi and Bluetooth chip's program. Without them the
-#                      desktop says "No Wi-Fi Adapter Found", as if the radio
-#                      were not fitted.
-#   amdgpu gc_11_5 /   the graphics and video engine of this exact chip family
-#   psp_14_0 / vcn_4_0 (AMD "Strix"). Without them the machine does not draw.
+# ⚠️ WHY THIS IS A BUILD FAILURE AND NOT A WARNING. Every one of these
+# failures looks like broken hardware and none of them says anything useful on
+# screen: a silent speaker, a "No Wi-Fi Adapter Found", a machine that will not
+# draw. Firmware is a small program the kernel hands to a piece of hardware when
+# it starts it; with the file missing the hardware simply reports itself absent.
 #
 # Fedora ships firmware compressed, and which compression it uses has changed
 # before (xz today, zstd on some spins), so each file is looked for under every
 # name it could have. Trust content, never a file name you remember.
-say "The firmware this handheld cannot work without"
 
 aq_firmware_file() { # aq_firmware_file <path-without-extension> "<what it is for>"
     local base="$1" what="$2" found=""
@@ -847,59 +1213,164 @@ aq_firmware_file() { # aq_firmware_file <path-without-extension> "<what it is fo
     fi
 }
 
-aq_firmware_file /usr/lib/firmware/TAS2XXX13840.bin \
-    "the speakers' firmware (TI TAS2781); without it the handheld is completely silent"
-aq_firmware_file /usr/lib/firmware/mediatek/WIFI_MT7922_patch_mcu_1_1_hdr.bin \
-    "Wi-Fi firmware patch (MediaTek MT7922)"
-aq_firmware_file /usr/lib/firmware/mediatek/WIFI_RAM_CODE_MT7922_1.bin \
-    "Wi-Fi firmware (MediaTek MT7922)"
-aq_firmware_file /usr/lib/firmware/mediatek/BT_RAM_CODE_MT7922_1_1_hdr.bin \
-    "Bluetooth firmware (MediaTek MT7922)"
-
-# The graphics blobs are a family, not single files, so these are counted rather
-# than named one by one — the exact suffixes change between AMD chips and we
-# would be chasing them for ever.
-say "The graphics firmware for this chip family (AMD 'Strix')"
-aq_fw_family() { # aq_fw_family <pattern> <at least> "<what it is>"
+# Some firmware comes as a family rather than one file, and the exact suffixes
+# change between chips. Counting is the honest check there: we would be chasing
+# individual names for ever.
+aq_fw_family() { # aq_fw_family <directory> <pattern> <at least> "<what it is>"
     local n
-    n="$(find /usr/lib/firmware/amdgpu -maxdepth 1 -name "$1*" \( -type f -o -type l \) 2> /dev/null | wc -l | tr -d ' ')"
-    if [ "${n}" -ge "$2" ]; then
-        ok "$3 — ${n} files matching ${1}*"
+    n="$(find "$1" -maxdepth 1 -name "$2*" \( -type f -o -type l \) 2> /dev/null | wc -l | tr -d ' ')"
+    if [ "${n}" -ge "$3" ]; then
+        ok "$4 — ${n} files matching ${2}*"
     else
-        bad "$3 — only ${n} files matching ${1}* in /usr/lib/firmware/amdgpu, expected at least $2"
+        bad "$4 — only ${n} files matching ${2}* in $1, expected at least $3"
     fi
 }
-if [ -d /usr/lib/firmware/amdgpu ]; then
-    ok "/usr/lib/firmware/amdgpu exists"
-    aq_fw_family gc_11_5 7 "the graphics engine"
-    aq_fw_family psp_14_0 2 "the security processor (nothing draws without it)"
-    aq_fw_family vcn_4_0 1 "the video decoder and encoder"
-else
-    bad "/usr/lib/firmware/amdgpu does not exist — this machine would not draw at all"
-fi
 
 # The kernel drivers, too. Firmware with no driver and a driver with no firmware
 # fail in exactly the same way from the desktop.
-say "The drivers that go with them"
-# ⚠️ HYPHEN OR UNDERSCORE? Both, always. A kernel module is written one way in
-# its file name and the other way when a program asks for it, and which is which
-# is not consistent (hid-asus.ko but bmi323_i2c.ko). Looking for both spellings
-# is one line here and saves a build failure that means nothing.
-aq_have_module() { # aq_have_module <module> "<what it is>"
-    local m="$1" what="$2" alt=""
+#
+# ⚠️ HYPHEN OR UNDERSCORE? Both, always. A kernel module is written one way
+# in its file name and the other way when a program asks for it, and which is
+# which is not consistent (hid-asus.ko but bmi323_i2c.ko). Looking for both
+# spellings is one line here and saves a build failure that means nothing.
+aq_module_path() { # aq_module_path <module>  — prints where it is, or nothing
+    local m="$1" alt="" hits=""
     alt="$(printf '%s' "${m}" | tr '_-' '-_')"
-    if [ -n "$(find /usr/lib/modules \( -name "${m}.ko*" -o -name "${alt}.ko*" \) 2> /dev/null | head -1)" ]; then
+    hits="$(find /usr/lib/modules \( -name "${m}.ko*" -o -name "${alt}.ko*" \) 2> /dev/null || true)"
+    printf '%s' "${hits%%$'\n'*}"
+}
+
+aq_have_module() { # aq_have_module <module> "<what it is>"
+    local m="$1" what="$2"
+    if [ -n "$(find /usr/lib/modules \( -name "${m}.ko*" -o -name "$(printf '%s' "${m}" | tr '_-' '-_').ko*" \) 2> /dev/null | head -1)" ]; then
         ok "${what} — driver ${m}"
     else
         bad "${what} — driver ${m} is MISSING; that part reports itself absent even with firmware present"
     fi
 }
-aq_have_module hid-asus "the built-in controller and the ASUS buttons"
-aq_have_module bmi323_i2c "the motion sensor (Steam's gyro)"
-aq_have_module mt7921e "Wi-Fi and Bluetooth (MediaTek MT7922)"
-aq_have_module snd-soc-tas2781-i2c "the speakers"
-aq_have_module asus-armoury "the power-limit knobs Steam's TDP slider moves"
-aq_have_module amdgpu "graphics"
+
+# AQ_HIDMSI_NOTE is filled in on the Claw and ends up in the note that ships in
+# the image. On the Ally it stays empty and nothing prints it.
+AQ_HIDMSI_NOTE=""
+
+case "${HANDHELD_TARGET}" in
+    ally)
+        # ----------------------------------------------------------------------
+        #   TAS2XXX13840.bin   the speakers' own program. Without it the Ally is
+        #                      silent — not quiet, silent — and nothing in the
+        #                      volume settings hints at why.
+        #   MT7922 files       the Wi-Fi and Bluetooth chip's program. Without
+        #                      them the desktop says "No Wi-Fi Adapter Found",
+        #                      as if the radio were not fitted.
+        #   amdgpu gc_11_5 /   the graphics and video engine of this exact chip
+        #   psp_14_0 / vcn_4_0 family (AMD "Strix"). Without them the machine
+        #                      does not draw.
+        # ----------------------------------------------------------------------
+        say "The firmware this handheld cannot work without"
+
+        aq_firmware_file /usr/lib/firmware/TAS2XXX13840.bin \
+            "the speakers' firmware (TI TAS2781); without it the handheld is completely silent"
+        aq_firmware_file /usr/lib/firmware/mediatek/WIFI_MT7922_patch_mcu_1_1_hdr.bin \
+            "Wi-Fi firmware patch (MediaTek MT7922)"
+        aq_firmware_file /usr/lib/firmware/mediatek/WIFI_RAM_CODE_MT7922_1.bin \
+            "Wi-Fi firmware (MediaTek MT7922)"
+        aq_firmware_file /usr/lib/firmware/mediatek/BT_RAM_CODE_MT7922_1_1_hdr.bin \
+            "Bluetooth firmware (MediaTek MT7922)"
+
+        say "The graphics firmware for this chip family (AMD 'Strix')"
+        if [ -d /usr/lib/firmware/amdgpu ]; then
+            ok "/usr/lib/firmware/amdgpu exists"
+            aq_fw_family /usr/lib/firmware/amdgpu gc_11_5 7 "the graphics engine"
+            aq_fw_family /usr/lib/firmware/amdgpu psp_14_0 2 "the security processor (nothing draws without it)"
+            aq_fw_family /usr/lib/firmware/amdgpu vcn_4_0 1 "the video decoder and encoder"
+        else
+            bad "/usr/lib/firmware/amdgpu does not exist — this machine would not draw at all"
+        fi
+
+        say "The drivers that go with them"
+        aq_have_module hid-asus "the built-in controller and the ASUS buttons"
+        aq_have_module bmi323_i2c "the motion sensor (Steam's gyro)"
+        aq_have_module mt7921e "Wi-Fi and Bluetooth (MediaTek MT7922)"
+        aq_have_module snd-soc-tas2781-i2c "the speakers"
+        aq_have_module asus-armoury "the power-limit knobs Steam's TDP slider moves"
+        aq_have_module amdgpu "graphics"
+        ;;
+    claw)
+        # ----------------------------------------------------------------------
+        # A COMPLETELY DIFFERENT SET OF PARTS. The Claw is an Intel machine:
+        # Intel graphics, Intel sound, Intel Wi-Fi. Not one of the Ally's files
+        # above is relevant, and looking for them would fail a perfectly good
+        # image.
+        #
+        #   xe/lnl_*           the graphics chip's own programs (Intel Arc 140V
+        #                      inside "Lunar Lake"). Without them the machine
+        #                      does not draw.
+        #   sof-lnl.ri         the sound chip's program. Intel machines run
+        #                      their audio on a small separate processor and
+        #                      this is what it runs. Without it: silence.
+        #   iwlwifi-bz-*       the Wi-Fi chip's program (Intel BE201). Without
+        #                      it the desktop says there is no Wi-Fi adapter.
+        # ----------------------------------------------------------------------
+        say "The firmware this handheld cannot work without (Intel Lunar Lake)"
+
+        aq_firmware_file /usr/lib/firmware/xe/lnl_guc_70.bin \
+            "the graphics scheduler (Intel Arc 140V); without it the machine does not draw"
+        aq_firmware_file /usr/lib/firmware/xe/lnl_huc.bin \
+            "the graphics video-encode helper"
+        aq_firmware_file /usr/lib/firmware/xe/lnl_gsc_1.bin \
+            "the graphics security controller"
+        aq_firmware_file /usr/lib/firmware/intel/sof-ipc4/lnl/sof-lnl.ri \
+            "the sound processor's program (Intel SOF); without it the handheld is silent"
+
+        # The Wi-Fi firmware is a family: Intel publishes one file per supported
+        # API version and the kernel picks the newest it understands. One is
+        # enough; which one this board actually loads is a bench question.
+        say "The Wi-Fi firmware (Intel BE201)"
+        aq_fw_family /usr/lib/firmware iwlwifi-bz-b0-fm-c0 1 \
+            "the Wi-Fi chip's program; without it the desktop says there is no Wi-Fi adapter"
+
+        say "The drivers that go with them"
+        aq_have_module xe "graphics (Intel Arc 140V)"
+        aq_have_module xpad "the built-in controller in XInput mode — this is what makes the sticks and buttons work at all"
+        aq_have_module iwlwifi "Wi-Fi (Intel BE201)"
+        aq_have_module snd-sof-pci-intel-lnl "the sound processor"
+        aq_have_module msi-wmi-platform "MSI's own platform chip — on kernel 7.2 this reads fan speed and nothing else"
+
+        # ----------------------------------------------------------------------
+        # hid-msi: PRINTED, NOT REQUIRED — and the day it appears matters
+        # ----------------------------------------------------------------------
+        # hid-msi is the kernel driver that would give this machine its M1 and
+        # M2 paddles, switching the pad between its modes, its lights and its
+        # rumble strength. It was merged for Linux 7.3 and is NOT in Fedora's
+        # 7.2. Its absence is expected and is not a build failure.
+        #
+        # This check exists so that the DAY Fedora's kernel gains it, the build
+        # log says so in plain words — because that is the day round two of the
+        # Claw image starts, and nobody would otherwise notice.
+        say "hid-msi — the driver that arrives with kernel 7.3 (expected: not here yet)"
+        AQ_HIDMSI="$(aq_module_path hid-msi)"
+        if [ -n "${AQ_HIDMSI}" ]; then
+            echo "  FOUND: ${AQ_HIDMSI}"
+            echo
+            echo "  ⚠️ THIS IS NEWS. hid-msi is in this image's kernel, which means"
+            echo "  the kernel has moved to 7.3 or Fedora has backported the driver."
+            echo "  That unlocks, on the Claw: the M1 and M2 paddles, switching the"
+            echo "  controller between XInput / DInput / Desktop from Linux, the"
+            echo "  lights, and rumble strength. It also means InputPlumber's own"
+            echo "  mode-switching udev rules start firing."
+            echo "  WHAT TO DO: open round two of the Claw image. Nothing in this"
+            echo "  build needs changing today — this is a notice, not a fault."
+            AQ_HIDMSI_NOTE="PRESENT (${AQ_HIDMSI}) — the kernel has gained it. M1/M2, mode switching, RGB and rumble become possible; round two of this image is due."
+        else
+            ok "hid-msi is not in this kernel, which is exactly what kernel 7.2 means"
+            echo "  Consequence, said plainly: the M1 and M2 paddles do nothing, the"
+            echo "  controller cannot be switched between its modes from Linux, and"
+            echo "  there is no control over the lights or the rumble strength."
+            echo "  All of that arrives with kernel 7.3. Nothing is broken."
+            AQ_HIDMSI_NOTE="not in this kernel (expected on 7.2). M1/M2, mode switching, RGB and rumble all wait for kernel 7.3."
+        fi
+        ;;
+esac
 
 # ==============================================================================
 # 8. `aq handheld status` — one command for the whole bench report
@@ -937,7 +1408,10 @@ rm -f /tmp/aq-hh.txt
 # decision of section 2 is written down permanently.
 say "The note that ships in the image"
 install -d -m 0755 "${AQ_NOTE_DIR}"
-cat > "${AQ_HANDHELD_NOTE}" << EOF
+
+case "${HANDHELD_TARGET}" in
+    ally)
+        cat > "${AQ_HANDHELD_NOTE}" << EOF
 AquariusOS — the handheld image (aquarius-os-handheld)
 
 This image is the AMD/Intel AquariusOS, built for ONE computer: the
@@ -974,10 +1448,82 @@ and the machine comes back to the ordinary login screen.
 
 The full guide is in the repository at docs/restart/handheld.md.
 EOF
-cat "${AQ_HANDHELD_NOTE}" | sed 's/^/       /'
+        ;;
+    claw)
+        cat > "${AQ_HANDHELD_NOTE}" << EOF
+AquariusOS — the Claw handheld image (aquarius-os-handheld-claw)
+
+This image is the AMD/Intel AquariusOS, built for ONE computer: the
+MSI Claw 8 AI+ (A2VM), board ${AQ_HH_BOARD}, an Intel "Lunar Lake" machine.
+It starts straight into Game Mode.
+
+This is ROUND ONE. It ships what Fedora's kernel 7.2 can do today, and
+it says plainly what it cannot. Nothing here is a fault to report;
+everything marked "kernel 7.3" is code that exists and is simply not in
+this kernel yet.
+
+InputPlumber (the program that gathers the built-in pad and its extra
+buttons into one controller Steam understands):
+
+    version: ${AQ_IP_EVR}
+    note:    ${AQ_IP_NOTE}
+
+    The version worth having on this machine is 0.80.0 or newer. That is
+    what carries the fix (PR #714, 14 September 2026) which makes the
+    Guide button — the Xbox button in the middle of the pad — open
+    Steam's menu. There is no upper limit: the 0.79.5 thumbstick
+    problem is an ASUS Ally problem and does not apply here.
+
+Steam's power slider (TDP):
+
+    ${AQ_TDP_NOTE}
+
+The kernel driver for this pad (hid-msi):
+
+    ${AQ_HIDMSI_NOTE}
+
+Our own udev rule, 50-aquarius-claw-controller.rules, stops the built-in
+controller waking the machine — so a thumbstick nudged in a bag cannot
+switch the handheld on. It is OURS and it is untested until the bench;
+no other distribution ships one for this machine.
+
+M1/M2, mode switch, RGB, rumble: kernel 7.3
+
+Also not here, and not coming: there is no gyro. Nothing on Linux
+exposes a motion sensor on this machine, so Steam's gyro settings will
+be empty. That is expected.
+
+Before anything else, the pad must be in XInput mode. That is set from
+Windows, in MSI Center M, and kernel 7.2 cannot change it. Check with:
+
+    aq handheld status
+
+which also prints every other answer a bench session needs. Run it first
+and paste all of it.
+
+If the screen is black or scrambled, press Ctrl+Alt+F3 for a text login,
+then:
+
+    aq game boot off
+    sudo systemctl reboot
+
+and the machine comes back to the ordinary login screen.
+
+The full guide is in the repository at docs/restart/handheld-claw.md.
+EOF
+        ;;
+esac
+
+sed 's/^/       /' "${AQ_HANDHELD_NOTE}"
 aq_file_has "${AQ_HANDHELD_NOTE}" "version: ${AQ_IP_EVR}" \
     "the exact InputPlumber version is written into the image"
 aq_file_has "${AQ_HANDHELD_NOTE}" 'Ctrl\+Alt\+F3' \
     "the note tells a person how to get out of a black screen"
+if [ "${HANDHELD_TARGET}" = "claw" ]; then
+    aq_file_has "${AQ_HANDHELD_NOTE}" 'M1/M2, mode switch, RGB, rumble: kernel 7\.3' \
+        "the note says out loud what waits for kernel 7.3"
+    aq_file_has "${AQ_HANDHELD_NOTE}" "${AQ_HH_BOARD}" \
+        "and it names the one board this image is for"
+fi
 
-aq_finish "Handheld layer (phase G2 — ROG Xbox Ally X)"
+aq_finish "Handheld layer (${AQ_HH_NAME}, board ${AQ_HH_BOARD})"
