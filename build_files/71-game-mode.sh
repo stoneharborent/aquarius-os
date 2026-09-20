@@ -438,7 +438,8 @@ for aq_f in \
     usr/share/polkit-1/actions/org.aquariusos.gamemode.policy \
     usr/share/polkit-1/rules.d/51-aquarius-game-mode.rules \
     etc/aquarius/login-mode \
-    etc/gamescope-session-plus/sessions.d/steam; do
+    etc/gamescope-session-plus/sessions.d/steam \
+    usr/lib/systemd/user/gamescope-session-plus@.service.d/50-aquarius-stop-targets.conf; do
     install -Dm644 "/ctx/system_files/${aq_f}" "/${aq_f}"
     if cmp -s "/ctx/system_files/${aq_f}" "/${aq_f}"; then
         ok "/${aq_f} is ours, byte for byte"
@@ -559,6 +560,84 @@ aq_file_has /usr/libexec/os-session-select '^aq_end_game_session\(\)' \
 aq_file_has /usr/libexec/os-session-select 'steam -shutdown' \
     "and asks Steam to close, the way Steam's own script would have"
 
+# ------------------------------------------------------------------------------
+# The 2026-09-20 fix (bench 4), read back out of the image
+# ------------------------------------------------------------------------------
+# The login screen logged Royce in and bounced him straight back, forty-five
+# times, because Game Mode left a signpost up in his account's systemd manager
+# saying "a graphical session is already running" — and GNOME will not start
+# next to one of those. Nothing takes that signpost down by itself: Game Mode's
+# unit is written to follow the target, not the other way round. So OUR program
+# takes it down, and then checks that it really came down.
+say "Ending Game Mode also takes the graphical-session signposts down (bench 4)"
+aq_file_has /usr/libexec/os-session-select 'AQ_SESSION_TARGETS=' \
+    "os-session-select knows the list of targets a graphical session puts up"
+aq_file_has /usr/libexec/os-session-select 'graphical-session-pre\.target' \
+    "and the list includes graphical-session-pre.target"
+aq_file_has /usr/libexec/os-session-select 'gamescope-session\.target' \
+    "and gamescope-session.target, when the image has one"
+aq_file_has /usr/libexec/os-session-select 'systemctl --user stop \$\{aq_targets\}' \
+    "and it really stops them"
+aq_file_has /usr/libexec/os-session-select 'is-active --quiet graphical-session\.target' \
+    "and reads back whether the main one actually stopped before walking away"
+aq_file_has /usr/libexec/os-session-select 'falling back to logind' \
+    "and says so out loud, in the journal and on stderr, when it did not"
+
+# Is `gamescope-session.target` really a unit on this image? It is not on every
+# Game Mode package, which is why the program above only stops the targets that
+# exist. This is a note, not a failure, either way.
+if [ -f /usr/lib/systemd/user/gamescope-session.target ]; then
+    ok "this image has gamescope-session.target, so the switch will stop that too"
+else
+    echo "NOTE: this image has no /usr/lib/systemd/user/gamescope-session.target."
+    echo "      That is allowed — os-session-select only stops the targets it finds."
+fi
+
+# ------------------------------------------------------------------------------
+# The same fix, attached to Terra's own unit
+# ------------------------------------------------------------------------------
+# Our program is not the only way Game Mode can end. Steam has its own paths,
+# and Steam can simply crash. So the signpost-lowering is ALSO bolted onto
+# Terra's unit as a drop-in, where it runs however the session finished. The
+# long plain-language explanation lives inside the file.
+say "Terra's Game Mode unit lowers the signpost however it ends (bench 4)"
+AQ_GS_DROPIN="/usr/lib/systemd/user/gamescope-session-plus@.service.d/50-aquarius-stop-targets.conf"
+if [ -f "${AQ_GS_DROPIN}" ]; then
+    ok "the drop-in is in the finished image at ${AQ_GS_DROPIN}"
+else
+    bad "${AQ_GS_DROPIN} is missing — Game Mode could again leave a signpost up"
+fi
+aq_file_has "${AQ_GS_DROPIN}" '^ExecStopPost=-/usr/bin/systemctl --user --no-block stop ' \
+    "it runs one systemctl when the session unit stops, and cannot fail the stop"
+aq_file_has "${AQ_GS_DROPIN}" 'graphical-session\.target' \
+    "and it lowers graphical-session.target"
+aq_file_has "${AQ_GS_DROPIN}" 'graphical-session-pre\.target' \
+    "and graphical-session-pre.target with it"
+aq_file_has "${AQ_GS_DROPIN}" '^\[Service\]$' \
+    "and the setting is under [Service], where systemd will look for it"
+
+# And ask systemd whether it can actually read it. ⚠️ ADVISORY ON PURPOSE.
+# Inside a build container systemd-analyze often cannot start a manager at all,
+# never reaches the file, and prints no complaint — so a check that only looks
+# for complaints would hand out a green tick nobody earned. Say which of the
+# two happened. (Same guard, same reason, as step 80's drop-in check.)
+if aq_have systemd-analyze; then
+    AQ_GS_VERIFY="$(systemd-analyze verify --user gamescope-session-plus@steam.service 2>&1 || true)"
+    printf '%s\n' "${AQ_GS_VERIFY}" | sed 's/^/  /'
+    if printf '%s' "${AQ_GS_VERIFY}" \
+        | grep -Eqi "failed to initialize manager|failed to lookup runtimedirectory|not found"; then
+        echo "  note   systemd-analyze could not read the unit inside this container, so"
+        echo "         the content checks above are what guard this drop-in."
+    elif printf '%s' "${AQ_GS_VERIFY}" | grep -Eqi "unknown (key|lvalue)|failed to parse"; then
+        bad "systemd cannot understand part of our drop-in (see above). A setting it"
+        bad "cannot read does nothing, silently — and the login loop comes back."
+    else
+        ok "systemd read gamescope-session-plus@steam.service with our drop-in and understood it"
+    fi
+else
+    echo "NOTE: systemd-analyze is not in this container; the content checks above stand alone."
+fi
+
 say "Game Mode starts at the screen's own resolution"
 aq_file_has /etc/gamescope-session-plus/sessions.d/steam '^[[:space:]]*SCREEN_WIDTH=' \
     "the session file works out SCREEN_WIDTH from the connected screen"
@@ -631,6 +710,14 @@ aq_file_has /usr/libexec/os-session-select "asked for 'plasma' from 'Game Mode'"
     "with the 2026-09-20 journal line written down beside it, so the next reader recognises it"
 
 say "'aq game status' no longer calls the timed login 'a switch' on its own"
+say "'aq game status' reports the two facts that decided the bench-4 loop"
+aq_file_has /usr/bin/aq 'loginctl show-user "\$\{USER\}" -p Linger --value' \
+    "'aq game status' says whether this account lingers"
+aq_file_has /usr/bin/aq 'Lingering means your account keeps a small manager of its own' \
+    "and explains, in plain words, what lingering means for the switch"
+aq_file_has /usr/bin/aq 'is-active --quiet graphical-session\.target' \
+    "and whether a graphical session is still marked as running"
+
 aq_file_has /usr/bin/aq 'a switch sets both; a boot into Game Mode sets the automatic ones' \
     "aq game status explains that a switch sets both sets of lines"
 

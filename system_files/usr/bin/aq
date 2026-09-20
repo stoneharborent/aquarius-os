@@ -2466,6 +2466,50 @@ game_status() {
         *) echo "${XDG_CURRENT_DESKTOP}." ;;
     esac
 
+    # ------------------------------------------------------------------------
+    # Two facts that decided the 2026-09-20 login loop
+    # ------------------------------------------------------------------------
+    # Neither of these is something you set or should worry about day to day.
+    # They are here because when a switch goes wrong, they are the first two
+    # things anybody will want to know, and both are awkward to look up.
+    echo
+    local linger=""
+    if command -v loginctl > /dev/null 2>&1; then
+        linger="$(loginctl show-user "${USER}" -p Linger --value 2> /dev/null)"
+    fi
+    case "${linger}" in
+        yes)
+            echo "Lingering for ${USER}: yes."
+            echo "   Lingering means your account keeps a small manager of its own running"
+            echo "   from the moment the computer starts until it is switched off, instead"
+            echo "   of only while you are logged in. Useful for background jobs, and"
+            echo "   normally invisible — but it also means leftovers from one session can"
+            echo "   still be there at the next one, which is what made a switch out of"
+            echo "   Game Mode loop on 2026-09-20. AquariusOS now clears those leftovers"
+            echo "   itself, so this is safe to leave alone. Nothing here changes it."
+            ;;
+        no)
+            echo "Lingering for ${USER}: no — your account's manager stops when you log out."
+            ;;
+        *)
+            echo "Lingering for ${USER}: could not tell (loginctl did not answer)."
+            ;;
+    esac
+
+    echo
+    if command -v systemctl > /dev/null 2>&1 \
+        && systemctl --user is-active --quiet graphical-session.target 2> /dev/null; then
+        echo "Your account currently has a graphical session running (the"
+        echo "graphical-session.target switch is on). That is the normal answer while"
+        echo "you are looking at a desktop or at Game Mode. If you see it in a plain"
+        echo "text login with nothing on screen, it is a leftover — and a leftover is"
+        echo "what stops the next desktop from starting. Clear it with:"
+        echo "   systemctl --user stop graphical-session.target graphical-session-pre.target"
+    else
+        echo "Your account has no graphical session running right now"
+        echo "(graphical-session.target is off)."
+    fi
+
     echo
     if [ "$(game_boot_mode)" = "game" ]; then
         echo "When you switch this computer on, it goes STRAIGHT INTO GAME MODE."
