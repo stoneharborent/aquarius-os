@@ -474,6 +474,16 @@ how to add the next controller; `build_files/68-gaming.sh` reads every id back
 out of the finished image and runs `udevadm verify` over the file, because
 udev ignores a rule file it cannot parse and says nothing about it.
 
+#### And one thing that was not a bug: Aquarius Keys in Game Mode
+
+In Game Mode the keyboard remapper waited thirty seconds for "the desktop's
+screen", gave up, started anyway with no Wayland connection, and took hold of
+four keyboards — including the Raiju's own keyboard interface. It did **not**
+touch the pad's gamepad interface, so it was not the cause of bug 3. But a
+keyboard remapper has no business in Game Mode at all: there is no desktop
+there to remap for. It now recognises a gamescope session, says so in one
+line, and stops in the way that tells systemd not to start it again.
+
 ### Why "Log Out" still works
 
 The automatic login stays switched on after a switch has finished. Left alone,

@@ -429,6 +429,26 @@ aq_file_has "${RUN_SCRIPT}" 'No device was selected' \
     "holding no keyboards at all is treated as a failure too"
 aq_file_has "${RUN_SCRIPT}" 'remapping .* keyboard' \
     "it says how many keyboards it actually has hold of, so 'running' and 'working' can be told apart"
+# ⚠️ AND IT MUST STOP IN GAME MODE, THE BENCH FIX OF 2026-09-19. In the
+# gamescope session there is no desktop to remap for, and the journal of that
+# evening shows this waiting thirty seconds for a screen, starting anyway, and
+# taking hold of four keyboards including a game controller's keyboard
+# interface. It now recognises Game Mode and exits 64 — one of the two
+# statuses RestartPreventExitStatus= names, so systemd does not start it again
+# every two seconds for the whole gaming session.
+aq_file_has "${RUN_SCRIPT}" '^aq_in_game_mode\(\)' \
+    "the remapper knows how to recognise Game Mode"
+aq_file_has "${RUN_SCRIPT}" 'this is Game Mode, not a desktop' \
+    "and says so in one plain line before stopping"
+aq_file_has "${RUN_SCRIPT}" 'if aq_in_game_mode; then' \
+    "and the test really is used, before the thirty-second wait for a screen"
+if [ "$(grep -n 'if aq_in_game_mode; then' "${RUN_SCRIPT}" | cut -d: -f1)" \
+    -lt "$(grep -n 'aq_wait 30 "the desktop.s screen"' "${RUN_SCRIPT}" | cut -d: -f1)" ]; then
+    ok "the Game Mode test comes BEFORE the wait — no thirty seconds wasted in a game"
+else
+    bad "the Game Mode test comes after the wait for a screen, which is the whole thing it avoids"
+fi
+
 aq_file_has "${RUN_SCRIPT}" 'aq_wait 30 "GNOME Shell to be ready"' \
     "on GNOME it waits for the shell before asking it to switch the add-on on"
 aq_file_has "${RUN_SCRIPT}" 'gnome-extensions info' \
