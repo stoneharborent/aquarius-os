@@ -306,6 +306,280 @@ else
 fi
 
 # -----------------------------------------------------------------------------
+# 3d. The SELinux label — the 20 September 2026 bench bug
+# -----------------------------------------------------------------------------
+# ⚠️ WHAT WENT WRONG, AND WHY IT NEEDS A TEST.
+#
+# Decky installed on Royce's bench PC with no errors at all, and then never
+# appeared in Game Mode. The reason was three lines down in the system journal:
+#
+#   plugin_loader.service: Failed at step EXEC ... status=203/EXEC
+#   avc: denied { execute } for comm="(PluginLoader)" name="PluginLoader"
+#       scontext=system_u:system_r:init_t:s0
+#       tcontext=unconfined_u:object_r:user_home_t:s0 tclass=file
+#
+# SELinux — Fedora's guard — labels anything downloaded into a home folder as
+# "one of this person's documents", and it will not let systemd start a
+# document as a service. /usr/libexec/aquarius-decky-label is what gives the
+# file the label of a program instead.
+#
+# NONE OF THAT CAN BE REHEARSED HONESTLY IN A CONTAINER: the CI container has
+# no SELinux, no semanage and no systemd, and a test that only ran on a machine
+# with all three would never run at all. So this does what the rest of this
+# file does with HOME — it builds a pretend world. `semanage`, `restorecon`,
+# `chcon`, `getenforce` and `stat` are replaced with small scripts that keep
+# their answers in two text files, and the test then checks the DECISIONS the
+# program makes: which spelling of the rule it writes, whether it reads the
+# label back off the file instead of trusting a command's silence, and whether
+# it refuses when the label is still wrong.
+echo ""
+echo "-- the SELinux label (the 20 Sept 2026 bench bug) --"
+
+LABELER="$(cd "$(dirname "$0")/.." && pwd)/system_files/usr/libexec/aquarius-decky-label"
+if [ ! -r "${LABELER}" ] && [ -r /usr/libexec/aquarius-decky-label ]; then
+    LABELER=/usr/libexec/aquarius-decky-label
+fi
+
+if [ ! -r "${LABELER}" ]; then
+    bad "aquarius-decky-label is not there — 'aq decky install' has nothing to label the loader with"
+else
+    ok "${LABELER} is there"
+    if bash -n "${LABELER}" 2> "${WORK}/lsyn.txt"; then
+        ok "it is valid shell"
+    else
+        sed 's/^/       /' "${WORK}/lsyn.txt" >&2
+        bad "aquarius-decky-label does not parse"
+    fi
+
+    # -------------------------------------------------------------------------
+    # The pretend world
+    # -------------------------------------------------------------------------
+    #   ${WORK}/label   the one label our pretend file is wearing right now
+    #   ${WORK}/rules   the SELinux rules our pretend semanage has been given
+    #   ${WORK}/match   which ONE rule our pretend restorecon actually honours
+    #
+    # Putting the stand-ins first on PATH is the whole trick: the program under
+    # test calls `semanage`, and gets ours.
+    STUB="${WORK}/stub"
+    mkdir -p "${STUB}"
+
+    cat > "${STUB}/getenforce" << 'EOF'
+#!/usr/bin/bash
+echo Enforcing
+EOF
+
+    # `stat -c %C <file>` is how the program reads a label back. Anything else
+    # is handed to the real stat, so the rest of the world still works.
+    cat > "${STUB}/stat" << 'EOF'
+#!/usr/bin/bash
+if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%C" ]; then
+    printf 'unconfined_u:object_r:%s:s0\n' "$(cat "${AQ_TEST_LABEL}")"
+    exit 0
+fi
+exec /usr/bin/stat "$@"
+EOF
+
+    # A rule book that remembers. -l lists, -a adds, -m changes, -d deletes.
+    cat > "${STUB}/semanage" << 'EOF'
+#!/usr/bin/bash
+[ "${1:-}" = "fcontext" ] || exit 0
+shift
+case "${1:-}" in
+    -l) cat "${AQ_TEST_RULES}" 2> /dev/null; exit 0 ;;
+    -d)
+        grep -vxF -- "${2:-}" "${AQ_TEST_RULES}" > "${AQ_TEST_RULES}.new" 2> /dev/null
+        mv -f "${AQ_TEST_RULES}.new" "${AQ_TEST_RULES}"
+        exit 0
+        ;;
+    -a | -m)
+        # -a/-m -t <type> <spec>
+        printf '%s\n' "${4:-}" >> "${AQ_TEST_RULES}"
+        exit 0
+        ;;
+esac
+exit 0
+EOF
+
+    # ⚠️ THE POINT OF THE WHOLE PRETENCE. The real restorecon only labels a
+    # file if a rule MATCHES IT, and on this system whether a rule matches
+    # depends on the /home versus /var/home spelling. So ours labels the file
+    # only when the rule book contains the one exact spelling named in
+    # ${WORK}/match — and otherwise does nothing at all, quietly, exactly as
+    # the real one does when a rule does not reach the file.
+    cat > "${STUB}/restorecon" << 'EOF'
+#!/usr/bin/bash
+want="$(cat "${AQ_TEST_MATCH}" 2> /dev/null || true)"
+if [ -n "${want}" ] && grep -qxF -- "${want}" "${AQ_TEST_RULES}" 2> /dev/null; then
+    echo "bin_t" > "${AQ_TEST_LABEL}"
+fi
+exit 0
+EOF
+
+    cat > "${STUB}/chcon" << 'EOF'
+#!/usr/bin/bash
+if [ "${AQ_TEST_CHCON_WORKS:-1}" = "1" ]; then
+    echo "bin_t" > "${AQ_TEST_LABEL}"
+fi
+exit 0
+EOF
+
+    chmod +x "${STUB}"/*
+
+    LOADER="${WORK}/home/homebrew/services/PluginLoader"
+    # The rule the program should write first: the /home spelling, which is the
+    # one Fedora's rules are written in even though the file really lives under
+    # /var/home. See the long note at the top of aquarius-decky-label.
+    SPEC_HOME='/home/[^/]+/homebrew/services/PluginLoader'
+    # And the fallback: the file's own real path with the person's name turned
+    # into "any one folder name".
+    SPEC_REAL="$(printf '%s' "${WORK}/home/homebrew/services/PluginLoader" \
+        | sed -E 's![^/]+/homebrew/services/PluginLoader$![^/]+/homebrew/services/PluginLoader!')"
+
+    label_world() { # label_world <which spelling restorecon honours, or nothing>
+        fresh_home
+        mkdir -p "${WORK}/home/homebrew/services"
+        : > "${LOADER}"
+        chmod +x "${LOADER}"
+        echo "user_home_t" > "${WORK}/label"
+        : > "${WORK}/rules"
+        printf '%s' "${1:-}" > "${WORK}/match"
+    }
+
+    run_labeler() {
+        PATH="${STUB}:${PATH}" \
+            AQ_TEST_LABEL="${WORK}/label" \
+            AQ_TEST_RULES="${WORK}/rules" \
+            AQ_TEST_MATCH="${WORK}/match" \
+            AQ_TEST_CHCON_WORKS="${CHCON_WORKS:-1}" \
+            bash "${LABELER}" "$@" > "${OUT}" 2>&1
+        return $?
+    }
+
+    # --- the ordinary case: the /home spelling reaches the file --------------
+    label_world "${SPEC_HOME}"
+    CHCON_WORKS=1
+    run_labeler "${LOADER}"
+    rc=$?
+    if [ "${rc}" -eq 0 ]; then
+        ok "labelling succeeds when the /home rule reaches the file"
+    else
+        sed 's/^/       /' "${OUT}" >&2
+        bad "labelling failed even though the /home rule reached the file (exit ${rc})"
+    fi
+    if grep -qxF -- "${SPEC_HOME}" "${WORK}/rules"; then
+        ok "and it wrote the LASTING rule, in the /home spelling"
+    else
+        sed 's/^/       /' "${WORK}/rules" >&2
+        bad "no ${SPEC_HOME} rule was written — a relabel would undo the label"
+    fi
+    if [ "$(cat "${WORK}/label")" = "bin_t" ]; then
+        ok "and the file ends up labelled bin_t — a program"
+    else
+        bad "the file is still labelled $(cat "${WORK}/label")"
+    fi
+    says 'rule says so' "and it says the label will survive a relabel"
+
+    # --- the machine where only the real path matches ------------------------
+    # This is what a system without Fedora's /var/home equivalency looks like.
+    # The program must notice that the first rule did nothing — by READING THE
+    # LABEL BACK, not by believing semanage's silence — and try the other
+    # spelling before giving up.
+    label_world "${SPEC_REAL}"
+    run_labeler "${LOADER}"
+    rc=$?
+    if [ "${rc}" -eq 0 ] && [ "$(cat "${WORK}/label")" = "bin_t" ]; then
+        ok "when the /home rule does not reach the file, it tries the real path and succeeds"
+    else
+        sed 's/^/       /' "${OUT}" >&2
+        bad "it gave up when the /home spelling did not take (exit ${rc}, label $(cat "${WORK}/label"))"
+    fi
+    says 'real path' "and says which spelling it fell back to"
+
+    # --- no semanage at all: chcon, and say that nothing remembers it --------
+    mv "${STUB}/semanage" "${WORK}/semanage.away"
+    label_world ""
+    run_labeler "${LOADER}"
+    rc=$?
+    mv "${WORK}/semanage.away" "${STUB}/semanage"
+    if [ "${rc}" -eq 0 ] && [ "$(cat "${WORK}/label")" = "bin_t" ]; then
+        ok "with no semanage it falls back to chcon and the file is still labelled"
+    else
+        sed 's/^/       /' "${OUT}" >&2
+        bad "with no semanage it did not fall back to chcon (exit ${rc})"
+    fi
+    says 'NOTHING REMEMBERS IT' "and warns plainly that the fallback does not survive a relabel"
+
+    # --- everything fails: REFUSE, and never call it done --------------------
+    # ⚠️ THE HEART OF THE BENCH BUG. The old code ran one chcon, ignored the
+    # answer and carried on, so an install that could not label anything still
+    # ended with "Decky Loader is installed and running". Here every way of
+    # labelling does nothing, and the program must say so and exit non-zero, so
+    # that 'aq decky install' stops instead of switching on a service that
+    # cannot start.
+    label_world ""
+    CHCON_WORKS=0
+    run_labeler "${LOADER}"
+    rc=$?
+    CHCON_WORKS=1
+    if [ "${rc}" -ne 0 ]; then
+        ok "when nothing can label the file it REFUSES, instead of claiming success"
+    else
+        sed 's/^/       /' "${OUT}" >&2
+        bad "it reported success with the file still labelled $(cat "${WORK}/label")"
+    fi
+    says 'user_home_t' "and names the wrong label the file is still wearing"
+    says '203/EXEC' "and names the failure a person will see in the journal"
+    says 'decky.md' "and points at the guide"
+
+    # --- --forget takes our rule away again ---------------------------------
+    label_world "${SPEC_HOME}"
+    run_labeler "${LOADER}"
+    run_labeler --forget "${LOADER}"
+    rc=$?
+    if [ "${rc}" -eq 0 ]; then
+        ok "'--forget' succeeds"
+    else
+        sed 's/^/       /' "${OUT}" >&2
+        bad "'--forget' exited ${rc}"
+    fi
+    if grep -qxF -- "${SPEC_HOME}" "${WORK}/rules"; then
+        sed 's/^/       /' "${WORK}/rules" >&2
+        bad "'aq decky remove' would leave the SELinux rule behind"
+    else
+        ok "and the rule is gone, so 'aq decky remove' leaves no policy behind"
+    fi
+
+    # --- aq really calls it -------------------------------------------------
+    # A perfect helper nobody runs is the same as no helper at all.
+    if grep -q 'aquarius-decky-label' "${AQ}"; then
+        ok "'aq decky' calls the labelling program"
+    else
+        bad "'aq decky' never calls aquarius-decky-label — the loader would go unlabelled"
+    fi
+    # Once where it is defined, and once in each of install, update and remove.
+    if [ "$(grep -c 'AQ_DECKY_LABEL' "${AQ}")" -ge 4 ]; then
+        ok "install, update and remove all hand it the labelling program"
+    else
+        bad "not every part of 'aq decky' passes AQ_DECKY_LABEL through to its administrator half"
+    fi
+fi
+
+# -----------------------------------------------------------------------------
+# 3e. `aq decky status` shows the label
+# -----------------------------------------------------------------------------
+# The label is the first thing to look at when Decky is installed and simply
+# never appears, so it belongs in the ordinary report rather than in a fault
+# path nobody finds.
+echo ""
+echo "-- status reports the SELinux label --"
+fresh_home
+mkdir -p "${WORK}/home/homebrew/services"
+: > "${WORK}/home/homebrew/services/PluginLoader"
+chmod +x "${WORK}/home/homebrew/services/PluginLoader"
+run_aq decky status
+says 'SELinux label' "status has a line for the SELinux label"
+
+# -----------------------------------------------------------------------------
 # 4. Under sudo it refuses, and refuses BEFORE it does anything
 # -----------------------------------------------------------------------------
 # Run as root, `aq decky install` would put Decky in the administrator's home

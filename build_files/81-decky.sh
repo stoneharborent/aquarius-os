@@ -28,14 +28,21 @@
 #   * the file that starts it names ONE person's home folder, so it could not
 #     be baked into an image that many people share even if we wanted to.
 #
-# So this step puts THREE things in the image and not one byte more:
+# So this step puts FIVE things in the image and not one byte more:
 #
 #   1. `jq`, a small program that reads GitHub's answer about which Decky is
 #      newest. `aq decky` cannot work without it and nothing else in this image
 #      had pulled it in;
 #   2. the `aq decky install | update | remove | status` command — which
 #      already arrived with system_files at step 5, and is read back here;
-#   3. the "Decky Loader" launcher in the app grid — likewise.
+#   3. the "Decky Loader" launcher in the app grid — likewise;
+#   4. `policycoreutils` and `policycoreutils-python-utils`, which carry the
+#      three commands (`restorecon`, `semanage`, and `chcon` from coreutils)
+#      that let an install tell the computer "the file I just downloaded is a
+#      program". Without them SELinux refuses to start Decky and it never
+#      appears in Game Mode — the 20 September 2026 bench bug, section 1b;
+#   5. `/usr/libexec/aquarius-decky-label`, the small program that does that
+#      labelling — also from system_files, also read back here.
 #
 # And then it proves the absence of everything else: no plugin_loader.service
 # baked into /etc, no /home/deck, no downloaded loader, no ~/homebrew. If any
@@ -68,6 +75,7 @@ source /ctx/build_files/aq-lib.sh
 
 AQ_DECKY_DESKTOP="/usr/share/applications/aquarius-decky.desktop"
 AQ_DECKY_UNIT="/etc/systemd/system/plugin_loader.service"
+AQ_DECKY_LABEL="/usr/libexec/aquarius-decky-label"
 
 # ==============================================================================
 # 1. jq — the one package this feature needs
@@ -89,6 +97,52 @@ if aq_have jq; then
 else
     bad "jq is not on PATH — 'aq decky install' could never find out which Decky is newest"
 fi
+
+# ==============================================================================
+# 1b. The three SELinux commands, without which Decky installs and never runs
+# ==============================================================================
+# ⚠️ THE BUG THIS EXISTS FOR, found on Royce's bench PC on 20 September 2026.
+#
+# Decky's downloaded program lands in a home folder, and Fedora labels anything
+# in a home folder as "one of this person's documents" (`user_home_t`). SELinux
+# — Fedora's guard — will not let systemd start a document as a service. So the
+# install printed no errors at all, and then:
+#
+#   plugin_loader.service: Failed at step EXEC ... status=203/EXEC
+#   avc: denied { execute } ... tcontext=...:user_home_t:s0 tclass=file
+#
+# and Decky never appeared in Game Mode. `aq decky install` now labels the file
+# as a program, which needs three commands:
+#
+#   * `semanage`, which writes a LASTING rule ("this file is a program"), so
+#     that a later relabel puts the label back instead of stripping it. It is
+#     in policycoreutils-python-utils and it is NOT in a bare Fedora image;
+#   * `restorecon`, which applies the rules to the file. policycoreutils;
+#   * `chcon`, the one-off fallback, which comes with coreutils and so is
+#     always here.
+#
+# Without the first two the labelling falls back to `chcon`, which works until
+# the next relabel and then quietly stops — the worst kind of fault. So they
+# are installed here, deliberately, rather than hoped for.
+#
+# ⚠️ policycoreutils also arrives on the NVIDIA image at step 60, for the
+# container/GPU rule. Asking for it again is free (dnf does nothing if it is
+# already there) and means this step does not depend on which image is being
+# built.
+say "The SELinux commands 'aq decky install' needs to label the loader"
+
+aq_dnf install policycoreutils policycoreutils-python-utils
+
+aq_installed policycoreutils
+aq_installed policycoreutils-python-utils
+
+for aq_cmd in semanage restorecon chcon; do
+    if aq_have "${aq_cmd}"; then
+        ok "${aq_cmd} runs in this image"
+    else
+        bad "${aq_cmd} is not on PATH — 'aq decky install' could not give the downloaded loader the label of a program, and Decky would install and never start"
+    fi
+done
 
 # ==============================================================================
 # 2. The `aq decky` command, read back out of the finished image
@@ -148,6 +202,64 @@ aq_file_has /tmp/aq-decky-help.txt 'ONLY EXISTS IN GAME MODE' \
 aq_file_has /tmp/aq-decky-help.txt 'administrator' \
     "and that it runs as an administrator in the background"
 rm -f /tmp/aq-decky-help.txt
+
+# ==============================================================================
+# 2b. The labelling program, and the fact that `aq` really calls it
+# ==============================================================================
+# Two separate questions, and both have to be yes or Decky installs and never
+# starts:
+#
+#   1. is /usr/libexec/aquarius-decky-label in the image, does it parse, and
+#      does it really write a lasting rule (`semanage fcontext` ... `bin_t`)
+#      rather than only the one-off `chcon` that a relabel undoes;
+#   2. does `aq decky` actually call it? A perfect helper nobody runs is the
+#      same as no helper at all.
+say "The program that gives Decky's loader the label of a program"
+
+if [ -x "${AQ_DECKY_LABEL}" ]; then
+    ok "${AQ_DECKY_LABEL} is installed and can be run"
+else
+    bad "${AQ_DECKY_LABEL} is missing or not runnable — 'aq decky install' would fall back to a one-off label, and Decky would stop starting after the next relabel"
+fi
+
+if bash -n "${AQ_DECKY_LABEL}" 2> /tmp/aq-decky-label-syntax.txt; then
+    ok "it is valid shell"
+else
+    sed 's/^/       /' /tmp/aq-decky-label-syntax.txt >&2
+    bad "${AQ_DECKY_LABEL} does not parse — the administrator's half of every Decky install would fail"
+fi
+rm -f /tmp/aq-decky-label-syntax.txt
+
+aq_file_has "${AQ_DECKY_LABEL}" 'semanage fcontext' \
+    "it writes a LASTING SELinux rule with 'semanage fcontext', not only a one-off label"
+aq_file_has "${AQ_DECKY_LABEL}" 'bin_t' \
+    "and the label it asks for is bin_t — 'this is a program'"
+aq_file_has "${AQ_DECKY_LABEL}" 'restorecon' \
+    "and it runs restorecon, which is what puts the rule onto the file"
+aq_file_has "${AQ_DECKY_LABEL}" 'chcon' \
+    "with chcon kept as the fallback for a machine where semanage will not play"
+
+if "${AQ_DECKY_LABEL}" --help > /tmp/aq-decky-label-help.txt 2>&1; then
+    ok "'${AQ_DECKY_LABEL} --help' runs and explains itself"
+else
+    sed 's/^/       /' /tmp/aq-decky-label-help.txt >&2
+    bad "${AQ_DECKY_LABEL} cannot even print its own help"
+fi
+rm -f /tmp/aq-decky-label-help.txt
+
+# Named with no file to work on, it must refuse rather than do something
+# arbitrary. This is the cheapest possible proof that the program runs at all
+# in this image, on this architecture, with this shell.
+if "${AQ_DECKY_LABEL}" > /tmp/aq-decky-label-none.txt 2>&1; then
+    sed 's/^/       /' /tmp/aq-decky-label-none.txt >&2
+    bad "${AQ_DECKY_LABEL} with no file named succeeded — it should refuse"
+else
+    ok "with no file named it refuses, instead of guessing"
+fi
+rm -f /tmp/aq-decky-label-none.txt
+
+aq_file_has /usr/bin/aq 'aquarius-decky-label' \
+    "'aq decky' really calls the labelling program — it is not an unused file"
 
 # ==============================================================================
 # 3. The launcher in the app grid

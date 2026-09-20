@@ -160,15 +160,78 @@ The computer is not on the internet, or GitHub is having a bad day, or you have
 asked it a great many times in a short while and it is making you wait. Nothing
 has been changed — try again later.
 
+### Decky did not appear in Game Mode
+
+*This is the 20 September 2026 bench bug. If Decky installed without a single
+error and the plug tab is simply not there, read this one first.*
+
+**What it looks like.** `aq decky install` finishes and says Decky is running.
+You go to Game Mode, press **"..."**, and there is no plug. `aq decky status`
+says the background service is NOT running. If you look in the computer's own
+log with `sudo journalctl -b -u plugin_loader.service`, you find two lines:
+
+```
+plugin_loader.service: Failed at step EXEC ... status=203/EXEC
+avc: denied { execute } for comm="(PluginLoader)" name="PluginLoader"
+    scontext=system_u:system_r:init_t:s0
+    tcontext=unconfined_u:object_r:user_home_t:s0 tclass=file permissive=0
+```
+
+**What SELinux is, in one sentence.** SELinux is a guard built into Fedora that
+gives every file on the computer a small label saying what kind of thing it is,
+and then decides, from those labels, who is allowed to do what with it.
+
+**What those two lines mean.** `203/EXEC` is the computer saying "I could not
+run that program at all". The second line is the reason: something labelled
+`init_t` — that is systemd, the part of Linux that runs background services —
+tried to run a file labelled `user_home_t`, which means "one of this person's
+documents". SELinux does not let a document be run as a service, so it said no.
+Decky's own installer was written for SteamOS and Bazzite, which do not guard
+home folders this way, so it never had to think about this. On Fedora it does.
+
+**What AquariusOS does about it.** Since this fix, `aq decky install` and `aq
+decky update` give the downloaded file the label `bin_t` — "this is a program"
+— before switching the service on. They do it in a way that *lasts*: a rule is
+written into the computer's policy saying that anything at
+`/home/<somebody>/homebrew/services/PluginLoader` is a program, and then the
+label is applied from that rule. A one-off label would be wiped out the next
+time anything put file labels back the way policy says they should be; a rule
+is what makes that same event *restore* the label instead. `aq decky remove`
+takes the rule away again.
+
+And it checks its own work: the label is read back off the file, and if it is
+still wrong the install stops and says so, instead of switching on a service
+that cannot possibly start.
+
+**If you are looking at this on a machine that is already wrong:**
+
+```
+aq decky status
+```
+
+now has a line called **The SELinux label**. If it says anything other than
+`bin_t`, put it right with:
+
+```
+sudo /usr/libexec/aquarius-decky-label ~/homebrew/services/PluginLoader
+sudo systemctl restart plugin_loader.service
+```
+
+(`aq decky update` does the same thing as part of its work, if there is a newer
+Decky to fetch.)
+
+The one-off, does-not-last version, if that program is ever missing:
+
+```
+sudo chcon -t bin_t ~/homebrew/services/PluginLoader
+sudo systemctl restart plugin_loader.service
+```
+
 ### It installed, but the service will not start
 
-This is almost always **SELinux**, the part of Linux that decides which programs
-are allowed to be programs. A file downloaded into your home folder is labelled
-as ordinary data, and systemd will not start ordinary data as a service. The
-install gives it the right label; if something has stripped it, put it back:
-
-    sudo chcon -t bin_t ~/homebrew/services/PluginLoader
-    sudo systemctl restart plugin_loader.service
+If the log does **not** say `203/EXEC`, it is not the label above. `aq decky
+status` prints the computer's own last words about it. The usual next step is
+`aq decky remove` followed by `aq decky install`.
 
 ### It asks for a password and will not take it
 
@@ -204,9 +267,13 @@ restarted, and hands it straight back to you.
 
 Nothing of Decky is in the AquariusOS image, and the build **fails** if any of
 it ever is — no service file, no `/home/deck`, no downloaded loader, no
-`~/homebrew`. What is in the image is three things: the `aq decky` command, the
-"Decky Loader" entry in the app grid, and `jq`, the small program that reads
-GitHub's answer about which release is newest.
+`~/homebrew`. What is in the image is five things: the `aq decky` command, the
+"Decky Loader" entry in the app grid, `jq` (the small program that reads
+GitHub's answer about which release is newest),
+`/usr/libexec/aquarius-decky-label` (the program that gives the downloaded
+loader the SELinux label of a program — see "Decky did not appear in Game
+Mode" above), and the two Fedora packages that carry `semanage` and
+`restorecon`, which is what that program uses.
 
 | Where | What |
 | --- | --- |
@@ -216,6 +283,7 @@ GitHub's answer about which release is newest.
 | `~/.steam/steam/.cef-enable-remote-debugging` | The empty flag file that lets Decky talk to Steam's interface. |
 | `/etc/systemd/system/plugin_loader.service` | What starts the loader with the computer. |
 | `/home/deck` | The signpost, if we made it. |
+| an SELinux rule for `/home/*/homebrew/services/PluginLoader` | Says that file is a program, so the computer is allowed to run it as a service. Written by the install, removed by `aq decky remove`. See `sudo semanage fcontext -l \| grep PluginLoader`. |
 
 ⚠️ **Why that service file is in `/etc`, when nothing else of AquariusOS is.**
 Everything AquariusOS switches on ships as a link under `/usr`, for the reason
@@ -238,8 +306,18 @@ and a real screen.
 
 1. **`aq decky status` on a machine with no Decky** says "NOT installed" and
    still explains where Decky would appear.
-2. **`aq decky install`** downloads, asks for a password exactly once, and ends
-   with the "TO SEE IT" instructions.
+2. **`aq decky install`** downloads, asks for a password exactly once, prints a
+   line about the **SELinux label** on the way past, and ends with the "TO SEE
+   IT" instructions.
+2a. **`aq decky status` has a line called "The SELinux label"** and it says
+   `bin_t — a program, which is right`. ⚠️ *This is the 20 September 2026
+   bench bug. If it says `user_home_t`, Decky will never appear in Game Mode.*
+2b. **The rule that makes it last.** `sudo semanage fcontext -l | grep
+   PluginLoader` shows a line ending in `bin_t`. Then
+   `sudo restorecon -v ~/homebrew/services/PluginLoader` changes nothing (it
+   is already right), and `aq decky status` still says `bin_t` afterwards —
+   which is the proof that a relabel now KEEPS Decky working instead of
+   breaking it.
 3. **`sudo aq decky install` is refused**, with a sentence explaining why.
 4. **Game Mode** (`aq game`) → **"..."** → the **plug** tab is there, and its
    store loads.
@@ -255,7 +333,8 @@ and a real screen.
    again by itself, and the plug tab is still in Game Mode.
 10. **`aq decky remove`**, then check: `~/homebrew/plugins` still has the plugin
     from step 5 in it, `/home/deck` is gone, and Steam and the games are
-    untouched.
+    untouched. Also `sudo semanage fcontext -l | grep PluginLoader` finds
+    **nothing** — the SELinux rule came out with everything else.
 11. **`aq decky install` again** — the plugin from step 5 is still there.
 12. **On the handheld image** (the ROG Xbox Ally X), all of the above, since
     that is the machine Decky was originally written for.
