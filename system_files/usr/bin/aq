@@ -2476,10 +2476,12 @@ game_status() {
         echo "To start in Game Mode instead:  aq game boot on"
     fi
 
-    # The honest extra: is the one-off automatic login still switched on? It is
-    # taken off at every boot and at every desktop login, so seeing it here is
-    # normal in the middle of a switch and worth knowing about at any other time.
-    if [ -r /etc/gdm/custom.conf ] && grep -q '^TimedLoginEnable=true' /etc/gdm/custom.conf 2> /dev/null; then
+    # The honest extra: is the one-off password-free login still switched on?
+    # It is taken off at every boot and at every desktop login, so seeing it
+    # here is normal in the middle of a switch and worth knowing about at any
+    # other time.
+    if [ -r /etc/gdm/custom.conf ] \
+        && grep -qE '^(TimedLoginEnable|AutomaticLoginEnable)=true' /etc/gdm/custom.conf 2> /dev/null; then
         echo
         echo "Note: the login screen is currently set to log you straight back in."
         echo "That is how a switch avoids asking for a password, and it is taken"
@@ -2498,9 +2500,16 @@ game_status() {
     else
         echo "   next session for ${USER}:  (not readable from here, or never set)"
     fi
+    # ⚠️ THESE TWO ARE NOT "ONE FOR A SWITCH, ONE FOR A BOOT" ANY MORE. Since
+    # GDM 50 the login screen's timed login is refused unless the automatic
+    # login names the same person, so a switch writes BOTH sets of lines and a
+    # switch is the usual reason to see both here. A cold boot into Game Mode
+    # writes the automatic lines only. The full explanation, with the line from
+    # GDM's own source, is in /usr/libexec/aquarius-session-root.
     if [ -r /etc/gdm/custom.conf ]; then
-        echo "   timed login (a switch):    $(grep -E '^TimedLogin(Enable)?=' /etc/gdm/custom.conf 2> /dev/null | tr '\n' ' ')"
-        echo "   automatic login (a boot):  $(grep -E '^AutomaticLogin(Enable)?=' /etc/gdm/custom.conf 2> /dev/null | tr '\n' ' ')"
+        echo "   timed login lines:         $(grep -E '^TimedLogin(Enable|Delay)?=' /etc/gdm/custom.conf 2> /dev/null | tr '\n' ' ')"
+        echo "   automatic login lines:     $(grep -E '^AutomaticLogin(Enable)?=' /etc/gdm/custom.conf 2> /dev/null | tr '\n' ' ')"
+        echo "   (a switch sets both; a boot into Game Mode sets the automatic ones)"
     fi
     local note="${XDG_STATE_HOME:-${HOME}/.local/state}/aquarius/desktop-session"
     if [ -r "${note}" ]; then

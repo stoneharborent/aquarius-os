@@ -117,21 +117,27 @@ case "${AQ_MODE}" in
         # Straight into Game Mode: the session is Steam's, and the login screen
         # logs this person in by itself.
         #
-        # ⚠️ AUTOMATIC login here, TIMED login for a switch — they are not
-        # interchangeable. GDM builds the first login screen of a boot with
-        # timed login disallowed (that is in gdm-local-display-factory.c), so
-        # a TimedLogin block does nothing at boot; it is AutomaticLogin that
-        # GDM honours then. Until 2026-09-19 this wrote TimedLogin and a
-        # machine set to start in Game Mode stopped at a password box.
-        # A switch later in the day still uses TimedLogin, because after a
-        # logout it is the other way round: automatic login is spent, timed
-        # login works.
+        # ⚠️ AUTOMATIC login here; a SWITCH writes more than this. GDM builds
+        # the first login screen of a boot with timed login disallowed (that
+        # is in gdm-local-display-factory.c), so a TimedLogin block does
+        # nothing at boot; it is AutomaticLogin that GDM honours then. Until
+        # 2026-09-19 this wrote TimedLogin and a machine set to start in Game
+        # Mode stopped at a password box.
+        # A switch later in the day uses `switch-login`, which writes the
+        # timed login AND the automatic one, because since GDM 50 the daemon
+        # refuses a timed login unless the automatic keys name the same
+        # person. See the long note in /usr/libexec/aquarius-session-root.
         "${AQ_ROOT_HELPER}" set-session "${AQ_USER}" "${AQ_GAME_SESSION}" \
             || say "could not set the session — this computer will show the login screen instead, which is safe."
+        # ⚠️ CLEAR FIRST, THEN SET, AND THE ORDER IS NOT A STYLE CHOICE.
+        # `switch-login off` removes BOTH the timed-login lines and the
+        # automatic-login ones (since 2026-09-19 a switch writes both, because
+        # GDM 50 will not honour one without the other). So it has to run
+        # BEFORE the automatic login is switched on, or it would take off the
+        # very setting this branch exists to write.
+        "${AQ_ROOT_HELPER}" switch-login off > /dev/null 2>&1 || true
         "${AQ_ROOT_HELPER}" auto-login on "${AQ_USER}" \
             || say "could not switch the automatic login on — you will be asked who you are, which is safe."
-        # A timed login left behind by yesterday's switch is not needed on top.
-        "${AQ_ROOT_HELPER}" timed-login off > /dev/null 2>&1 || true
         ;;
 
     desktop)
@@ -144,10 +150,10 @@ case "${AQ_MODE}" in
         #      time, on a machine whose owner asked for the login screen. So if
         #      the account is still pointed at Game Mode, it is pointed back at
         #      the desktop it came from.
-        "${AQ_ROOT_HELPER}" timed-login off \
-            || say "could not switch the timed login off — see the journal."
-        "${AQ_ROOT_HELPER}" auto-login off \
-            || say "could not switch the automatic login off — see the journal."
+        # One call takes all five lines off — the three timed-login ones a
+        # switch writes and the two automatic-login ones beside them.
+        "${AQ_ROOT_HELPER}" switch-login off \
+            || say "could not switch the password-free login off — see the journal."
 
         aq_file="${AQ_ACCOUNTS_DIR}/${AQ_USER}"
         if [ -r "${aq_file}" ] && grep -qx "Session=${AQ_GAME_SESSION}" "${aq_file}"; then

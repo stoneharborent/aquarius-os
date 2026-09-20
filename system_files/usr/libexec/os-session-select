@@ -35,8 +35,11 @@
 # WHAT IT ACTUALLY WRITES
 #   1. Which session the login screen should start for you next time
 #      (`Session=` in your account's file under /var/lib/AccountsService/users).
-#   2. A one-second automatic login, so the switch does not stop to ask for a
-#      password — you cannot type a password with a game controller.
+#   2. A password-free login for that one switch, so it does not stop to ask
+#      for a password — you cannot type a password with a game controller.
+#      Since GDM 50 that means TWO settings written together, the timed login
+#      and the automatic one; the long reason is in the `switch-login` job of
+#      /usr/libexec/aquarius-session-root.
 #   3. Which DESKTOP you came from, so that "Switch to Desktop" puts you back in
 #      GNOME if you were in GNOME and in Plasma if you were in Plasma. That one
 #      is remembered in your own home folder, because it is yours:
@@ -186,7 +189,7 @@ aq_tidy() {
     # Non-interactive on purpose: at login there is nobody watching a password
     # box, and if polkit says no, nothing bad happens — the automatic login just
     # stays on until the next restart.
-    if pkexec --disable-internal-agent "${AQ_ROOT_HELPER}" timed-login off; then
+    if pkexec --disable-internal-agent "${AQ_ROOT_HELPER}" switch-login off; then
         say "the login screen will ask who you are again, so Log Out behaves normally."
     else
         say "NOTE: could not switch the automatic login back off. Log Out may log"
@@ -297,7 +300,7 @@ fi
 #     that was about to disappear.
 #   * FROM GAME MODE, it is a warning and we go on. The alternative to "type
 #     your password once" is "stay stuck in Steam", and that is worse.
-if ! pkexec --disable-internal-agent "${AQ_ROOT_HELPER}" timed-login on "${USER}"; then
+if ! pkexec --disable-internal-agent "${AQ_ROOT_HELPER}" switch-login on "${USER}"; then
     if [ -n "${aq_from}" ]; then
         # Put the session back the way it was, so a half-done switch does not
         # quietly change what the login screen offers next time.

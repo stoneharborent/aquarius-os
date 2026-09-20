@@ -572,11 +572,42 @@ else
     bad "the session file does not parse — Game Mode would fail to start"
 fi
 
+# ------------------------------------------------------------------------------
+# Bench 2, 2026-09-19 — bug 1: the switch writes BOTH logins
+# ------------------------------------------------------------------------------
+# GDM 50's daemon refuses the login screen's timed login unless the automatic-
+# login keys are set for the same person (daemon/gdm-session.c,
+# gdm_session_handle_client_begin_auto_login). Writing only the TimedLogin
+# lines — what this image did until 2026-09-19 — is what put a password box in
+# the middle of a switch, and made it flicker while Royce typed. These checks
+# fail the build if any part of that fix ever goes missing.
+say "A switch writes the timed login AND the automatic one (the GDM 50 rule)"
+aq_file_has /usr/libexec/aquarius-session-root '^aq_switch_login\(\)' \
+    "the root helper has one job for the whole password-free switch login"
+aq_file_has /usr/libexec/aquarius-session-root '"AutomaticLogin=\$\{account\}"' \
+    "and that job writes the automatic-login lines as well as the timed ones"
+aq_file_has /usr/libexec/aquarius-session-root 'Autologin not permitted for user' \
+    "and the journal line it was diagnosed from is written down beside it"
+aq_file_has /usr/libexec/aquarius-session-root '^aq_gdm_add\(\)' \
+    "the two login jobs share one way of writing custom.conf, not two copies"
+aq_file_has /usr/libexec/aquarius-session-root '^aq_gdm_must_say\(\)' \
+    "and one way of reading it back out afterwards"
+aq_file_has /usr/libexec/os-session-select 'switch-login on "\$\{USER\}"' \
+    "a switch asks for switch-login, not the old timed-login"
+aq_file_has /usr/libexec/os-session-select 'switch-login off' \
+    "and a desktop arrival clears it again"
+aq_file_has /usr/libexec/aquarius-login-mode 'switch-login off' \
+    "the boot-time program clears all five lines in both of its branches"
+
 say "Starting IN Game Mode uses the login GDM honours at boot"
 aq_file_has /usr/libexec/aquarius-session-root '^aq_auto_login\(\)' \
-    "the root helper can write AutomaticLogin (boot) as well as TimedLogin (switch)"
+    "the root helper can still write AutomaticLogin on its own, for a cold boot"
 aq_file_has /usr/libexec/aquarius-login-mode 'auto-login on' \
     "and the boot-time program uses it for mode=game"
+
+say "'aq game status' no longer calls the timed login 'a switch' on its own"
+aq_file_has /usr/bin/aq 'a switch sets both; a boot into Game Mode sets the automatic ones' \
+    "aq game status explains that a switch sets both sets of lines"
 
 say "The login screen's own account does not run the tidy service"
 aq_file_has /usr/lib/systemd/user/aquarius-game-tidy.service '^ConditionUser=!@system$' \

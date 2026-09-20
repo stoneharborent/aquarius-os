@@ -17,7 +17,10 @@
 #      every Linux that has it). So that you do not have to type your password
 #      each time you press "Switch to Desktop", the login screen is told, for
 #      this one switch, to log you in by itself after one second. That is the
-#      `TimedLogin` block in /etc/gdm/custom.conf.
+#      `TimedLogin` block in /etc/gdm/custom.conf — and, since GDM 50, the
+#      `AutomaticLogin` block beside it, which GDM now insists on before it
+#      will honour a timed login at all. Both are written together by the
+#      `switch-login` job below, which explains that rule at length.
 #
 # This program does nothing else. It is deliberately tiny and deliberately
 # suspicious of everything it is handed, because it runs as root on behalf of a
@@ -50,8 +53,8 @@
 #
 # WHAT IT CAN DO
 #   aquarius-session-root set-session <account> <session>
-#   aquarius-session-root timed-login on <account>
-#   aquarius-session-root timed-login off
+#   aquarius-session-root switch-login on <account>   (a switch, while the
+#   aquarius-session-root switch-login off             computer is running)
 #   aquarius-session-root auto-login on <account>     (the boot-time service only)
 #   aquarius-session-root auto-login off
 #   aquarius-session-root reload-gdm
@@ -202,20 +205,116 @@ aq_set_session() {
 }
 
 # -----------------------------------------------------------------------------
-# timed-login on <account>  /  timed-login off
+# The three small helpers the two login jobs share
 # -----------------------------------------------------------------------------
-# ⚠️ WHY "TIMED LOGIN" AND NOT "AUTOMATIC LOGIN". They look like the same thing
-# and they are not. GDM's plain automatic login fires ONCE per boot and is then
-# spent — so it takes you into Game Mode the first time and does nothing at all
-# on the way back, which is a machine that asks for a password halfway through a
-# switch you already started. GDM's *timed* login fires every time the login
-# screen appears, including after a logout, which is exactly what a switch is.
-# Nobara's Steam Deck edition hit this first and their script carries the same
-# one-line comment; ours carries the whole paragraph.
+# ⚠️ WHY THESE EXIST RATHER THAN THE SAME `sed` WRITTEN OUT FOUR TIMES. Both
+# jobs below do exactly the same three things to /etc/gdm/custom.conf — take
+# the old lines out, put new ones in under [daemon], then read them back — and
+# until 2026-09-19 each job carried its own copy of all three. Two copies of a
+# thing that must stay identical is one copy too many: the copies drifted, and
+# the drift was the bug.
+
+# aq_gdm_drop <sed-expression> — take lines out of custom.conf.
+aq_gdm_drop() {
+    sed -i "$1" "${AQ_GDM_CONF}" || die "could not edit ${AQ_GDM_CONF}."
+}
+
+# aq_gdm_add <line> [<line>...] — put lines in, directly under [daemon].
+#
+# The lines are added in the order given. sed's `a` command inserts AFTER the
+# [daemon] line, so adding them one at a time and in order would reverse them;
+# they are joined with the escaped newlines sed wants and added in one go.
+# If there is no [daemon] section at all — a custom.conf somebody has emptied —
+# one is made at the end of the file.
+aq_gdm_add() {
+    local joined="" line
+    for line in "$@"; do
+        if [ -z "${joined}" ]; then joined="${line}"; else joined="${joined}\\n${line}"; fi
+    done
+    if grep -q '^\[daemon\]' "${AQ_GDM_CONF}"; then
+        sed -i "/^\[daemon\]/a ${joined}" "${AQ_GDM_CONF}" \
+            || die "could not edit ${AQ_GDM_CONF}."
+    else
+        {
+            echo ""
+            echo "[daemon]"
+            printf '%b\n' "${joined}"
+        } >> "${AQ_GDM_CONF}" || die "could not edit ${AQ_GDM_CONF}."
+    fi
+}
+
+# aq_gdm_must_say <line> [<line>...] — trust content, never timestamps.
+# Reads the finished file and insists every line really is in it.
+aq_gdm_must_say() {
+    local line
+    for line in "$@"; do
+        grep -qx "${line}" "${AQ_GDM_CONF}" \
+            || die "wrote ${AQ_GDM_CONF} but it does not contain '${line}'. Nothing was changed the way it should have been."
+    done
+}
+
+# The five lines a switch needs, named once so no job can write four of them.
+AQ_TIMED_KILL='/^[[:space:]]*TimedLoginEnable[[:space:]]*=/d; /^[[:space:]]*TimedLoginDelay[[:space:]]*=/d; /^[[:space:]]*TimedLogin[[:space:]]*=/d'
+AQ_AUTO_KILL='/^[[:space:]]*AutomaticLoginEnable[[:space:]]*=/d; /^[[:space:]]*AutomaticLogin[[:space:]]*=/d'
+
+# -----------------------------------------------------------------------------
+# switch-login on <account>  /  switch-login off
+# -----------------------------------------------------------------------------
+# THE PASSWORD-FREE LOGIN THAT CARRIES YOU THROUGH ONE SWITCH.
+#
+# (This job was called `timed-login` until 2026-09-19. It was renamed because
+# the name had stopped being true: it now writes the timed login AND the
+# automatic one, for the reason below.)
+#
+# Every switch between the desktop and Game Mode is a full logout, so something
+# has to log you back in without asking for a password — you cannot type a
+# password on a game controller. GDM has two settings that look like they do
+# that, and the whole history of this file is people discovering they are not
+# interchangeable:
+#
+#   TimedLogin*      "after N seconds on the login screen, log this person in."
+#                    Fires every time the login screen appears, including after
+#                    a logout — which is what a switch is.
+#   AutomaticLogin*  "log this person in without showing a login screen at all."
+#                    Allowed ONCE in the life of the running GDM, and then spent.
+#
+# ⚠️ THE GDM 50 RULE, LEARNED ON THE BENCH ON 2026-09-19. Since GDM 50 the
+# timed login ALSO needs the automatic-login keys to be set, for the same
+# person. The login screen asks the GDM daemon to begin a timed login and the
+# daemon checks the AUTOMATIC-login settings before agreeing
+# (daemon/gdm-session.c, gdm_session_handle_client_begin_auto_login):
+#
+#     gdm_settings_direct_get_boolean (GDM_KEY_AUTO_LOGIN_ENABLE, &enabled);
+#     gdm_settings_direct_get_string  (GDM_KEY_AUTO_LOGIN_USER, &allowed);
+#     if (!enabled || allowed == NULL || g_strcmp0 (allowed, username) != 0) {
+#             ... "Autologin not permitted for user %s"
+#
+# With only the TimedLogin lines written — Nobara's recipe, and ours until
+# 2026-09-19 — the greeter's countdown fires, the daemon refuses, and the
+# greeter tries again about every two seconds. That is what Royce saw: a
+# password box that kept going inactive while he typed. In the journal it
+# looks like this, over and over:
+#
+#     gnome-shell[14056]: Exception in callback for signal: release:
+#     Gio.DBusError: GDBus.Error:org.freedesktop.DBus.Error.AccessDenied:
+#     Autologin not permitted for user rorobeckley
+#
+# So a switch writes BOTH blocks — all five lines — and takes all five off
+# again. Nothing else changed: the timed login is still the thing that carries
+# a switch, and the automatic login is still what carries a cold boot.
+#
+# ⚠️ AND YES, THE AUTOMATIC LOGIN MAY FIRE INSTEAD. GDM allows its direct
+# automatic login once per GDM lifetime, on any seat0 login screen and not only
+# the first of a boot (daemon/gdm-manager.c, get_automatic_login_details, and
+# the `did_automatic_login` flag beside it). So on a machine that has not used
+# its automatic login yet, the first switch lands with no login screen at all;
+# every switch after that goes through the greeter's one-second timed login,
+# which now succeeds because these keys are present. Both paths land in the
+# right session without a password, which is the whole point.
 #
 # The delay is one second, not zero. Zero is not allowed to mean "instantly" in
 # GDM and a zero there has historically meant "never".
-aq_timed_login() {
+aq_switch_login() {
     local action="$1" account="${2:-}"
 
     [ -f "${AQ_GDM_CONF}" ] || die "${AQ_GDM_CONF} is not there — this computer's login screen is not the one AquariusOS ships."
@@ -225,40 +324,37 @@ aq_timed_login() {
             aq_check_account "${account}"
             # Switching on a password-free login is the sharpest thing this
             # program does, so it is bound to the person asking. `off` is not:
-            # taking an automatic login away can only ever make the machine ask
-            # for a password more often, which is never something to refuse.
+            # taking a password-free login away can only ever make the machine
+            # ask for a password more often, which is never something to refuse.
             aq_must_be_the_caller "${account}"
-            # Remove any block we or anybody else left, then write a clean one
-            # directly under [daemon]. Removing first means this can never end
-            # up with two TimedLogin lines, whatever state the file was in.
-            sed -i '/^[[:space:]]*TimedLoginEnable[[:space:]]*=/d; /^[[:space:]]*TimedLoginDelay[[:space:]]*=/d; /^[[:space:]]*TimedLogin[[:space:]]*=/d' \
-                "${AQ_GDM_CONF}" || die "could not edit ${AQ_GDM_CONF}."
-
-            if grep -q '^\[daemon\]' "${AQ_GDM_CONF}"; then
-                sed -i "/^\[daemon\]/a TimedLoginEnable=true\nTimedLoginDelay=1\nTimedLogin=${account}" \
-                    "${AQ_GDM_CONF}" || die "could not edit ${AQ_GDM_CONF}."
-            else
-                printf '\n[daemon]\nTimedLoginEnable=true\nTimedLoginDelay=1\nTimedLogin=%s\n' \
-                    "${account}" >> "${AQ_GDM_CONF}" || die "could not edit ${AQ_GDM_CONF}."
-            fi
-
-            if grep -qx "TimedLogin=${account}" "${AQ_GDM_CONF}" \
-                && grep -qx 'TimedLoginEnable=true' "${AQ_GDM_CONF}"; then
-                say "the login screen will log ${account} back in by itself, one second after it appears."
-            else
-                die "wrote ${AQ_GDM_CONF} but the TimedLogin lines are not in it."
-            fi
+            # Remove both blocks first, whatever state the file was in, so this
+            # can never end up with two of any line.
+            aq_gdm_drop "${AQ_TIMED_KILL}"
+            aq_gdm_drop "${AQ_AUTO_KILL}"
+            aq_gdm_add \
+                "TimedLoginEnable=true" \
+                "TimedLoginDelay=1" \
+                "TimedLogin=${account}" \
+                "AutomaticLoginEnable=true" \
+                "AutomaticLogin=${account}"
+            aq_gdm_must_say \
+                "TimedLoginEnable=true" \
+                "TimedLoginDelay=1" \
+                "TimedLogin=${account}" \
+                "AutomaticLoginEnable=true" \
+                "AutomaticLogin=${account}"
+            say "the login screen will log ${account} back in by itself, without asking for a password."
             ;;
         off)
-            sed -i '/^[[:space:]]*TimedLoginEnable[[:space:]]*=/d; /^[[:space:]]*TimedLoginDelay[[:space:]]*=/d; /^[[:space:]]*TimedLogin[[:space:]]*=/d' \
-                "${AQ_GDM_CONF}" || die "could not edit ${AQ_GDM_CONF}."
-            if grep -q '^[[:space:]]*TimedLogin' "${AQ_GDM_CONF}"; then
-                die "tried to remove the automatic-login lines from ${AQ_GDM_CONF} and they are still there."
+            aq_gdm_drop "${AQ_TIMED_KILL}"
+            aq_gdm_drop "${AQ_AUTO_KILL}"
+            if grep -q '^[[:space:]]*\(TimedLogin\|AutomaticLogin\)' "${AQ_GDM_CONF}"; then
+                die "tried to remove the password-free login lines from ${AQ_GDM_CONF} and they are still there."
             fi
             say "the login screen will ask who you are again, the normal way."
             ;;
         *)
-            die "'timed-login' takes 'on <account>' or 'off'."
+            die "'switch-login' takes 'on <account>' or 'off'."
             ;;
     esac
 }
@@ -266,24 +362,18 @@ aq_timed_login() {
 # -----------------------------------------------------------------------------
 # auto-login on <account>  /  auto-login off
 # -----------------------------------------------------------------------------
-# ⚠️ THE OTHER HALF OF THE "TIMED, NOT AUTOMATIC" STORY ABOVE — and the reason
-# `aq game boot on` needs this one and not that one.
+# ⚠️ THIS ONE IS FOR A COLD BOOT, AND ONLY THE BOOT-TIME SERVICE USES IT.
 #
-# GDM's timed login is what a SWITCH needs, because it works on every login
-# screen GDM shows after a logout. But GDM's own source (gdm-local-display-
-# factory.c, the "Creating local display" path) builds the FIRST login screen
-# of a boot with allow-timed-login switched OFF: at boot, the only password-
-# free login GDM will do is the plain AutomaticLogin one. So a machine set to
-# start in Game Mode with only TimedLogin written would stop at the login
-# screen every morning and ask for a password — the opposite of a console.
-#
-# So: a switch writes TimedLogin (above); the boot-time service writes
-# AutomaticLogin (this). The two blocks live side by side in custom.conf and
-# each is removed in full before being written, so neither can be doubled.
+# A machine set to start in Game Mode (`aq game boot on`) has no switch to
+# carry: it is switched on and it must arrive in Steam. There is no login
+# screen in that story at all, so there is nothing for a timed login to do —
+# what GDM honours there is the plain AutomaticLogin block, and that is what
+# this writes. (It writes only the automatic block; `switch-login` above writes
+# that block AND the timed one, because a switch needs both.)
 #
 # ⚠️ ONLY THE BOOT-TIME SERVICE CALLS `on`. It runs as real root, before
 # anybody has logged in. Through pkexec this is still bound to the person
-# asking, the same as timed-login, so it cannot be turned against somebody
+# asking, the same as switch-login, so it cannot be turned against somebody
 # else's account.
 aq_auto_login() {
     local action="$1" account="${2:-}"
@@ -294,25 +384,13 @@ aq_auto_login() {
         on)
             aq_check_account "${account}"
             aq_must_be_the_caller "${account}"
-            sed -i '/^[[:space:]]*AutomaticLoginEnable[[:space:]]*=/d; /^[[:space:]]*AutomaticLogin[[:space:]]*=/d' \
-                "${AQ_GDM_CONF}" || die "could not edit ${AQ_GDM_CONF}."
-            if grep -q '^\[daemon\]' "${AQ_GDM_CONF}"; then
-                sed -i "/^\[daemon\]/a AutomaticLoginEnable=true\nAutomaticLogin=${account}" \
-                    "${AQ_GDM_CONF}" || die "could not edit ${AQ_GDM_CONF}."
-            else
-                printf '\n[daemon]\nAutomaticLoginEnable=true\nAutomaticLogin=%s\n' \
-                    "${account}" >> "${AQ_GDM_CONF}" || die "could not edit ${AQ_GDM_CONF}."
-            fi
-            if grep -qx "AutomaticLogin=${account}" "${AQ_GDM_CONF}" \
-                && grep -qx 'AutomaticLoginEnable=true' "${AQ_GDM_CONF}"; then
-                say "at the next boot the login screen will log ${account} in by itself."
-            else
-                die "wrote ${AQ_GDM_CONF} but the AutomaticLogin lines are not in it."
-            fi
+            aq_gdm_drop "${AQ_AUTO_KILL}"
+            aq_gdm_add "AutomaticLoginEnable=true" "AutomaticLogin=${account}"
+            aq_gdm_must_say "AutomaticLoginEnable=true" "AutomaticLogin=${account}"
+            say "at the next boot the login screen will log ${account} in by itself."
             ;;
         off)
-            sed -i '/^[[:space:]]*AutomaticLoginEnable[[:space:]]*=/d; /^[[:space:]]*AutomaticLogin[[:space:]]*=/d' \
-                "${AQ_GDM_CONF}" || die "could not edit ${AQ_GDM_CONF}."
+            aq_gdm_drop "${AQ_AUTO_KILL}"
             if grep -q '^[[:space:]]*AutomaticLogin' "${AQ_GDM_CONF}"; then
                 die "tried to remove the automatic-login lines from ${AQ_GDM_CONF} and they are still there."
             fi
@@ -408,9 +486,18 @@ case "${1:-}" in
         [ $# -eq 3 ] || die "usage: aquarius-session-root set-session <account> <session>"
         aq_set_session "$2" "$3"
         ;;
+    switch-login)
+        [ $# -ge 2 ] || die "usage: aquarius-session-root switch-login on <account> | off"
+        aq_switch_login "$2" "${3:-}"
+        ;;
     timed-login)
-        [ $# -ge 2 ] || die "usage: aquarius-session-root timed-login on <account> | off"
-        aq_timed_login "$2" "${3:-}"
+        # The old name for switch-login, kept for one release so that an
+        # in-flight switch started by the previous image cannot end in a
+        # program that does not know the word. It writes exactly what
+        # switch-login writes, because they are the same job.
+        [ $# -ge 2 ] || die "usage: aquarius-session-root switch-login on <account> | off"
+        say "NOTE: 'timed-login' is the old name for 'switch-login'."
+        aq_switch_login "$2" "${3:-}"
         ;;
     auto-login)
         [ $# -ge 2 ] || die "usage: aquarius-session-root auto-login on <account> | off"
@@ -424,6 +511,6 @@ case "${1:-}" in
         aq_boot_flag "$2" "${3:-}"
         ;;
     *)
-        die "'${1:-}' is not a job this program knows. It does: set-session, timed-login, auto-login, reload-gdm, boot-flag."
+        die "'${1:-}' is not a job this program knows. It does: set-session, switch-login, auto-login, reload-gdm, boot-flag."
         ;;
 esac

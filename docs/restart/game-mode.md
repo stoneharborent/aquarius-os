@@ -228,13 +228,23 @@ does this with GDM. Three moving parts:
    `/var/lib/AccountsService/users/<your name>`, as `Session=gnome`,
    `Session=plasma` or `Session=gamescope-session-steam`. GDM reads it.
 2. **Getting back in without a password** uses GDM's *timed* login — "log this
-   person in one second after the login screen appears". Not GDM's *automatic*
-   login, which looks like the same thing and is not: automatic login fires once
-   per boot and is then spent, so it would take you into Game Mode and do
-   nothing on the way back. (The mirror image is true at boot: GDM builds the
-   first login screen of a boot with timed login *disallowed*, so `aq game
-   boot on` writes the automatic one. Both facts are in GDM's own source —
-   `gdm-local-display-factory.c` — and both were learned the hard way.)
+   person in one second after the login screen appears" — **together with**
+   GDM's *automatic* login, for the same person. Both, every time, since
+   2026-09-19. They are different things and both are needed:
+
+   * the *timed* login is the one that fires on a login screen shown after a
+     logout, which is what a switch is;
+   * the *automatic* login is what GDM honours at boot (`aq game boot on`),
+     because GDM builds the first login screen of a boot with timed login
+     *disallowed* (`gdm-local-display-factory.c`);
+   * and since **GDM 50**, the daemon **refuses the timed login unless the
+     automatic-login keys are set for that same person**. Writing only the
+     timed ones — Nobara's recipe, and ours until 2026-09-19 — gives you a
+     password box that also flickers, because the login screen retries every
+     couple of seconds. See "Bench 2" below for the journal line that says so.
+
+   All five lines are written by one job, `switch-login on <you>`, and all five
+   are taken off by `switch-login off`.
 3. **`systemctl reload gdm`** so GDM re-reads that. Reload, never restart —
    restarting the login screen kills every session on the machine at once and
    reliably ends in a black screen. (A reload is a SIGHUP, and GDM's `main.c`
@@ -270,7 +280,7 @@ computer rather than about a person.
 | File | What it does |
 | --- | --- |
 | `/usr/libexec/os-session-select` | The hinge. Steam's own `steamos-session-select` looks for exactly this path and hands over to it. Writes down where you are going, and — from Game Mode — ends the session. Everything it decides goes to the journal: `journalctl -t os-session-select`. |
-| `/usr/libexec/aquarius-session-root` | The root half: the `Session=` line, the timed login (a switch), the automatic login (a boot), the GDM reload, the boot setting. Behind polkit. |
+| `/usr/libexec/aquarius-session-root` | The root half: the `Session=` line, the password-free login for a switch (`switch-login`, which writes the timed **and** automatic blocks), the automatic login on its own for a cold boot (`auto-login`), the GDM reload, the boot setting. Behind polkit. |
 | `/etc/gamescope-session-plus/sessions.d/steam` | Starts Game Mode at the screen's preferred resolution. Read by Terra's session script through a hook it already has. |
 | `/usr/libexec/aquarius-game-mode` | The "Game Mode" button: warn, switch, log out. |
 | `/usr/libexec/aquarius-login-mode` | Runs once per boot, before the login screen, and makes it match `/etc/aquarius/login-mode`. |
@@ -288,7 +298,7 @@ AquariusOS behaviour is added alongside, through hooks those packages already
 provide. A forked session script is a fork we would maintain for ever, and the
 first upstream fix we missed would be a bench day nobody could explain.
 
-### What went wrong on 2026-09-19
+### Bench 1, 2026-09-19 — what went wrong the first time
 
 The first real use of the switch, on the bench machine with the Samsung
 Odyssey Ark, found four things. Each is fixed; each is written down here so
@@ -322,6 +332,67 @@ And one thing found in the source while looking, not on the bench: **`aq game
 boot on` could never have worked**, because it wrote a *timed* login and GDM
 disallows timed login on the first login screen of a boot. It now writes the
 *automatic* one, which is what GDM honours there.
+
+### Bench 2, 2026-09-19 — the password box that flickered, and a dead controller
+
+The second bench run, on image `44.20260920` with GDM 50.3 on Fedora 44. The
+switch out of the desktop worked — the desktop logged out properly, which is
+bench 1's fix holding — and then three separate things went wrong. All three
+are fixed; here is what each one was, in plain language, so that the next
+person recognises it instead of rediscovering it.
+
+#### Bug 1 — the login screen asked for a password, and the box kept going dead
+
+**What it looked like.** Pressing the "Game Mode" launcher logged the desktop
+out and landed on the login screen asking for a password. While Royce typed,
+the password box went inactive for a moment, twice.
+
+**What it was.** GDM 50 changed the rule. The login screen asks the GDM daemon
+to begin the timed login, and the daemon now checks the **automatic**-login
+settings before agreeing (`daemon/gdm-session.c`,
+`gdm_session_handle_client_begin_auto_login`):
+
+```c
+gdm_settings_direct_get_boolean (GDM_KEY_AUTO_LOGIN_ENABLE, &enabled);
+gdm_settings_direct_get_string  (GDM_KEY_AUTO_LOGIN_USER, &allowed);
+if (!enabled || allowed == NULL || g_strcmp0 (allowed, username) != 0) {
+        ... "Autologin not permitted for user %s"
+```
+
+AquariusOS wrote only the `TimedLogin*` lines — Nobara's recipe, which worked
+on older GDM. So the countdown fired, the daemon said no, and the login screen
+tried again about every two seconds. Every keypress restarted its timer, and
+each time the timer fired the password box was disabled for a moment while the
+refusal came back. That is the flicker. In the greeter's journal it is this
+line, over and over:
+
+```
+gnome-shell[14056]: Exception in callback for signal: release: Gio.DBusError:
+GDBus.Error:org.freedesktop.DBus.Error.AccessDenied: Autologin not permitted
+for user rorobeckley
+```
+
+Everything else in the mechanism was fine and was checked in GDM's source: the
+reload really is a SIGHUP and really does re-read `custom.conf`
+(`daemon/main.c`, `on_sighup_cb`), and timed login is allowed on an ordinary
+login screen.
+
+**The fix.** A switch now writes **all five lines** — the three `TimedLogin*`
+ones and the two `AutomaticLogin*` ones — in one job, `switch-login on <you>`,
+and takes all five off again with `switch-login off`. (That job used to be
+called `timed-login`; the name stopped being true.)
+
+**What you will actually see.** Two different things, both password-free, and
+both correct:
+
+* the **first** switch after a boot where you typed your password lands you
+  straight in the new session with no login screen at all. GDM allows its
+  direct automatic login once in the life of the running GDM, on any login
+  screen on this seat — not only the first of a boot
+  (`daemon/gdm-manager.c`, `get_automatic_login_details`);
+* **after that** it is spent, so later switches show the login screen for
+  about a second and it logs you in by itself. That is the timed login, which
+  now works because the automatic keys are there beside it.
 
 ### Why "Log Out" still works
 
