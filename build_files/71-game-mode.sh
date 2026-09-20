@@ -438,7 +438,8 @@ for aq_f in \
     usr/share/polkit-1/actions/org.aquariusos.gamemode.policy \
     usr/share/polkit-1/rules.d/51-aquarius-game-mode.rules \
     etc/aquarius/login-mode \
-    etc/gamescope-session-plus/sessions.d/steam; do
+    etc/gamescope-session-plus/sessions.d/steam \
+    usr/lib/systemd/user/gamescope-session-plus@.service.d/50-aquarius-stop-targets.conf; do
     install -Dm644 "/ctx/system_files/${aq_f}" "/${aq_f}"
     if cmp -s "/ctx/system_files/${aq_f}" "/${aq_f}"; then
         ok "/${aq_f} is ours, byte for byte"
@@ -590,6 +591,51 @@ if [ -f /usr/lib/systemd/user/gamescope-session.target ]; then
 else
     echo "NOTE: this image has no /usr/lib/systemd/user/gamescope-session.target."
     echo "      That is allowed — os-session-select only stops the targets it finds."
+fi
+
+# ------------------------------------------------------------------------------
+# The same fix, attached to Terra's own unit
+# ------------------------------------------------------------------------------
+# Our program is not the only way Game Mode can end. Steam has its own paths,
+# and Steam can simply crash. So the signpost-lowering is ALSO bolted onto
+# Terra's unit as a drop-in, where it runs however the session finished. The
+# long plain-language explanation lives inside the file.
+say "Terra's Game Mode unit lowers the signpost however it ends (bench 4)"
+AQ_GS_DROPIN="/usr/lib/systemd/user/gamescope-session-plus@.service.d/50-aquarius-stop-targets.conf"
+if [ -f "${AQ_GS_DROPIN}" ]; then
+    ok "the drop-in is in the finished image at ${AQ_GS_DROPIN}"
+else
+    bad "${AQ_GS_DROPIN} is missing — Game Mode could again leave a signpost up"
+fi
+aq_file_has "${AQ_GS_DROPIN}" '^ExecStopPost=-/usr/bin/systemctl --user --no-block stop ' \
+    "it runs one systemctl when the session unit stops, and cannot fail the stop"
+aq_file_has "${AQ_GS_DROPIN}" 'graphical-session\.target' \
+    "and it lowers graphical-session.target"
+aq_file_has "${AQ_GS_DROPIN}" 'graphical-session-pre\.target' \
+    "and graphical-session-pre.target with it"
+aq_file_has "${AQ_GS_DROPIN}" '^\[Service\]$' \
+    "and the setting is under [Service], where systemd will look for it"
+
+# And ask systemd whether it can actually read it. ⚠️ ADVISORY ON PURPOSE.
+# Inside a build container systemd-analyze often cannot start a manager at all,
+# never reaches the file, and prints no complaint — so a check that only looks
+# for complaints would hand out a green tick nobody earned. Say which of the
+# two happened. (Same guard, same reason, as step 80's drop-in check.)
+if aq_have systemd-analyze; then
+    AQ_GS_VERIFY="$(systemd-analyze verify --user gamescope-session-plus@steam.service 2>&1 || true)"
+    printf '%s\n' "${AQ_GS_VERIFY}" | sed 's/^/  /'
+    if printf '%s' "${AQ_GS_VERIFY}" \
+        | grep -Eqi "failed to initialize manager|failed to lookup runtimedirectory|not found"; then
+        echo "  note   systemd-analyze could not read the unit inside this container, so"
+        echo "         the content checks above are what guard this drop-in."
+    elif printf '%s' "${AQ_GS_VERIFY}" | grep -Eqi "unknown (key|lvalue)|failed to parse"; then
+        bad "systemd cannot understand part of our drop-in (see above). A setting it"
+        bad "cannot read does nothing, silently — and the login loop comes back."
+    else
+        ok "systemd read gamescope-session-plus@steam.service with our drop-in and understood it"
+    fi
+else
+    echo "NOTE: systemd-analyze is not in this container; the content checks above stand alone."
 fi
 
 say "Game Mode starts at the screen's own resolution"
