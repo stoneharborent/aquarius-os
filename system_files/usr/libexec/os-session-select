@@ -267,19 +267,155 @@ aq_tidy() {
 # then reads what we wrote and brings the desktop back. If Steam is not there
 # to ask, the unit is stopped directly; if even that fails, logind ends the
 # session, which is blunt but always works.
+#
+# ⚠️ THE 2026-09-20 BUG (BENCH 4), AND WHY ASKING STEAM TO CLOSE IS NOT ENOUGH.
+#
+# Switch to Desktop no longer hung — it did something worse. The login screen
+# appeared, faded out to log Royce in, and came straight back. Forty-five times
+# in ninety seconds, until he held the power button.
+#
+# What GNOME said, once per attempt:
+#
+#     gnome-session-i[18098]: A graphical session is already running!
+#
+# It was not. Game Mode had gone. What had NOT gone was a signpost that Game
+# Mode had put up, and here is the plain-language version of it.
+#
+# Your computer runs a little manager of its own for your account — systemd's
+# "user manager" — and that manager keeps a set of switches called TARGETS that
+# say what state you are in. One of them, `graphical-session.target`, means
+# "this person has a graphical session on the screen right now". Anything that
+# should only run while you can see a screen hangs off it.
+#
+# Game Mode's unit, which comes from the Terra repository, is written like this:
+#
+#     BindsTo=graphical-session.target
+#     Before=graphical-session.target
+#
+# Read that in the right direction and the problem jumps out. `BindsTo` points
+# FROM the service TO the target: it means "if the TARGET stops, stop ME too".
+# It does not mean the reverse. Nothing anywhere says "when Game Mode ends,
+# take the signpost down". So Game Mode ended, and the signpost stayed up.
+# GNOME then started, saw a signpost saying a graphical session was already
+# running, refused, and died — and the login screen, told to log Royce straight
+# in, tried again. And again.
+#
+# WHY IT WORKED ON EARLIER BENCHES. The user manager used to shut down a few
+# seconds after the last session closed, taking every stale target with it, and
+# the next login got a brand-new manager. Since 2026-09-20 this account has
+# LINGERING switched on (something else on the machine switched it on — most
+# likely Homebrew's services or Decky), which means the manager starts at boot
+# and lives until the computer is switched off. One manager, all day, carrying
+# the stale signpost across the switch. Plasma never noticed because starting
+# Plasma reloads the manager; GNOME checks, and GNOME is right to check.
+#
+# SO THIS FUNCTION NOW DOES THE WHOLE JOB, IN ORDER:
+#
+#   1. asks Steam to close, and WAITS for it to actually be gone (up to ten
+#      seconds) instead of walking away the moment the request is accepted;
+#   2. takes the signposts down by hand — stops `graphical-session.target`,
+#      `graphical-session-pre.target` and, if this image has it,
+#      `gamescope-session.target`. Stopping `graphical-session.target` also
+#      stops Game Mode's own unit, because of that `BindsTo` above, and it is
+#      the unit stopping that ends the logind session;
+#   3. checks that the signpost really is down before walking away, says so
+#      loudly if it is not, and falls back to the blunt instrument — logind
+#      ending the session outright — exactly as before.
+#
+# The same take-the-signpost-down step is also attached to Terra's unit itself,
+# as a drop-in, so that Steam's own paths and Steam's own crashes are covered
+# even when this program never runs:
+#     /usr/lib/systemd/user/gamescope-session-plus@.service.d/50-aquarius-stop-targets.conf
+# And if a login ever does start looping again, the loop stops itself after
+# three tries at a password box: /usr/libexec/aquarius-login-loop-guard.
+
+# The signposts that have to come down when Game Mode ends. The third one is
+# not on every image (it comes with newer Game Mode packages), so it is only
+# stopped when it is really there.
+AQ_SESSION_TARGETS="graphical-session.target graphical-session-pre.target gamescope-session.target"
+
+# Which of those targets does this computer actually have? Asking systemd to
+# stop a unit it has never heard of is noise in the journal for no gain.
+aq_targets_here() {
+    local t out=""
+    for t in ${AQ_SESSION_TARGETS}; do
+        if systemctl --user cat "${t}" > /dev/null 2>&1; then
+            out="${out}${out:+ }${t}"
+        fi
+    done
+    printf '%s\n' "${out}"
+}
+
 aq_end_game_session() {
+    local aq_targets aq_waited
+
+    if ! command -v systemctl > /dev/null 2>&1; then
+        say "WARNING: systemctl is missing from this computer, so Game Mode can only"
+        say "be ended the blunt way."
+    fi
+
+    # -------------------------------------------------------------------------
+    # 1. Ask Steam to close, and wait for it to be gone
+    # -------------------------------------------------------------------------
     if command -v steam > /dev/null 2>&1 && pgrep -x steam > /dev/null 2>&1; then
         say "asking Steam to close, which ends Game Mode."
-        if steam -shutdown > /dev/null 2>&1; then
+        steam -shutdown > /dev/null 2>&1 \
+            || say "Steam did not take the request; carrying on and stopping the session anyway."
+        # Up to ten seconds, in half-second glances. Steam saves what it is
+        # doing on the way out, and walking off while it is still writing is
+        # how Steam libraries get confused.
+        aq_waited=0
+        while [ "${aq_waited}" -lt 20 ] && pgrep -x steam > /dev/null 2>&1; do
+            sleep 0.5
+            aq_waited=$((aq_waited + 1))
+        done
+        if pgrep -x steam > /dev/null 2>&1; then
+            say "Steam is still running after ten seconds; going ahead without it."
+        else
+            say "Steam has closed."
+        fi
+    fi
+
+    # -------------------------------------------------------------------------
+    # 2. Take the signposts down
+    # -------------------------------------------------------------------------
+    # This is the bench-4 fix. See the long note above for why nothing else
+    # does it for us.
+    if command -v systemctl > /dev/null 2>&1; then
+        aq_targets="$(aq_targets_here)"
+        if [ -n "${aq_targets}" ]; then
+            say "telling your account's systemd manager that the graphical session is over: ${aq_targets}"
+            # shellcheck disable=SC2086
+            systemctl --user stop ${aq_targets} > /dev/null 2>&1 \
+                || say "one of those did not stop cleanly; checking what is left."
+        else
+            say "NOTE: this computer has none of the usual graphical-session targets,"
+            say "which is unexpected. Carrying on."
+        fi
+
+        # -------------------------------------------------------------------------
+        # 3. Prove it, because this is the exact thing that failed
+        # -------------------------------------------------------------------------
+        aq_waited=0
+        while [ "${aq_waited}" -lt 10 ] \
+            && systemctl --user is-active --quiet graphical-session.target 2> /dev/null; do
+            sleep 0.5
+            aq_waited=$((aq_waited + 1))
+        done
+        if systemctl --user is-active --quiet graphical-session.target 2> /dev/null; then
+            say "WARNING: graphical-session.target is STILL running after five seconds."
+            say "WARNING: the desktop may refuse to start ('A graphical session is already"
+            say "WARNING: running!'). Ending the session the blunt way instead."
+            echo "os-session-select: graphical-session.target would not stop; falling back to logind." >&2
+        else
+            say "the graphical session is properly over; the login screen can take you to your desktop."
             return 0
         fi
-        say "Steam did not take the request; stopping the session directly."
     fi
-    if command -v systemctl > /dev/null 2>&1 \
-        && systemctl --user is-active --quiet gamescope-session-plus@steam.service 2> /dev/null; then
-        say "stopping the Game Mode session unit."
-        systemctl --user stop --no-block gamescope-session-plus@steam.service && return 0
-    fi
+
+    # -------------------------------------------------------------------------
+    # 4. The blunt instrument, unchanged
+    # -------------------------------------------------------------------------
     if command -v loginctl > /dev/null 2>&1; then
         say "ending this session through logind."
         loginctl terminate-session "${XDG_SESSION_ID:-self}" && return 0

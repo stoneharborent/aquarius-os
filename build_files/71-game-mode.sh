@@ -559,6 +559,39 @@ aq_file_has /usr/libexec/os-session-select '^aq_end_game_session\(\)' \
 aq_file_has /usr/libexec/os-session-select 'steam -shutdown' \
     "and asks Steam to close, the way Steam's own script would have"
 
+# ------------------------------------------------------------------------------
+# The 2026-09-20 fix (bench 4), read back out of the image
+# ------------------------------------------------------------------------------
+# The login screen logged Royce in and bounced him straight back, forty-five
+# times, because Game Mode left a signpost up in his account's systemd manager
+# saying "a graphical session is already running" — and GNOME will not start
+# next to one of those. Nothing takes that signpost down by itself: Game Mode's
+# unit is written to follow the target, not the other way round. So OUR program
+# takes it down, and then checks that it really came down.
+say "Ending Game Mode also takes the graphical-session signposts down (bench 4)"
+aq_file_has /usr/libexec/os-session-select 'AQ_SESSION_TARGETS=' \
+    "os-session-select knows the list of targets a graphical session puts up"
+aq_file_has /usr/libexec/os-session-select 'graphical-session-pre\.target' \
+    "and the list includes graphical-session-pre.target"
+aq_file_has /usr/libexec/os-session-select 'gamescope-session\.target' \
+    "and gamescope-session.target, when the image has one"
+aq_file_has /usr/libexec/os-session-select 'systemctl --user stop \$\{aq_targets\}' \
+    "and it really stops them"
+aq_file_has /usr/libexec/os-session-select 'is-active --quiet graphical-session\.target' \
+    "and reads back whether the main one actually stopped before walking away"
+aq_file_has /usr/libexec/os-session-select 'falling back to logind' \
+    "and says so out loud, in the journal and on stderr, when it did not"
+
+# Is `gamescope-session.target` really a unit on this image? It is not on every
+# Game Mode package, which is why the program above only stops the targets that
+# exist. This is a note, not a failure, either way.
+if [ -f /usr/lib/systemd/user/gamescope-session.target ]; then
+    ok "this image has gamescope-session.target, so the switch will stop that too"
+else
+    echo "NOTE: this image has no /usr/lib/systemd/user/gamescope-session.target."
+    echo "      That is allowed — os-session-select only stops the targets it finds."
+fi
+
 say "Game Mode starts at the screen's own resolution"
 aq_file_has /etc/gamescope-session-plus/sessions.d/steam '^[[:space:]]*SCREEN_WIDTH=' \
     "the session file works out SCREEN_WIDTH from the connected screen"
