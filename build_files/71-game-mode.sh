@@ -605,6 +605,31 @@ aq_file_has /usr/libexec/aquarius-session-root '^aq_auto_login\(\)' \
 aq_file_has /usr/libexec/aquarius-login-mode 'auto-login on' \
     "and the boot-time program uses it for mode=game"
 
+# ------------------------------------------------------------------------------
+# Bench 3, 2026-09-20 — 'plasma' from Steam means "the desktop", never Plasma
+# ------------------------------------------------------------------------------
+# Steam's power menu has one button out of Game Mode, and the SteamOS script
+# behind it always passes the hard-coded word `plasma` (or `desktop`, or one of
+# the two `*-persistent` spellings). On AquariusOS both desktops ship, so an
+# os-session-select that honoured the name whenever the session file existed
+# sent EVERY "Switch to Desktop" into Plasma — including Royce's, from GNOME,
+# on 2026-09-20. The fix is that there is no literal-name branch anywhere
+# in that file: the remembered desktop decides, full stop. This check is here
+# because the deleted line is exactly the sort of thing a future reader would
+# put back thinking it was an improvement.
+say "Switch to Desktop obeys the remembered desktop, not Steam's word"
+if [ ! -r /usr/libexec/os-session-select ]; then
+    bad "os-session-select has no literal-desktop override left — the file does not exist"
+elif grep -Eq 'wayland-sessions/\$\{aq_target\}\.desktop' /usr/libexec/os-session-select; then
+    bad "os-session-select still turns Steam's literal '\${aq_target}' into a session — Switch to Desktop would always land in Plasma"
+else
+    ok "os-session-select has no literal-desktop override left"
+fi
+aq_file_has /usr/libexec/os-session-select 'aq_session="\$\(aq_remembered_desktop\)"' \
+    "and every word Steam can pass resolves to the desktop you came from"
+aq_file_has /usr/libexec/os-session-select "asked for 'plasma' from 'Game Mode'" \
+    "with the 2026-09-20 journal line written down beside it, so the next reader recognises it"
+
 say "'aq game status' no longer calls the timed login 'a switch' on its own"
 aq_file_has /usr/bin/aq 'a switch sets both; a boot into Game Mode sets the automatic ones' \
     "aq game status explains that a switch sets both sets of lines"
