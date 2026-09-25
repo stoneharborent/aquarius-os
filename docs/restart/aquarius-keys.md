@@ -613,6 +613,101 @@ the service starts again with the session.
 
 ---
 
+## ⚠️ The restart loop nobody could see — the 2026-09-24 bug
+
+### What was happening
+
+Nothing, on screen. That is what made this one interesting.
+
+Aquarius Keys was starting, stopping, and starting again about **once every
+two and a half seconds, day and night**. Over three days on the bench it did
+that **60,945 times**. Every one of those restarts made the remapper invent a
+fresh virtual keyboard, which the login manager then dutifully registered — so
+the machine had created and thrown away tens of thousands of keyboards.
+
+You could not tell. `systemctl --user status aquarius-keys` said **active**.
+The journal said *"Mac-style shortcuts are live. Command-C copies."* Your
+shortcuts worked. There was nothing to notice, which is why it ran for three
+days.
+
+### Why it was doing it
+
+Royce's only keyboard is a **Bluetooth K780, and it disconnects when you leave
+it alone.** While it is away, there is genuinely no keyboard on the machine.
+
+The remapper handles that perfectly well on its own. It says one line —
+
+```
+No device was selected, but --watch is waiting for new devices.
+```
+
+— and then sits there listening, because it was started with `--watch=device`,
+which means *"tell me when a keyboard turns up."* When the K780 wakes, it takes
+hold of it. Nothing needed doing.
+
+The problem was on our side. Since 2026-09-03 our script treated that line as a
+**failure**: it killed the remapper, exited, and let systemd start a brand new
+one two seconds later — which found no keyboard either, and so on, forever.
+
+That rule was written for a different problem and for it, it was right. On
+2026-09-03 the keyboards *were* there and something else was holding them, and
+retrying really was the answer, because the remapper will not go back and try a
+keyboard it has already been refused. What went wrong is that **two very
+different situations print nearly the same thing**:
+
+| What the remapper means | Is retrying the answer? |
+|---|---|
+| "The keyboard is there, someone else has it" (`resource busy`) | **Yes** — they let go after a few seconds |
+| "There is no keyboard" (`No device was selected`, on its own) | **No** — there is nothing to retry, and it is already waiting |
+
+We were answering both with the same yes.
+
+### What changed
+
+1. **"No keyboard" is now a wait, not a failure.** The service says one plain
+   line — *"no keyboard is connected at the moment… the shortcuts switch
+   themselves on the moment it comes back"* — and stays running. When the
+   keyboard wakes up, it is picked up and you get the usual *"Mac-style
+   shortcuts are live"*. No restart, no invented keyboards.
+
+   This was measured before it was written, not assumed: a remapper left
+   sitting in exactly that state had a keyboard appear, and grabbed it without
+   anybody restarting it.
+
+2. **"Someone else has the keyboard" still fails and still retries.** The
+   2026-09-03 fix is untouched. That is the one case where restarting is right.
+
+3. **A brake on the retries themselves.** Even now the loop is fixed, two
+   seconds apart forever was a bad shape for anything that cannot fix itself.
+   Retries now spread out — roughly 2s, 5s, 11s, 20s, 35s, and so on up to one
+   every five minutes. The early ones stay close together on purpose, because
+   that is the case this must not spoil: a keyboard that is busy at login
+   clears in about ten seconds, and it still recovers in about ten seconds. It
+   never gives up, and it goes straight back to two seconds once something
+   works.
+
+   So the worst any future bug of this shape can do is twelve restarts an hour
+   instead of fourteen hundred.
+
+### How to check it
+
+```bash
+systemctl --user show aquarius-keys.service -p NRestarts
+```
+
+On a machine that has been up for a while this should be a **small** number —
+single or double digits, from the ordinary scramble at login. Thousands means
+something is looping, and the journal will say what:
+
+```bash
+journalctl --user -u aquarius-keys -b | grep -E "PROBLEM|no keyboard is connected"
+```
+
+*"no keyboard is connected"* on its own is **not** a problem. It means what it
+says: plug a keyboard in, or wake the Bluetooth one, and it will carry on.
+
+---
+
 ## The Aquarius Session (labwc) — gap now closed
 
 **On GNOME — which is what AquariusOS boots into today — everything above
