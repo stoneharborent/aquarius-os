@@ -399,6 +399,17 @@ on:
       # of it back out of the finished image. Same arrangement as every side
       # branch: builds and checks, never publishes.
       - fix/game-mode-bench-4
+      # The password boxes that asked for nothing. GNOME Software's rpm-ostree
+      # plug-in — a weak dependency nobody chose — was asking polkit to upgrade
+      # an operating system that does not update that way, about once an hour,
+      # ten times in five days on the bench. firewalld was separately running
+      # Fedora's SERVER answers on a desktop, so merely READING the firewall
+      # configuration wanted an administrator password. Steps 30, 40 and 90 read
+      # all of it back out of the finished image, including a second look at the
+      # very end in case a later step reinstalls the plug-in through another
+      # recommendation. Same arrangement as every side branch: builds and
+      # checks, never publishes.
+      - fix/login-password-prompts
       # Phase G2: the third image, aquarius-os-handheld, for the one ROG Xbox
       # Ally X Royce owns. The matrix builds all three here, and the third
       # image's own checks run on all three — because half of what they prove is
