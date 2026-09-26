@@ -5,6 +5,24 @@
 
 ---
 
+## ⚠️ There are two handhelds. This page is the ROG Xbox Ally X.
+
+Since 2026-09-20 AquariusOS builds a **second handheld image**, for the MSI
+Claw 8 AI+. It is a different computer — Intel where this one is AMD, MSI where
+this one is ASUS — and almost nothing on this page applies to it. Its own guide
+is [`handheld-claw.md`](handheld-claw.md).
+
+| The machine | The image | Its guide |
+| --- | --- | --- |
+| ROG Xbox Ally X (board `RC73XA`) | `aquarius-os-handheld` | this page |
+| MSI Claw 8 AI+ (board `MS-1T52`) | `aquarius-os-handheld-claw` | [`handheld-claw.md`](handheld-claw.md) |
+
+Nothing about this image changed when the Claw one arrived. The two share the
+same build step and the same `aq handheld status` command, and the build proves
+on every run that neither machine's files reach the other.
+
+---
+
 ## The one-paragraph version
 
 There is now a **third AquariusOS image**, `aquarius-os-handheld`. It is the
@@ -293,11 +311,12 @@ Royce, on the Ally. Work down it and put the answers in
 | File | What it is |
 | --- | --- |
 | `build_files/78-handheld.sh` | The whole of this phase. On the two desktop images it installs nothing and instead proves that none of it arrived. |
-| `handheld_files/` | The files that go **only** on this image. They are kept out of `system_files/`, which is copied onto every image with no filter. |
-| `handheld_files/etc/aquarius/login-mode` | The one line that makes it start in Game Mode. |
-| `handheld_files/usr/lib/udev/rules.d/50-ally-x-controller.rules` | The wake-source rule. **Copied byte-identically from ublue-os/bazzite PR #5735** — do not tidy it, so a future upstream change is one `diff`. |
-| `handheld_files/usr/lib/udev/rules.d/70-aquarius-ally-mcu-powersave.rules` | Ours: switches the controller chip's power saving on where the kernel has not. |
-| `handheld_files/usr/libexec/aquarius-handheld-status` | The report `aq handheld status` runs. |
+| `handheld_files/` | The files that go **only** on a handheld image. They are kept out of `system_files/`, which is copied onto every image with no filter. ⚠️ Since 2026-09-20 it has three parts: the top level is what **both** handhelds get, `ally/` is this machine's, `claw/` is the other one's. |
+| `handheld_files/etc/aquarius/login-mode` | Shared. The one line that makes it start in Game Mode. |
+| `handheld_files/ally/usr/lib/udev/rules.d/50-ally-x-controller.rules` | The wake-source rule. **Copied byte-identically from ublue-os/bazzite PR #5735** — do not tidy it, so a future upstream change is one `diff`. |
+| `handheld_files/ally/usr/lib/udev/rules.d/70-aquarius-ally-mcu-powersave.rules` | Ours: switches the controller chip's power saving on where the kernel has not. |
+| `handheld_files/usr/libexec/aquarius-handheld-status` | Shared. The report `aq handheld status` runs — it asks this machine's questions on an Ally and the Claw's on a Claw. |
+| `HANDHELD_TARGET=ally` | The switch, in the `Justfile` and `.github/workflows/build.yml`, that says this image is the Ally's. |
 | `.github/workflows/build.yml` | Builds all three images, and runs the handheld checks on **all three** — half of what they prove is that the other two are untouched. |
 | `.github/workflows/build-iso.yml` | Has **handheld** as a choice. That ISO is the only way onto the Ally. |
 

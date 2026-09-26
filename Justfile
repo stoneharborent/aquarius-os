@@ -17,6 +17,7 @@ set dotenv-load
 export image_name := env_var("IMAGE_NAME")
 export nvidia_image_name := env_var("NVIDIA_IMAGE_NAME")
 export handheld_image_name := env_var("HANDHELD_IMAGE_NAME")
+export handheld_claw_image_name := env_var("HANDHELD_CLAW_IMAGE_NAME")
 export base_image := env_var("BASE_IMAGE")
 export fedora_version := env_var("FEDORA_VERSION")
 export akmods_nvidia_image := env_var("AKMODS_NVIDIA_IMAGE")
@@ -71,9 +72,17 @@ clean:
 # ------------------------------------------------------------------------------
 # Which image is which
 # ------------------------------------------------------------------------------
-# GitHub Actions builds the two images from one matrix, and asks these two
-# recipes what each one is called and whether it wants the NVIDIA driver. Adding
-# a variant means adding a line to each — and nowhere else.
+# GitHub Actions builds the four images from one matrix, and asks these recipes
+# what each one is called, whether it wants the NVIDIA driver, whether it is a
+# handheld, and — when it is — WHICH handheld. Adding a variant means adding a
+# line to each of them and nowhere else.
+#
+# The four variants are:
+#
+#   base            aquarius-os                 an AMD or Intel desktop PC
+#   nvidia          aquarius-os-nvidia          the same, plus NVIDIA's driver
+#   handheld        aquarius-os-handheld        the ROG Xbox Ally X (phase G2)
+#   handheld-claw   aquarius-os-handheld-claw   the MSI Claw 8 AI+ (phase G4)
 
 # The published name of a variant. `just variant-image-name nvidia`
 [group('Utility')]
@@ -85,8 +94,9 @@ variant-image-name variant="base":
         base) echo "${IMAGE_NAME}" ;;
         nvidia) echo "${NVIDIA_IMAGE_NAME}" ;;
         handheld) echo "${HANDHELD_IMAGE_NAME}" ;;
+        handheld-claw) echo "${HANDHELD_CLAW_IMAGE_NAME}" ;;
         *)
-            echo "Unknown variant '{{ variant }}' — expected 'base', 'nvidia' or 'handheld'." >&2
+            echo "Unknown variant '{{ variant }}' — expected 'base', 'nvidia', 'handheld' or 'handheld-claw'." >&2
             exit 1
             ;;
     esac
@@ -101,13 +111,14 @@ variant-nvidia variant="base":
         base) echo "0" ;;
         nvidia) echo "1" ;;
         handheld) echo "0" ;;
+        handheld-claw) echo "0" ;;
         *)
-            echo "Unknown variant '{{ variant }}' — expected 'base', 'nvidia' or 'handheld'." >&2
+            echo "Unknown variant '{{ variant }}' — expected 'base', 'nvidia', 'handheld' or 'handheld-claw'." >&2
             exit 1
             ;;
     esac
 
-# Whether a variant is the handheld one: 0 or 1. (Phase G2 — the ROG Xbox Ally X.)
+# Whether a variant is a handheld one: 0 or 1. (Phase G2 and phase G4.)
 [group('Utility')]
 variant-handheld variant="base":
     #!/usr/bin/env bash
@@ -117,8 +128,33 @@ variant-handheld variant="base":
         base) echo "0" ;;
         nvidia) echo "0" ;;
         handheld) echo "1" ;;
+        handheld-claw) echo "1" ;;
         *)
-            echo "Unknown variant '{{ variant }}' — expected 'base', 'nvidia' or 'handheld'." >&2
+            echo "Unknown variant '{{ variant }}' — expected 'base', 'nvidia', 'handheld' or 'handheld-claw'." >&2
+            exit 1
+            ;;
+    esac
+
+# WHICH handheld a variant is for: 'ally' or 'claw'.
+#
+# The two desktop variants answer 'ally' as well. That is not a claim that a
+# desktop PC is an Ally — the build only ever reads this when HANDHELD=1, and
+# 'ally' is the default the build script itself uses. Answering with a real word
+# rather than an empty string keeps the workflow's "the Justfile and the matrix
+# must agree" check simple: it compares two strings and never has to reason
+# about which of them is allowed to be blank.
+[group('Utility')]
+variant-handheld-target variant="base":
+    #!/usr/bin/env bash
+
+    set -euo pipefail
+    case "{{ variant }}" in
+        base) echo "ally" ;;
+        nvidia) echo "ally" ;;
+        handheld) echo "ally" ;;
+        handheld-claw) echo "claw" ;;
+        *)
+            echo "Unknown variant '{{ variant }}' — expected 'base', 'nvidia', 'handheld' or 'handheld-claw'." >&2
             exit 1
             ;;
     esac
@@ -166,10 +202,12 @@ tag-images $target_image=image_name $tag=default_tag tags="":
 
 # Build an AquariusOS image.
 #   just build aquarius-os-nvidia latest 1
-#   just build aquarius-os-handheld latest 0 1
-# The last two numbers are the two switches: NVIDIA, then HANDHELD. They are
-# never both 1 — the one handheld this image targets has AMD graphics.
-build $target_image=image_name $tag=default_tag $nvidia="0" $handheld="0":
+#   just build aquarius-os-handheld latest 0 1 ally
+#   just build aquarius-os-handheld-claw latest 0 1 claw
+# The two numbers are the two switches: NVIDIA, then HANDHELD. They are never
+# both 1 — neither handheld has an NVIDIA graphics card. The last word says
+# WHICH handheld, and is only read when HANDHELD is 1.
+build $target_image=image_name $tag=default_tag $nvidia="0" $handheld="0" $handheld_target="ally":
     #!/usr/bin/env bash
 
     set -euox pipefail
@@ -187,14 +225,22 @@ build $target_image=image_name $tag=default_tag $nvidia="0" $handheld="0":
             exit 1
             ;;
     esac
+    case "${handheld_target}" in
+        ally | claw) : ;;
+        *)
+            echo "just build: handheld_target must be 'ally' (the ROG Xbox Ally X) or 'claw' (the MSI Claw 8 AI+), not '${handheld_target}'." >&2
+            exit 1
+            ;;
+    esac
     if [ "${nvidia}" = "1" ] && [ "${handheld}" = "1" ]; then
-        echo "just build: there is no NVIDIA handheld. The ROG Xbox Ally X has AMD graphics." >&2
+        echo "just build: there is no NVIDIA handheld. Neither the ROG Xbox Ally X nor the MSI Claw 8 AI+ has an NVIDIA graphics card." >&2
         exit 1
     fi
     BUILD_ARGS=()
     BUILD_ARGS+=("--build-arg" "FEDORA_VERSION={{ fedora_version }}")
     BUILD_ARGS+=("--build-arg" "NVIDIA=${nvidia}")
     BUILD_ARGS+=("--build-arg" "HANDHELD=${handheld}")
+    BUILD_ARGS+=("--build-arg" "HANDHELD_TARGET=${handheld_target}")
     BUILD_ARGS+=("--build-arg" "AKMODS_NVIDIA_IMAGE={{ akmods_nvidia_image }}")
     BUILD_ARGS+=("--build-arg" "AKMODS_IMAGE={{ akmods_image }}")
     BUILD_ARGS+=("--build-arg" "IMAGE_NAME=${target_image}")

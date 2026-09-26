@@ -8,9 +8,23 @@
 # nothing at all, it never asks for a password, and it is safe to run at any
 # time, including from a phone-sized terminal on the handheld itself.
 #
-# It exists so that the first bench session on Royce's ROG Xbox Ally X is ONE
-# command and one paste, instead of nine different things to look up. Every
-# line answers a question that, on this device, is genuinely in doubt:
+# It exists so that the first bench session on a handheld is ONE command and one
+# paste, instead of nine different things to look up.
+#
+# There are TWO handhelds, and they need different questions asked. The report
+# works out which machine it is on from the board name the motherboard reports
+# (and, in a build container where there is no motherboard, from the note the
+# image carries), and then asks that machine's questions:
+#
+#   RC73XA   the ROG Xbox Ally X      — sections 2 and 4 below
+#   MS-1T52  the MSI Claw 8 AI+       — sections 2c and 4c below
+#
+# ⚠️ THE ALLY'S HALF OF THIS FILE IS UNCHANGED. Phase G4 added the Claw's
+# questions beside it; it did not rewrite the Ally's. On an Ally this prints
+# exactly what it printed before.
+#
+# Every line answers a question that, on that device, is genuinely in doubt.
+# On the ALLY:
 #
 #   Which machine is this?      The Xbox Ally X and the Xbox Ally Z2 A have the
 #                               SAME controller USB id. Only the board name
@@ -33,12 +47,34 @@
 #                               firmware file. This says whether the kernel
 #                               loaded them.
 #
+# On the CLAW, a different list, because a different set of things is in doubt:
+#
+#   Which mode is the pad in?   The Claw's built-in controller changes its USB
+#                               identity with its mode: 1901 XInput (the one we
+#                               want), 1902 DInput, 1903 Desktop, 1904 BIOS.
+#                               Kernel 7.2 CANNOT change it — that is done from
+#                               Windows, in MSI Center M. If the number is not
+#                               1901, that is almost always the whole problem.
+#   Is hid-msi loaded?          The kernel driver for the M1/M2 paddles, the
+#                               mode switch, the lights and rumble strength. It
+#                               arrives in kernel 7.3, so the expected answer
+#                               today is "no". The day it says yes is the day
+#                               round two of this image starts.
+#   intel-rapl power limits     The only power numbers this machine exposes on
+#                               kernel 7.2. Steam's TDP slider cannot move them;
+#                               this at least shows what the machine is running
+#                               at.
+#   msi-wmi-platform attributes The folder that WOULD hold real power knobs if
+#                               the unmerged kernel series ever lands. Absent is
+#                               the expected answer.
+#
 # ⚠️ IT NEVER FAILS. Every single question is asked defensively: a missing file,
 # a missing command or a kernel log this account may not read all print a line
 # saying so and the report carries on. A status command that stops half way
 # through is worse than useless on a bench.
 #
-# Plain-language guide: docs/restart/handheld.md
+# Plain-language guides: docs/restart/handheld.md       (the Ally)
+#                        docs/restart/handheld-claw.md  (the Claw)
 # =============================================================================
 
 set -uo pipefail
@@ -132,17 +168,134 @@ case "${AQ_BOARD}" in
         echo "  → This is an older ROG Ally (${AQ_BOARD}), not an Xbox Ally."
         echo "    Untested. See docs/restart/handheld.md."
         ;;
+    MS-1T52)
+        echo "  → This is an MSI Claw 8 AI+ (A2VM). That is the machine the Claw"
+        echo "    image was built for. See docs/restart/handheld-claw.md."
+        ;;
+    MS-1T41 | MS-1T42 | MS-1T8K | MS-1T91)
+        echo "  → This is an MSI Claw, but NOT the 8 AI+ A2VM (${AQ_BOARD})."
+        echo "    AquariusOS targets MS-1T52 only. These are different computers"
+        echo "    inside — different processors, different graphics. Nothing here"
+        echo "    has been tested on this board. See docs/restart/handheld-claw.md."
+        ;;
     *)
-        echo "  → This is not an ROG Ally at all, so most of the report below will be empty."
-        echo "    That is expected on a desktop PC."
+        echo "  → This is not a handheld AquariusOS knows, so most of the report below"
+        echo "    will be empty. That is expected on a desktop PC."
         ;;
 esac
+
+# ---------------------------------------------------------------------------
+# Which set of questions should the rest of this report ask?
+# ---------------------------------------------------------------------------
+# Normally the board name answers it. But this report is also run inside the
+# build, in a container that has no motherboard at all and therefore no board
+# name — and there it should still ask the right machine's questions, because
+# the whole point of running it in the build is to prove it does not fall over.
+# So the image's own note is the second source: the Claw image's note names the
+# Claw image, and nothing else's does.
+AQ_IS_CLAW=0
+case "${AQ_BOARD}" in
+    MS-1T52) AQ_IS_CLAW=1 ;;
+esac
+if [ "${AQ_IS_CLAW}" = "0" ] && grep -q 'aquarius-os-handheld-claw' "${AQ_NOTE}" 2> /dev/null; then
+    AQ_IS_CLAW=1
+fi
 
 # -----------------------------------------------------------------------------
 # 2. The controller chip's own firmware
 # -----------------------------------------------------------------------------
 # hid-asus prints this once, at boot, and there is no file to read it from.
 # Below 313, suspend and resume are broken and only Windows can fix it.
+if [ "${AQ_IS_CLAW}" = "1" ]; then
+
+# -----------------------------------------------------------------------------
+# 2c. The Claw's controller: which MODE is it in?
+# -----------------------------------------------------------------------------
+# This is the single most useful line in the whole report on this machine.
+#
+# The Claw's built-in pad has four personalities and it announces which one it
+# is in by changing its USB product number:
+#
+#     1901  XInput   — an ordinary Xbox controller. THIS IS THE ONE WE WANT.
+#     1902  DInput   — an older style of gamepad. Steam will be confused.
+#     1903  Desktop  — the pad pretends to be a mouse and a keyboard. Games see
+#                      no controller at all.
+#     1904  BIOS     — only while the machine is in its setup screen.
+#
+# On Fedora's kernel 7.2 Linux CANNOT change this. The driver that would
+# (hid-msi) arrives in kernel 7.3. The mode is remembered by the controller's
+# own chip, and it is set from Windows in MSI Center M — which means it has to
+# be set BEFORE Windows is wiped off the machine.
+#
+# No root is needed for any of this: /sys/bus/usb/devices is readable by anyone.
+heading "The built-in controller, and which mode it is in"
+AQ_PAD_FOUND=0
+for aq_d in /sys/bus/usb/devices/*; do
+    [ -r "${aq_d}/idVendor" ] || continue
+    [ "$(cat "${aq_d}/idVendor" 2> /dev/null)" = "0db0" ] || continue
+    aq_pid="$(cat "${aq_d}/idProduct" 2> /dev/null)"
+    # ⚠️ ONLY FOUR PRODUCT NUMBERS ARE THE CONTROLLER. MSI make plenty of other
+    # USB things — keyboards, card readers, motherboards' own gadgets — and they
+    # all share the vendor number 0db0. Treating any of them as "the controller
+    # in the wrong mode" would print a loud, wrong fix-it note. Anything that is
+    # not one of the four is listed quietly and passed over.
+    case "${aq_pid}" in
+        1901 | 1902 | 1903 | 1904) : ;;
+        *)
+            printf '  %-28s %s\n' "another MSI device" "$(basename "${aq_d}") (0db0:${aq_pid}) — not the controller"
+            continue
+            ;;
+    esac
+    AQ_PAD_FOUND=1
+    printf '  %-28s %s\n' "the built-in controller" "$(basename "${aq_d}") (0db0:${aq_pid})"
+    case "${aq_pid}" in
+        1901) printf '  %-28s %s\n' "mode" "1901 — XInput. This is the right one." ;;
+        1902) printf '  %-28s %s\n' "mode" "1902 — DInput. NOT what this image expects." ;;
+        1903) printf '  %-28s %s\n' "mode" "1903 — Desktop (mouse and keyboard). Games will see no controller." ;;
+        1904) printf '  %-28s %s\n' "mode" "1904 — BIOS mode." ;;
+    esac
+    if [ "${aq_pid}" != "1901" ]; then
+        echo
+        echo "  ⚠️ HOW TO FIX IT: switch the controller to XInput in MSI Center M, in"
+        echo "     WINDOWS. Kernel 7.2 cannot switch it from Linux — the driver that"
+        echo "     could (hid-msi) arrives in kernel 7.3. If Windows is already gone"
+        echo "     from this machine, the pad keeps whatever mode it was last left in."
+    fi
+done
+if [ "${AQ_PAD_FOUND}" = "0" ]; then
+    echo "  No MSI controller (USB 0db0, product 1901/1902/1903/1904) is attached"
+    echo "  to this machine. On a Claw that would be very wrong. On anything else"
+    echo "  it is expected."
+fi
+
+printf '  %-28s ' "xpad driver"
+if [ -d /sys/module/xpad ]; then
+    echo "loaded — this is what makes the sticks and buttons work"
+else
+    echo "NOT loaded"
+fi
+
+# -----------------------------------------------------------------------------
+# 2d. hid-msi — the driver that is not here yet
+# -----------------------------------------------------------------------------
+heading "hid-msi (the M1/M2 paddles, mode switch, lights, rumble)"
+if [ -d /sys/module/hid_msi ] || [ -d /sys/module/hid-msi ]; then
+    echo "  LOADED. That is news: this kernel has the MSI gamepad driver."
+    echo "  The M1 and M2 paddles, switching the pad's mode from Linux, the lights"
+    echo "  and rumble strength all become possible. Worth telling whoever keeps"
+    echo "  this image — it means round two."
+else
+    echo "  Not loaded, which is expected on Fedora's kernel 7.2."
+    echo "  Consequence: the M1 and M2 paddles do nothing, the pad's mode cannot be"
+    echo "  changed from Linux, and there is no control over the lights or the"
+    echo "  rumble strength. All of it arrives with kernel 7.3. Nothing is broken."
+fi
+
+else
+
+# -----------------------------------------------------------------------------
+# 2. The controller chip's own firmware (the Ally)
+# -----------------------------------------------------------------------------
 heading "The controller chip (MCU) firmware"
 AQ_MCU="$(kernel_log | grep -i -E 'asus.*(mcu|firmware)' | tail -5)"
 if [ -n "${AQ_MCU}" ]; then
@@ -158,6 +311,8 @@ else
 fi
 say_file "mcu_powersave (want 1)" /sys/devices/platform/asus-nb-wmi/mcu_powersave
 
+fi
+
 # -----------------------------------------------------------------------------
 # 3. InputPlumber — the thing that makes the built-in controller ONE controller
 # -----------------------------------------------------------------------------
@@ -170,14 +325,25 @@ fi
 if command -v systemctl > /dev/null 2>&1; then
     printf '  %-28s %s\n' "service" "$(unit_state inputplumber.service)"
 fi
-if [ -r /usr/share/inputplumber/devices/50-rog_xbox_ally.yaml ]; then
-    printf '  %-28s %s\n' "Xbox Ally device profile" "present"
+# Which description file matters depends on which machine this is. Each one is
+# a plain text file inside the InputPlumber package that says "on THIS computer,
+# gather these devices together and present them as that controller".
+if [ "${AQ_IS_CLAW}" = "1" ]; then
+    AQ_IP_PROFILE=/usr/share/inputplumber/devices/50-msi_claw8_a2vm.yaml
+    AQ_IP_PROFILE_NAME="MSI Claw device profile"
+    AQ_IP_PROFILE_MISSING="There is no MSI Claw profile in this image — the Guide button and the Quick Access button would do nothing."
+else
+    AQ_IP_PROFILE=/usr/share/inputplumber/devices/50-rog_xbox_ally.yaml
+    AQ_IP_PROFILE_NAME="Xbox Ally device profile"
+    AQ_IP_PROFILE_MISSING="There is no Xbox Ally profile in this image — the built-in controller would appear as a plain gamepad with no paddles and no gyro."
+fi
+if [ -r "${AQ_IP_PROFILE}" ]; then
+    printf '  %-28s %s\n' "${AQ_IP_PROFILE_NAME}" "present"
     printf '  %-28s %s\n' "target it should build" \
-        "$(sed -n '/^target_devices:/,/^[a-z]/p' /usr/share/inputplumber/devices/50-rog_xbox_ally.yaml \
+        "$(sed -n '/^target_devices:/,/^[a-z]/p' "${AQ_IP_PROFILE}" \
             | sed -n 's/^[[:space:]]*-[[:space:]]*//p' | tr '\n' ' ')"
 else
-    echo "  There is no Xbox Ally profile in this image — the built-in controller"
-    echo "  would appear as a plain gamepad with no paddles and no gyro."
+    echo "  ${AQ_IP_PROFILE_MISSING}"
 fi
 echo "  Controllers Linux can see right now:"
 if [ -d /dev/input ]; then
@@ -191,12 +357,82 @@ fi
 echo "  Motion sensor (gyro):"
 if compgen -G '/sys/bus/iio/devices/iio:device*/name' > /dev/null 2>&1; then
     cat /sys/bus/iio/devices/iio:device*/name 2> /dev/null | sed 's/^/    /'
+elif [ "${AQ_IS_CLAW}" = "1" ]; then
+    echo "    (none — and none is expected. Nothing on Linux exposes a motion"
+    echo "     sensor on this machine, so Steam's gyro settings will be empty.)"
 else
     echo "    (none found — Steam's gyro settings would be empty)"
 fi
 
 # -----------------------------------------------------------------------------
 # 4. The power limit — the number Steam's TDP slider moves
+# -----------------------------------------------------------------------------
+if [ "${AQ_IS_CLAW}" = "1" ]; then
+
+# -----------------------------------------------------------------------------
+# 4c. The Claw's power numbers — read-only, and that is the whole story
+# -----------------------------------------------------------------------------
+# ⚠️ EXPECT STEAM'S TDP SLIDER TO DO NOTHING ON THIS MACHINE. The knob it would
+# write through lives in a kernel patch series that has not been accepted
+# upstream, so it is not in Fedora's kernel and AquariusOS does not carry kernel
+# patches. The machine runs at the power its own firmware chooses.
+#
+# What CAN be read is Intel's own power accounting, "RAPL". These numbers are
+# what the processor is currently allowed to draw. They are useful on a bench —
+# they show what the machine is actually doing — but nothing in Steam moves them
+# today.
+heading "Power limits (read-only on this machine)"
+AQ_RAPL="/sys/class/powercap/intel-rapl:0"
+if [ -d "${AQ_RAPL}" ]; then
+    AQ_RAPL_SHOWN=0
+    for aq_c in "${AQ_RAPL}"/constraint_*_power_limit_uw; do
+        [ -r "${aq_c}" ] || continue
+        aq_name="$(cat "${aq_c%_power_limit_uw}_name" 2> /dev/null || echo "limit")"
+        aq_uw="$(cat "${aq_c}" 2> /dev/null)"
+        if [ -n "${aq_uw}" ]; then
+            AQ_RAPL_SHOWN=1
+            printf '  %-28s %s W   (%s)\n' "$(basename "${aq_c}")" \
+                "$(awk -v u="${aq_uw}" 'BEGIN { printf "%.1f", u / 1000000 }')" "${aq_name}"
+        fi
+    done
+    if [ "${AQ_RAPL_SHOWN}" = "0" ]; then
+        echo "  ${AQ_RAPL} exists but reports no power limits this account can read."
+        echo "  Try: sudo aq handheld status"
+    fi
+else
+    echo "  ${AQ_RAPL} does not exist, so even the read-only power numbers are"
+    echo "  not available here. On a Claw that would be unusual; on a desktop PC"
+    echo "  or in a build container it is expected."
+fi
+
+# The folder that WOULD hold real, writable power knobs, if the kernel series
+# that creates it were ever merged. Absent is the expected answer today, and
+# saying so out loud stops it being mistaken for a fault.
+printf '  %-28s ' "msi-wmi-platform knobs"
+if [ -d /sys/class/firmware-attributes/msi-wmi-platform ]; then
+    echo "PRESENT — that is news; real power control may be possible"
+    ls -1 /sys/class/firmware-attributes/msi-wmi-platform/attributes 2> /dev/null | sed 's/^/    /'
+else
+    echo "absent (expected — the kernel series that creates them is unmerged)"
+fi
+printf '  %-28s ' "fan speed (read-only)"
+if compgen -G '/sys/class/hwmon/hwmon*/name' > /dev/null 2>&1; then
+    if grep -rqs 'msi_wmi_platform' /sys/class/hwmon/*/name 2> /dev/null; then
+        echo "msi_wmi_platform is reporting fan speeds"
+    else
+        echo "no msi_wmi_platform hwmon — fan speed cannot be read"
+    fi
+else
+    echo "(no hwmon devices on this machine)"
+fi
+echo
+echo "  Steam's TDP slider: expected to do nothing on this machine, on this"
+echo "  kernel. That is not a fault — see docs/restart/handheld-claw.md."
+
+else
+
+# -----------------------------------------------------------------------------
+# 4. The power limit — the number Steam's TDP slider moves (the Ally)
 # -----------------------------------------------------------------------------
 heading "Power limit (Steam's TDP slider)"
 AQ_ARMOURY="/sys/class/firmware-attributes/asus-armoury/attributes"
@@ -219,6 +455,8 @@ else
     echo "  ${AQ_ARMOURY} does not exist, so there are no power-limit knobs here."
     echo "  On an Ally that means the asus-armoury driver did not load."
 fi
+fi
+
 say_file "power profile now" /sys/firmware/acpi/platform_profile
 if command -v systemctl > /dev/null 2>&1; then
     printf '  %-28s %s\n' "steamos-manager" "$(unit_state steamos-manager.service)"
@@ -251,15 +489,31 @@ AQ_LOG="$(kernel_log)"
 if [ -z "${AQ_LOG}" ]; then
     echo "  This account cannot read the kernel log; try: sudo aq handheld status"
 else
-    if printf '%s' "${AQ_LOG}" | grep -qi 'tas27\|tas2781\|TAS2XXX'; then
-        printf '%s' "${AQ_LOG}" | grep -i 'tas27\|tas2781\|TAS2XXX' | tail -4 | sed 's/^/  /'
+    if [ "${AQ_IS_CLAW}" = "1" ]; then
+        # Different chips entirely: Intel sound (SOF) and Intel Wi-Fi.
+        if printf '%s' "${AQ_LOG}" | grep -qi 'sof-audio\|snd_sof\|sof-lnl'; then
+            printf '%s' "${AQ_LOG}" | grep -i 'sof-audio\|snd_sof\|sof-lnl' | tail -6 | sed 's/^/  /'
+        else
+            echo "  The kernel said nothing about the Intel sound processor (SOF)."
+        fi
+        if printf '%s' "${AQ_LOG}" | grep -qi 'iwlwifi'; then
+            printf '%s' "${AQ_LOG}" | grep -i 'iwlwifi' | tail -6 | sed 's/^/  /'
+            echo
+            echo "  Worth noting for the bench: WHICH iwlwifi firmware file loaded."
+        else
+            echo "  The kernel said nothing about the Intel Wi-Fi chip."
+        fi
     else
-        echo "  The kernel said nothing about the TI speaker amplifier."
-    fi
-    if printf '%s' "${AQ_LOG}" | grep -qi 'mt79'; then
-        printf '%s' "${AQ_LOG}" | grep -i 'mt79' | tail -4 | sed 's/^/  /'
-    else
-        echo "  The kernel said nothing about the MediaTek Wi-Fi/Bluetooth chip."
+        if printf '%s' "${AQ_LOG}" | grep -qi 'tas27\|tas2781\|TAS2XXX'; then
+            printf '%s' "${AQ_LOG}" | grep -i 'tas27\|tas2781\|TAS2XXX' | tail -4 | sed 's/^/  /'
+        else
+            echo "  The kernel said nothing about the TI speaker amplifier."
+        fi
+        if printf '%s' "${AQ_LOG}" | grep -qi 'mt79'; then
+            printf '%s' "${AQ_LOG}" | grep -i 'mt79' | tail -4 | sed 's/^/  /'
+        else
+            echo "  The kernel said nothing about the MediaTek Wi-Fi/Bluetooth chip."
+        fi
     fi
     if printf '%s' "${AQ_LOG}" | grep -qiE 'firmware.*(failed|not found)'; then
         echo
@@ -294,5 +548,9 @@ if [ -r "${AQ_NOTE}" ]; then
 fi
 
 echo
-echo "The full guide, including the bench list: docs/restart/handheld.md"
+if [ "${AQ_IS_CLAW}" = "1" ]; then
+    echo "The full guide, including the bench list: docs/restart/handheld-claw.md"
+else
+    echo "The full guide, including the bench list: docs/restart/handheld.md"
+fi
 exit 0

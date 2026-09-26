@@ -17,10 +17,13 @@ there if you want it, and invisible if you do not.
 handheld support. Both of those are now wrong.** Royce reversed the decision on
 17 September 2026. Game Mode — the console-like interface a Steam Deck boots
 into — shipped in phase G1 and is on every image: see
-[`game-mode.md`](game-mode.md). And since 19 September 2026 there is a third
-image, `aquarius-os-handheld`, built for one handheld computer, the ROG Xbox
-Ally X: see [`handheld.md`](handheld.md). What is still true is that the
-handheld list is **one device long**, on purpose.
+[`game-mode.md`](game-mode.md). And since 19 September 2026 there are handheld
+images too, one per machine: `aquarius-os-handheld` for the **ROG Xbox Ally X**
+(see [`handheld.md`](handheld.md)) and, since 20 September 2026,
+`aquarius-os-handheld-claw` for the **MSI Claw 8 AI+** (see
+[`handheld-claw.md`](handheld-claw.md)). What is still true is that the handheld
+list is **two devices long** — those two, both of them on Royce's bench — on
+purpose.
 
 ---
 
@@ -346,20 +349,27 @@ there: [`decky.md`](decky.md).
 
 ## What is NOT here, and why
 
-**No handheld support — on THESE two images.** ⚠️ Updated 2026-09-19: phase G2
-shipped, and handheld support now exists, but it is a **separate, third image**
-called `aquarius-os-handheld` and it targets **exactly one device**, the ROG
-Xbox Ally X that Royce owns. See [`handheld.md`](handheld.md).
+**No handheld support — on THESE two images.** ⚠️ Updated 2026-09-20: phases G2
+and G4 shipped, and handheld support now exists, but it lives in **separate
+images**, one per machine, each targeting **exactly one device**:
+
+| Image | The one device it is for | Its guide |
+| --- | --- | --- |
+| `aquarius-os-handheld` | ROG Xbox Ally X (board `RC73XA`) | [`handheld.md`](handheld.md) |
+| `aquarius-os-handheld-claw` | MSI Claw 8 AI+ (board `MS-1T52`) | [`handheld-claw.md`](handheld-claw.md) |
 
 Nothing of it is on the AMD/Intel or NVIDIA images: no InputPlumber, no gyro
 plumbing, no TDP sliders, no fan curves, and a cold boot on them still shows the
-login screen. The build checks that on every run, on all three images, because
+login screen. The build checks that on every run, on all four images, because
 "the handheld work cannot change the computer Royce edits on" is the promise the
-whole phase was built around.
+whole phase was built around. Each handheld image also proves the *other*
+handheld's files did not reach it.
 
-Still no Steam Deck, no Legion Go, no Ayaneo. Widening that list without the
-hardware on the bench is how a distribution ends up owning a device matrix it
-cannot test. Doing handhelds badly is worse than not doing them.
+Still no Steam Deck, no Legion Go, no Ayaneo — and no other MSI Claw, either;
+the ones called `MS-1T41`, `MS-1T42`, `MS-1T8K` and `MS-1T91` are different
+computers inside. Widening that list without the hardware on the bench is how a
+distribution ends up owning a device matrix it cannot test. Doing handhelds
+badly is worse than not doing them.
 
 The original reasoning, from the era when Game Mode was out too, is in
 [`../base-distro-reassessment-2026-09.md`](../base-distro-reassessment-2026-09.md)
