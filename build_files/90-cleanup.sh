@@ -121,6 +121,36 @@ for stray in /build_files /system_files /ingest; do
 done
 
 # ------------------------------------------------------------------------------
+# The password-box packages: gone at the end, not just gone at the time
+# ------------------------------------------------------------------------------
+# Step 40 takes GNOME Software's rpm-ostree plug-in out, for the reason written
+# out in full beside the removal: it asks for an administrator password roughly
+# once an hour to upgrade an operating system that does not upgrade that way.
+# Step 40 checks its own work — but it checks it at step 40, and fifty steps
+# run after it.
+#
+# Any one of those steps installing a package that merely RECOMMENDS this plug-in
+# would bring it quietly back, and step 40's check would still be green in the
+# build log. So the question gets asked again here, at the very end, where the
+# answer is about the image that actually ships.
+#
+# Same shape as the "exactly one kernel" check above: a thing that was true
+# earlier is not the same as a thing that is true now.
+say "Checking no app store on the finished image can ask to upgrade the OS"
+if rpm -q gnome-software-rpm-ostree > /dev/null 2>&1; then
+    bad "gnome-software-rpm-ostree came BACK after step 40 removed it — a later step installed something that recommends it. Find that step and exclude it there."
+else
+    ok "gnome-software-rpm-ostree is still absent at the end of the build"
+fi
+
+AQ_OSTREE_PLUGIN="$(find /usr/lib64/gnome-software -name 'libgs_plugin_rpm-ostree.so' -print -quit 2> /dev/null || true)"
+if [ -n "${AQ_OSTREE_PLUGIN}" ]; then
+    bad "${AQ_OSTREE_PLUGIN} is in the finished image — the pointless password box is back"
+else
+    ok "no rpm-ostree plug-in in the finished image"
+fi
+
+# ------------------------------------------------------------------------------
 # How big did it get?
 # ------------------------------------------------------------------------------
 # Printed for the log so that a jump in size is visible in the build history

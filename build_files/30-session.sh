@@ -326,6 +326,56 @@ aq_dnf install \
     vim-enhanced
 
 # ------------------------------------------------------------------------------
+# Telling firewalld that this is a desktop, not a server
+# ------------------------------------------------------------------------------
+# WHAT THE PROBLEM LOOKS LIKE
+#
+# Something on the desktop wants to know how the firewall is currently set up —
+# a read, not a change — and a password box appears. On the bench PC this was
+# the action `org.fedoraproject.FirewallD1.config.info` (2026-09-24). Typing a
+# password to be told what your own firewall settings are is a prompt that
+# teaches the person nothing except to stop reading prompts.
+#
+# WHY IT HAPPENS, AND WHY FEDORA ALREADY SOLVED IT
+#
+# firewalld ships with the cautious settings of a server that a dozen people
+# might log into. It also ships a second, gentler set for machines that are one
+# person's desktop, and it deliberately does NOT switch either one on for you —
+# it leaves both on disk with a `.choice` ending, which polkit ignores, and
+# lets the distribution pick. Fedora Workstation picks the desktop one. Nobody
+# picked for us, so we were running the server answers on a video editor's PC.
+#
+# This picks the desktop one, which is two files:
+#
+#   ...desktop.policy.choice   the DEFAULTS. Its only difference that matters
+#                              here: reading the configuration
+#                              (`...FirewallD1.config.info`) becomes "yes" for
+#                              the person at the keyboard instead of "ask for
+#                              an administrator password". Reading. Not
+#                              changing.
+#   ...desktop.rules.choice    a rule saying an administrator sitting at this
+#                              machine may CHANGE the firewall without a
+#                              password — the same shape as everything else we
+#                              allow: local, active, in the wheel group.
+#
+# ⚠️ THIS IS FEDORA'S OWN FILE, COPIED, NOT A RULE WE WROTE. We do not edit it,
+#    and we install it under the name polkit expects by dropping the `.choice`.
+#    If a future firewalld changes what is inside, we inherit the change, which
+#    is the right way round for somebody else's security policy.
+say "Firewall prompts: using Fedora's desktop answers, not its server answers"
+for aq_fw in \
+    "/usr/share/polkit-1/actions/org.fedoraproject.FirewallD1.desktop.policy" \
+    "/usr/share/polkit-1/rules.d/org.fedoraproject.FirewallD1.desktop.rules"
+do
+    if [ -r "${aq_fw}.choice" ]; then
+        cp "${aq_fw}.choice" "${aq_fw}"
+    else
+        bad "${aq_fw}.choice is missing — firewalld no longer ships the desktop answers under that name, so this step is reading a file that moved"
+    fi
+done
+unset aq_fw
+
+# ------------------------------------------------------------------------------
 # Check the floor
 # ------------------------------------------------------------------------------
 say "Checking the session floor"
@@ -352,7 +402,41 @@ aq_installed \
     distrobox \
     polkit \
     sudo \
-    openssh-server
+    openssh-server \
+    firewalld
+
+# The firewall's desktop answers, read back out of the finished image. Checking
+# the CONTENT, not just that a file exists: the one line that matters is the one
+# that turns "reading the firewall configuration" from an administrator password
+# into a plain yes for the person at the keyboard. A file that exists but still
+# says auth_admin would leave the prompt exactly where it was.
+AQ_FW_POLICY="/usr/share/polkit-1/actions/org.fedoraproject.FirewallD1.desktop.policy"
+AQ_FW_RULES="/usr/share/polkit-1/rules.d/org.fedoraproject.FirewallD1.desktop.rules"
+
+if [ -r "${AQ_FW_POLICY}" ]; then
+    # ⚠️ NO PIPE INTO `grep -q` HERE, ON PURPose — see the long warning above
+    # aq_output_has() in aq-lib.sh. Under `set -o pipefail` a `grep -q` that
+    # finds its match exits early, the command feeding it dies of a broken
+    # pipe, and the whole check reports FAILURE for having succeeded. So the
+    # first grep is run to completion into a variable, and the variable is what
+    # gets searched.
+    AQ_FW_INFO_BLOCK="$(grep -A6 'action id="org.fedoraproject.FirewallD1.config.info"' "${AQ_FW_POLICY}" || true)"
+    case "${AQ_FW_INFO_BLOCK}" in
+        *"<allow_active>yes</allow_active>"*)
+            ok "reading the firewall configuration no longer asks for a password" ;;
+        *)
+            bad "${AQ_FW_POLICY} is installed but still asks for a password to READ the firewall configuration" ;;
+    esac
+else
+    bad "${AQ_FW_POLICY} is missing — firewalld is running a server's answers on a desktop"
+fi
+
+# aq_file_has greps with -E, so the brackets below are escaped to mean literal
+# brackets rather than a regular-expression group.
+aq_file_has "${AQ_FW_RULES}" 'isInGroup\("wheel"\)' \
+    "changing the firewall is limited to an administrator, not opened up to everyone"
+aq_file_has "${AQ_FW_RULES}" 'subject.active == true' \
+    "and only from the session that owns the screen right now — never over SSH"
 
 # The fingerprint PAM module, read back by the exact path the login rules name.
 # Installing fprintd-pam was only half the job — the whole point was to make the
