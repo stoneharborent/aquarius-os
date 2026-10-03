@@ -39,16 +39,16 @@
 # -----------------------------------------------------------------------------
 # THE NUMBERS, AND WHERE EACH ONE COMES FROM
 # -----------------------------------------------------------------------------
-#   1.5 s   BOOT_DELAY in /usr/share/plymouth/themes/aquarius/aquarius.script
-#           (written there as `BOOT_DELAY = 45;` — 45 frames at 30 a second).
+#   4.0 s   BOOT_DELAY in /usr/share/plymouth/themes/aquarius/aquarius.script
+#           (written there as `BOOT_DELAY = 120;` — 120 frames at 30 a second).
 #   2.2 s   the pour itself: 66 frames at 30 a second.
 #   0.6 s   a margin, so the finished mark is held still for a moment rather
 #           than being cut off on its last frame.
 #   -----
-#   4.3 s   from the moment the boot animation appeared.
+#   6.8 s   from the moment the boot animation appeared.
 #
 # ⚠️ THESE MUST MATCH THE THEME. build_files/80-boot-branding.sh checks that the
-# theme still says `BOOT_DELAY = 45;` and that this file still says 4.3, so the
+# theme still says `BOOT_DELAY = 120;` and that this file still says 6.8, so the
 # two cannot drift apart quietly.
 #
 # AND A CEILING. However odd the answers coming back, this never waits longer
@@ -62,15 +62,15 @@
 set -uo pipefail
 
 # How long the story lasts, from the moment the animation appears. See above.
-AQ_HOLD_TOTAL="${AQ_BOOT_HOLD_TOTAL:-4.3}"
+AQ_HOLD_TOTAL="${AQ_BOOT_HOLD_TOTAL:-6.8}"
 
 # The most this may ever wait, whatever the arithmetic says.
-AQ_MAX_HOLD="${AQ_BOOT_HOLD_MAX:-6}"
+AQ_MAX_HOLD="${AQ_BOOT_HOLD_MAX:-8}"
 
 # What to fall back to when systemd cannot say when the animation appeared —
 # the old flat sleep, which is better than nothing and is what this machine did
 # before 2026-09-08.
-AQ_FALLBACK="${AQ_BOOT_HOLD_FALLBACK:-3.5}"
+AQ_FALLBACK="${AQ_BOOT_HOLD_FALLBACK:-6}"
 
 # The unit whose start time is "when the animation appeared".
 AQ_PLYMOUTH_UNIT="${AQ_BOOT_HOLD_UNIT:-plymouth-start.service}"

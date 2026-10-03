@@ -53,7 +53,7 @@ Then it **holds** — stands perfectly still — until the login screen takes ov
 > boot screen to login screen in five seconds, and its television spends the
 > first two of them still showing the motherboard's logo while it switches over.
 > The pour had finished before the picture arrived; all Royce saw was the held
-> mark. So the pour starts 1.5 seconds late (`BOOT_DELAY` in `aquarius.script`),
+> mark. So the pour starts 4.0 seconds late (`BOOT_DELAY` in `aquarius.script`; 1.5 s until 2026-10-03),
 > and `aquarius-boot-hold.service` keeps the login screen from starting until the
 > pour has been on screen. Shutdown is untouched — the screen is already awake
 > for the wind. **The next section is the real timeline, measured on the bench,
@@ -194,11 +194,11 @@ It now asks systemd when `plymouth-start.service` really became active, and
 waits for however much of the story is left:
 
 ```
-1.5 s  the animation's own wait, so a television is awake for the pour
+4.0 s  the animation's own wait, so a monitor is awake for the pour
 2.2 s  the pour itself
 0.6 s  a margin, so the finished mark is held still rather than cut off
 -----
-4.3 s  from the moment the animation appeared — and never more than 6
+6.8 s  from the moment the animation appeared — and never more than 8
 ```
 
 On a machine where the animation appeared four seconds ago, it waits almost
@@ -1001,3 +1001,14 @@ life. Worth revisiting if AquariusOS is ever handed to somebody who is not Royce
   [`nvidia-notes.md`](nvidia-notes.md)
 - **How the whole build is put together:** [`README.md`](README.md)
 - **The colours and fonts everything here uses:** `branding/tokens.md`
+
+
+### 2026-10-03: "the mark appears but the pour never plays"
+
+Bench journal for the boot: Plymouth starts at 7.83 s and the amdgpu driver does
+its first mode set on the monitor's port (DP-1, DSC) at 7.92 s. With the pour
+delayed only 1.5 s it played from ~9.7 to ~11.9 s, while the monitor was still
+re-syncing; Royce saw only the held mark. `BOOT_DELAY` is now 120 (4.0 s) and
+`aquarius-boot-hold` holds the login screen 6.8 s from the animation's start
+(ceiling 8 s), about 2.5 s longer than before. If the pour is still missed, raise
+`BOOT_DELAY` and `AQ_HOLD_TOTAL` together (they must agree; the build checks).

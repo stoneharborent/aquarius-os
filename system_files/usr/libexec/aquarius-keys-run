@@ -856,6 +856,7 @@ aq_count=0           # how many keyboards it chose
 aq_names=""          # and what they are called
 aq_said_summary=0    # so the summary is printed once, not once per line
 aq_problem=""        # empty means all well
+aq_said_waiting=0    # so "no keyboard connected" is said once, not every time
 
 aq_summary() {
     [ "${aq_said_summary}" -eq 1 ] && return 0
@@ -863,6 +864,11 @@ aq_summary() {
     if [ "${aq_count}" -gt 0 ]; then
         say "remapping ${aq_count} keyboard(s): ${aq_names}"
         say "Mac-style shortcuts are live. Command-C copies."
+        # A keyboard has been taken hold of, so any earlier "no keyboard
+        # connected" note is finished with. Clearing this means that if the
+        # keyboard goes away again later the wait is announced again, rather
+        # than the log going silent on it.
+        aq_said_waiting=0
     fi
 }
 
@@ -872,7 +878,16 @@ while true; do
 
         case "${aq_line}" in
             *"Selecting devices from the following list"*)
+                # START OF A FRESH COUNT, NOT A CONTINUATION. The remapper
+                # prints this whole block AGAIN every time a keyboard is
+                # plugged in, so the tallies below have to go back to zero
+                # here — otherwise a keyboard that arrives later is added to
+                # the old total and we report four keyboards when there are
+                # two, with every name listed twice.
                 aq_phase="listing"
+                aq_count=0
+                aq_names=""
+                aq_said_summary=0
                 ;;
             *"Selected"*"since --device options weren't specified"* | *"Selected devices"*)
                 aq_phase="chosen"
@@ -893,9 +908,53 @@ while true; do
         # claim we have not checked. Five seconds of silence afterwards is the
         # cheapest honest proof that the grabs actually succeeded.
 
+        # ---------------------------------------------------------------
+        # ⚠️ ONLY ONE OF THESE TWO IS A FAILURE. THIS IS THE 2026-09-24 FIX.
+        # ---------------------------------------------------------------
+        # "resource busy" means: the keyboard is there, and somebody else is
+        # holding it. That is the 2026-09-03 bug, it clears in a few seconds
+        # when the other program lets go, and the remapper will NOT go back
+        # and try a keyboard it was already refused. So the right answer is
+        # to fail the run and let systemd start a fresh one two seconds
+        # later. Unchanged.
+        #
+        # "No device was selected" on its own means something completely
+        # different: there was no keyboard to select. Nothing is wrong, and
+        # nothing is broken — Royce's only keyboard is a Bluetooth K780 that
+        # disconnects when it is left alone, and while it is away this is
+        # simply the truth.
+        #
+        # Until 2026-09-24 this line was treated as a failure too, and that
+        # cost 60,945 restarts over three days on the bench: kill the
+        # remapper, exit 1, start again two seconds later, forever, each turn
+        # of the loop inventing another virtual keyboard for logind to
+        # register. It never showed on screen, because the moment the K780
+        # came back a run succeeded and looked perfectly healthy.
+        #
+        # Retrying was never going to help, and it was never needed:
+        # --watch=device means the remapper is already listening for a
+        # keyboard to appear and takes hold of it by itself the moment one
+        # does. Measured on the bench, 2026-09-24: a remapper sitting in
+        # exactly this state saw a keyboard arrive and grabbed it without
+        # being restarted. So the right answer here is to wait, which costs
+        # nothing and is what the remapper is doing anyway.
+        #
+        # Note the order this is written in. A busy keyboard can still turn
+        # up LATER — a keyboard that arrives while we are waiting may well be
+        # grabbed by somebody else first — and because we stay in this loop
+        # rather than leaving it, that error is still seen and still retried.
         case "${aq_line}" in
-            *"resource busy"*)      aq_problem="busy" ;;
-            *"No device was selected"*) aq_problem="none" ;;
+            *"resource busy"*) aq_problem="busy" ;;
+            *"No device was selected"*)
+                if [ "${aq_said_waiting}" -eq 0 ]; then
+                    aq_said_waiting=1
+                    say "no keyboard is connected at the moment, so there is nothing"
+                    say "to remap yet. Waiting. This is normal for a wireless"
+                    say "keyboard that has gone to sleep; the shortcuts switch"
+                    say "themselves on the moment it comes back, with nothing to"
+                    say "restart and nothing for you to do."
+                fi
+                ;;
         esac
 
         if [ -n "${aq_problem}" ]; then
@@ -933,15 +992,14 @@ if [ -n "${aq_problem}" ]; then
         exit 1
     fi
 
+    # Since 2026-09-24 there is only one problem that gets this far: a
+    # keyboard that exists but is held by somebody else. "No keyboard at all"
+    # is no longer a problem, it is a wait, and it is handled up in the
+    # reading loop without ever reaching here.
     say ""
-    if [ "${aq_problem}" = "busy" ]; then
-        say "PROBLEM: another program is holding the keyboard, so the shortcuts"
-        say "are not working yet. The usual cause is the login screen's own copy"
-        say "of the remapper, which lets go a few seconds after you log in."
-    else
-        say "PROBLEM: no keyboard could be taken hold of, so nothing is being"
-        say "remapped and the shortcuts are not working yet."
-    fi
+    say "PROBLEM: another program is holding the keyboard, so the shortcuts"
+    say "are not working yet. The usual cause is the login screen's own copy"
+    say "of the remapper, which lets go a few seconds after you log in."
     say "Trying again in two seconds. This normally fixes itself; if these lines"
     say "keep repeating, run:  aq keys status"
     exit 1

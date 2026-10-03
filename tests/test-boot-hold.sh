@@ -19,11 +19,11 @@
 # The four cases:
 #
 #   1. The animation appeared a tenth of a second ago  → wait nearly the whole
-#      4.3 seconds.
+#      6.8 seconds.
 #   2. The animation appeared six seconds ago          → wait nothing at all.
 #   3. systemd has no answer (a build container, or a machine with no boot
 #      animation)                                     → fall back to the old
-#      flat 3.5 seconds rather than skipping the hold.
+#      flat 6 seconds rather than skipping the hold.
 #   4. Something absurd — the animation "appeared" an hour in the future →
 #      never wait longer than the six-second ceiling.
 #
@@ -122,24 +122,24 @@ echo "== the hold's arithmetic, against a stand-in clock =="
 echo "   program under test: ${HOLD}"
 
 # 1. The animation has only just appeared: almost all of the story is still to
-#    come, so almost all of the 4.3 seconds must be waited.
-run_case "the animation appeared a moment ago" 0.1 4.2
+#    come, so almost all of the 6.8 seconds must be waited.
+run_case "the animation appeared a moment ago" 0.1 6.7
 
 # 2. The animation appeared six seconds ago: the story is long over and the
 #    login screen must not be held back for a single second more.
-run_case "the animation appeared six seconds ago" 6 0
+run_case "the animation appeared eight seconds ago" 8 0
 
 # 3. ⚠️ THE IMPORTANT ONE. systemd cannot say. The old flat wait is the answer;
 #    "no answer" must never mean "do not wait".
-run_case "systemd has no answer at all" none 3.5
+run_case "systemd has no answer at all" none 6
 
 # 4. A nonsense answer from the future must not become a long wait.
 awk -v n="$(now_us)" 'BEGIN { printf "%d\n", n + 3600000000 }' > "${WORK}/answer"
 out="$(PATH="${WORK}/bin:${PATH}" "${HOLD}" --explain 2>&1)"
-if printf '%s\n' "${out}" | grep -q 'waits 6.00s more'; then
-    ok "an impossible answer is capped at the six-second ceiling"
+if printf '%s\n' "${out}" | grep -q 'waits 8.00s more'; then
+    ok "an impossible answer is capped at the eight-second ceiling"
 else
-    bad "an impossible answer was NOT capped at six seconds:"
+    bad "an impossible answer was NOT capped at eight seconds:"
     printf '%s\n' "${out}" | sed 's/^/         /' >&2
 fi
 

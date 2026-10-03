@@ -425,8 +425,42 @@ aq_file_has "${RUN_SCRIPT}" 'ignore=xremap' \
     "a leftover 'xremap' virtual keyboard can never be auto-selected as the only device (event16 on the bench)"
 aq_file_has "${RUN_SCRIPT}" 'resource busy' \
     "a refused keyboard is treated as a failure of the run, so systemd retries — the bench's --watch dead end"
+# ------------------------------------------------------------------------------
+# ⚠️ AND THE 2026-09-24 FIX, WHICH IS THE OPPOSITE OF THE LINE THAT USED TO BE
+# HERE. IT IS ONE EDIT AWAY FROM BEING LOST, AND LOSING IT IS EXPENSIVE.
+# ------------------------------------------------------------------------------
+# Until 2026-09-24 this file checked that "no keyboards at all" was ALSO treated
+# as a failure of the run. On the bench that turned out to be the wrong call and
+# it cost 60,945 restarts over three days — once every two and a half seconds,
+# for three days, each one inventing another virtual keyboard — because Royce's
+# only keyboard is a Bluetooth K780 that disconnects when it is left alone, and
+# while it is away "no keyboards at all" is simply true.
+#
+# It is not a failure, and restarting never helped: --watch=device means the
+# remapper is already waiting for a keyboard to appear and takes hold of it by
+# itself when one does. That was measured on the bench, not assumed.
+#
+# So the run script must still RECOGNISE the line, and must NOT turn it into a
+# failure. Both halves are checked, because recognising it and then failing
+# anyway is exactly the bug.
 aq_file_has "${RUN_SCRIPT}" 'No device was selected' \
-    "holding no keyboards at all is treated as a failure too"
+    "it still recognises the remapper's 'no keyboard' line"
+aq_file_has "${RUN_SCRIPT}" 'no keyboard is connected at the moment' \
+    "and answers it by waiting, in a line that says nothing is wrong"
+if grep -q 'aq_problem="none"' "${RUN_SCRIPT}"; then
+    bad "'no keyboard at all' is still treated as a failure — this is the 2026-09-24 restart loop, back again"
+else
+    ok "'no keyboard at all' is NOT treated as a failure (no aq_problem=\"none\" anywhere)"
+fi
+aq_file_has "${RUN_SCRIPT}" '^                aq_count=0$' \
+    "the keyboard tally restarts when the remapper re-lists devices, so a later arrival is not double-counted"
+
+# The brake on the retry loop, added the same day. The run script fix cures the
+# loop we found; these two lines are what stops the next one we have not.
+aq_file_has "${UNIT}" '^RestartSteps=10$' \
+    "a failure that cannot fix itself is retried more and more slowly, instead of every two seconds forever"
+aq_file_has "${UNIT}" '^RestartMaxDelaySec=5min$' \
+    "and never slower than once every five minutes, so it still recovers by itself"
 aq_file_has "${RUN_SCRIPT}" 'remapping .* keyboard' \
     "it says how many keyboards it actually has hold of, so 'running' and 'working' can be told apart"
 # ⚠️ AND IT MUST STOP IN GAME MODE, THE BENCH FIX OF 2026-09-19. In the

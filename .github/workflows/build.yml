@@ -399,6 +399,20 @@ on:
       # of it back out of the finished image. Same arrangement as every side
       # branch: builds and checks, never publishes.
       - fix/game-mode-bench-4
+      # The keyboard service's restart loop — the bench had started and stopped
+      # aquarius-keys 60,945 times in three days, once every two and a half
+      # seconds, inventing a virtual keyboard each turn, with nothing showing on
+      # screen. It was not crashing: it treated "no keyboard is connected" as a
+      # failure, when the only keyboard is a Bluetooth one that sleeps. That is
+      # now a wait; "another program is holding the keyboard" still retries; and
+      # the retries themselves now spread out so no future loop can run away.
+      # Step 75 reads all of it back out of the finished image. Same arrangement
+      # as every side branch: builds and checks, never publishes.
+      - fix/keys-no-keyboard-loop
+      # Boot pour timing: the pour now starts 4 s after Plymouth (was 1.5 s) and
+      # the login screen is held 6.8 s, so a slow-waking monitor sees it. Builds
+      # and checks only; never publishes.
+      - fix/boot-pour-delay
       # The password boxes that asked for nothing. GNOME Software's rpm-ostree
       # plug-in — a weak dependency nobody chose — was asking polkit to upgrade
       # an operating system that does not update that way, about once an hour,

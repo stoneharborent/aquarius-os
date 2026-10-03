@@ -127,6 +127,42 @@ ExecStart=/usr/libexec/aquarius-keys-run
 Restart=always
 RestartSec=2
 
+# -----------------------------------------------------------------------------
+# AND THE BRAKE ON IT, ADDED 2026-09-24.
+# -----------------------------------------------------------------------------
+# Two seconds forever is right for the thing it was written for — a keyboard
+# that is busy for a few seconds at login — and badly wrong for anything that
+# cannot fix itself. The bench found out which: this service restarted 60,945
+# times in three days, about once every two and a half seconds, day and night,
+# and nothing on screen ever showed it. The cause of that particular loop is
+# fixed in the run script. This is the brake, so that the NEXT thing we have
+# not thought of cannot do the same.
+#
+# What these two lines mean: start at the two seconds above, and if it keeps
+# failing, wait a little longer each time, in ten steps, stretching out to at
+# most five minutes between attempts.
+#
+# ⚠️ TEN STEPS, NOT FIVE, AND THE REASON IS THE CASE THIS MUST NOT SPOIL.
+# The whole point of the two seconds is that at login a keyboard can be busy
+# for a few seconds while the last session lets go, and the 2026-09-03 bug
+# cleared on about the tenth second. So the early attempts have to stay close
+# together. Measured:
+#
+#   ten steps  attempts at 0s, 2s, 5s, 11s, 20s, 35s, 59s, 100s ...
+#   five steps attempts at 0s, 2s, 7s, 22s, 63s ...
+#
+# Five steps would have turned that ten-second recovery into a twenty-second
+# one, which is a fix making a different thing worse. Ten keeps it.
+#
+# At the far end both do the same job: something that was never going to work
+# settles down to one attempt every five minutes — twelve an hour, instead of
+# the fourteen hundred an hour the bench was doing.
+#
+# It never gives up — StartLimitIntervalSec=0 above is untouched — and the
+# waiting goes back to two seconds the moment an attempt succeeds.
+RestartSteps=10
+RestartMaxDelaySec=5min
+
 # The two exits that mean "do not try again, trying again cannot help":
 #
 #   64  Nothing to do ON PURPOSE. Windows mode has no rules in it, so there is
