@@ -86,7 +86,7 @@
 # if they disagree, but it is quicker to get it right here.
 BOOT_FRAMES  = 66;      # the pour: 2.2 seconds at 30 pictures a second
 WIND_FRAMES  = 57;      # the wind: 1.9 seconds
-# How long to wait, at boot only, before the pour begins: 45 pictures = 1.5 s.
+# How long to wait, at boot only, before the pour begins: 120 pictures = 4.0 s.
 # Found on the bench, 2026-09-07: the pour played to a television that was
 # still showing the motherboard's logo. A big screen takes a second or two to
 # switch over after the machine starts drawing, and by the time the picture
@@ -94,7 +94,11 @@ WIND_FRAMES  = 57;      # the wind: 1.9 seconds
 # screen stays plain navy for this long, then the stream falls. Shutdown is not
 # delayed: the screen is already awake. (The login screen is also held back
 # until the pour has finished — see aquarius-boot-hold.service.)
-BOOT_DELAY   = 45;
+# Raised from 45 (1.5 s) to 120 (4.0 s) on 2026-10-03: on the bench PC the
+# monitor is on the AMD iGPU and is re-synced (DSC) by the first mode set at
+# ~7.9 s; with a 1.5 s delay the whole pour played in the dark and only the
+# held mark was ever seen. 4.0 s lets the monitor wake first.
+BOOT_DELAY   = 120;
 FRAME_WIDTH  = 288;
 FRAME_HEIGHT = 389;
 

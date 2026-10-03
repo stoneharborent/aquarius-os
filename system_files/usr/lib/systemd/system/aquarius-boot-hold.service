@@ -3,7 +3,7 @@
 # =============================================================================
 # WHAT IT IS FOR
 #
-# The boot screen pours the Aquarius mark over 2.2 seconds, after waiting 1.5
+# The boot screen pours the Aquarius mark over 2.2 seconds, after waiting 4.0
 # seconds so a television has time to wake up, and then holds it until the login
 # screen takes over. On the bench (2026-09-07) the machine got from the boot
 # screen to the login screen in five seconds, and a big television took the
@@ -23,7 +23,7 @@
 #
 # WHAT IT COSTS. On a machine that already takes five seconds, nothing: the wait
 # ends before the login screen would have started anyway. On a fast machine, up
-# to a few seconds of navy with the mark held on it, and never more than six.
+# to a few seconds of navy with the mark held on it, and never more than eight.
 #
 # WHEN IT DOES NOT RUN. Only when the boot screen was asked for at all
 # (`splash` on the kernel command line — the image puts it there). Shutting

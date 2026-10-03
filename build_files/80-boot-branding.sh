@@ -622,15 +622,15 @@ else
     sed 's/^/       /' /tmp/aq-hold-syn.txt
 fi
 rm -f /tmp/aq-hold-syn.txt
-# 1.5 s of waiting + 2.2 s of pouring + 0.6 s of margin = 4.3.
-aq_file_has "${AQ_HOLD_PROG}" '^AQ_HOLD_TOTAL="\$\{AQ_BOOT_HOLD_TOTAL:-4\.3\}"$' \
-    "it holds for 4.3 s from the moment the animation appeared (1.5 + 2.2 + 0.6)"
-aq_file_has "${AQ_HOLD_PROG}" 'AQ_BOOT_HOLD_MAX:-6' \
-    "and never for longer than six seconds, whatever the arithmetic says"
+# 4.0 s of waiting + 2.2 s of pouring + 0.6 s of margin = 6.8.
+aq_file_has "${AQ_HOLD_PROG}" '^AQ_HOLD_TOTAL="\$\{AQ_BOOT_HOLD_TOTAL:-6\.8\}"$' \
+    "it holds for 6.8 s from the moment the animation appeared (4.0 + 2.2 + 0.6)"
+aq_file_has "${AQ_HOLD_PROG}" 'AQ_BOOT_HOLD_MAX:-8' \
+    "and never for longer than eight seconds, whatever the arithmetic says"
 aq_file_has "${AQ_HOLD_PROG}" 'ActiveEnterTimestampMonotonic' \
     "it measures from when the boot animation really appeared, not from when it started"
-aq_file_has "${THEME_DIR}/aquarius.script" '^BOOT_DELAY *= *45;' \
-    "the pour starts 1.5 s late at boot, so a slow screen is awake for it"
+aq_file_has "${THEME_DIR}/aquarius.script" '^BOOT_DELAY *= *120;' \
+    "the pour starts 4.0 s late at boot, so a slow screen is awake for it"
 
 # It has to RUN. --explain does every step except the waiting, so a build
 # container — which has no systemd to ask and therefore takes the fallback
