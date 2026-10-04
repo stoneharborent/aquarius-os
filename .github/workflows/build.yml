@@ -426,6 +426,11 @@ on:
       # profile, with GNOME's on-screen keyboard; and the Keyboard slider really
       # dimming the stick rings. Builds and checks only; never publishes.
       - feat/handheld-desktop
+      # Handheld bench round 2, 2026-10-04: Desktop → Game Mode no longer hangs
+      # (steamos-manager left on a dead bus), a 128-point app grid, and a
+      # full-width on-screen keyboard that closes with a swipe down. Builds and
+      # checks only; never publishes.
+      - fix/handheld-desktop-round2
       # The password boxes that asked for nothing. GNOME Software's rpm-ostree
       # plug-in — a weak dependency nobody chose — was asking polkit to upgrade
       # an operating system that does not update that way, about once an hour,
