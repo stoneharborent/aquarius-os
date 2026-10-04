@@ -6918,7 +6918,9 @@ jobs:
                      /usr/libexec/aquarius-handheld-input \
                      /usr/libexec/aquarius-ally-rings \
                      /usr/lib/udev/rules.d/72-aquarius-ally-rings.rules \
-                     /usr/share/gnome-shell/extensions/aquarius-handheld@stoneharborent.github.io; do
+                     /usr/share/gnome-shell/extensions/aquarius-handheld@stoneharborent.github.io \
+                     /usr/lib/systemd/user/steamos-manager.service.d/60-aquarius-session.conf \
+                     /usr/lib/systemd/logind.conf.d/60-aquarius-handheld.conf; do
               [ -e "$f" ] && bad "$f is on a desktop image" || ok "$f is not on this image"
             done
             # `aq` is ONE program on all three images, so `aq handheld` exists

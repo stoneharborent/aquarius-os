@@ -131,6 +131,9 @@ AQ_DESKTOP_FILES=(
     usr/lib/systemd/system/aquarius-ally-rings.service
     usr/share/gnome-shell/extensions/aquarius-handheld@stoneharborent.github.io/metadata.json
     usr/share/gnome-shell/extensions/aquarius-handheld@stoneharborent.github.io/extension.js
+    usr/lib/systemd/user/steamos-manager.service.d/60-aquarius-session.conf
+    usr/lib/systemd/user/steamos-manager-session-cleanup.service.d/60-aquarius-timeout.conf
+    usr/lib/systemd/logind.conf.d/60-aquarius-handheld.conf
 )
 
 # ==============================================================================
@@ -859,6 +862,29 @@ aq_file_has /etc/xdg/autostart/aquarius-handheld-input.desktop '^OnlyShowIn=GNOM
 aq_file_has "/usr/lib/systemd/user/gamescope-session-plus@.service.d/60-aquarius-handheld-input.conf" \
     '^ExecStartPre=-/usr/libexec/aquarius-handheld-input game$' \
     "and Game Mode puts the ordinary controller back before Steam starts"
+# Desktop → Game Mode hung on a black screen on the 2026-10-04 bench: GNOME's
+# logout killed the account's message bus, steamos-manager was left talking to
+# nothing, and the session clean-up waited on it for ever. The three files that
+# fix it, read back.
+say "Desktop → Game Mode cannot hang on a half-closed session"
+aq_file_has /usr/lib/systemd/user/steamos-manager.service.d/60-aquarius-session.conf \
+    '^PartOf=graphical-session\.target$' \
+    "steamos-manager stops with the session, so the next one gets a fresh one on the new bus"
+aq_file_has /usr/lib/systemd/user/steamos-manager-session-cleanup.service.d/60-aquarius-timeout.conf \
+    '^TimeoutStartSec=15$' \
+    "the session clean-up gives up after 15 seconds instead of waiting for ever"
+aq_file_has /usr/lib/systemd/logind.conf.d/60-aquarius-handheld.conf \
+    '^UserStopDelaySec=0$' \
+    "and every session switch starts a brand-new account manager, as a boot does"
+if aq_have systemd-analyze; then
+    AQ_DELAY="$(systemd-analyze cat-config systemd/logind.conf 2> /dev/null | grep -E '^UserStopDelaySec=' | tail -1)"
+    if [ "${AQ_DELAY}" = "UserStopDelaySec=0" ]; then
+        ok "logind really reads UserStopDelaySec=0"
+    else
+        bad "logind's effective UserStopDelaySec is '${AQ_DELAY:-the default, 10s}', not 0 — another file overrides ours"
+    fi
+fi
+
 aq_file_has /usr/lib/udev/rules.d/72-aquarius-ally-rings.rules \
     'SYSTEMD_WANTS\}\+="aquarius-ally-rings\.service"' \
     "the stick-ring light starts aquarius-ally-rings.service when it appears"
