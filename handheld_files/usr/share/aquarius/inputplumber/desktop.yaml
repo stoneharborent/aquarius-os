@@ -1,0 +1,195 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/device_profile_v1.json
+# =============================================================================
+# The Ally X's built-in controller on the DESKTOP — a mouse and a few keys
+# =============================================================================
+# HANDHELD IMAGE ONLY. Royce, 2026-10-04: the controller should drive the
+# desktop. /usr/libexec/aquarius-handheld-input loads this when GNOME or Plasma
+# starts, and puts InputPlumber's own Default profile back when Game Mode
+# starts, so Steam always gets an ordinary controller.
+#
+# WHY NOT STEAM IN THE BACKGROUND (the other way to do this): on GNOME, Steam
+# has to ask "Allow Remote Interaction" before it can move the pointer, and it
+# asks again every time it restarts — which is every switch out of Game Mode. It
+# also only reaches native GNOME apps with an extra library Fedora does not
+# ship, and it sits in memory the whole time. This is InputPlumber, which is
+# already running and already makes the controller.
+#
+#   Right stick       the pointer
+#   Left stick        scroll — one notch per push (hold does not repeat)
+#   RT / A            left click
+#   LT                right click
+#   LB                middle click
+#   RB                Alt+Tab, the previous window
+#   B                 Escape
+#   X                 Backspace
+#   Y                 Enter
+#   D-pad             the arrow keys
+#   View              Tab
+#   Menu              the Super key: Activities, and its search
+#   Xbox button       left alone — it still reaches games as a controller
+#
+# Typing: GNOME's own on-screen keyboard comes up by itself in any text box
+# (handheld_files/usr/share/glib-2.0/schemas/zz1-aquarius-90-handheld). The
+# dock: three fingers up, or Menu to open Activities.
+#
+# ⚠️ THE BUTTON NAMES ARE THE ONES OUR MAP GIVES THEM, NOT XBOX LABELS.
+# capability_maps/aquarius_ally_x_dinput.yaml says the printed X is "North" and
+# the printed Y is "West". This file follows that map.
+#
+# Anything not listed passes straight through to the virtual Xbox controller.
+# =============================================================================
+version: 1
+kind: DeviceProfile
+name: AquariusOS Desktop
+description: The Ally X controller as a mouse and a few keys, for the desktop
+
+mapping:
+  # --- the pointer ----------------------------------------------------------
+  - name: Right stick moves the pointer
+    source_event:
+      gamepad:
+        axis:
+          name: RightStick
+    target_events:
+      - mouse:
+          motion:
+            speed_pps: 800
+
+  # --- scrolling ------------------------------------------------------------
+  - name: Left stick up scrolls up
+    source_event:
+      gamepad:
+        axis:
+          name: LeftStick
+          direction: up
+          deadzone: 0.5
+    target_events:
+      - mouse:
+          button: WheelUp
+  - name: Left stick down scrolls down
+    source_event:
+      gamepad:
+        axis:
+          name: LeftStick
+          direction: down
+          deadzone: 0.5
+    target_events:
+      - mouse:
+          button: WheelDown
+  - name: Left stick left scrolls left
+    source_event:
+      gamepad:
+        axis:
+          name: LeftStick
+          direction: left
+          deadzone: 0.5
+    target_events:
+      - mouse:
+          button: WheelLeft
+  - name: Left stick right scrolls right
+    source_event:
+      gamepad:
+        axis:
+          name: LeftStick
+          direction: right
+          deadzone: 0.5
+    target_events:
+      - mouse:
+          button: WheelRight
+
+  # --- clicks ---------------------------------------------------------------
+  - name: RT is a left click
+    source_event:
+      gamepad:
+        trigger:
+          name: RightTrigger
+          deadzone: 0.2
+    target_events:
+      - mouse:
+          button: Left
+  - name: A is a left click
+    source_event:
+      gamepad:
+        button: South
+    target_events:
+      - mouse:
+          button: Left
+  - name: LT is a right click
+    source_event:
+      gamepad:
+        trigger:
+          name: LeftTrigger
+          deadzone: 0.2
+    target_events:
+      - mouse:
+          button: Right
+  - name: LB is a middle click
+    source_event:
+      gamepad:
+        button: LeftBumper
+    target_events:
+      - mouse:
+          button: Middle
+
+  # --- keys -----------------------------------------------------------------
+  - name: RB is Alt+Tab
+    source_event:
+      gamepad:
+        button: RightBumper
+    target_events:
+      - keyboard: KeyLeftAlt
+      - keyboard: KeyTab
+  - name: B is Escape
+    source_event:
+      gamepad:
+        button: East
+    target_events:
+      - keyboard: KeyEsc
+  - name: X is Backspace
+    source_event:
+      gamepad:
+        button: North
+    target_events:
+      - keyboard: KeyBackspace
+  - name: Y is Enter
+    source_event:
+      gamepad:
+        button: West
+    target_events:
+      - keyboard: KeyEnter
+  - name: View is Tab
+    source_event:
+      gamepad:
+        button: Select
+    target_events:
+      - keyboard: KeyTab
+  - name: Menu is the Super key
+    source_event:
+      gamepad:
+        button: Start
+    target_events:
+      - keyboard: KeyLeftMeta
+  - name: D-pad up
+    source_event:
+      gamepad:
+        button: DPadUp
+    target_events:
+      - keyboard: KeyUp
+  - name: D-pad down
+    source_event:
+      gamepad:
+        button: DPadDown
+    target_events:
+      - keyboard: KeyDown
+  - name: D-pad left
+    source_event:
+      gamepad:
+        button: DPadLeft
+    target_events:
+      - keyboard: KeyLeft
+  - name: D-pad right
+    source_event:
+      gamepad:
+        button: DPadRight
+    target_events:
+      - keyboard: KeyRight

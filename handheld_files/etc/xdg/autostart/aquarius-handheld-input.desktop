@@ -1,0 +1,17 @@
+# HANDHELD IMAGE ONLY. Turns the Ally X's controller into a mouse and a few keys
+# when a desktop starts. Game Mode puts it back (gamescope-session-plus@.service.d/
+# 60-aquarius-handheld-input.conf). See /usr/libexec/aquarius-handheld-input.
+#
+# ⚠️ OnlyShowIn keeps it out of Game Mode, whose session calls itself
+# "gamescope" — a controller turned into a mouse there would make Steam unusable.
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Handheld controller as a mouse
+Comment=Lets the built-in controller drive the desktop
+Exec=/usr/libexec/aquarius-handheld-input desktop
+TryExec=/usr/libexec/aquarius-handheld-input
+Terminal=false
+NoDisplay=true
+OnlyShowIn=GNOME;KDE;
+X-GNOME-Autostart-enabled=true
