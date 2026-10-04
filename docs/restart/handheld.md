@@ -156,7 +156,8 @@ is the whole reason this phase is small.
 | Brightness slider | works |
 | Sleep and wake, with the controller alive afterwards | works **if the MCU firmware is 313 or newer** |
 | Switch to Desktop → GNOME, and back | works (phase G1) |
-| RGB on the stick rings | works once Game Mode starts — Steam lights them. Dark on the desktop until then |
+| RGB on the stick rings | brightness: GNOME's quick settings → **Keyboard** slider (off, low, medium, high). Colour: white on the desktop; Steam may set its own in Game Mode. There is no colour setting on purpose |
+| The controller on the desktop | works as a mouse and a few keys — see "The desktop on the handheld" |
 | Variable refresh rate (VRR) | **unverified.** One report on another distribution says it misbehaves. |
 | **Rumble strength, stick dead zones, response curves, button remapping** | **not yet.** These need a kernel patch series that is still being reviewed upstream (`hid-asus` v6). It is a separate decision whether to go and get it. |
 | Custom fan curves | not yet, same reason |
@@ -179,6 +180,78 @@ writes the version and the known issue into the image itself** at
 
 This is a plain userspace package. Changing which version the image carries is a
 one-line change and a rebuild — no kernel, no modules, nothing delicate.
+
+---
+
+## The desktop on the handheld
+
+*Added 2026-10-04.* What changes when you press **Switch to Desktop**.
+
+### The dock
+
+- It holds **Files, Steam, Game Mode, Aquarius Editor (once installed),
+  Firefox, Terminal, Software and Settings**. DaVinci Resolve, Aquarius Writer
+  and Text Editor are off the dock but still in the app grid.
+- It **slides away whenever a window covers it** and comes back when nothing
+  does.
+- To bring it back over a window: **three fingers swiped up** (the Activities
+  overview, which always shows the dock), the controller's **Menu** button
+  (the same thing), or a mouse pushed against the bottom edge.
+- A **one-finger** swipe up from the bottom edge is GNOME's on-screen keyboard,
+  not the dock. Dash to Dock has no touch support at all, and Royce chose to
+  leave that swipe to the keyboard.
+
+These are defaults. An account that has already changed its dock keeps its
+own. To take the handheld's:
+
+    gsettings reset org.gnome.shell favorite-apps
+    gsettings reset-recursively org.gnome.shell.extensions.dash-to-dock
+
+### The controller is a mouse
+
+When a desktop starts, InputPlumber switches the built-in controller to
+`/usr/share/aquarius/inputplumber/desktop.yaml`. When Game Mode starts, it is
+put back to an ordinary Xbox controller **before Steam opens**.
+
+| Control | On the desktop |
+| --- | --- |
+| Right stick | the pointer |
+| Left stick | scroll, one notch per push |
+| RT, A | left click |
+| LT | right click |
+| LB | middle click |
+| RB | Alt+Tab |
+| B / X / Y | Escape / Backspace / Enter |
+| D-pad | arrow keys |
+| View / Menu | Tab / Super (Activities) |
+| Xbox button | unchanged |
+
+**Why not Steam in the background**, which is what some other systems do: on
+GNOME Steam has to ask "Allow Remote Interaction" before it can move the
+pointer, and asks again every time it restarts — every switch out of Game
+Mode. It also needs an extra library Fedora does not ship to reach GNOME's own
+apps, and it sits in memory the whole time.
+
+The switch is done by `/usr/libexec/aquarius-handheld-input`, which only works
+for an administrator (the `wheel` group), and logs to
+`journalctl -t aquarius-handheld-input`. `aquarius-handheld-input status` says
+which map is loaded.
+
+### Typing
+
+GNOME's own **on-screen keyboard comes up in any text box**, including one
+chosen with the stick. With a real keyboard plugged in, switch it off in
+Settings → Accessibility → Typing → Screen Keyboard.
+
+### The stick rings' brightness
+
+GNOME's quick settings has a **Keyboard** slider. On the Ally it is the stick
+rings. On its own it only turned them off and on: the controller chip treats
+every level above 0 as "on" in its one-colour mode. So
+`aquarius-ally-rings.service` watches the level and dims the rings by darkening
+their colour instead — 15 %, 45 % and 100 % — the same way HHD does it. On the
+very first boot a saved level of 0 is turned into medium; after that your
+choice, including off, is kept. Its log: `journalctl -u aquarius-ally-rings`.
 
 ---
 
@@ -280,6 +353,21 @@ Royce, on the Ally. Work down it and put the answers in
 - [ ] `aq game boot off` → restart → **login screen**
 - [ ] `aq game boot on` → restart → **Game Mode**
 
+### E2. The desktop (2026-10-04)
+
+- [ ] Switch to Desktop → the **right stick moves the pointer**, A and RT click,
+      LT right-clicks, the left stick scrolls
+- [ ] `aquarius-handheld-input status` says **AquariusOS Desktop**
+- [ ] Click a text box with the stick → the **on-screen keyboard** comes up
+- [ ] Open Firefox maximised → the **dock slides away**; three fingers up
+      brings it back; close Firefox → the dock returns
+- [ ] Sleep and wake **on the desktop** → the stick still moves the pointer
+- [ ] **Game Mode** from the dock → Steam sees an ordinary controller (A
+      selects, the stick does not move a pointer)
+- [ ] The **Keyboard** slider in quick settings: four positions give
+      **off, dim, medium, bright** rings, not just off and on
+- [ ] After a restart the rings come back at the brightness you left them
+
 ### F. Living with it
 
 - [ ] Run **one game for ten minutes**. Note how it plays, how hot it gets and
@@ -328,6 +416,10 @@ To see the controller set itself up: `journalctl -b -u aquarius-ally-controller`
 | `handheld_files/usr/lib/systemd/system/aquarius-ally-controller.service` | Runs it: started by the udev rule below, and at the end of every sleep. |
 | `handheld_files/usr/lib/udev/rules.d/71-aquarius-ally-controller.rules` | Starts that service whenever the controller chip appears (boot, and after sleep). |
 | `handheld_files/usr/share/inputplumber/capability_maps/aquarius_ally_x_dinput.yaml` | The measured button map. The build attaches it to InputPlumber's Xbox Ally config (`78-handheld.sh`, section 2b). |
+| `handheld_files/usr/share/glib-2.0/schemas/zz1-aquarius-90-handheld.gschema.override` | The handheld's dock and the on-screen keyboard default. |
+| `handheld_files/usr/share/aquarius/inputplumber/desktop.yaml` | The controller as a mouse on the desktop. |
+| `handheld_files/usr/libexec/aquarius-handheld-input` | Loads that map when a desktop starts (`etc/xdg/autostart/aquarius-handheld-input.desktop`) and puts the ordinary one back before Game Mode's Steam (`usr/lib/systemd/user/gamescope-session-plus@.service.d/60-aquarius-handheld-input.conf`). |
+| `handheld_files/usr/libexec/aquarius-ally-rings` | Makes the Keyboard slider dim the stick rings. Run by `aquarius-ally-rings.service`, started by `72-aquarius-ally-rings.rules`. |
 | `.github/workflows/build.yml` | Builds all three images, and runs the handheld checks on **all three** — half of what they prove is that the other two are untouched. |
 | `.github/workflows/build-iso.yml` | Has **handheld** as a choice. That ISO is the only way onto the Ally. |
 
