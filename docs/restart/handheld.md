@@ -212,10 +212,21 @@ own. To take the handheld's:
 GNOME runs this screen at 200 %, which makes the desktop 960×540 in GNOME's
 units, and in a wide, short space its app grid always chooses 3 rows of 8 and
 shrinks the icons to fit — too small to read or to aim at. A small extension
-of ours, `aquarius-handheld@stoneharborent.github.io`, tells the grid to use
-**2 rows of 5** instead, which roughly doubles every icon. More pages; the
-D-pad moves between apps and **Y** opens one. It is switched on once per
+of ours, `aquarius-handheld@stoneharborent.github.io`, makes it **one row of
+five icons at 128 points** — four times GNOME's size here. (2 rows of 5 at 64
+points, the first try, was still too small on the bench.) It is a strip you
+page through: the D-pad moves between apps and **Y** opens one. It is switched on once per
 account, so turning it off in the Extensions app sticks.
+
+### Back to Game Mode
+
+The switch from the desktop to Game Mode used to stop on a black screen until a
+restart (bench, 2026-10-04). GNOME's logout shuts down the account's message
+bus; Steam's helper (`steamos-manager`), which runs in the desktop session on
+the handheld, was left talking to that dead bus, and Game Mode's start-up
+clean-up waited on it for ever. Now that helper ends with the session, the
+clean-up gives up after 15 seconds, and every switch starts a fresh account
+manager the way a boot does (`UserStopDelaySec=0`).
 
 ### The controller is a mouse
 
@@ -250,7 +261,10 @@ which map is loaded.
 ### Typing
 
 GNOME's own **on-screen keyboard comes up in any text box**, including one
-chosen with the stick. With a real keyboard plugged in, switch it off in
+chosen with the stick. On the handheld its keys fill the **whole width** of the
+screen (GNOME left 200 empty points either side) and it is a little taller.
+**Swipe down across it to put it away**; a one-finger swipe up from the bottom
+edge brings it back. With a real keyboard plugged in, switch it off in
 Settings → Accessibility → Typing → Screen Keyboard.
 
 ### The stick rings' brightness
@@ -374,8 +388,11 @@ Royce, on the Ally. Work down it and put the answers in
 - [ ] Sleep and wake **on the desktop** → the stick still moves the pointer
 - [ ] **Game Mode** from the dock → Steam sees an ordinary controller (A
       selects, the stick does not move a pointer)
-- [ ] Show Apps → **two rows of five large icons**, readable from arm's
-      length; the D-pad moves between them and Y opens one 📸
+- [ ] Show Apps → **one row of five 128-point icons**, readable from arm's
+      length; the D-pad pages through them and Y opens one 📸
+- [ ] The on-screen keyboard **fills the screen's width**; a **swipe down**
+      across it closes it without typing anything
+- [ ] Desktop → **Game Mode** five times in a row, never a black screen
 - [ ] The **Keyboard** slider in quick settings: four positions give
       **off, dim, medium, bright** rings, not just off and on
 - [ ] After a restart the rings come back at the brightness you left them

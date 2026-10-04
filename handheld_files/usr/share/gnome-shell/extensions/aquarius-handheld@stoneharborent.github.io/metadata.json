@@ -1,10 +1,10 @@
 {
     "uuid": "aquarius-handheld@stoneharborent.github.io",
     "name": "AquariusOS Handheld",
-    "description": "Makes the app grid fit a 7-inch screen: two rows of five large icons per page instead of three rows of eight tiny ones, so every app can be read and picked with the controller. Part of AquariusOS, on the handheld image only.",
+    "description": "Sizes GNOME for a 7-inch screen: the app grid becomes one row of five large icons you page through with the D-pad, and the on-screen keyboard fills the full width and closes with a swipe down. Part of AquariusOS, on the handheld image only.",
     "shell-version": [
         "50"
     ],
     "url": "https://github.com/stoneharborent/aquarius-os",
-    "version-name": "1.0"
+    "version-name": "1.1"
 }
