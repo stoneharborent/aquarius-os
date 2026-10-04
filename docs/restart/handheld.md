@@ -207,6 +207,16 @@ own. To take the handheld's:
     gsettings reset org.gnome.shell favorite-apps
     gsettings reset-recursively org.gnome.shell.extensions.dash-to-dock
 
+### The app grid
+
+GNOME runs this screen at 200 %, which makes the desktop 960×540 in GNOME's
+units, and in a wide, short space its app grid always chooses 3 rows of 8 and
+shrinks the icons to fit — too small to read or to aim at. A small extension
+of ours, `aquarius-handheld@stoneharborent.github.io`, tells the grid to use
+**2 rows of 5** instead, which roughly doubles every icon. More pages; the
+D-pad moves between apps and **Y** opens one. It is switched on once per
+account, so turning it off in the Extensions app sticks.
+
 ### The controller is a mouse
 
 When a desktop starts, InputPlumber switches the built-in controller to
@@ -364,6 +374,8 @@ Royce, on the Ally. Work down it and put the answers in
 - [ ] Sleep and wake **on the desktop** → the stick still moves the pointer
 - [ ] **Game Mode** from the dock → Steam sees an ordinary controller (A
       selects, the stick does not move a pointer)
+- [ ] Show Apps → **two rows of five large icons**, readable from arm's
+      length; the D-pad moves between them and Y opens one 📸
 - [ ] The **Keyboard** slider in quick settings: four positions give
       **off, dim, medium, bright** rings, not just off and on
 - [ ] After a restart the rings come back at the brightness you left them
@@ -419,6 +431,7 @@ To see the controller set itself up: `journalctl -b -u aquarius-ally-controller`
 | `handheld_files/usr/share/glib-2.0/schemas/zz1-aquarius-90-handheld.gschema.override` | The handheld's dock and the on-screen keyboard default. |
 | `handheld_files/usr/share/aquarius/inputplumber/desktop.yaml` | The controller as a mouse on the desktop. |
 | `handheld_files/usr/libexec/aquarius-handheld-input` | Loads that map when a desktop starts (`etc/xdg/autostart/aquarius-handheld-input.desktop`) and puts the ordinary one back before Game Mode's Steam (`usr/lib/systemd/user/gamescope-session-plus@.service.d/60-aquarius-handheld-input.conf`). |
+| `handheld_files/usr/share/gnome-shell/extensions/aquarius-handheld@stoneharborent.github.io/` | The large app grid. |
 | `handheld_files/usr/libexec/aquarius-ally-rings` | Makes the Keyboard slider dim the stick rings. Run by `aquarius-ally-rings.service`, started by `72-aquarius-ally-rings.rules`. |
 | `.github/workflows/build.yml` | Builds all three images, and runs the handheld checks on **all three** — half of what they prove is that the other two are untouched. |
 | `.github/workflows/build-iso.yml` | Has **handheld** as a choice. That ISO is the only way onto the Ally. |

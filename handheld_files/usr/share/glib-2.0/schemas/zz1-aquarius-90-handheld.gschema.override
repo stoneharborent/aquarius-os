@@ -35,6 +35,19 @@
 # and again by 78-handheld.sh, so a typo fails the build.
 favorite-apps=['org.gnome.Nautilus.desktop', 'steam.desktop', 'aquarius-game-mode.desktop', 'aquarius-editor.desktop', 'org.mozilla.firefox.desktop', 'org.gnome.Ptyxis.desktop', 'org.gnome.Software.desktop', 'org.gnome.Settings.desktop']
 
+# ------------------------------------------------------------------------------
+# One more extension: a readable app grid (Royce, 2026-10-04)
+# ------------------------------------------------------------------------------
+# aquarius-handheld@ makes the app grid two rows of five large icons instead of
+# three rows of eight tiny ones — its extension.js explains why. The rest of the
+# line is 20-shell's, unchanged: this setting is a whole list, never an
+# addition, so it has to be written out in full here.
+#
+# ⚠️ Like every default, this only reaches accounts that never wrote the list
+# themselves — and aquarius-keys-run writes it at the first login. So
+# /usr/libexec/aquarius-handheld-input also switches it on, once per account.
+enabled-extensions=['aquarius-keys@stoneharborent.github.io', 'dash-to-dock@micxgx.gmail.com', 'appindicatorsupport@rgcjonas.gmail.com', 'caffeine@patapon.info', 'gsconnect@andyholmes.github.io', 'aquarius-handheld@stoneharborent.github.io']
+
 [org.gnome.shell.extensions.dash-to-dock]
 
 # ------------------------------------------------------------------------------

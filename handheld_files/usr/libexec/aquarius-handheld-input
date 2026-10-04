@@ -95,7 +95,28 @@ aq_session_alive() {
     [ "$(loginctl show-session "${XDG_SESSION_ID}" -p State --value 2> /dev/null)" = "active" ]
 }
 
+# The readable app grid (aquarius-handheld@, GNOME only), switched on ONCE per
+# account. The image's default list covers brand-new accounts; an account that
+# already owns its list (every one that has logged in — aquarius-keys-run writes
+# it) needs this. Once, marked by a file, so turning it off in the Extensions
+# app sticks — the same arrangement aquarius-keys-run uses for its own switch.
+aq_enable_grid_once() {
+    local ext="aquarius-handheld@stoneharborent.github.io"
+    local marker="${XDG_STATE_HOME:-${HOME:-/tmp}/.local/state}/aquarius/handheld-grid-enabled"
+    case "${XDG_CURRENT_DESKTOP:-}" in *GNOME*) ;; *) return ;; esac
+    [ -e "${marker}" ] && return
+    [ -d "/usr/share/gnome-shell/extensions/${ext}" ] || return
+    command -v gnome-extensions > /dev/null 2>&1 || return
+    if gnome-extensions enable "${ext}" 2> /dev/null; then
+        mkdir -p "$(dirname "${marker}")" && : > "${marker}"
+        say "switched on the large app grid (once for this account)."
+    else
+        say "could not switch on ${ext}; try: gnome-extensions enable ${ext}"
+    fi
+}
+
 aq_desktop() {
+    aq_enable_grid_once
     aq_load "${AQ_DESKTOP_PROFILE}"
     command -v gdbus > /dev/null 2>&1 || return
     # logind says PrepareForSleep(false) as the machine wakes.

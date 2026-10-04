@@ -129,6 +129,8 @@ AQ_DESKTOP_FILES=(
     usr/lib/systemd/user/gamescope-session-plus@.service.d/60-aquarius-handheld-input.conf
     usr/libexec/aquarius-ally-rings
     usr/lib/systemd/system/aquarius-ally-rings.service
+    usr/share/gnome-shell/extensions/aquarius-handheld@stoneharborent.github.io/metadata.json
+    usr/share/gnome-shell/extensions/aquarius-handheld@stoneharborent.github.io/extension.js
 )
 
 # ==============================================================================
@@ -766,6 +768,21 @@ for aq_app in aquarius-davinci-resolve.desktop aquarius-writer.desktop org.gnome
 done
 
 aq_hh_want org.gnome.desktop.a11y.applications screen-keyboard-enabled "true"
+
+# The handheld's extension list is 20-shell's list plus ONE name. It has to be
+# written out whole (the setting is a list, not an addition), so if somebody
+# adds an extension to 20-shell and forgets this file, the handheld would
+# silently lose it. Read both back and compare.
+say "The handheld's extension list is the desktop's plus the large app grid"
+AQ_EXT_DESKTOP="$(sed -n "s/^enabled-extensions=//p" "${AQ_SCHEMA_DIR}/zz1-aquarius-20-shell.gschema.override")"
+AQ_EXT_HANDHELD="$(GSETTINGS_BACKEND=memory gsettings get org.gnome.shell enabled-extensions 2> /dev/null || true)"
+echo "  ${AQ_EXT_HANDHELD}"
+if [ "${AQ_EXT_HANDHELD}" = "${AQ_EXT_DESKTOP%]}, 'aquarius-handheld@stoneharborent.github.io']" ]; then
+    ok "every desktop extension is still on, and aquarius-handheld@ is added"
+else
+    echo "  the desktop's list: ${AQ_EXT_DESKTOP}"
+    bad "the handheld's enabled-extensions is not 20-shell's list plus aquarius-handheld@ — update zz1-aquarius-90-handheld to match 20-shell"
+fi
 
 # ==============================================================================
 # 4c. The controller on the desktop, and the stick rings' brightness (2026-10-04)
