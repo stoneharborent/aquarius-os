@@ -12,8 +12,8 @@
 # On the bench on 2026-10-04, the layout the chip booted with sent NOTHING at
 # all for the View button, and the same key (F15) for both back paddles.
 #
-# On Bazzite and CachyOS, the thing that writes a proper layout is a kernel
-# driver (`asus_rog_ally`, from the `hid-asus` patch series still being
+# On other gaming distributions, the thing that writes a proper layout is a
+# kernel driver (`asus_rog_ally`, from the `hid-asus` patch series still being
 # reviewed upstream). InputPlumber leaves the job to that driver and, on
 # Fedora's own kernel, logs "Device is not using the asus_rog_ally driver" and
 # skips it. Nobody writes the layout.
@@ -54,8 +54,8 @@
 #   paddles. Writing a known layout every time means InputPlumber's map
 #   (aquarius_ally_x_dinput.yaml) always has the same thing to translate.
 #   The layout lives in the chip, so it also applies under Windows if this
-#   machine ever boots it — the same is true of HHD, Bazzite and the kernel
-#   driver, all of which write it.
+#   machine ever boots it — the same is true of HHD, the other gaming
+#   distributions and the kernel driver, all of which write it.
 #
 # ------------------------------------------------------------------------------
 # WHEN IT RUNS
