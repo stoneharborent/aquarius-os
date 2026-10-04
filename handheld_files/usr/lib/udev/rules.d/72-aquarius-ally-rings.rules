@@ -1,0 +1,12 @@
+# =============================================================================
+# Start aquarius-ally-rings.service when the Ally's stick-ring light appears
+# =============================================================================
+# HANDHELD IMAGE ONLY. The same udev event that makes systemd restore the
+# light's saved level (99-systemd.rules, systemd-backlight@leds:...) starts our
+# service too, which is what makes its After= ordering real.
+#
+# ⚠️ += and never =, or systemd's own backlight restore is dropped.
+# The DMI match keeps it to the Xbox Ally X: other ASUS laptops have an
+# asus::kbd_backlight that is a real keyboard.
+# =============================================================================
+ACTION=="add", SUBSYSTEM=="leds", KERNEL=="asus::kbd_backlight", ATTR{[dmi/id]board_name}=="RC73XA", TAG+="systemd", ENV{SYSTEMD_WANTS}+="aquarius-ally-rings.service"

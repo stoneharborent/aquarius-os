@@ -1,0 +1,151 @@
+#!/usr/bin/bash
+# =============================================================================
+# aquarius-handheld-input — the Ally X's controller: mouse on the desktop,
+# controller in Game Mode
+# =============================================================================
+# HANDHELD IMAGE ONLY.
+#
+#   aquarius-handheld-input desktop   load /usr/share/aquarius/inputplumber/desktop.yaml
+#                                     (from /etc/xdg/autostart, when GNOME or
+#                                     Plasma starts), then stay and load it again
+#                                     after every sleep — InputPlumber rebuilds
+#                                     the controller on wake with its Default.
+#                                     Stops by itself when this desktop session
+#                                     is over, so it can never reach Game Mode.
+#   aquarius-handheld-input game      put InputPlumber's Default profile back
+#                                     (from the Game Mode session, before Steam)
+#   aquarius-handheld-input status    which profile is loaded now
+#
+# ⚠️ IT NEVER FAILS LOUDLY. Both callers are on the way into a session; a
+# controller that stays in the wrong mode is a nuisance, a session that does not
+# start is a brick. Every problem is written to the journal
+# (journalctl -t aquarius-handheld-input) and the script exits 0.
+#
+# ⚠️ WHO MAY DO THIS. InputPlumber asks polkit, and its own rule lets members of
+# `wheel` (an administrator) or `inputplumber` in without a password. Anybody
+# else would get a password box at every login, so for them this does nothing
+# and says why.
+#
+# The profile file must sit where the InputPlumber service (root) can read it,
+# which is why it is in /usr/share and not in anybody's home folder.
+#
+# Plain-language guide: docs/restart/handheld.md
+# =============================================================================
+
+set -uo pipefail
+
+AQ_DESKTOP_PROFILE="/usr/share/aquarius/inputplumber/desktop.yaml"
+AQ_GAME_PROFILE="/usr/share/inputplumber/profiles/default.yaml"
+
+say() {
+    echo "aquarius-handheld-input: $*"
+    logger -t aquarius-handheld-input -- "$*" 2> /dev/null || true
+}
+
+if ! command -v inputplumber > /dev/null 2>&1; then
+    say "InputPlumber is not installed here; nothing to do."
+    exit 0
+fi
+
+# The composite devices InputPlumber has made, by number. The Ally makes one;
+# looking rather than assuming 0 keeps this right if a USB pad is plugged in
+# first.
+aq_devices() {
+    busctl --system --list tree org.shadowblip.InputPlumber 2> /dev/null \
+        | sed -n 's|^/org/shadowblip/InputPlumber/CompositeDevice\([0-9][0-9]*\)$|\1|p'
+}
+
+aq_allowed() {
+    [ "$(id -u)" -eq 0 ] && return 0
+    id -nG | tr ' ' '\n' | grep -qxE 'wheel|inputplumber'
+}
+
+aq_load() { # aq_load <profile file>
+    local profile="$1" dev found=0
+    if [ ! -r "${profile}" ]; then
+        say "${profile} is missing; leaving the controller as it is."
+        return
+    fi
+    if ! aq_allowed; then
+        say "$(id -un) is not in 'wheel' or 'inputplumber', so InputPlumber would ask for a password. Leaving the controller as it is."
+        return
+    fi
+    # InputPlumber can take a moment longer than the desktop to be ready after
+    # a session switch.
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        [ -n "$(aq_devices)" ] && break
+        sleep 0.5
+    done
+    for dev in $(aq_devices); do
+        found=1
+        if inputplumber device "${dev}" profile load "${profile}" > /dev/null 2>&1; then
+            say "controller ${dev}: loaded $(inputplumber device "${dev}" profile name 2> /dev/null | sed -n "s/.*'\(.*\)'.*/\1/p")"
+        else
+            say "controller ${dev}: InputPlumber would not load ${profile}"
+        fi
+    done
+    [ "${found}" -eq 1 ] || say "InputPlumber has no controller yet; leaving it."
+}
+
+# Is the desktop session that started us still the one on screen? With
+# lingering on, a program can outlive its session; this one must not, or a
+# wake-up inside Game Mode would turn Steam's controller into a mouse.
+aq_session_alive() {
+    [ -n "${XDG_SESSION_ID:-}" ] || return 0
+    [ "$(loginctl show-session "${XDG_SESSION_ID}" -p State --value 2> /dev/null)" = "active" ]
+}
+
+# The readable app grid (aquarius-handheld@, GNOME only), switched on ONCE per
+# account. The image's default list covers brand-new accounts; an account that
+# already owns its list (every one that has logged in — aquarius-keys-run writes
+# it) needs this. Once, marked by a file, so turning it off in the Extensions
+# app sticks — the same arrangement aquarius-keys-run uses for its own switch.
+aq_enable_grid_once() {
+    local ext="aquarius-handheld@stoneharborent.github.io"
+    local marker="${XDG_STATE_HOME:-${HOME:-/tmp}/.local/state}/aquarius/handheld-grid-enabled"
+    case "${XDG_CURRENT_DESKTOP:-}" in *GNOME*) ;; *) return ;; esac
+    [ -e "${marker}" ] && return
+    [ -d "/usr/share/gnome-shell/extensions/${ext}" ] || return
+    command -v gnome-extensions > /dev/null 2>&1 || return
+    if gnome-extensions enable "${ext}" 2> /dev/null; then
+        mkdir -p "$(dirname "${marker}")" && : > "${marker}"
+        say "switched on the large app grid (once for this account)."
+    else
+        say "could not switch on ${ext}; try: gnome-extensions enable ${ext}"
+    fi
+}
+
+aq_desktop() {
+    aq_enable_grid_once
+    aq_load "${AQ_DESKTOP_PROFILE}"
+    command -v gdbus > /dev/null 2>&1 || return
+    # logind says PrepareForSleep(false) as the machine wakes.
+    gdbus monitor --system --dest org.freedesktop.login1 \
+        --object-path /org/freedesktop/login1 2> /dev/null \
+        | while read -r line; do
+            case "${line}" in
+                *PrepareForSleep*false*)
+                    aq_session_alive || exit 0
+                    sleep 2
+                    aq_session_alive || exit 0
+                    say "awake again; putting the desktop controller back."
+                    aq_load "${AQ_DESKTOP_PROFILE}"
+                    ;;
+            esac
+        done
+}
+
+case "${1:-}" in
+    desktop) aq_desktop ;;
+    game) aq_load "${AQ_GAME_PROFILE}" ;;
+    status)
+        for dev in $(aq_devices); do
+            echo "controller ${dev}: $(inputplumber device "${dev}" profile name 2> /dev/null)"
+        done
+        ;;
+    *)
+        echo "usage: aquarius-handheld-input desktop|game|status" >&2
+        exit 1
+        ;;
+esac
+exit 0

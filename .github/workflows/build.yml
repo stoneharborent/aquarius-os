@@ -420,6 +420,12 @@ on:
       # setting really boots into Game Mode. Builds and checks only; never
       # publishes.
       - fix/handheld-controller-gamemode
+      # Handheld desktop, 2026-10-04: its own dock (Steam and Game Mode in,
+      # Resolve, Writer and Text Editor out) that slides away under a window;
+      # the controller as a mouse on the desktop through an InputPlumber
+      # profile, with GNOME's on-screen keyboard; and the Keyboard slider really
+      # dimming the stick rings. Builds and checks only; never publishes.
+      - feat/handheld-desktop
       # The password boxes that asked for nothing. GNOME Software's rpm-ostree
       # plug-in — a weak dependency nobody chose — was asking polkit to upgrade
       # an operating system that does not update that way, about once an hour,
@@ -1871,8 +1877,16 @@ jobs:
           want org.gnome.desktop.sound event-sounds "true"
           want org.gnome.desktop.background picture-options "'zoom'"
           want org.gnome.shell.extensions.dash-to-dock dock-position "'BOTTOM'"
-          want org.gnome.shell.extensions.dash-to-dock dock-fixed "true"
-          want org.gnome.shell.extensions.dash-to-dock intellihide "false"
+          # The handheld's dock slides away when a window covers it (2026-10-04,
+          # handheld_files/usr/share/glib-2.0/schemas/zz1-aquarius-90-handheld).
+          if grep -q '^VARIANT="Handheld Edition"$' /etc/os-release; then
+            want org.gnome.shell.extensions.dash-to-dock dock-fixed "false"
+            want org.gnome.shell.extensions.dash-to-dock intellihide "true"
+            want org.gnome.shell.extensions.dash-to-dock intellihide-mode "'ALL_WINDOWS'"
+          else
+            want org.gnome.shell.extensions.dash-to-dock dock-fixed "true"
+            want org.gnome.shell.extensions.dash-to-dock intellihide "false"
+          fi
 
           echo "  ---- for the log ----"
           GSETTINGS_BACKEND=memory gsettings get org.gnome.desktop.background picture-uri || true
@@ -5032,9 +5046,25 @@ jobs:
           echo "== the dock and the app grid =="
           FAV="$(GSETTINGS_BACKEND=memory gsettings get org.gnome.shell favorite-apps)"
           echo "  GNOME dock: ${FAV}"
-          for want in aquarius-editor.desktop aquarius-writer.desktop; do
+          # ⚠️ THE HANDHELD HAS ITS OWN DOCK (2026-10-04, Royce). On a 7-inch
+          # screen Writer, Text Editor and Resolve gave their seats to Steam and
+          # Game Mode — see handheld_files/usr/share/glib-2.0/schemas/
+          # zz1-aquarius-90-handheld.gschema.override. So this is asked the
+          # other way round there.
+          if grep -q '^VARIANT="Handheld Edition"$' /etc/os-release; then
+            AQ_DOCK_YES="aquarius-editor.desktop steam.desktop aquarius-game-mode.desktop"
+            AQ_DOCK_NO="aquarius-writer.desktop aquarius-davinci-resolve.desktop org.gnome.TextEditor.desktop"
+          else
+            AQ_DOCK_YES="aquarius-editor.desktop aquarius-writer.desktop"
+            AQ_DOCK_NO=""
+          fi
+          for want in ${AQ_DOCK_YES}; do
             if printf '%s' "${FAV}" | grep -q "${want}"; then ok "GNOME dock pins ${want}"
             else bad "GNOME dock does not pin ${want}"; fi
+          done
+          for want in ${AQ_DOCK_NO}; do
+            if printf '%s' "${FAV}" | grep -q "${want}"; then bad "the handheld dock still pins ${want}"
+            else ok "the handheld dock leaves ${want} off, as intended"; fi
           done
           # Every name on that line has to be a real file, or the icon is
           # simply missing with no error anywhere.
@@ -6882,7 +6912,13 @@ jobs:
                      /usr/lib/udev/rules.d/70-aquarius-ally-mcu-powersave.rules \
                      /usr/lib/systemd/system/inputplumber.service.d/10-aquarius-before-login.conf \
                      /usr/libexec/aquarius-handheld-status \
-                     /usr/share/aquarius/gaming/handheld.txt; do
+                     /usr/share/aquarius/gaming/handheld.txt \
+                     /usr/share/glib-2.0/schemas/zz1-aquarius-90-handheld.gschema.override \
+                     /etc/xdg/autostart/aquarius-handheld-input.desktop \
+                     /usr/libexec/aquarius-handheld-input \
+                     /usr/libexec/aquarius-ally-rings \
+                     /usr/lib/udev/rules.d/72-aquarius-ally-rings.rules \
+                     /usr/share/gnome-shell/extensions/aquarius-handheld@stoneharborent.github.io; do
               [ -e "$f" ] && bad "$f is on a desktop image" || ok "$f is not on this image"
             done
             # `aq` is ONE program on all three images, so `aq handheld` exists

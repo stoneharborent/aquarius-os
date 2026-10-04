@@ -111,6 +111,7 @@ AQ_UDEV_RULES=(
     usr/lib/udev/rules.d/50-ally-x-controller.rules
     usr/lib/udev/rules.d/70-aquarius-ally-mcu-powersave.rules
     usr/lib/udev/rules.d/71-aquarius-ally-controller.rules
+    usr/lib/udev/rules.d/72-aquarius-ally-rings.rules
 )
 # The controller set-up (2026-10-04 bench): a program that writes a known button
 # layout to the controller chip, the service that runs it, and the InputPlumber
@@ -118,6 +119,19 @@ AQ_UDEV_RULES=(
 AQ_ALLY_HELPER="usr/libexec/aquarius-ally-controller"
 AQ_ALLY_UNIT="usr/lib/systemd/system/aquarius-ally-controller.service"
 AQ_ALLY_MAP="usr/share/inputplumber/capability_maps/aquarius_ally_x_dinput.yaml"
+# The desktop on the handheld (2026-10-04): the controller as a mouse while a
+# desktop is on screen, and the brightness slider dimming the stick rings. See
+# section 4c below.
+AQ_DESKTOP_FILES=(
+    usr/libexec/aquarius-handheld-input
+    usr/share/aquarius/inputplumber/desktop.yaml
+    etc/xdg/autostart/aquarius-handheld-input.desktop
+    usr/lib/systemd/user/gamescope-session-plus@.service.d/60-aquarius-handheld-input.conf
+    usr/libexec/aquarius-ally-rings
+    usr/lib/systemd/system/aquarius-ally-rings.service
+    usr/share/gnome-shell/extensions/aquarius-handheld@stoneharborent.github.io/metadata.json
+    usr/share/gnome-shell/extensions/aquarius-handheld@stoneharborent.github.io/extension.js
+)
 
 # ==============================================================================
 # 0. The two desktop images: install nothing, and prove nothing arrived
@@ -156,7 +170,9 @@ if [ "${HANDHELD}" != "1" ]; then
     done
 
     for aq_f in /usr/libexec/aquarius-handheld-status "${AQ_HANDHELD_NOTE}" \
-        "/${AQ_ALLY_HELPER}" "/${AQ_ALLY_UNIT}" "/${AQ_ALLY_MAP}"; do
+        "/${AQ_ALLY_HELPER}" "/${AQ_ALLY_UNIT}" "/${AQ_ALLY_MAP}" \
+        /usr/share/glib-2.0/schemas/zz1-aquarius-90-handheld.gschema.override \
+        "${AQ_DESKTOP_FILES[@]/#//}"; do
         if [ -e "${aq_f}" ]; then
             bad "${aq_f} is on a desktop image — it is part of the handheld layer"
         else
@@ -677,6 +693,187 @@ for aq_f in \
         bad "/${aq_f} is not the file this repository ships"
     fi
 done
+
+# ==============================================================================
+# 4b. The desktop on a 7-inch screen: the dock (Royce, 2026-10-04)
+# ==============================================================================
+# One more override file on top of the desktop's: Steam and Game Mode on the
+# dock in place of Resolve, Writer and Text Editor, and a dock that slides away
+# when a window covers it. The file itself explains every line.
+#
+# Step 50 already compiled the settings index, so it has to be compiled again
+# here or this file is ignored. And --strict is run on a copy first, exactly as
+# step 50 does, because a misspelt key is otherwise silent.
+say "The handheld's dock"
+AQ_HH_SCHEMA="usr/share/glib-2.0/schemas/zz1-aquarius-90-handheld.gschema.override"
+AQ_SCHEMA_DIR="/usr/share/glib-2.0/schemas"
+install -Dm644 "${AQ_SRC}/${AQ_HH_SCHEMA}" "/${AQ_HH_SCHEMA}"
+if cmp -s "${AQ_SRC}/${AQ_HH_SCHEMA}" "/${AQ_HH_SCHEMA}"; then
+    ok "/${AQ_HH_SCHEMA} is ours, byte for byte"
+else
+    bad "/${AQ_HH_SCHEMA} is not the file this repository ships"
+fi
+
+AQ_SCHEMA_TEST="$(mktemp -d)"
+cp "${AQ_SCHEMA_DIR}"/*.gschema.xml "${AQ_SCHEMA_TEST}/"
+cp "${AQ_SCHEMA_DIR}"/*.enums.xml "${AQ_SCHEMA_TEST}/" 2> /dev/null || true
+cp "${AQ_SCHEMA_DIR}"/zz1-aquarius-*.gschema.override "${AQ_SCHEMA_TEST}/"
+if glib-compile-schemas --strict "${AQ_SCHEMA_TEST}" 2> /tmp/aq-schema.txt; then
+    ok "the handheld's dock settings name real settings with valid values"
+else
+    sed 's/^/       /' /tmp/aq-schema.txt
+    bad "the handheld's dock override is wrong — read the message above"
+fi
+rm -rf "${AQ_SCHEMA_TEST}" /tmp/aq-schema.txt
+
+rm -f "${AQ_SCHEMA_DIR}/gschemas.compiled"
+glib-compile-schemas "${AQ_SCHEMA_DIR}"
+
+aq_hh_want() { # aq_hh_want <group> <setting> <expected>
+    local got
+    got="$(GSETTINGS_BACKEND=memory gsettings get "$1" "$2" 2> /dev/null || echo '<error>')"
+    if [ "${got}" = "$3" ]; then
+        ok "$1 $2 = ${got}"
+    else
+        bad "$1 $2 is ${got}, expected $3"
+    fi
+}
+AQ_D2D=org.gnome.shell.extensions.dash-to-dock
+aq_hh_want "${AQ_D2D}" dock-fixed "false"
+aq_hh_want "${AQ_D2D}" intellihide "true"
+aq_hh_want "${AQ_D2D}" intellihide-mode "'ALL_WINDOWS'"
+aq_hh_want "${AQ_D2D}" autohide "true"
+aq_hh_want "${AQ_D2D}" require-pressure-to-show "false"
+aq_hh_want "${AQ_D2D}" dock-position "'BOTTOM'"
+
+AQ_FAV="$(GSETTINGS_BACKEND=memory gsettings get org.gnome.shell favorite-apps 2> /dev/null || true)"
+echo "  dock: ${AQ_FAV}"
+for aq_app in steam.desktop aquarius-game-mode.desktop; do
+    if printf '%s' "${AQ_FAV}" | grep -q "'${aq_app}'"; then
+        if [ -r "/usr/share/applications/${aq_app}" ]; then
+            ok "the dock pins ${aq_app}, and it is installed"
+        else
+            bad "the dock pins ${aq_app} but /usr/share/applications/${aq_app} does not exist — the icon would just be missing"
+        fi
+    else
+        bad "the dock does not pin ${aq_app}"
+    fi
+done
+for aq_app in aquarius-davinci-resolve.desktop aquarius-writer.desktop org.gnome.TextEditor.desktop; do
+    if printf '%s' "${AQ_FAV}" | grep -q "'${aq_app}'"; then
+        bad "the handheld dock still pins ${aq_app}"
+    else
+        ok "the handheld dock leaves ${aq_app} off (still in the app grid)"
+    fi
+done
+
+aq_hh_want org.gnome.desktop.a11y.applications screen-keyboard-enabled "true"
+
+# The handheld's extension list is 20-shell's list plus ONE name. It has to be
+# written out whole (the setting is a list, not an addition), so if somebody
+# adds an extension to 20-shell and forgets this file, the handheld would
+# silently lose it. Read both back and compare.
+say "The handheld's extension list is the desktop's plus the large app grid"
+AQ_EXT_DESKTOP="$(sed -n "s/^enabled-extensions=//p" "${AQ_SCHEMA_DIR}/zz1-aquarius-20-shell.gschema.override")"
+AQ_EXT_HANDHELD="$(GSETTINGS_BACKEND=memory gsettings get org.gnome.shell enabled-extensions 2> /dev/null || true)"
+echo "  ${AQ_EXT_HANDHELD}"
+if [ "${AQ_EXT_HANDHELD}" = "${AQ_EXT_DESKTOP%]}, 'aquarius-handheld@stoneharborent.github.io']" ]; then
+    ok "every desktop extension is still on, and aquarius-handheld@ is added"
+else
+    echo "  the desktop's list: ${AQ_EXT_DESKTOP}"
+    bad "the handheld's enabled-extensions is not 20-shell's list plus aquarius-handheld@ — update zz1-aquarius-90-handheld to match 20-shell"
+fi
+
+# ==============================================================================
+# 4c. The controller on the desktop, and the stick rings' brightness (2026-10-04)
+# ==============================================================================
+# Royce's call, after the research: InputPlumber's own mouse-and-keys profile on
+# the desktop, not Steam left running in the background (the reasons are at the
+# top of desktop.yaml). And GNOME's "Keyboard" slider made to really dim the
+# stick rings, which on its own only turned them off and on
+# (aquarius-ally-rings explains why).
+say "The controller as a mouse on the desktop, and the stick rings' brightness"
+for aq_f in "${AQ_DESKTOP_FILES[@]}"; do
+    case "${aq_f}" in
+        usr/libexec/*) install -Dm755 "${AQ_SRC}/${aq_f}" "/${aq_f}" ;;
+        *) install -Dm644 "${AQ_SRC}/${aq_f}" "/${aq_f}" ;;
+    esac
+    if cmp -s "${AQ_SRC}/${aq_f}" "/${aq_f}"; then
+        ok "/${aq_f} is ours, byte for byte"
+    else
+        bad "/${aq_f} is not the file this repository ships"
+    fi
+done
+
+if bash -n /usr/libexec/aquarius-handheld-input 2> /tmp/aq-sh.txt; then
+    ok "aquarius-handheld-input is valid bash"
+else
+    sed 's/^/       /' /tmp/aq-sh.txt
+    bad "aquarius-handheld-input has a syntax error — the controller would never become a mouse"
+fi
+rm -f /tmp/aq-sh.txt
+
+if python3 -c "import sys; compile(open(sys.argv[1]).read(), sys.argv[1], 'exec')" \
+    /usr/libexec/aquarius-ally-rings 2> /tmp/aq-py.txt; then
+    ok "aquarius-ally-rings is valid Python"
+else
+    sed 's/^/       /' /tmp/aq-py.txt
+    bad "aquarius-ally-rings does not compile — the brightness slider would only turn the rings off and on"
+fi
+rm -f /tmp/aq-py.txt
+
+# The profile must be one this InputPlumber accepts. It cannot be loaded here
+# (no daemon, no controller), so the next best thing: every name in it is one
+# InputPlumber's own schema lists.
+AQ_IP_SCHEMA=/usr/share/inputplumber/schema/device_profile_v1.json
+if [ -r "${AQ_IP_SCHEMA}" ]; then
+    if python3 - "${AQ_IP_SCHEMA}" /usr/share/aquarius/inputplumber/desktop.yaml > /tmp/aq-ip.txt 2>&1 <<'PY'
+import json, re, sys
+d = json.load(open(sys.argv[1]))["definitions"]
+keys = set(d["Event"]["properties"]["keyboard"]["enum"])
+buttons = set(d["GamepadEvent"]["properties"]["button"]["enum"])
+mouse = set(d["MouseEvent"]["properties"]["button"]["enum"])
+bad = 0
+for n, line in enumerate(open(sys.argv[2]), 1):
+    line = line.split("#", 1)[0]
+    for kind, names in (("keyboard", keys), ("button", buttons | mouse)):
+        m = re.search(rf"\b{kind}:\s*(\w+)", line)
+        if m and m.group(1) not in names:
+            print(f"line {n}: '{m.group(1)}' is not a {kind} InputPlumber knows")
+            bad = 1
+sys.exit(bad)
+PY
+    then
+        ok "desktop.yaml only names keys and buttons this InputPlumber knows"
+    else
+        sed 's/^/       /' /tmp/aq-ip.txt
+        bad "desktop.yaml names something InputPlumber does not know — loading it would fail"
+    fi
+    rm -f /tmp/aq-ip.txt
+else
+    bad "${AQ_IP_SCHEMA} is missing — cannot check desktop.yaml against InputPlumber"
+fi
+
+aq_file_has /etc/xdg/autostart/aquarius-handheld-input.desktop '^OnlyShowIn=GNOME;KDE;$' \
+    "the mouse profile is loaded on the desktops only, never inside Game Mode"
+aq_file_has "/usr/lib/systemd/user/gamescope-session-plus@.service.d/60-aquarius-handheld-input.conf" \
+    '^ExecStartPre=-/usr/libexec/aquarius-handheld-input game$' \
+    "and Game Mode puts the ordinary controller back before Steam starts"
+aq_file_has /usr/lib/udev/rules.d/72-aquarius-ally-rings.rules \
+    'SYSTEMD_WANTS\}\+="aquarius-ally-rings\.service"' \
+    "the stick-ring light starts aquarius-ally-rings.service when it appears"
+aq_file_has /usr/lib/udev/rules.d/72-aquarius-ally-rings.rules \
+    'board_name\}=="RC73XA"' \
+    "and only on the Xbox Ally X, never on an ASUS laptop's real keyboard light"
+if aq_have systemd-analyze; then
+    if systemd-analyze verify /usr/lib/systemd/system/aquarius-ally-rings.service > /tmp/aq-sd.txt 2>&1; then
+        ok "systemd is happy with aquarius-ally-rings.service"
+    else
+        sed 's/^/       /' /tmp/aq-sd.txt
+        bad "systemd does not accept aquarius-ally-rings.service"
+    fi
+    rm -f /tmp/aq-sd.txt
+fi
 
 # ------------------------------------------------------------------------------
 # The wake-source rule is Bazzite's, unchanged, on purpose

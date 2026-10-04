@@ -111,6 +111,36 @@ aq_logout() {
     exit 1
 }
 
+# -----------------------------------------------------------------------------
+# Close the desktop's own Steam first, and wait for it to be gone
+# -----------------------------------------------------------------------------
+# ⚠️ ADDED 2026-10-04 — A LATENT BUG ON EVERY IMAGE. Steam allows ONE copy of
+# itself per account. If a Steam somebody opened on the desktop is still alive
+# when Game Mode starts its own, Game Mode's Steam finds it, hands over, and
+# exits — and the session that was built around it ends with it, leaving a
+# black screen. Logging out does not reliably kill it either: with lingering on,
+# a program started in the session can outlive the session that started it.
+#
+# So Steam is asked to close the polite way, `steam -shutdown`, which is the
+# same line os-session-select uses on its way OUT of Game Mode, and given up to
+# ten seconds to save what it was writing.
+aq_close_steam() {
+    local aq_waited=0
+    command -v steam > /dev/null 2>&1 || return 0
+    pgrep -x steam > /dev/null 2>&1 || return 0
+    say "asking the desktop's Steam to close first, so Game Mode's Steam can start."
+    steam -shutdown > /dev/null 2>&1 || true
+    while [ "${aq_waited}" -lt 20 ] && pgrep -x steam > /dev/null 2>&1; do
+        sleep 0.5
+        aq_waited=$((aq_waited + 1))
+    done
+    if pgrep -x steam > /dev/null 2>&1; then
+        say "Steam is still running after ten seconds; logging out anyway."
+    else
+        say "Steam has closed."
+    fi
+}
+
 # =============================================================================
 AQ_ASKED=0
 case "${1:-}" in
@@ -174,4 +204,5 @@ Nothing was closed. The reason is in the journal:
     exit 1
 fi
 
+aq_close_steam
 aq_logout
