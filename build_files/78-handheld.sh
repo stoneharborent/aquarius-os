@@ -828,7 +828,11 @@ aq_file_has /usr/lib/udev/rules.d/71-aquarius-ally-controller.rules \
 aq_file_has /usr/lib/udev/rules.d/71-aquarius-ally-controller.rules \
     'SYSTEMD_WANTS\}\+="aquarius-ally-controller\.service"' \
     "and it starts aquarius-ally-controller.service"
-if python3 -m py_compile "/${AQ_ALLY_HELPER}" 2> /tmp/aq-py.txt; then
+# compile() in memory, never `python3 -m py_compile`: that writes a
+# __pycache__ next to the file, into /usr/libexec, and the login-screen checks
+# rightly fail any image that has one (CI on this branch, 2026-10-04).
+if python3 -c "import sys; compile(open(sys.argv[1]).read(), sys.argv[1], 'exec')" \
+    "/${AQ_ALLY_HELPER}" 2> /tmp/aq-py.txt; then
     ok "/${AQ_ALLY_HELPER} is valid Python"
 else
     sed 's/^/       /' /tmp/aq-py.txt
