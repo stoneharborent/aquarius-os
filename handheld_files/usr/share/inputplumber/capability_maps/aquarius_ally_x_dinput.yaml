@@ -1,0 +1,205 @@
+# =============================================================================
+# aquarius_ally_x_dinput.yaml — the ROG Xbox Ally X's buttons, without the
+# ASUS kernel driver
+# =============================================================================
+# WHAT THIS IS FOR
+#
+# InputPlumber's own map for this machine (ally_type2.yaml, id `aly2`) assumes
+# the `asus_rog_ally` kernel driver is loaded. That driver presents the
+# controller in Xbox button order. Fedora's kernel does not have it yet, so the
+# controller arrives as a plain "DInput" pad instead, and its buttons are in a
+# different order. Left alone, InputPlumber reads LB as X, View as LB, Menu as
+# RB and the Xbox button as View, and drops X and RB entirely.
+#
+# This map says what each kernel code really is. It was MEASURED on the bench
+# on 2026-10-04 (a press-each-button test), after aquarius-ally-controller had
+# written its button layout to the controller chip. It is not copied from
+# HHD, whose map has LT and RT the other way round.
+#
+#   button    kernel code    becomes
+#   A B X Y   SOUTH EAST C NORTH   South East North West (see below)
+#   LB RB     WEST Z
+#   LT RT     ABS_Z ABS_RZ   (triggers, not buttons)
+#   L3 R3     TL2 TR2
+#   View      TL
+#   Menu      TR
+#   Xbox      SELECT         Guide (opens the Steam menu)
+#   paddles   KEY_F15        both of them: the chip sends the same code for
+#                            left and right, so they are one button for now
+#
+# ⚠️ X IS `North` AND Y IS `West`. That looks backwards and is not.
+#   InputPlumber names buttons after the Linux codes, and its virtual Xbox pad
+#   sends `North` as BTN_NORTH (0x133) and `West` as BTN_WEST (0x134). The
+#   Linux Xbox driver has always put the Xbox X button on 0x133 and Y on
+#   0x134, and Steam reads the virtual Elite pad the same way. The bench proved
+#   it: with the first version of this map, physical Y (sent to `North`) came
+#   out of the virtual pad as 0x133, which Steam reads as X.
+#
+# The sticks and the d-pad are already standard (ABS_X/Y, ABS_RX/RY, HAT0) and
+# are not listed: InputPlumber's default handling covers anything not here.
+#
+# The `...` button is not here either. After the layout is written it sends
+# only an ASUS vendor report (5a 93) that the kernel does not turn into a key,
+# and InputPlumber will not read the vendor channel without the driver. Until
+# that changes, Steam's Xbox + A shortcut opens the Quick Access menu.
+#
+# The handheld build (78-handheld.sh) points InputPlumber's Xbox Ally device
+# config at this map instead of `aly2`.
+# =============================================================================
+version: 2
+kind: CapabilityMap
+name: AquariusOS ROG Xbox Ally X (DInput, no ASUS driver)
+id: aqx1
+
+mapping:
+  - name: A
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_SOUTH
+          value_type: button
+    target_event:
+      gamepad:
+        button: South
+
+  - name: B
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_EAST
+          value_type: button
+    target_event:
+      gamepad:
+        button: East
+
+  - name: X
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_C
+          value_type: button
+    target_event:
+      gamepad:
+        button: North
+
+  - name: Y
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_NORTH
+          value_type: button
+    target_event:
+      gamepad:
+        button: West
+
+  - name: LB
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_WEST
+          value_type: button
+    target_event:
+      gamepad:
+        button: LeftBumper
+
+  - name: RB
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_Z
+          value_type: button
+    target_event:
+      gamepad:
+        button: RightBumper
+
+  - name: L3 (left stick click)
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_TL2
+          value_type: button
+    target_event:
+      gamepad:
+        button: LeftStick
+
+  - name: R3 (right stick click)
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_TR2
+          value_type: button
+    target_event:
+      gamepad:
+        button: RightStick
+
+  - name: View
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_TL
+          value_type: button
+    target_event:
+      gamepad:
+        button: Select
+
+  - name: Menu
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_TR
+          value_type: button
+    target_event:
+      gamepad:
+        button: Start
+
+  - name: Xbox button
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_SELECT
+          value_type: button
+    target_event:
+      gamepad:
+        button: Guide
+
+  - name: Back paddles (both send F15)
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: KEY_F15
+          value_type: button
+    target_event:
+      gamepad:
+        button: LeftPaddle1
+
+  - name: ... button, when the chip sends it as F16
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: KEY_F16
+          value_type: button
+    target_event:
+      gamepad:
+        button: QuickAccess
+
+  - name: LT
+    source_events:
+      - evdev:
+          event_type: ABS
+          event_code: ABS_Z
+          value_type: trigger
+    target_event:
+      gamepad:
+        trigger:
+          name: LeftTrigger
+
+  - name: RT
+    source_events:
+      - evdev:
+          event_type: ABS
+          event_code: ABS_RZ
+          value_type: trigger
+    target_event:
+      gamepad:
+        trigger:
+          name: RightTrigger

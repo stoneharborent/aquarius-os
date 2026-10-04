@@ -1,0 +1,243 @@
+#!/usr/bin/python3
+# =============================================================================
+# aquarius-ally-controller — give the Ally X's controller a known button layout
+# =============================================================================
+# WHAT PROBLEM THIS SOLVES, IN PLAIN ENGLISH
+#
+# The ROG Xbox Ally X's controller is run by its own little chip (the "MCU").
+# The chip decides which signal each physical button sends, from a layout it
+# stores itself. Whoever wrote that layout last (Windows, Armoury Crate, or
+# nobody) decides what Linux sees.
+#
+# On the bench on 2026-10-04, the layout the chip booted with sent NOTHING at
+# all for the View button, and the same key (F15) for both back paddles.
+#
+# On Bazzite and CachyOS, the thing that writes a proper layout is a kernel
+# driver (`asus_rog_ally`, from the `hid-asus` patch series still being
+# reviewed upstream). InputPlumber leaves the job to that driver and, on
+# Fedora's own kernel, logs "Device is not using the asus_rog_ally driver" and
+# skips it. Nobody writes the layout.
+#
+# This program writes it: the same messages HHD (hhd-dev/hhd) has been sending
+# from userspace for years, so the bytes are not new, only who sends them.
+# After it runs, View works, and every button sends a fixed, known signal that
+# InputPlumber's map (aquarius_ally_x_dinput.yaml) translates into the right
+# Xbox button. When Fedora's kernel gains the driver, the driver will do this
+# itself and this program becomes harmless repetition.
+#
+# WHAT IT DOES NOT FIX (measured on the bench, 2026-10-04)
+#   * The two back paddles still send the same signal. The paddle part of the
+#     layout does not take on this model, so they work as one button.
+#   * The `...` button sends only an ASUS vendor report after this runs, which
+#     neither the kernel nor InputPlumber reads without the driver. Steam's
+#     Xbox + A shortcut opens the Quick Access menu instead.
+#   * The lights. Steam sets those itself once Game Mode starts.
+#
+# ------------------------------------------------------------------------------
+# WHAT IT SENDS — ONE DEVICE, FOURTEEN MESSAGES
+# ------------------------------------------------------------------------------
+# All of them go to the ASUS vendor device (HID usage page 0xFF31, report
+# 0x5A), 64 bytes each, padded with zeros, written as output reports. They are
+# HHD's COMMANDS_GAME, byte for byte:
+#
+#   5a d1 01 ...   controller mode = gamepad
+#   5a d1 02 ...   nine BUTTON LAYOUT messages: d-pad, sticks, bumpers, A/B,
+#                  X/Y, View/Menu, the two back paddles, triggers
+#   5a d1 0f/06/04/05 ...   turbo off, rumble 100%, stick and trigger dead
+#                  zones at their full range — the "commit" that makes the
+#                  chip apply the layout
+#
+# ⚠️ WHY THE BUTTON LAYOUT AND NOT JUST "BE A GAMEPAD"
+#   The chip keeps whatever layout it was last given — by Windows, by Armoury
+#   Crate, or by nobody. On the bench (2026-10-04) the layout it booted with
+#   sent NOTHING for the View button and the same key (F15) for BOTH back
+#   paddles. Writing a known layout every time means InputPlumber's map
+#   (aquarius_ally_x_dinput.yaml) always has the same thing to translate.
+#   The layout lives in the chip, so it also applies under Windows if this
+#   machine ever boots it — the same is true of HHD, Bazzite and the kernel
+#   driver, all of which write it.
+#
+# ------------------------------------------------------------------------------
+# WHEN IT RUNS
+# ------------------------------------------------------------------------------
+# aquarius-ally-controller.service starts it whenever the controller's USB
+# device appears (udev rule 71-aquarius-ally-controller.rules): at boot, and
+# again after sleep, because mcu_powersave switches the chip off during sleep
+# and the USB device comes back as a new device. It sends everything twice, two
+# seconds apart, because the chip can miss the first message while it is still
+# waking up (HHD re-sends after five seconds for the same reason).
+#
+# USAGE
+#   aquarius-ally-controller           find the devices and switch the pad on
+#   aquarius-ally-controller --dry-run say which devices it found, send nothing
+#
+# Plain-language guide: docs/restart/handheld.md
+# =============================================================================
+import glob
+import os
+import sys
+import time
+
+ASUS_VID = 0x0B05
+ALLY_X_PID = 0x1B4C
+
+PAGE_ASUS_VENDOR = 0xFF31
+REPORT_ASUS = 0x5A
+
+RETRY_DELAY_S = 2.0
+WAIT_FOR_DEVICES_S = 5.0
+
+
+def say(msg):
+    print(f"aquarius-ally-controller: {msg}", flush=True)
+
+
+def buf(data):
+    return bytes(data) + bytes(64 - len(data))
+
+
+# HHD's COMMANDS_GAME (src/hhd/device/rog_ally/const.py), unchanged.
+VENDOR_COMMANDS = [buf(bytes.fromhex(h)) for h in (
+    # controller mode = gamepad
+    "5a d1 01 01 01",
+    # button layout: d-pad left/right, d-pad up/down, sticks, bumpers
+    "5a d1 02 02 2c 01 0b 00 00 00 00 00 00 00 00 00 04 00 00 00 00 02 82 23 00 00 00 01 0c 00 00 00 00 00 00 00 00 00 04 00 00 00 00 02 82 0d",
+    "5a d1 02 01 2c 01 09 00 00 00 00 00 00 00 00 00 05 00 00 19 00 00 00 00 00 00 00 01 0a 00 00 00 00 00 00 00 00 00 04 00 00 00 00 03 8c 88 76",
+    "5a d1 02 03 2c 01 07 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 08",
+    "5a d1 02 04 2c 01 05 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 06",
+    # A/B, X/Y, View/Menu, back paddles (as F17/F18), triggers
+    "5a d1 02 05 2c 01 01 00 00 00 00 00 00 00 00 00 05 00 00 16 00 00 00 00 00 00 00 01 02 00 00 00 00 00 00 00 00 00 04 00 00 00 00 02 82 31",
+    "5a d1 02 06 2c 01 03 00 00 00 00 00 00 00 00 00 04 00 00 00 00 02 82 4d 00 00 00 01 04 00 00 00 00 00 00 00 00 00 05 00 00 1e",
+    "5a d1 02 07 2c 01 11 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 12",
+    "5a d1 02 08 2c 02 00 28 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 30",
+    "5a d1 02 09 2c 01 0d 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 0e",
+    # commit: turbo off, rumble 100%/100%, stick and trigger dead zones full range
+    "5a d1 0f 20",
+    "5a d1 06 02 64 64",
+    "5a d1 04 04 00 40 00 40",
+    "5a d1 05 04 00 40 00 40",
+)]
+
+
+def top_level_collections(desc):
+    """Read a HID report descriptor and return, for each top-level collection,
+    its (usage page, usage) and the report IDs used inside it.
+
+    Only the short items this needs are understood: Usage Page, Usage,
+    Report ID, Collection and End Collection. Everything else is skipped.
+    """
+    out = []
+    page = 0
+    usage = None
+    depth = 0
+    current = None
+    i = 0
+    while i < len(desc):
+        prefix = desc[i]
+        if prefix == 0xFE:  # a long item: skip it whole
+            size = desc[i + 1] if i + 1 < len(desc) else 0
+            i += 3 + size
+            continue
+        size = (0, 1, 2, 4)[prefix & 0x03]
+        value = int.from_bytes(desc[i + 1 : i + 1 + size], "little")
+        tag = prefix & 0xFC
+        i += 1 + size
+        if tag == 0x04:  # Usage Page (global)
+            page = value
+        elif tag == 0x08:  # Usage (local)
+            usage = value
+        elif tag == 0x84:  # Report ID (global)
+            if current is not None:
+                current["reports"].add(value)
+        elif tag == 0xA0:  # Collection
+            if depth == 0:
+                current = {"page": page, "usage": usage, "reports": set()}
+                out.append(current)
+            depth += 1
+            usage = None
+        elif tag == 0xC0:  # End Collection
+            depth = max(0, depth - 1)
+            if depth == 0:
+                current = None
+        elif tag & 0x0C == 0x00:  # any other Main item ends the local usage
+            usage = None
+    return out
+
+
+def is_ally_x(sysdir):
+    try:
+        with open(os.path.join(sysdir, "device", "uevent")) as f:
+            uevent = f.read()
+    except OSError:
+        return False
+    return f"HID_ID=0003:{ASUS_VID:08X}:{ALLY_X_PID:08X}" in uevent.upper()
+
+
+def find_vendor_device():
+    """The Ally X's ASUS vendor hidraw node (usage page 0xFF31 with report 0x5A)."""
+    for sysdir in sorted(glob.glob("/sys/class/hidraw/hidraw*")):
+        if not is_ally_x(sysdir):
+            continue
+        try:
+            with open(os.path.join(sysdir, "device", "report_descriptor"), "rb") as f:
+                desc = f.read()
+        except OSError:
+            continue
+        node = "/dev/" + os.path.basename(sysdir)
+        for c in top_level_collections(desc):
+            if c["page"] == PAGE_ASUS_VENDOR and REPORT_ASUS in c["reports"]:
+                return node
+    return None
+
+
+def write_all(node, messages):
+    try:
+        fd = os.open(node, os.O_WRONLY)
+    except OSError as e:
+        say(f"could not open {node}: {e.strerror}")
+        return False
+    ok = True
+    try:
+        for m in messages:
+            try:
+                os.write(fd, m)
+            except OSError as e:
+                say(f"{node} refused {m[:5].hex(' ')}: {e.strerror}")
+                ok = False
+    finally:
+        os.close(fd)
+    return ok
+
+
+def main():
+    dry_run = "--dry-run" in sys.argv[1:]
+
+    # The chip's USB interfaces do not all appear at the same instant.
+    deadline = time.monotonic() + WAIT_FOR_DEVICES_S
+    vendor = find_vendor_device()
+    while vendor is None and time.monotonic() < deadline:
+        time.sleep(0.25)
+        vendor = find_vendor_device()
+
+    say(f"vendor device: {vendor or 'NOT FOUND'}")
+    if vendor is None:
+        say("no ROG Xbox Ally X controller here — nothing to do.")
+        return 0
+    if dry_run:
+        say("--dry-run: sending nothing.")
+        return 0
+
+    ok = True
+    for attempt in (1, 2):
+        if attempt == 2:
+            time.sleep(RETRY_DELAY_S)
+        ok = write_all(vendor, VENDOR_COMMANDS) and ok
+
+    say("controller set to gamepad mode with the AquariusOS button layout." if ok
+        else "finished with errors (see above).")
+    # Never fail the unit: a controller that is not set up is no reason to hold anything up.
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

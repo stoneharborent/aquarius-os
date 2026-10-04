@@ -1,0 +1,29 @@
+# =============================================================================
+# 71-aquarius-ally-controller.rules — set the Ally X controller up when it appears
+# =============================================================================
+# The ROG Xbox Ally X's controller chip has to be told "be a gamepad, with this
+# button layout" (see /usr/libexec/aquarius-ally-controller for why, and what
+# is sent). This rule starts the one-shot service that tells it, whenever the
+# chip's ASUS vendor channel appears:
+#
+#   * at boot, and
+#   * after sleep: with mcu_powersave on (70-aquarius-ally-mcu-powersave.rules)
+#     the chip is switched off while the machine sleeps and comes back as a NEW
+#     USB device, which forgets its layout. That re-appearance runs this rule
+#     again, which is exactly what is wanted.
+#
+# WHICH DEVICE
+#   The controller is one USB device (0b05:1b4c) with six HID interfaces. Only
+#   interface 02 is the vendor channel the messages go to, so the rule fires
+#   once per appearance rather than six times.
+#
+#   The match uses ENV{} properties, not ATTRS{}: the vendor id and the
+#   interface number live on DIFFERENT parent devices in sysfs, and udev
+#   requires every ATTRS{} in one rule to match the SAME parent, so an ATTRS{}
+#   version of this rule would never fire. udev's own earlier rules (60-*) copy
+#   all three onto the hidraw device as properties, which is why this file is
+#   numbered after them.
+#
+# Plain-language guide: docs/restart/handheld.md
+# =============================================================================
+ACTION=="add", SUBSYSTEM=="hidraw", ENV{ID_VENDOR_ID}=="0b05", ENV{ID_MODEL_ID}=="1b4c", ENV{ID_USB_INTERFACE_NUM}=="02", TAG+="systemd", ENV{SYSTEMD_WANTS}+="aquarius-ally-controller.service"
