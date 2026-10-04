@@ -146,8 +146,9 @@ is the whole reason this phase is small.
 | Thing | Expect |
 | --- | --- |
 | Boot, screen, touch, battery, storage | works |
-| Sticks, face buttons, triggers | works |
-| Back paddles, Armoury button, Library button | works — *if* InputPlumber is 0.79.0 or newer (see below) |
+| Sticks, face buttons, triggers, bumpers, stick clicks, View, Menu, Xbox button | works — through our button map (see "The button map" below) |
+| Back paddles | work, **as one button**: the chip sends the same signal for left and right without the ASUS driver |
+| The `...` button | **not yet.** Without the ASUS driver nothing reads it. Steam's **Xbox + A** opens the Quick Access menu instead |
 | Gyro in Steam | works |
 | Speakers, at full volume | works |
 | Wi-Fi and Bluetooth | works |
@@ -155,7 +156,7 @@ is the whole reason this phase is small.
 | Brightness slider | works |
 | Sleep and wake, with the controller alive afterwards | works **if the MCU firmware is 313 or newer** |
 | Switch to Desktop → GNOME, and back | works (phase G1) |
-| RGB on the stick rings | should work, through InputPlumber — unverified |
+| RGB on the stick rings | works once Game Mode starts — Steam lights them. Dark on the desktop until then |
 | Variable refresh rate (VRR) | **unverified.** One report on another distribution says it misbehaves. |
 | **Rumble strength, stick dead zones, response curves, button remapping** | **not yet.** These need a kernel patch series that is still being reviewed upstream (`hid-asus` v6). It is a separate decision whether to go and get it. |
 | Custom fan curves | not yet, same reason |
@@ -286,6 +287,31 @@ Royce, on the Ally. Work down it and put the answers in
 - [ ] Note whether **VRR** behaves (this is the genuinely unknown one)
 - [ ] Paste the whole of `aq handheld status` into the bench log
 
+### The button map (bench, 2026-10-04)
+
+The first boot on the Ally found the controller *detected* but wrong: Steam saw
+an Xbox Elite pad on which X and RB did nothing, LB pressed X, View pressed LB,
+Menu pressed RB and the Xbox button pressed View. The chip and the kernel were
+fine. What was wrong was the **button order**.
+
+InputPlumber's own config for this machine assumes an ASUS kernel driver
+(`asus_rog_ally`) that puts the controller in Xbox order. Fedora's kernel does
+not have that driver yet, so the controller arrives as a plain "DInput" pad, in
+a different order, and InputPlumber read it as if it were in Xbox order.
+
+Two pieces fix it. Both were measured and proven on the Ally before they went
+into the image:
+
+1. **`aquarius-ally-controller`** writes a known button layout to the
+   controller chip, at boot and after every sleep. Without it, View sends
+   nothing at all. The bytes are HHD's, unchanged.
+2. **`aquarius_ally_x_dinput.yaml`** (map id `aqx1`) tells InputPlumber what
+   each signal in that layout really is. It was written from a
+   press-every-button test, not copied: HHD's map has the triggers the other
+   way round.
+
+To see the controller set itself up: `journalctl -b -u aquarius-ally-controller`.
+
 ---
 
 ## Where the pieces are, for the record
@@ -298,6 +324,10 @@ Royce, on the Ally. Work down it and put the answers in
 | `handheld_files/usr/lib/udev/rules.d/50-ally-x-controller.rules` | The wake-source rule. **Copied byte-identically from ublue-os/bazzite PR #5735** — do not tidy it, so a future upstream change is one `diff`. |
 | `handheld_files/usr/lib/udev/rules.d/70-aquarius-ally-mcu-powersave.rules` | Ours: switches the controller chip's power saving on where the kernel has not. |
 | `handheld_files/usr/libexec/aquarius-handheld-status` | The report `aq handheld status` runs. |
+| `handheld_files/usr/libexec/aquarius-ally-controller` | Writes the known button layout to the controller chip. |
+| `handheld_files/usr/lib/systemd/system/aquarius-ally-controller.service` | Runs it: started by the udev rule below, and at the end of every sleep. |
+| `handheld_files/usr/lib/udev/rules.d/71-aquarius-ally-controller.rules` | Starts that service whenever the controller chip appears (boot, and after sleep). |
+| `handheld_files/usr/share/inputplumber/capability_maps/aquarius_ally_x_dinput.yaml` | The measured button map. The build attaches it to InputPlumber's Xbox Ally config (`78-handheld.sh`, section 2b). |
 | `.github/workflows/build.yml` | Builds all three images, and runs the handheld checks on **all three** — half of what they prove is that the other two are untouched. |
 | `.github/workflows/build-iso.yml` | Has **handheld** as a choice. That ISO is the only way onto the Ally. |
 

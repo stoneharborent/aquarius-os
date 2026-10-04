@@ -28,6 +28,19 @@
 #   nothing about whether it should start. The same choice, for the same reason,
 #   as aquarius-gdm-display.service.
 #
+# ⚠️ WHY IT ALSO RUNS BEFORE accounts-daemon, AND NEVER AFTER IT
+#   The program writes the `Session=` line in
+#   /var/lib/AccountsService/users/<you>, the file that says which session the
+#   login screen starts. But GDM does not read that file: it asks the accounts
+#   service, which reads the file ONCE when it starts and remembers it. If the
+#   accounts service is already running when the file changes, it keeps the old
+#   answer, and GDM logs you into GNOME instead of Game Mode.
+#   That is exactly what the first handheld boot did on 2026-10-03: the
+#   accounts service started at .347, this program wrote
+#   `Session=gamescope-session-steam` at .391, and the machine woke up in
+#   GNOME. Running first means the accounts service reads the file only after
+#   it says the right thing.
+#
 # It is deliberately harmless: every failure inside is a line in the journal and
 # a successful exit. A login screen must never fail to appear because a
 # convenience did not work.
@@ -37,8 +50,8 @@
 [Unit]
 Description=Set the login screen to match this computer's boot setting (desktop or Game Mode)
 Documentation=https://github.com/stoneharborent/aquarius-os/blob/main/docs/restart/game-mode.md
-Before=display-manager.service
-After=local-fs.target accounts-daemon.service
+Before=display-manager.service accounts-daemon.service
+After=local-fs.target
 ConditionPathExists=/usr/libexec/aquarius-login-mode
 
 [Service]

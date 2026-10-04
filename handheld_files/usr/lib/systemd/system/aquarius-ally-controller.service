@@ -1,0 +1,33 @@
+# =============================================================================
+# aquarius-ally-controller.service — tell the Ally X's controller chip what to be
+# =============================================================================
+# Runs /usr/libexec/aquarius-ally-controller once, which writes "gamepad mode"
+# and the AquariusOS button layout to the controller chip. That program's
+# header explains why it exists at all (Fedora's kernel does not have the ASUS
+# driver that would otherwise do this).
+#
+# WHAT STARTS IT
+#   * 71-aquarius-ally-controller.rules, whenever the chip's vendor channel
+#     appears: at boot, and when the chip comes back after sleep.
+#   * The end of a sleep, as a second voice (the links into suspend.target and
+#     friends are made in build_files/78-handheld.sh). If the chip ever stays
+#     on through sleep, it does not re-appear and the udev rule does not fire;
+#     this covers that case. Sending the layout twice is harmless.
+#
+# It is deliberately harmless: the program always exits 0, and it says what it
+# did in the journal. A controller that was not set up is no reason for
+# anything else to fail.
+#
+# Plain-language guide: docs/restart/handheld.md
+# =============================================================================
+[Unit]
+Description=Set the ROG Xbox Ally X controller to gamepad mode with the AquariusOS button layout
+Documentation=https://github.com/stoneharborent/aquarius-os/blob/main/docs/restart/handheld.md
+After=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+ConditionPathExists=/usr/libexec/aquarius-ally-controller
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/aquarius-ally-controller
+StandardOutput=journal
+StandardError=journal

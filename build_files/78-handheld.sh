@@ -110,7 +110,14 @@ AQ_SRC="/ctx/handheld_files"
 AQ_UDEV_RULES=(
     usr/lib/udev/rules.d/50-ally-x-controller.rules
     usr/lib/udev/rules.d/70-aquarius-ally-mcu-powersave.rules
+    usr/lib/udev/rules.d/71-aquarius-ally-controller.rules
 )
+# The controller set-up (2026-10-04 bench): a program that writes a known button
+# layout to the controller chip, the service that runs it, and the InputPlumber
+# map that translates that layout. See section 2b below.
+AQ_ALLY_HELPER="usr/libexec/aquarius-ally-controller"
+AQ_ALLY_UNIT="usr/lib/systemd/system/aquarius-ally-controller.service"
+AQ_ALLY_MAP="usr/share/inputplumber/capability_maps/aquarius_ally_x_dinput.yaml"
 
 # ==============================================================================
 # 0. The two desktop images: install nothing, and prove nothing arrived
@@ -148,7 +155,8 @@ if [ "${HANDHELD}" != "1" ]; then
         fi
     done
 
-    for aq_f in /usr/libexec/aquarius-handheld-status "${AQ_HANDHELD_NOTE}"; do
+    for aq_f in /usr/libexec/aquarius-handheld-status "${AQ_HANDHELD_NOTE}" \
+        "/${AQ_ALLY_HELPER}" "/${AQ_ALLY_UNIT}" "/${AQ_ALLY_MAP}"; do
         if [ -e "${aq_f}" ]; then
             bad "${aq_f} is on a desktop image — it is part of the handheld layer"
         else
@@ -367,6 +375,59 @@ if [ -r /usr/share/inputplumber/capability_maps/ally_type2.yaml ]; then
 else
     bad "/usr/share/inputplumber/capability_maps/ally_type2.yaml is missing — the paddles and the Armoury button would do nothing"
 fi
+
+# ------------------------------------------------------------------------------
+# 2b. The button map for Fedora's kernel (bench, 2026-10-04)
+# ------------------------------------------------------------------------------
+# InputPlumber's config above assumes the `asus_rog_ally` kernel driver, which
+# presents the controller in Xbox button order. Fedora's kernel does not have
+# that driver, so the controller arrives as a plain DInput pad, in a different
+# order: left alone, LB reads as X, View as LB, Menu as RB, the Xbox button as
+# View, and X and RB do nothing at all. Measured, not guessed.
+#
+# Two pieces fix it, and both were proven on the bench before they came here:
+#
+#   * aquarius-ally-controller writes a known button layout to the controller
+#     chip at boot and after sleep (otherwise View sends nothing), and
+#   * aquarius_ally_x_dinput.yaml (map id `aqx1`) tells InputPlumber what each
+#     of those signals really is.
+#
+# ⚠️ WHERE THE MAP IS ATTACHED MATTERS. A version-2 map like ours is read per
+# SOURCE device (`source_devices[].capability_map_id`), not from the
+# top-level `capability_map_id`. The bench proved it: set at the top level, the
+# map was silently ignored. So it goes on the evdev entry, and the top-level
+# `aly2` (a version-1 map, applied to the whole device) stays, for the extra
+# keys it already handles.
+#
+# The file is the package's own, edited in place, rather than a copy of ours
+# in /etc/inputplumber/devices.d: InputPlumber loads BOTH when two files share
+# a name, and two configs claiming the same controller is a race we do not need.
+say "Pointing InputPlumber's Xbox Ally config at the AquariusOS button map (aqx1)"
+python3 - "${AQ_IP_YAML}" << 'AQ_PY'
+import sys
+path = sys.argv[1]
+text = open(path).read()
+old = (
+    "  - group: gamepad\n"
+    "    unique: false\n"
+    "    evdev:\n"
+)
+new = (
+    "  - group: gamepad\n"
+    "    unique: false\n"
+    "    capability_map_id: aqx1\n"
+    "    evdev:\n"
+)
+if text.count(old) != 1:
+    sys.exit(f"the evdev source entry in {path} is not where it was on 2026-10-04 "
+             f"(found {text.count(old)} copies) — InputPlumber changed its config; "
+             "look at it before deciding where the map belongs now")
+open(path, "w").write(text.replace(old, new))
+AQ_PY
+aq_file_has "${AQ_IP_YAML}" '^    capability_map_id: aqx1$' \
+    "the controller's evdev source now uses the AquariusOS map"
+aq_file_has "${AQ_IP_YAML}" '^capability_map_id: aly2$' \
+    "and the whole device still uses the stock map for the extra keys"
 
 # ==============================================================================
 # 3. The sliders and the power button
@@ -601,11 +662,15 @@ install -Dm644 "${AQ_SRC}/usr/lib/systemd/system/inputplumber.service.d/10-aquar
 install -Dm755 "${AQ_SRC}/usr/libexec/aquarius-handheld-status" \
     /usr/libexec/aquarius-handheld-status
 install -Dm644 "${AQ_SRC}/etc/aquarius/login-mode" /etc/aquarius/login-mode
+install -Dm755 "${AQ_SRC}/${AQ_ALLY_HELPER}" "/${AQ_ALLY_HELPER}"
+install -Dm644 "${AQ_SRC}/${AQ_ALLY_UNIT}" "/${AQ_ALLY_UNIT}"
+install -Dm644 "${AQ_SRC}/${AQ_ALLY_MAP}" "/${AQ_ALLY_MAP}"
 
 for aq_f in \
     usr/lib/systemd/system/inputplumber.service.d/10-aquarius-before-login.conf \
     usr/libexec/aquarius-handheld-status \
-    etc/aquarius/login-mode; do
+    etc/aquarius/login-mode \
+    "${AQ_ALLY_HELPER}" "${AQ_ALLY_UNIT}" "${AQ_ALLY_MAP}"; do
     if cmp -s "${AQ_SRC}/${aq_f}" "/${aq_f}"; then
         ok "/${aq_f} is ours, byte for byte"
     else
@@ -724,6 +789,12 @@ aq_link_on "${AQ_SYS}/multi-user.target.wants" "${AQ_SYS}" steamos-manager.servi
 aq_link_on "${AQ_SYS}/multi-user.target.wants" "${AQ_SYS}" powerstation.service
 aq_link_on "${AQ_GAME_WANTS}" "${AQ_USR}" steamos-manager.service
 aq_link_on "${AQ_GAME_WANTS}" "${AQ_USR}" steamos-powerbuttond.service
+# The controller layout (section 2b). The udev rule starts it at boot and
+# whenever the chip comes back after sleep; these links are the second voice at
+# the end of a sleep, for the case where the chip stays on and udev stays quiet.
+for aq_sleep in suspend hibernate hybrid-sleep suspend-then-hibernate; do
+    aq_link_on "${AQ_SYS}/${aq_sleep}.target.wants" "${AQ_SYS}" aquarius-ally-controller.service
+done
 
 # And nothing of ours may be switched on through /etc.
 # The powerstation package switches itself on when it is installed (its
@@ -748,6 +819,34 @@ if [ -z "${AQ_ETC_ON}" ]; then
 else
     printf '%s\n' "${AQ_ETC_ON}" | sed 's/^/       /'
     bad "a handheld service is switched on through /etc — a build step ran 'systemctl enable'. See the note in aq-lib.sh."
+fi
+
+say "The controller layout runs at boot and after every sleep"
+aq_file_has /usr/lib/udev/rules.d/71-aquarius-ally-controller.rules \
+    'ENV\{ID_USB_INTERFACE_NUM\}=="02"' \
+    "the udev rule fires once, on the controller's vendor channel"
+aq_file_has /usr/lib/udev/rules.d/71-aquarius-ally-controller.rules \
+    'SYSTEMD_WANTS\}\+="aquarius-ally-controller\.service"' \
+    "and it starts aquarius-ally-controller.service"
+# compile() in memory, never `python3 -m py_compile`: that writes a
+# __pycache__ next to the file, into /usr/libexec, and the login-screen checks
+# rightly fail any image that has one (CI on this branch, 2026-10-04).
+if python3 -c "import sys; compile(open(sys.argv[1]).read(), sys.argv[1], 'exec')" \
+    "/${AQ_ALLY_HELPER}" 2> /tmp/aq-py.txt; then
+    ok "/${AQ_ALLY_HELPER} is valid Python"
+else
+    sed 's/^/       /' /tmp/aq-py.txt
+    bad "/${AQ_ALLY_HELPER} does not compile — the controller would keep whatever layout it booted with"
+fi
+rm -f /tmp/aq-py.txt
+if aq_have systemd-analyze; then
+    if systemd-analyze verify "/${AQ_ALLY_UNIT}" > /tmp/aq-sd.txt 2>&1; then
+        ok "systemd is happy with aquarius-ally-controller.service"
+    else
+        sed 's/^/       /' /tmp/aq-sd.txt
+        bad "systemd does not accept aquarius-ally-controller.service"
+    fi
+    rm -f /tmp/aq-sd.txt
 fi
 
 # The ordering drop-in, read back out of the finished image.

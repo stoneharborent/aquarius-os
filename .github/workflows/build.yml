@@ -413,6 +413,13 @@ on:
       # the login screen is held 6.8 s, so a slow-waking monitor sees it. Builds
       # and checks only; never publishes.
       - fix/boot-pour-delay
+      # Handheld bench, 2026-10-04: the Ally X controller's buttons arrived in
+      # DInput order (no ASUS kernel driver), so a measured InputPlumber map
+      # and a helper that writes a known layout to the controller chip; and
+      # aquarius-login-mode now runs before accounts-daemon, so a `game` boot
+      # setting really boots into Game Mode. Builds and checks only; never
+      # publishes.
+      - fix/handheld-controller-gamemode
       # The password boxes that asked for nothing. GNOME Software's rpm-ostree
       # plug-in — a weak dependency nobody chose — was asking polkit to upgrade
       # an operating system that does not update that way, about once an hour,
