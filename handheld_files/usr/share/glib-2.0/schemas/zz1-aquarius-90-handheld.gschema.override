@@ -1,0 +1,94 @@
+# ==============================================================================
+# AquariusOS on the handheld — the dock, for a 7-inch screen
+# ==============================================================================
+# HANDHELD IMAGE ONLY. This file lives in handheld_files/, which only
+# build_files/78-handheld.sh copies, so the two desktop images never see it.
+#
+# Read zz1-aquarius-20-shell and zz1-aquarius-30-dash-to-dock first: this file
+# changes a few of their answers and nothing else. It is named "90" so it sorts
+# AFTER both of them, and for the same setting the file that sorts last wins.
+# It must keep the "zz1-aquarius-" start, or the CI check that ours sort after
+# everybody else's would read it as somebody else's.
+#
+# ⚠️ ONLY BRAND-NEW ACCOUNTS, OR ACCOUNTS THAT NEVER CHANGED THESE. These are
+# defaults. Somebody who has already dragged an icon onto the dock has their own
+# list and keeps it. To get these back on an existing account:
+#     gsettings reset org.gnome.shell favorite-apps
+#     gsettings reset-recursively org.gnome.shell.extensions.dash-to-dock
+# ==============================================================================
+
+[org.gnome.shell]
+
+# ------------------------------------------------------------------------------
+# The dock's apps (Royce, 2026-10-04)
+# ------------------------------------------------------------------------------
+# On the handheld the desktop is where you go to do a small job and come back to
+# the games, not where you edit. So three seats change hands:
+#
+#   OFF  DaVinci Resolve, Aquarius Writer, Text Editor
+#   ON   Steam        the ordinary Steam window, for the store and the library
+#        Game Mode    one press back to the console screen
+#
+# All of them are still installed and still in the app grid. Aquarius Editor
+# stays: it is drawn only once somebody installs it (see the 20-shell file).
+# Every name here is checked against /usr/share/applications by step 50's rule
+# and again by 78-handheld.sh, so a typo fails the build.
+favorite-apps=['org.gnome.Nautilus.desktop', 'steam.desktop', 'aquarius-game-mode.desktop', 'aquarius-editor.desktop', 'org.mozilla.firefox.desktop', 'org.gnome.Ptyxis.desktop', 'org.gnome.Software.desktop', 'org.gnome.Settings.desktop']
+
+[org.gnome.shell.extensions.dash-to-dock]
+
+# ------------------------------------------------------------------------------
+# The dock gets out of the way when an app is open (Royce, 2026-10-04)
+# ------------------------------------------------------------------------------
+# On the desktop images the dock is always there (30-dash-to-dock explains the
+# four settings that takes). On 1080 pixels of 7-inch screen that is too much
+# room, so here it slides off the bottom edge whenever a window covers the
+# place it sits, and comes back when nothing does.
+#
+#   dock-fixed=false     the dock is allowed to move at all. With this true the
+#                        other three are ignored.
+#   intellihide=true     hide when a window overlaps the dock...
+#   intellihide-mode='ALL_WINDOWS'
+#                        ...ANY window, not only the focused app's. The default
+#                        (FOCUS_APPLICATION_WINDOWS) would leave the dock over
+#                        an app the moment a second app's window was focused.
+#   autohide=true        a mouse pushed against the bottom edge brings it back
+#   require-pressure-to-show=false
+#                        ...straight away, without having to push hard.
+#
+# Other ways it comes back, none of which need a mouse:
+#   * three fingers swiped up opens the Activities overview, and the dock is
+#     always shown there
+#   * Super+Q (the extension's own shortcut) shows it for a moment
+#   * the controller's Menu button is the Super key on the desktop, so it opens
+#     the Activities overview too (/usr/share/aquarius/inputplumber/desktop.yaml)
+#
+# ⚠️ A ONE-FINGER SWIPE UP FROM THE BOTTOM EDGE DOES NOT SHOW THE DOCK. Dash to
+# Dock has no touch handling at all — it only reacts to the pointer — and in
+# GNOME 50 that exact gesture opens GNOME's own on-screen keyboard, which is
+# where Royce chose to leave it (2026-10-04). See docs/restart/handheld.md,
+# "The desktop on the handheld".
+#
+# Key names read from the extension's own gschema (dash-to-dock 105+).
+dock-fixed=false
+intellihide=true
+intellihide-mode='ALL_WINDOWS'
+autohide=true
+require-pressure-to-show=false
+
+[org.gnome.desktop.a11y.applications]
+
+# ------------------------------------------------------------------------------
+# The on-screen keyboard comes up in any text box (Royce, 2026-10-04)
+# ------------------------------------------------------------------------------
+# GNOME normally shows its keyboard by itself only when the last thing touched
+# was the touchscreen AND no mouse is plugged in. On the desktop the controller
+# IS a mouse (InputPlumber's, see /usr/share/aquarius/inputplumber/desktop.yaml),
+# so without this the keyboard would never appear when you click a text box
+# with the stick. With it on, GNOME shows it whenever a text box is chosen,
+# however it was chosen. A one-finger swipe up from the bottom edge also opens
+# it, as in stock GNOME.
+#
+# With a real keyboard plugged in it gets in the way: switch it off in
+# Settings → Accessibility → Typing → Screen Keyboard.
+screen-keyboard-enabled=true
