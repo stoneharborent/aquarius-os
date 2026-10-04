@@ -1,0 +1,24 @@
+# =============================================================================
+# aquarius-ally-rings.service — GNOME's "Keyboard" slider dims the stick rings
+# =============================================================================
+# HANDHELD IMAGE ONLY. Started by udev when the stick rings' light appears
+# (72-aquarius-ally-rings.rules), never "enabled". What it does and why:
+# /usr/libexec/aquarius-ally-rings, and docs/restart/handheld.md.
+#
+# ⚠️ After= the backlight restore, and started by the SAME udev event as it, so
+# the order really holds: the first-run default must read the level systemd has
+# put back, not the 0 the kernel starts with.
+# =============================================================================
+[Unit]
+Description=Let the brightness slider dim the ROG Xbox Ally X stick rings
+Documentation=https://github.com/stoneharborent/aquarius-os/blob/main/docs/restart/handheld.md
+After=systemd-backlight@leds:asus::kbd_backlight.service upower.service
+ConditionPathExists=/sys/class/leds/asus::kbd_backlight
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/aquarius-ally-rings
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal

@@ -1,0 +1,216 @@
+#!/usr/bin/python3
+# =============================================================================
+# aquarius-ally-rings — make GNOME's "Keyboard" brightness slider dim the
+# ROG Xbox Ally X's stick rings
+# =============================================================================
+# HANDHELD IMAGE ONLY. Runs as root, as aquarius-ally-rings.service.
+#
+# WHY THIS EXISTS (bench, 2026-10-04)
+#
+# Fedora's kernel already gives the stick rings a brightness setting:
+# /sys/class/leds/asus::kbd_backlight, levels 0 to 3. GNOME shows it in the
+# quick settings as "Keyboard", and the whole chain works — moving the slider to
+# a third, two thirds and full really does write 1, 2 and 3 there, and the
+# kernel really does send each level to the controller chip.
+#
+# But the rings only went OFF or ON. The reason is the chip: with the rings in
+# their plain one-colour mode, it treats every level above 0 as "on". HHD, the
+# handheld daemon that has supported this machine longest, does exactly the
+# same thing we do here: it leaves the chip's level alone and dims the rings by
+# making the COLOUR darker (hhd/device/rog_ally/hid.py, rgb_set_brightness is
+# only used for its animated modes).
+#
+# So this watches the kernel's level and, whenever it changes, sends the chip a
+# solid colour scaled to it:
+#
+#   0  off     (the kernel already sent "off"; nothing to add)
+#   1  low     RING_COLOUR at 15 %
+#   2  medium  RING_COLOUR at 45 %
+#   3  high    RING_COLOUR at 100 %
+#
+# The colour itself is not a setting (Royce, 2026-10-04: brightness, not
+# colour). It is white.
+#
+# THE FIRST BOOT. systemd saves this level at shutdown and puts it back at boot,
+# and on the bench the saved value was 0 — so the rings were dark on the desktop
+# with nothing visibly wrong. The very first time this runs on a machine, a 0 is
+# turned into 2 (medium) and a marker file is written, so from then on whatever
+# somebody chooses — including off — is kept.
+#
+# THE BYTES. The ASUS vendor channel (usage page 0xFF31, report 0x5A) is found
+# the same way aquarius-ally-controller finds it, by loading that program's own
+# functions. The messages are HHD's, unchanged:
+#   5a 41 53 55 53 20 54 65 63 68 2e 49 6e 63 2e   "ASUS Tech.Inc." hello
+#   5a b3 00 00 R G B                               zone all, mode solid, colour
+#   5a b5                                            set
+#   5a b4                                            apply
+# The hello, set and apply go once, when the controller appears. After that a
+# level change sends only the colour, as HHD does — "apply" stores the mode in
+# the chip, and doing that on every slider movement would be pointless wear.
+#
+# In Game Mode Steam may set the rings itself. That is fine: this only writes
+# when the level changes, and Steam does not move it.
+#
+#   aquarius-ally-rings              run (what the service does)
+#   aquarius-ally-rings --once N     set level N (0-3) and the colour once, exit
+#                                    — for the bench, as root
+#
+# Plain-language guide: docs/restart/handheld.md
+# =============================================================================
+
+import importlib.machinery
+import importlib.util
+import os
+import select
+import subprocess
+import sys
+import time
+
+sys.dont_write_bytecode = True
+
+LED = "/sys/class/leds/asus::kbd_backlight"
+MARKER = "/var/lib/aquarius/ally-rings-default-set"
+FIRST_BOOT_LEVEL = 2
+RING_COLOUR = (255, 255, 255)
+SCALE = {0: 0.0, 1: 0.15, 2: 0.45, 3: 1.0}
+RECHECK_S = 10.0
+
+HELLO = bytes.fromhex("5a 41 53 55 53 20 54 65 63 68 2e 49 6e 63 2e")
+SET = bytes.fromhex("5a b5")
+APPLY = bytes.fromhex("5a b4")
+
+
+def say(msg):
+    print(f"aquarius-ally-rings: {msg}", flush=True)
+
+
+def load_controller_helper():
+    """aquarius-ally-controller's own functions: buf, find_vendor_device,
+    write_all. One copy of the code that finds the vendor channel."""
+    path = "/usr/libexec/aquarius-ally-controller"
+    loader = importlib.machinery.SourceFileLoader("aquarius_ally_controller", path)
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+def read_level():
+    try:
+        with open(os.path.join(LED, "brightness")) as f:
+            return max(0, min(3, int(f.read().strip())))
+    except (OSError, ValueError):
+        return None
+
+
+def first_boot_default():
+    if os.path.exists(MARKER):
+        return
+    level = read_level()
+    if level == 0:
+        try:
+            with open(os.path.join(LED, "brightness"), "w") as f:
+                f.write(str(FIRST_BOOT_LEVEL))
+            say(f"first run on this machine: the saved level was 0, set it to {FIRST_BOOT_LEVEL}.")
+        except OSError as e:
+            say(f"could not set the first-run level: {e.strerror}")
+            return
+    os.makedirs(os.path.dirname(MARKER), exist_ok=True)
+    with open(MARKER, "w") as f:
+        f.write("The stick rings' first-run brightness was set. Delete this file to do it again.\n")
+
+
+def colour_message(hc, level):
+    s = SCALE.get(level, 1.0)
+    r, g, b = (round(c * s) for c in RING_COLOUR)
+    return hc.buf(bytes([0x5A, 0xB3, 0x00, 0x00, r, g, b]))
+
+
+def apply(hc, node, level, init):
+    if level is None:
+        return
+    if level == 0:
+        # The kernel has already told the chip "off".
+        say("level 0 — off.")
+        return
+    msgs = []
+    if init:
+        msgs.append(hc.buf(HELLO))
+    msgs.append(colour_message(hc, level))
+    if init:
+        msgs += [hc.buf(SET), hc.buf(APPLY)]
+    if hc.write_all(node, msgs):
+        say(f"level {level} — rings at {round(SCALE[level] * 100)} %.")
+
+
+def watch_upower():
+    """A pipe that says something whenever UPower's keyboard light changes —
+    which is what GNOME's slider goes through. None if gdbus is missing; the
+    ten-second re-check still catches every change, only slower."""
+    try:
+        return subprocess.Popen(
+            ["gdbus", "monitor", "--system", "--dest", "org.freedesktop.UPower",
+             "--object-path", "/org/freedesktop/UPower/KbdBacklight"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    except OSError:
+        say("gdbus is missing; checking the level every ten seconds instead.")
+        return None
+
+
+def main():
+    hc = load_controller_helper()
+    args = sys.argv[1:]
+
+    if args[:1] == ["--once"]:
+        level = int(args[1]) if len(args) > 1 else read_level()
+        node = hc.find_vendor_device()
+        if node is None:
+            say("no ROG Xbox Ally X controller here.")
+            return 1
+        with open(os.path.join(LED, "brightness"), "w") as f:
+            f.write(str(level))
+        apply(hc, node, level, init=True)
+        return 0
+
+    if not os.path.isdir(LED):
+        say(f"{LED} does not exist — no stick rings to drive here.")
+        return 0
+
+    first_boot_default()
+
+    mon = watch_upower()
+    node, last = None, None
+    while True:
+        current = hc.find_vendor_device()
+        if current is None:
+            node = None
+        else:
+            level = read_level()
+            # The node's name can come back the same after sleep, so it is
+            # compared together with when it was created.
+            try:
+                current = (current, os.stat(current).st_ctime_ns)
+            except OSError:
+                current = (current, 0)
+            if current != node:
+                # The controller (re)appeared: boot, or after sleep.
+                node = current
+                apply(hc, node[0], level, init=True)
+            elif level != last:
+                apply(hc, node[0], level, init=False)
+            last = level
+
+        if mon is None:
+            time.sleep(RECHECK_S)
+            continue
+        ready, _, _ = select.select([mon.stdout], [], [], RECHECK_S)
+        if ready:
+            if not mon.stdout.readline():
+                say("the UPower watch ended; starting it again.")
+                mon = watch_upower()
+            # Let the kernel finish writing the level before reading it.
+            time.sleep(0.1)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
