@@ -93,6 +93,7 @@ WHITE_BALANCE = (1.0, 0.72, 0.62)
 PRESETS = {
     "white": "ffffff",
     "blue": "8ab4ff",     # AquariusOS Starlight, branding/design-system/tokens
+    "steam": "1a9fff",    # Steam's own interface blue; matched by eye to the logo, bench 2026-10-05
     "cyan": "00e5ff",
     "green": "00ff40",
     "red": "ff0000",
@@ -152,8 +153,8 @@ SET_USAGE = """\
 aq handheld rings — the stick rings' colour and effect
 
     aq handheld rings                 what they are set to now
-    aq handheld rings <colour>        one colour: white blue cyan green red
-                                      orange pink purple, or #RRGGBB
+    aq handheld rings <colour>        one colour: white blue steam cyan green
+                                      red orange pink purple, or #RRGGBB
     aq handheld rings breathe [colour]
                                       slowly pulsing (white if no colour given)
     aq handheld rings cycle           all colours, one after another
