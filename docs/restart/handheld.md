@@ -270,8 +270,8 @@ Settings → Accessibility → Typing → Screen Keyboard.
 ### The stick rings' colour
 
 Quick settings → **Rings**: the switch turns them off and on, and its menu
-picks a colour (white, AquariusOS blue, cyan, green, red, orange, pink,
-purple) or an effect (a turning rainbow, every colour in turn, breathing). The
+picks a colour (white, AquariusOS blue, Steam blue, cyan, green, red, orange,
+pink, purple) or an effect (a turning rainbow, every colour in turn, breathing). The
 same from a terminal, with no password:
 
     aq handheld rings blue

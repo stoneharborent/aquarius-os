@@ -86,8 +86,8 @@ FIRST_BOOT_LEVEL = 2
 SCALE = {0: 0.0, 1: 0.15, 2: 0.45, 3: 1.0}
 RECHECK_S = 10.0
 
-# The LEDs' red is weak: full white comes out light cyan. Measured by eye on
-# the bench only — tune these three if "white" is still tinted.
+# The LEDs' red is weak: full white comes out light cyan. Set by eye and
+# confirmed on the bench, 2026-10-05: white looks white.
 WHITE_BALANCE = (1.0, 0.72, 0.62)
 
 PRESETS = {

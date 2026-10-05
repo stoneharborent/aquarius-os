@@ -93,6 +93,7 @@ const RINGS_ICON = 'weather-clear-night-symbolic';
 const RING_CHOICES = [
     ['white', 'White'],
     ['blue', 'AquariusOS blue'],
+    ['steam', 'Steam blue'],
     ['cyan', 'Cyan'],
     ['green', 'Green'],
     ['red', 'Red'],
@@ -104,7 +105,7 @@ const RING_CHOICES = [
     ['breathe', 'Breathing'],
 ];
 const RING_HEX = {
-    white: 'ffffff', blue: '8ab4ff', cyan: '00e5ff', green: '00ff40',
+    white: 'ffffff', blue: '8ab4ff', steam: '1a9fff', cyan: '00e5ff', green: '00ff40',
     red: 'ff0000', orange: 'ff6000', pink: 'ff2090', purple: '8000ff',
 };
 
