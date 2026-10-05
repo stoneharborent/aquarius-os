@@ -825,6 +825,25 @@ else
 fi
 rm -f /tmp/aq-py.txt
 
+# `aq handheld rings` is the person's half of aquarius-ally-rings: it must
+# write ~/.config/aquarius/rings.conf with no root and no running service.
+say "'aq handheld rings' writes the person's own ring choice, without a password"
+AQ_RINGS_HOME="$(mktemp -d)"
+if HOME="${AQ_RINGS_HOME}" /usr/bin/aq handheld rings breathe pink > /tmp/aq-rings.txt 2>&1 \
+    && grep -qx 'effect=breathe' "${AQ_RINGS_HOME}/.config/aquarius/rings.conf" \
+    && grep -qx 'colour=ff2090' "${AQ_RINGS_HOME}/.config/aquarius/rings.conf"; then
+    ok "'aq handheld rings breathe pink' wrote effect=breathe, colour=ff2090"
+else
+    sed 's/^/       /' /tmp/aq-rings.txt "${AQ_RINGS_HOME}/.config/aquarius/rings.conf" 2> /dev/null || true
+    bad "'aq handheld rings' did not write the ring choice — the Rings menu would do nothing"
+fi
+if HOME="${AQ_RINGS_HOME}" /usr/bin/aq handheld rings no-such-colour > /dev/null 2>&1; then
+    bad "'aq handheld rings no-such-colour' succeeded — it should refuse a colour it does not know"
+else
+    ok "and it refuses a colour it does not know"
+fi
+rm -rf "${AQ_RINGS_HOME}" /tmp/aq-rings.txt
+
 # The profile must be one this InputPlumber accepts. It cannot be loaded here
 # (no daemon, no controller), so the next best thing: every name in it is one
 # InputPlumber's own schema lists.

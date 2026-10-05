@@ -33,6 +33,15 @@
 //       now closes it. (A one-finger swipe UP from the bottom edge still opens
 //       it — that one is GNOME's.)
 //
+// 3. THE STICK RINGS (Royce, 2026-10-05)
+//
+//    A "Rings" switch in the quick settings menu, next to the Keyboard
+//    brightness slider: the switch turns the rings off and back on, and its
+//    menu picks a colour or an effect. Like the Mac-or-Windows switch, it
+//    decides nothing itself — it reads ~/.config/aquarius/rings.conf and runs
+//    `aq handheld rings <choice>`, the same command a person would type, which
+//    needs no password (/usr/libexec/aquarius-ally-rings explains how).
+//
 // HOW, AND WHAT IS PRIVATE
 //
 //   * The grid: setGridModes() is public; the fixed-icon-size property is a
@@ -48,10 +57,16 @@
 // =============================================================================
 
 import Clutter from 'gi://Clutter';
+import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
+import GObject from 'gi://GObject';
 
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as KeyboardUI from 'resource:///org/gnome/shell/ui/keyboard.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import * as MessageTray from 'resource:///org/gnome/shell/ui/messageTray.js';
+import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
+import * as QuickSettings from 'resource:///org/gnome/shell/ui/quickSettings.js';
 
 // ---- the app grid -----------------------------------------------------------
 const HANDHELD_GRID = [{rows: 1, columns: 5}];
@@ -70,13 +85,170 @@ function appGrid() {
     return Main.overview?._overview?._controls?._appDisplay?._grid ?? null;
 }
 
+// ---- the stick rings -------------------------------------------------------
+const AQ_COMMAND = '/usr/bin/aq';
+const RINGS_ICON = 'weather-clear-night-symbolic';
+// [what `aq handheld rings` is told, what the menu says]. Kept in step with
+// PRESETS and EFFECTS in /usr/libexec/aquarius-ally-rings.
+const RING_CHOICES = [
+    ['white', 'White'],
+    ['blue', 'AquariusOS blue'],
+    ['cyan', 'Cyan'],
+    ['green', 'Green'],
+    ['red', 'Red'],
+    ['orange', 'Orange'],
+    ['pink', 'Pink'],
+    ['purple', 'Purple'],
+    ['rainbow', 'Rainbow (turning)'],
+    ['cycle', 'Every colour in turn'],
+    ['breathe', 'Breathing'],
+];
+const RING_HEX = {
+    white: 'ffffff', blue: '8ab4ff', cyan: '00e5ff', green: '00ff40',
+    red: 'ff0000', orange: 'ff6000', pink: 'ff2090', purple: '8000ff',
+};
+
+function ringsConfFile() {
+    return Gio.File.new_for_path(
+        GLib.build_filenamev([GLib.get_user_config_dir(), 'aquarius', 'rings.conf']));
+}
+
+/** @returns {{effect: string, colour: string}} what rings.conf says, or the default */
+function readRings() {
+    const found = {effect: 'solid', colour: 'ffffff'};
+    try {
+        const [okRead, bytes] = ringsConfFile().load_contents(null);
+        if (!okRead)
+            return found;
+        for (const line of new TextDecoder().decode(bytes).split('\n')) {
+            const match = /^\s*(effect|colour)\s*=\s*([0-9A-Za-z]+)/.exec(line);
+            if (match)
+                found[match[1]] = match[2].toLowerCase();
+        }
+    } catch (_error) {
+        // No file yet: the default.
+    }
+    return found;
+}
+
+/** Which menu entry a rings.conf choice is. */
+function choiceKey({effect, colour}) {
+    if (effect === 'solid')
+        return Object.keys(RING_HEX).find(k => RING_HEX[k] === colour) ?? null;
+    return effect;
+}
+
+function complainRings(body) {
+    try {
+        const source = MessageTray.getSystemSource();
+        source.addNotification(new MessageTray.Notification({
+            source,
+            title: 'The stick rings could not be changed',
+            body,
+            isTransient: true,
+        }));
+    } catch (error) {
+        console.warn(`aquarius-handheld: ${body} (and the notification failed: ${error})`);
+    }
+}
+
+const RingsToggle = GObject.registerClass(
+class RingsToggle extends QuickSettings.QuickMenuToggle {
+    _init() {
+        super._init({title: 'Rings', iconName: RINGS_ICON, toggleMode: false});
+
+        this._cancellable = new Gio.Cancellable();
+        this._items = new Map();
+        this.menu.setHeader(RINGS_ICON, 'Stick rings',
+            'Brightness is the Keyboard slider');
+        for (const [key, label] of RING_CHOICES) {
+            const item = new PopupMenu.PopupMenuItem(label);
+            item.connect('activate', () => this._run(key));
+            this.menu.addMenuItem(item);
+            this._items.set(key, item);
+        }
+        this.connect('clicked', () => this._run(this.checked ? 'off' : 'on'));
+
+        try {
+            this._monitor = ringsConfFile().monitor_file(
+                Gio.FileMonitorFlags.WATCH_MOVES, this._cancellable);
+            this._monitor.connect('changed', () => this._refresh());
+        } catch (error) {
+            console.warn(`aquarius-handheld: could not watch rings.conf: ${error}`);
+        }
+        this._refresh();
+    }
+
+    _refresh() {
+        const rings = readRings();
+        const key = choiceKey(rings);
+        this.checked = rings.effect !== 'off';
+        const label = RING_CHOICES.find(([k]) => k === key)?.[1];
+        this.subtitle = rings.effect === 'off' ? 'Off' : (label ?? `#${rings.colour}`);
+        for (const [k, item] of this._items) {
+            item.setOrnament(k === key
+                ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
+        }
+    }
+
+    _run(choice) {
+        let proc;
+        try {
+            proc = Gio.Subprocess.new([AQ_COMMAND, 'handheld', 'rings', choice],
+                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE);
+        } catch (error) {
+            complainRings(`AquariusOS could not start ${AQ_COMMAND}. ${error.message}`);
+            return;
+        }
+        proc.communicate_utf8_async(null, this._cancellable, (source, result) => {
+            try {
+                const [, , stderr] = source.communicate_utf8_finish(result);
+                if (!source.get_successful())
+                    complainRings((stderr || '').trim() || `'aq handheld rings ${choice}' did not succeed.`);
+                this._refresh();
+            } catch (error) {
+                if (!error?.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+                    complainRings(error?.message ?? String(error));
+            }
+        });
+    }
+
+    destroy() {
+        this._cancellable.cancel();
+        this._monitor?.cancel();
+        this._monitor = null;
+        super.destroy();
+    }
+});
+
+const RingsIndicator = GObject.registerClass(
+class RingsIndicator extends QuickSettings.SystemIndicator {
+    _init() {
+        super._init();
+        this.quickSettingsItems.push(new RingsToggle());
+    }
+
+    destroy() {
+        this.quickSettingsItems.forEach(item => item.destroy());
+        this.quickSettingsItems.length = 0;
+        super.destroy();
+    }
+});
+
 export default class AquariusHandheldExtension extends Extension {
     enable() {
         this._enableGrid();
         this._enableKeyboard();
+        // Only where there are rings to set (the handheld image ships both).
+        if (GLib.file_test('/usr/libexec/aquarius-ally-rings', GLib.FileTest.IS_EXECUTABLE)) {
+            this._rings = new RingsIndicator();
+            Main.panel.statusArea.quickSettings.addExternalIndicator(this._rings);
+        }
     }
 
     disable() {
+        this._rings?.destroy();
+        this._rings = null;
         this._disableKeyboard();
         this._disableGrid();
     }

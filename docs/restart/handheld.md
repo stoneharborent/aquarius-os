@@ -267,6 +267,27 @@ screen (GNOME left 200 empty points either side) and it is a little taller.
 edge brings it back. With a real keyboard plugged in, switch it off in
 Settings → Accessibility → Typing → Screen Keyboard.
 
+### The stick rings' colour
+
+Quick settings → **Rings**: the switch turns them off and on, and its menu
+picks a colour (white, AquariusOS blue, cyan, green, red, orange, pink,
+purple) or an effect (a turning rainbow, every colour in turn, breathing). The
+same from a terminal, with no password:
+
+    aq handheld rings blue
+    aq handheld rings '#ff8800'
+    aq handheld rings breathe pink
+    aq handheld rings rainbow
+    aq handheld rings off
+
+The choice is saved in `~/.config/aquarius/rings.conf` and the ring service
+applies it at once. In Game Mode Steam may set its own colours.
+
+The LEDs' red is weaker than their green and blue — plain white came out light
+cyan on the bench — so every colour is white-balanced first. If white still
+looks tinted, the three numbers are `WHITE_BALANCE` in
+`/usr/libexec/aquarius-ally-rings`.
+
 ### The stick rings' brightness
 
 GNOME's quick settings has a **Keyboard** slider. On the Ally it is the stick
@@ -396,6 +417,10 @@ Royce, on the Ally. Work down it and put the answers in
 - [ ] The **Keyboard** slider in quick settings: four positions give
       **off, dim, medium, bright** rings, not just off and on
 - [ ] After a restart the rings come back at the brightness you left them
+- [ ] Quick settings → **Rings** → each colour; **white looks white**, not cyan
+- [ ] **Rainbow**, **every colour in turn** and **breathing** all animate; the
+      Keyboard slider still dims them
+- [ ] The Rings switch turns them off, and on again to the same effect
 
 ### F. Living with it
 
