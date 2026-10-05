@@ -174,7 +174,7 @@ USAGE
                         effect — 'aq handheld rings blue', '... rainbow',
                         '... breathe pink', '... off'. No password.
 
-    aq welcome         Show the AquariusOS welcome again — the three-step
+    aq welcome          Show the AquariusOS welcome again — the three-step
                         window a new account sees at its first login: how the
                         keyboard should work, which creator apps you want, and
                         a page of tips. Safe to run any time; it changes
