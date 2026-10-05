@@ -1,0 +1,55 @@
+#!/usr/bin/bash
+# =============================================================================
+# aquarius-decky-rings-sync — put the AquariusRings plugin into Decky
+# =============================================================================
+# HANDHELD IMAGE ONLY. Root, from aquarius-decky-rings.service at boot (before
+# Decky starts) and from `aq decky install` right after Decky is switched on.
+#
+# Decky is OFFERED, not shipped (docs/restart/decky.md): it lives in the
+# person's ~/homebrew, and its plugins folder belongs to root. So the plugin
+# ships in the image at /usr/share/aquarius/decky/AquariusRings and this copies
+# it in — only if Decky is installed, and only when the copy differs, so every
+# image update brings the plugin up to date and nothing else is touched.
+#
+# Where Decky lives is read from its own service file
+# (Environment=UNPRIVILEGED_PATH=, written by `aq decky install`).
+#
+# ⚠️ plugin.json goes in FIRST: Decky's live reload only notices a plugin's
+# other files once its plugin.json exists.
+# =============================================================================
+set -uo pipefail
+
+# AQ_DECKY_RINGS_SRC: a different copy of the plugin, for the bench only
+# (e.g. the repository's handheld_files/usr/share/aquarius/decky/AquariusRings).
+SRC="${AQ_DECKY_RINGS_SRC:-/usr/share/aquarius/decky/AquariusRings}"
+UNIT="/etc/systemd/system/plugin_loader.service"
+
+say() { echo "aquarius-decky-rings-sync: $*"; }
+
+[ -r "${UNIT}" ] || { say "Decky Loader is not installed; nothing to do."; exit 0; }
+[ -d "${SRC}" ] || { say "${SRC} is missing from this image; nothing to do."; exit 0; }
+
+HOMEBREW="$(sed -n 's/^Environment=UNPRIVILEGED_PATH=//p' "${UNIT}" | tail -1)"
+if [ -z "${HOMEBREW}" ] || [ ! -d "${HOMEBREW}/plugins" ]; then
+    say "could not find Decky's plugins folder from ${UNIT}; leaving it."
+    exit 0
+fi
+DEST="${HOMEBREW}/plugins/AquariusRings"
+
+if [ -d "${DEST}" ] && diff -rq -x __pycache__ "${SRC}" "${DEST}" > /dev/null 2>&1; then
+    say "the plugin in ${DEST} is already this image's."
+    exit 0
+fi
+
+rm -rf "${DEST}"
+install -d -m 0755 "${DEST}/dist"
+install -m 0644 "${SRC}/plugin.json" "${DEST}/plugin.json"
+install -m 0644 "${SRC}/package.json" "${SRC}/main.py" "${DEST}/"
+install -m 0644 "${SRC}/dist/index.js" "${DEST}/dist/index.js"
+say "put this image's AquariusRings plugin into ${DEST}."
+
+# At boot this runs before Decky starts. Any other time, Decky has to be told.
+if [ "${1:-}" != "--boot" ] && systemctl is-active --quiet plugin_loader.service; then
+    systemctl restart plugin_loader.service && say "restarted Decky so it loads the plugin."
+fi
+exit 0

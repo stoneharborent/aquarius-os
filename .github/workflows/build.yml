@@ -431,6 +431,9 @@ on:
       # full-width on-screen keyboard that closes with a swipe down. Builds and
       # checks only; never publishes.
       - fix/handheld-desktop-round2
+      # The stick rings in Game Mode: our own hand-written Decky plugin, copied
+      # into Decky at boot. Builds and checks only; never publishes.
+      - feat/handheld-decky-rings
       # The password boxes that asked for nothing. GNOME Software's rpm-ostree
       # plug-in — a weak dependency nobody chose — was asking polkit to upgrade
       # an operating system that does not update that way, about once an hour,
@@ -6925,7 +6928,9 @@ jobs:
                      /usr/lib/udev/rules.d/72-aquarius-ally-rings.rules \
                      /usr/share/gnome-shell/extensions/aquarius-handheld@stoneharborent.github.io \
                      /usr/lib/systemd/user/steamos-manager.service.d/60-aquarius-session.conf \
-                     /usr/lib/systemd/logind.conf.d/60-aquarius-handheld.conf; do
+                     /usr/lib/systemd/logind.conf.d/60-aquarius-handheld.conf \
+                     /usr/share/aquarius/decky/AquariusRings \
+                     /usr/libexec/aquarius-decky-rings-sync; do
               [ -e "$f" ] && bad "$f is on a desktop image" || ok "$f is not on this image"
             done
             # `aq` is ONE program on all three images, so `aq handheld` exists
