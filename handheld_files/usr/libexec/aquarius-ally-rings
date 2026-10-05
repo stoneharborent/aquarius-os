@@ -1,67 +1,77 @@
 #!/usr/bin/python3
 # =============================================================================
-# aquarius-ally-rings — make GNOME's "Keyboard" brightness slider dim the
-# ROG Xbox Ally X's stick rings
+# aquarius-ally-rings — the ROG Xbox Ally X's stick rings: colour, effect and
+# brightness
 # =============================================================================
-# HANDHELD IMAGE ONLY. Runs as root, as aquarius-ally-rings.service.
+# HANDHELD IMAGE ONLY. Two halves in one program:
 #
-# WHY THIS EXISTS (bench, 2026-10-04)
+#   aquarius-ally-rings              the service (root, aquarius-ally-rings.service)
+#   aquarius-ally-rings set ...      what `aq handheld rings` runs (any user,
+#                                    no password)
+#   aquarius-ally-rings --once N     set level N (0-3) once and exit — bench, root
 #
-# Fedora's kernel already gives the stick rings a brightness setting:
-# /sys/class/leds/asus::kbd_backlight, levels 0 to 3. GNOME shows it in the
-# quick settings as "Keyboard", and the whole chain works — moving the slider to
-# a third, two thirds and full really does write 1, 2 and 3 there, and the
-# kernel really does send each level to the controller chip.
+# -----------------------------------------------------------------------------
+# BRIGHTNESS (bench, 2026-10-04)
+# -----------------------------------------------------------------------------
+# Fedora's kernel already gives the rings a brightness setting,
+# /sys/class/leds/asus::kbd_backlight, levels 0-3, and GNOME shows it in the
+# quick settings as "Keyboard". But in the rings' one-colour mode the controller
+# chip treats every level above 0 as "on". HHD, the handheld daemon that has
+# supported this machine longest, does what this does: for the one-colour and
+# breathing effects it dims by making the COLOUR darker, and only uses the
+# chip's own levels for the animated rainbow effects
+# (hhd/device/rog_ally/hid.py).
 #
-# But the rings only went OFF or ON. The reason is the chip: with the rings in
-# their plain one-colour mode, it treats every level above 0 as "on". HHD, the
-# handheld daemon that has supported this machine longest, does exactly the
-# same thing we do here: it leaves the chip's level alone and dims the rings by
-# making the COLOUR darker (hhd/device/rog_ally/hid.py, rgb_set_brightness is
-# only used for its animated modes).
+#   level  0  off      1  15 %      2  45 %      3  100 %
 #
-# So this watches the kernel's level and, whenever it changes, sends the chip a
-# solid colour scaled to it:
+# THE FIRST BOOT. systemd saves the level at shutdown and puts it back at boot;
+# on the bench it was 0, so the rings were dark with nothing visibly wrong. The
+# first time this runs on a machine a 0 becomes 2, and a marker file is written
+# so from then on whatever somebody chooses — including off — is kept.
 #
-#   0  off     (the kernel already sent "off"; nothing to add)
-#   1  low     RING_COLOUR at 15 %
-#   2  medium  RING_COLOUR at 45 %
-#   3  high    RING_COLOUR at 100 %
+# -----------------------------------------------------------------------------
+# COLOUR AND EFFECT (Royce, 2026-10-05)
+# -----------------------------------------------------------------------------
+# The bench showed the colour is ours to set: the first version sent plain
+# white and the rings went from Steam's rainbow to a light cyan. Light cyan,
+# because the red in these LEDs is weaker than the green and blue — so every
+# colour is now passed through WHITE_BALANCE first, and "white" looks white.
 #
-# The colour itself is not a setting (Royce, 2026-10-04: brightness, not
-# colour). It is white.
+# The choice lives in the PERSON'S OWN settings, ~/.config/aquarius/rings.conf,
+# written by `aq handheld rings` without a password. The service (root) reads
+# the file of whoever is on the screen, and is nudged through a small pipe,
+# /run/aquarius/ally-rings.nudge, so a change shows at once. Anybody can poke
+# that pipe; all a poke does is make the service read the file again.
 #
-# THE FIRST BOOT. systemd saves this level at shutdown and puts it back at boot,
-# and on the bench the saved value was 0 — so the rings were dark on the desktop
-# with nothing visibly wrong. The very first time this runs on a machine, a 0 is
-# turned into 2 (medium) and a marker file is written, so from then on whatever
-# somebody chooses — including off — is kept.
+#   effect=solid | breathe | cycle | rainbow | off
+#   colour=RRGGBB        (used by solid and breathe)
 #
-# THE BYTES. The ASUS vendor channel (usage page 0xFF31, report 0x5A) is found
-# the same way aquarius-ally-controller finds it, by loading that program's own
-# functions. The messages are HHD's, unchanged:
+# In Game Mode Steam may set the rings itself; this only writes when something
+# changes (the level, the choice, or the controller reappearing after sleep).
+#
+# -----------------------------------------------------------------------------
+# THE BYTES — HHD's, unchanged; OpenRGB uses the same ones
+# -----------------------------------------------------------------------------
 #   5a 41 53 55 53 20 54 65 63 68 2e 49 6e 63 2e   "ASUS Tech.Inc." hello
-#   5a b3 00 00 R G B                               zone all, mode solid, colour
+#   5a b3 00 MODE R G B SPEED DIR 00 R2 G2 B2      zone all, effect, colour
+#   5a ba c5 c4 LEVEL                               the chip's own level
 #   5a b5                                            set
 #   5a b4                                            apply
-# The hello, set and apply go once, when the controller appears. After that a
-# level change sends only the colour, as HHD does — "apply" stores the mode in
-# the chip, and doing that on every slider movement would be pointless wear.
-#
-# In Game Mode Steam may set the rings itself. That is fine: this only writes
-# when the level changes, and Steam does not move it.
-#
-#   aquarius-ally-rings              run (what the service does)
-#   aquarius-ally-rings --once N     set level N (0-3) and the colour once, exit
-#                                    — for the bench, as root
+# Hello, set and apply go only when the effect changes or the controller
+# reappears: "apply" stores the effect in the chip, and doing that on every
+# slider movement would be pointless wear. A level change in a one-colour
+# effect sends the colour alone, as HHD does.
 #
 # Plain-language guide: docs/restart/handheld.md
 # =============================================================================
 
+import errno
 import importlib.machinery
 import importlib.util
 import os
+import pwd
 import select
+import stat
 import subprocess
 import sys
 import time
@@ -70,10 +80,46 @@ sys.dont_write_bytecode = True
 
 LED = "/sys/class/leds/asus::kbd_backlight"
 MARKER = "/var/lib/aquarius/ally-rings-default-set"
+NUDGE = "/run/aquarius/ally-rings.nudge"
+USER_CONF = ".config/aquarius/rings.conf"
 FIRST_BOOT_LEVEL = 2
-RING_COLOUR = (255, 255, 255)
 SCALE = {0: 0.0, 1: 0.15, 2: 0.45, 3: 1.0}
 RECHECK_S = 10.0
+
+# The LEDs' red is weak: full white comes out light cyan. Set by eye and
+# confirmed on the bench, 2026-10-05: white looks white.
+WHITE_BALANCE = (1.0, 0.72, 0.62)
+
+PRESETS = {
+    "white": "ffffff",
+    "blue": "8ab4ff",     # AquariusOS Starlight, branding/design-system/tokens
+    "steam": "1a9fff",    # Steam's own interface blue; matched by eye to the logo, bench 2026-10-05
+    "xbox": "40ff20",     # Xbox green, brightened for LEDs; chosen on the bench 2026-10-05
+    "x20": "fff000",      # the ROG Xbox Ally X20 anniversary edition's gold rings, bench 2026-10-05
+    "cyan": "00e5ff",
+    "green": "00ff40",
+    "red": "ff0000",
+    "orange": "ff6000",
+    "pink": "ff2090",
+    "purple": "8000ff",
+}
+EFFECTS = {
+    # name: (chip mode, dims by colour?, needs a colour?)
+    "solid": (0x00, True, True),
+    "breathe": (0x01, True, True),
+    "cycle": (0x02, False, False),
+    "rainbow": (0x03, False, False),
+    "off": (0x00, True, False),
+}
+SPEED_MEDIUM = 0xEB
+SPEED_FAST = 0xF5
+# Breathe fades between the colour and a dim copy of it, never to black: with
+# black at the bottom the chip sat dark for about ten seconds between pulses
+# (bench, 2026-10-05). Fast speed with an 8 % floor brings the light back in a
+# second or two; Royce picked it from three variants.
+BREATHE_SPEED = SPEED_FAST
+BREATHE_FLOOR = 0.08
+DEFAULT_CHOICE = {"effect": "solid", "colour": PRESETS["white"]}
 
 HELLO = bytes.fromhex("5a 41 53 55 53 20 54 65 63 68 2e 49 6e 63 2e")
 SET = bytes.fromhex("5a b5")
@@ -84,6 +130,156 @@ def say(msg):
     print(f"aquarius-ally-rings: {msg}", flush=True)
 
 
+# =============================================================================
+# The choice, as a person writes it
+# =============================================================================
+def parse_choice(text):
+    choice = dict(DEFAULT_CHOICE)
+    for line in text.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if "=" not in line:
+            continue
+        key, value = (p.strip().lower() for p in line.split("=", 1))
+        if key == "effect" and value in EFFECTS:
+            choice["effect"] = value
+        elif key == "colour" and len(value) == 6 and all(c in "0123456789abcdef" for c in value):
+            choice["colour"] = value
+    return choice
+
+
+def describe(choice):
+    effect = choice["effect"]
+    if EFFECTS[effect][2]:
+        name = next((n for n, h in PRESETS.items() if h == choice["colour"]), "#" + choice["colour"])
+        return f"{effect} {name}"
+    return effect
+
+
+# =============================================================================
+# `aquarius-ally-rings set ...` — the person's half, no root
+# =============================================================================
+SET_USAGE = """\
+aq handheld rings — the stick rings' colour and effect
+
+    aq handheld rings                 what they are set to now
+    aq handheld rings <colour>        one colour: white blue steam xbox x20
+                                      cyan green red orange pink purple, or
+                                      #RRGGBB
+    aq handheld rings breathe [colour]
+                                      slowly pulsing (white if no colour given)
+    aq handheld rings cycle           all colours, one after another
+    aq handheld rings rainbow         a rainbow that turns
+    aq handheld rings off             dark (the brightness slider is kept)
+    aq handheld rings on              back to the last effect
+
+Brightness is the "Keyboard" slider in the quick settings menu.
+"""
+
+
+def user_conf_path():
+    return os.path.join(os.path.expanduser("~"), USER_CONF)
+
+
+def read_user_choice(path):
+    try:
+        with open(path) as f:
+            return parse_choice(f.read())
+    except OSError:
+        return dict(DEFAULT_CHOICE)
+
+
+def colour_arg(word):
+    word = word.lower().lstrip("#")
+    if word in PRESETS:
+        return PRESETS[word]
+    if len(word) == 6 and all(c in "0123456789abcdef" for c in word):
+        return word
+    return None
+
+
+def nudge():
+    try:
+        fd = os.open(NUDGE, os.O_WRONLY | os.O_NONBLOCK)
+    except OSError:
+        return False
+    try:
+        os.write(fd, b"1")
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+    return True
+
+
+def cmd_set(args):
+    path = user_conf_path()
+    choice = read_user_choice(path)
+    previous = dict(choice)
+
+    if not args:
+        print(f"The stick rings are set to: {describe(choice)}")
+        print("(brightness: the Keyboard slider in the quick settings menu)")
+        return 0
+    word = args[0].lower()
+    if word in ("-h", "--help", "help"):
+        print(SET_USAGE, end="")
+        return 0
+
+    if word == "on":
+        if previous["effect"] == "off":
+            choice["effect"] = _read_last(path) or "solid"
+    elif word in ("off", "cycle", "rainbow"):
+        choice["effect"] = word
+    elif word in ("solid", "breathe"):
+        choice["effect"] = word
+        if len(args) > 1:
+            c = colour_arg(args[1])
+            if c is None:
+                print(f"aq: '{args[1]}' is not a colour. Try white, blue, red ... or #RRGGBB.", file=sys.stderr)
+                return 1
+            choice["colour"] = c
+    else:
+        c = colour_arg(word)
+        if c is None:
+            print(f"aq: '{args[0]}' is not something the rings understand.\n", file=sys.stderr)
+            print(SET_USAGE, end="", file=sys.stderr)
+            return 1
+        choice["effect"] = "solid"
+        choice["colour"] = c
+
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    keep_last = previous["effect"] if previous["effect"] != "off" else _read_last(path)
+    with open(path + ".new", "w") as f:
+        f.write("# The ROG Xbox Ally X's stick rings. Written by `aq handheld rings`.\n")
+        f.write(f"effect={choice['effect']}\n")
+        f.write(f"colour={choice['colour']}\n")
+        if keep_last:
+            f.write(f"# last={keep_last}\n")
+    os.replace(path + ".new", path)
+
+    print(f"The stick rings: {describe(choice)}.")
+    if not nudge():
+        print("(The ring service is not running, so this applies the next time it starts:"
+              " journalctl -u aquarius-ally-rings)")
+    return 0
+
+
+def _read_last(path):
+    """The effect before 'off', kept as a comment so 'on' can go back to it."""
+    try:
+        with open(path) as f:
+            for line in f:
+                if line.startswith("# last="):
+                    value = line.split("=", 1)[1].strip()
+                    return value if value in EFFECTS and value != "off" else None
+    except OSError:
+        pass
+    return None
+
+
+# =============================================================================
+# The service's half
+# =============================================================================
 def load_controller_helper():
     """aquarius-ally-controller's own functions: buf, find_vendor_device,
     write_all. One copy of the code that finds the vendor channel."""
@@ -120,27 +316,71 @@ def first_boot_default():
         f.write("The stick rings' first-run brightness was set. Delete this file to do it again.\n")
 
 
-def colour_message(hc, level):
-    s = SCALE.get(level, 1.0)
-    r, g, b = (round(c * s) for c in RING_COLOUR)
-    return hc.buf(bytes([0x5A, 0xB3, 0x00, 0x00, r, g, b]))
+def screen_user_choice():
+    """The choice of whoever is on the screen (seat0's active session). When
+    nobody is — the login screen — the last choice stands."""
+    try:
+        session = subprocess.run(
+            ["loginctl", "show-seat", "seat0", "-p", "ActiveSession", "--value"],
+            capture_output=True, text=True, timeout=5).stdout.strip()
+        if not session:
+            return None
+        uid = subprocess.run(
+            ["loginctl", "show-session", session, "-p", "User", "--value"],
+            capture_output=True, text=True, timeout=5).stdout.strip()
+        home = pwd.getpwuid(int(uid)).pw_dir
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+        return None
+    if int(uid) < 1000:
+        return None
+    path = os.path.join(home, USER_CONF)
+    try:
+        with open(path) as f:
+            return parse_choice(f.read())
+    except OSError:
+        return dict(DEFAULT_CHOICE)
 
 
-def apply(hc, node, level, init):
+def balanced(hexcolour, scale):
+    rgb = (int(hexcolour[i:i + 2], 16) for i in (0, 2, 4))
+    return [round(c * w * scale) for c, w in zip(rgb, WHITE_BALANCE)]
+
+
+def messages(hc, choice, level, init):
+    effect = choice["effect"]
+    mode, dims_by_colour, needs_colour = EFFECTS[effect]
+    msgs = [hc.buf(HELLO)] if init else []
+
+    r = g = b = r2 = g2 = b2 = 0
+    if effect != "off" and needs_colour:
+        scale = SCALE.get(level, 1.0) if dims_by_colour else 1.0
+        r, g, b = balanced(choice["colour"], scale)
+        if effect == "breathe":
+            r2, g2, b2 = balanced(choice["colour"], scale * BREATHE_FLOOR)
+
+    if not dims_by_colour and level:
+        # The animated rainbows use the chip's own level.
+        msgs.append(hc.buf(bytes([0x5A, 0xBA, 0xC5, 0xC4, level])))
+
+    speed = {0x00: 0x00, 0x01: BREATHE_SPEED}.get(mode, SPEED_MEDIUM)
+    msgs.append(hc.buf(bytes([0x5A, 0xB3, 0x00, mode, r, g, b, speed, 0x00, 0x00, r2, g2, b2])))
+    if init:
+        msgs += [hc.buf(SET), hc.buf(APPLY)]
+    return msgs
+
+
+def apply(hc, node, choice, level, init):
     if level is None:
         return
     if level == 0:
         # The kernel has already told the chip "off".
         say("level 0 — off.")
         return
-    msgs = []
-    if init:
-        msgs.append(hc.buf(HELLO))
-    msgs.append(colour_message(hc, level))
-    if init:
-        msgs += [hc.buf(SET), hc.buf(APPLY)]
-    if hc.write_all(node, msgs):
-        say(f"level {level} — rings at {round(SCALE[level] * 100)} %.")
+    if hc.write_all(node, messages(hc, choice, level, init)):
+        if EFFECTS[choice["effect"]][1]:
+            say(f"{describe(choice)} — level {level}, {round(SCALE[level] * 100)} %.")
+        else:
+            say(f"{describe(choice)} — level {level}.")
 
 
 def watch_upower():
@@ -157,21 +397,22 @@ def watch_upower():
         return None
 
 
-def main():
-    hc = load_controller_helper()
-    args = sys.argv[1:]
+def open_nudge():
+    """The pipe `aq handheld rings` pokes. Opened for reading AND writing so it
+    never reports end-of-file when the last poker leaves."""
+    os.makedirs(os.path.dirname(NUDGE), mode=0o755, exist_ok=True)
+    try:
+        if not stat.S_ISFIFO(os.stat(NUDGE).st_mode):
+            os.unlink(NUDGE)
+    except FileNotFoundError:
+        pass
+    if not os.path.exists(NUDGE):
+        os.mkfifo(NUDGE)
+    os.chmod(NUDGE, 0o622)
+    return os.open(NUDGE, os.O_RDWR | os.O_NONBLOCK)
 
-    if args[:1] == ["--once"]:
-        level = int(args[1]) if len(args) > 1 else read_level()
-        node = hc.find_vendor_device()
-        if node is None:
-            say("no ROG Xbox Ally X controller here.")
-            return 1
-        with open(os.path.join(LED, "brightness"), "w") as f:
-            f.write(str(level))
-        apply(hc, node, level, init=True)
-        return 0
 
+def main_service(hc):
     if not os.path.isdir(LED):
         say(f"{LED} does not exist — no stick rings to drive here.")
         return 0
@@ -179,7 +420,15 @@ def main():
     first_boot_default()
 
     mon = watch_upower()
-    node, last = None, None
+    try:
+        nudge_fd = open_nudge()
+    except OSError as e:
+        say(f"could not make {NUDGE} ({e.strerror}); changes will show within ten seconds instead.")
+        nudge_fd = None
+
+    node, last_level = None, None
+    choice = screen_user_choice() or dict(DEFAULT_CHOICE)
+    last_choice = None
     while True:
         current = hc.find_vendor_device()
         if current is None:
@@ -192,24 +441,54 @@ def main():
                 current = (current, os.stat(current).st_ctime_ns)
             except OSError:
                 current = (current, 0)
-            if current != node:
-                # The controller (re)appeared: boot, or after sleep.
+            effect_changed = last_choice is not None and choice["effect"] != last_choice["effect"]
+            if current != node or effect_changed:
+                # The controller (re)appeared — boot, or after sleep — or the
+                # effect changed: the full sequence.
                 node = current
-                apply(hc, node[0], level, init=True)
-            elif level != last:
-                apply(hc, node[0], level, init=False)
-            last = level
+                apply(hc, node[0], choice, level, init=True)
+            elif level != last_level or choice != last_choice:
+                apply(hc, node[0], choice, level, init=False)
+            last_level, last_choice = level, dict(choice)
 
-        if mon is None:
-            time.sleep(RECHECK_S)
-            continue
-        ready, _, _ = select.select([mon.stdout], [], [], RECHECK_S)
-        if ready:
+        watched = [s for s in (mon.stdout if mon else None, nudge_fd) if s is not None]
+        ready, _, _ = select.select(watched, [], [], RECHECK_S)
+        if mon is not None and mon.stdout in ready:
             if not mon.stdout.readline():
                 say("the UPower watch ended; starting it again.")
                 mon = watch_upower()
-            # Let the kernel finish writing the level before reading it.
-            time.sleep(0.1)
+        if nudge_fd is not None and nudge_fd in ready:
+            try:
+                while os.read(nudge_fd, 64):
+                    pass
+            except OSError as e:
+                if e.errno not in (errno.EAGAIN, errno.EWOULDBLOCK):
+                    raise
+        # Let the kernel finish writing the level before reading it.
+        time.sleep(0.1)
+        choice = screen_user_choice() or choice
+
+
+def main():
+    args = sys.argv[1:]
+
+    if args[:1] == ["set"]:
+        return cmd_set(args[1:])
+
+    hc = load_controller_helper()
+
+    if args[:1] == ["--once"]:
+        level = int(args[1]) if len(args) > 1 else read_level()
+        node = hc.find_vendor_device()
+        if node is None:
+            say("no ROG Xbox Ally X controller here.")
+            return 1
+        with open(os.path.join(LED, "brightness"), "w") as f:
+            f.write(str(level))
+        apply(hc, node, screen_user_choice() or dict(DEFAULT_CHOICE), level, init=True)
+        return 0
+
+    return main_service(hc)
 
 
 if __name__ == "__main__":

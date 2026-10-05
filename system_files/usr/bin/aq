@@ -170,6 +170,10 @@ USAGE
                         the radio got their firmware. It changes nothing and
                         never asks for a password — run it and paste the lot.
 
+    aq handheld rings   Handheld edition only: the stick rings' colour and
+                        effect — 'aq handheld rings blue', '... rainbow',
+                        '... breathe pink', '... off'. No password.
+
     aq welcome          Show the AquariusOS welcome again — the three-step
                         window a new account sees at its first login: how the
                         keyboard should work, which creator apps you want, and
@@ -3581,6 +3585,10 @@ aq handheld — how this handheld is doing, in one screen
                          for a password, and it is the first thing to run when
                          something on the handheld is not right. Paste all of
                          it into a bench log.
+    aq handheld rings    The stick rings' colour and effect: a colour (white,
+                         blue, red ... or #RRGGBB), breathe, cycle, rainbow,
+                         off or on. No password. Brightness is the "Keyboard"
+                         slider in the quick settings menu.
 
 This only exists on the HANDHELD edition of AquariusOS, which is built for one
 computer: the ROG Xbox Ally X. On a desktop PC there is nothing for it to
@@ -3613,9 +3621,15 @@ handheld() {
 
     case "${1:-}" in
         "" | status) "${AQ_HANDHELD_STATUS}" ;;
+        rings)
+            shift
+            # The person's half of /usr/libexec/aquarius-ally-rings: it writes
+            # ~/.config/aquarius/rings.conf and nudges the ring service.
+            exec /usr/libexec/aquarius-ally-rings set "$@"
+            ;;
         *)
             echo "aq: '${1}' is not something 'aq handheld' knows how to do." >&2
-            echo "    It understands: status." >&2
+            echo "    It understands: status, rings." >&2
             return 1
             ;;
     esac

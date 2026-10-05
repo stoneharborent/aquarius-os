@@ -426,6 +426,11 @@ on:
       # profile, with GNOME's on-screen keyboard; and the Keyboard slider really
       # dimming the stick rings. Builds and checks only; never publishes.
       - feat/handheld-desktop
+      # Handheld bench round 2, 2026-10-04: Desktop → Game Mode no longer hangs
+      # (steamos-manager left on a dead bus), a 128-point app grid, and a
+      # full-width on-screen keyboard that closes with a swipe down. Builds and
+      # checks only; never publishes.
+      - fix/handheld-desktop-round2
       # The password boxes that asked for nothing. GNOME Software's rpm-ostree
       # plug-in — a weak dependency nobody chose — was asking polkit to upgrade
       # an operating system that does not update that way, about once an hour,
@@ -6918,7 +6923,9 @@ jobs:
                      /usr/libexec/aquarius-handheld-input \
                      /usr/libexec/aquarius-ally-rings \
                      /usr/lib/udev/rules.d/72-aquarius-ally-rings.rules \
-                     /usr/share/gnome-shell/extensions/aquarius-handheld@stoneharborent.github.io; do
+                     /usr/share/gnome-shell/extensions/aquarius-handheld@stoneharborent.github.io \
+                     /usr/lib/systemd/user/steamos-manager.service.d/60-aquarius-session.conf \
+                     /usr/lib/systemd/logind.conf.d/60-aquarius-handheld.conf; do
               [ -e "$f" ] && bad "$f is on a desktop image" || ok "$f is not on this image"
             done
             # `aq` is ONE program on all three images, so `aq handheld` exists
