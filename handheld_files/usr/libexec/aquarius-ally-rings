@@ -112,6 +112,13 @@ EFFECTS = {
     "off": (0x00, True, False),
 }
 SPEED_MEDIUM = 0xEB
+SPEED_FAST = 0xF5
+# Breathe fades between the colour and a dim copy of it, never to black: with
+# black at the bottom the chip sat dark for about ten seconds between pulses
+# (bench, 2026-10-05). Fast speed with an 8 % floor brings the light back in a
+# second or two; Royce picked it from three variants.
+BREATHE_SPEED = SPEED_FAST
+BREATHE_FLOOR = 0.08
 DEFAULT_CHOICE = {"effect": "solid", "colour": PRESETS["white"]}
 
 HELLO = bytes.fromhex("5a 41 53 55 53 20 54 65 63 68 2e 49 6e 63 2e")
@@ -344,20 +351,19 @@ def messages(hc, choice, level, init):
     mode, dims_by_colour, needs_colour = EFFECTS[effect]
     msgs = [hc.buf(HELLO)] if init else []
 
-    if effect == "off":
-        r = g = b = 0
-    elif needs_colour:
-        r, g, b = balanced(choice["colour"], SCALE.get(level, 1.0) if dims_by_colour else 1.0)
-    else:
-        r = g = b = 0
+    r = g = b = r2 = g2 = b2 = 0
+    if effect != "off" and needs_colour:
+        scale = SCALE.get(level, 1.0) if dims_by_colour else 1.0
+        r, g, b = balanced(choice["colour"], scale)
+        if effect == "breathe":
+            r2, g2, b2 = balanced(choice["colour"], scale * BREATHE_FLOOR)
 
     if not dims_by_colour and level:
         # The animated rainbows use the chip's own level.
         msgs.append(hc.buf(bytes([0x5A, 0xBA, 0xC5, 0xC4, level])))
 
-    speed = 0x00 if mode == 0x00 else SPEED_MEDIUM
-    # Breathe fades between two colours; the second is black, so it pulses.
-    msgs.append(hc.buf(bytes([0x5A, 0xB3, 0x00, mode, r, g, b, speed, 0x00, 0x00, 0, 0, 0])))
+    speed = {0x00: 0x00, 0x01: BREATHE_SPEED}.get(mode, SPEED_MEDIUM)
+    msgs.append(hc.buf(bytes([0x5A, 0xB3, 0x00, mode, r, g, b, speed, 0x00, 0x00, r2, g2, b2])))
     if init:
         msgs += [hc.buf(SET), hc.buf(APPLY)]
     return msgs
