@@ -890,7 +890,6 @@ aq_file_has "/usr/lib/systemd/user/gamescope-session-plus@.service.d/60-aquarius
 # The stick rings in Game Mode: a Decky plugin of ours, hand-written (no build
 # step), copied into Decky's plugins folder at boot if Decky is installed.
 say "The AquariusRings Decky plugin, and the service that installs it"
-aq_link_on "${AQ_SYS}/multi-user.target.wants" "${AQ_SYS}" aquarius-decky-rings.service
 AQ_DR=/usr/share/aquarius/decky/AquariusRings
 if python3 - "${AQ_DR}" > /tmp/aq-decky.txt 2>&1 << 'PY'
 import ast, json, re, sys
@@ -1071,6 +1070,8 @@ aq_link_on "${AQ_SYS}/multi-user.target.wants" "${AQ_SYS}" inputplumber.service
 aq_link_on "${AQ_SYS}/sleep.target.wants" "${AQ_SYS}" inputplumber-suspend.service
 aq_link_on "${AQ_SYS}/multi-user.target.wants" "${AQ_SYS}" steamos-manager.service
 aq_link_on "${AQ_SYS}/multi-user.target.wants" "${AQ_SYS}" powerstation.service
+# The AquariusRings Decky plugin's installer (section 4c checks the plugin).
+aq_link_on "${AQ_SYS}/multi-user.target.wants" "${AQ_SYS}" aquarius-decky-rings.service
 aq_link_on "${AQ_GAME_WANTS}" "${AQ_USR}" steamos-manager.service
 aq_link_on "${AQ_GAME_WANTS}" "${AQ_USR}" steamos-powerbuttond.service
 # The controller layout (section 2b). The udev rule starts it at boot and
