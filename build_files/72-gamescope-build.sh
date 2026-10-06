@@ -36,7 +36,8 @@
 # different way (through GBM), which the driver always makes contiguous.
 #
 # THE FIX is to make gamescope ask the same way GNOME does. Somebody has already
-# written it — NightHammer1000's branch `poc/gamescope-gbm-route` — and it is
+# written it — NightHammer1000's branch `poc/gamescope-gbm-route`, which we now
+# keep a copy of in stoneharborent/gamescope (see THE PIN below) — and it is
 # confirmed working on NVIDIA cards including Blackwell. It is NOT in upstream
 # gamescope and NOT in Fedora's package, so until it is, the NVIDIA image builds
 # its own.
@@ -67,9 +68,17 @@ source /ctx/build_files/aq-lib.sh
 # ------------------------------------------------------------------------------
 # THE PIN
 # ------------------------------------------------------------------------------
-# NightHammer1000/gamescope, branch poc/gamescope-gbm-route, head on 2026-09-17.
-# The commit message is "drm, rendervulkan: apply final review findings".
-AQ_GS_REPO="https://github.com/NightHammer1000/gamescope.git"
+# Originally NightHammer1000/gamescope, branch poc/gamescope-gbm-route, head on
+# 2026-09-17. The commit message is "drm, rendervulkan: apply final review findings".
+#
+# ⚠️ WHERE THE SOURCE LIVES NOW. NightHammer1000 deleted that repository around
+# 2026-10-06, and every NVIDIA build broke at "Fetching the source". The exact
+# same commit (same id, below) was recovered from Valve's own gamescope repo and
+# copied into OUR account: github.com/stoneharborent/gamescope (a fork of
+# ValveSoftware/gamescope), same branch name. Nothing in the code changed — only
+# the address. Keeping our own copy means the build never again depends on a
+# stranger's repository staying online.
+AQ_GS_REPO="https://github.com/stoneharborent/gamescope.git"
 AQ_GS_COMMIT="2bfc18c736520b7d4f9756977213ea439daa1c63"
 AQ_GS_BRANCH="poc/gamescope-gbm-route"
 
