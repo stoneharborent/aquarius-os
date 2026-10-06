@@ -4006,6 +4006,27 @@ jobs:
             bad "kernel module is ${k} but the driver is ${d}"
           fi
 
+          # The driver pin (2026-10-06). While aquarius-os.env holds the NVIDIA
+          # image on driver 610.57.04 (615.71.09 crashes the RTX 5080 with
+          # Xid 13), the build writes the version it was pinned to into
+          # /usr/share/aquarius/nvidia.txt. Read it back and make sure the
+          # finished image really has that driver. With the pin removed the
+          # pinned_driver= line is empty and this only prints.
+          echo "== which driver, and was it pinned =="
+          if [ -r /usr/share/aquarius/nvidia.txt ]; then
+            sed 's/^/     /' /usr/share/aquarius/nvidia.txt
+            want="$(sed -n 's/^pinned_driver=//p' /usr/share/aquarius/nvidia.txt)"
+            if [ -z "${want}" ]; then
+              ok "no driver pin — this image follows Universal Blue's newest driver (${d})"
+            elif [ "${d}" = "${want}" ] && [ "${k}" = "${want}" ]; then
+              ok "driver PINNED to ${want}, and the image really has ${d}"
+            else
+              bad "the build was pinned to driver ${want} but the image has driver ${d} / module ${k}"
+            fi
+          else
+            bad "/usr/share/aquarius/nvidia.txt is missing — build_files/60-nvidia.sh did not finish"
+          fi
+
           # And the module file has to be filed under the kernel that is
           # actually in this image, not the one it was built on.
           KERNEL="$(rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core)"

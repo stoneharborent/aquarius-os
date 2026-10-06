@@ -197,6 +197,35 @@ build $target_image=image_name $tag=default_tag $nvidia="0" $handheld="0":
     BUILD_ARGS+=("--build-arg" "HANDHELD=${handheld}")
     BUILD_ARGS+=("--build-arg" "AKMODS_NVIDIA_IMAGE={{ akmods_nvidia_image }}")
     BUILD_ARGS+=("--build-arg" "AKMODS_IMAGE={{ akmods_image }}")
+    # Which BUILD of Universal Blue's two module boxes to use. Normally today's
+    # (the `main-44` tag). The NVIDIA image can instead be held on one exact
+    # older build by the NVIDIA_PIN_* lines in aquarius-os.env — see the big
+    # warning there for why (driver 615.71.09 crashes the RTX 5080) and how to
+    # remove it. The AMD/Intel and handheld images never read those lines.
+    AKMODS_NVIDIA_REF=":main-{{ fedora_version }}"
+    AKMODS_REF=":main-{{ fedora_version }}"
+    NVIDIA_EXPECTED_DRIVER=""
+    if [ "${nvidia}" = "1" ] && [ -n "${NVIDIA_PIN_AKMODS_NVIDIA_REF:-}${NVIDIA_PIN_AKMODS_REF:-}" ]; then
+        if [ -z "${NVIDIA_PIN_AKMODS_NVIDIA_REF:-}" ] || [ -z "${NVIDIA_PIN_AKMODS_REF:-}" ]; then
+            echo "just build: aquarius-os.env pins only ONE of Universal Blue's two module boxes." >&2
+            echo "            NVIDIA_PIN_AKMODS_NVIDIA_REF and NVIDIA_PIN_AKMODS_REF must both be" >&2
+            echo "            set (pinned) or both be empty (not pinned) — otherwise the kernel and" >&2
+            echo "            the NVIDIA driver come from different days and do not match." >&2
+            exit 1
+        fi
+        AKMODS_NVIDIA_REF="${NVIDIA_PIN_AKMODS_NVIDIA_REF}"
+        AKMODS_REF="${NVIDIA_PIN_AKMODS_REF}"
+        NVIDIA_EXPECTED_DRIVER="${NVIDIA_PIN_DRIVER:-}"
+        echo "================================================================"
+        echo " NVIDIA DRIVER PIN IS ON (see aquarius-os.env)"
+        echo "   NVIDIA box : {{ akmods_nvidia_image }}${AKMODS_NVIDIA_REF}"
+        echo "   common box : {{ akmods_image }}${AKMODS_REF}"
+        echo "   driver must be: ${NVIDIA_EXPECTED_DRIVER:-<not stated>}"
+        echo "================================================================"
+    fi
+    BUILD_ARGS+=("--build-arg" "AKMODS_NVIDIA_REF=${AKMODS_NVIDIA_REF}")
+    BUILD_ARGS+=("--build-arg" "AKMODS_REF=${AKMODS_REF}")
+    BUILD_ARGS+=("--build-arg" "NVIDIA_EXPECTED_DRIVER=${NVIDIA_EXPECTED_DRIVER}")
     BUILD_ARGS+=("--build-arg" "IMAGE_NAME=${target_image}")
     BUILD_ARGS+=("--build-arg" "IMAGE_VENDOR={{ repo_organization }}")
     # (The Aquarius Desktop's three pinned pieces used to be passed here. That

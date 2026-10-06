@@ -157,6 +157,24 @@ Two things changed as a result:
 
 ---
 
+## ⚠️ Exception, since 2026-10-06: the NVIDIA image's kernel is held
+
+Everything on this page about "following Universal Blue every day" is true for
+the AMD/Intel and handheld images. **The NVIDIA image is currently held on
+kernel 7.2.4-200.fc44**, because it is held on NVIDIA driver 610.57.04 — the
+newer driver, 615.71.09, crashes the RTX 5080 under sustained CUDA work.
+
+The mechanism is the same pin as always, just pointed at one exact older build
+of Universal Blue's boxes (by fingerprint) instead of their newest. So the
+kernel still matches the modules exactly; it just does not move. When you see
+`box=…@sha256:…` in `/usr/share/aquarius/kernel.txt`, that is why.
+
+The reason, the pin itself, and how to remove it:
+[`nvidia-notes.md` → "The driver pin (2026-10-06)"](nvidia-notes.md#the-driver-pin-2026-10-06).
+The pin lives in `aquarius-os.env` (the `NVIDIA_PIN_*` lines).
+
+---
+
 ## How to bump the kernel
 
 You mostly do not. The kernel follows Universal Blue automatically: they rebuild

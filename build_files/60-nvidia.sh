@@ -112,6 +112,15 @@ esac
 # Printing the whole tree costs nothing and is the single most useful thing in
 # the log when Universal Blue changes their layout.
 say "What is in the NVIDIA parts box"
+# Which BUILD of the box this is. Normally Universal Blue's newest (a tag such
+# as :main-44). Since 2026-10-06 it is one exact older build, held by its
+# fingerprint (@sha256:…), because driver 615.71.09 crashes the RTX 5080 under
+# sustained CUDA work. The NVIDIA_PIN_* lines in aquarius-os.env hold the pin,
+# the reason and the steps to remove it.
+echo "Box used: ${AQ_NVIDIA_BOX:-<not told — an old Containerfile?>}"
+if [ -n "${AQ_NVIDIA_EXPECTED_DRIVER:-}" ]; then
+    echo "⚠️  DRIVER PIN IS ON: this image must end up with driver ${AQ_NVIDIA_EXPECTED_DRIVER}."
+fi
 find "${AKMODS}" -maxdepth 3 > /tmp/aq-akmods-tree.txt 2>/dev/null || true
 head -60 /tmp/aq-akmods-tree.txt
 echo "..."
@@ -225,6 +234,52 @@ if [ "${AQ_KMOD_VERSION}" = "${AQ_DRIVER_VERSION}" ]; then
 else
     bad "kernel module is ${AQ_KMOD_VERSION} but the driver is ${AQ_DRIVER_VERSION}"
 fi
+
+# ------------------------------------------------------------------------------
+# The driver pin (2026-10-06) — is this the driver we meant to ship?
+# ------------------------------------------------------------------------------
+# While the NVIDIA image is held on driver 610.57.04 (see aquarius-os.env, the
+# NVIDIA_PIN_* lines), the build is told which driver it MUST end up with. If
+# the fingerprint in aquarius-os.env were ever wrong, or Universal Blue's old
+# build somehow held a different driver, this stops the build instead of
+# quietly shipping the driver that crashes the RTX 5080 (615.71.09, Xid 13).
+# With the pin removed, AQ_NVIDIA_EXPECTED_DRIVER is empty and this only prints.
+AQ_KMOD_FULL="$(rpm -q kmod-nvidia)"
+AQ_IMAGE_KERNEL_NOW="$(rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core)"
+echo
+echo "================================================================"
+echo " AQUARIUS NVIDIA DRIVER : ${AQ_DRIVER_VERSION}"
+echo " AQUARIUS KERNEL        : ${AQ_IMAGE_KERNEL_NOW}"
+echo " kernel module package  : ${AQ_KMOD_FULL}"
+echo " from box               : ${AQ_NVIDIA_BOX:-<unknown>}"
+if [ -n "${AQ_NVIDIA_EXPECTED_DRIVER:-}" ]; then
+    echo " driver pin             : ${AQ_NVIDIA_EXPECTED_DRIVER} (PINNED — see aquarius-os.env)"
+else
+    echo " driver pin             : none (following Universal Blue's newest)"
+fi
+echo "================================================================"
+if [ -n "${AQ_NVIDIA_EXPECTED_DRIVER:-}" ]; then
+    if [ "${AQ_DRIVER_VERSION}" = "${AQ_NVIDIA_EXPECTED_DRIVER}" ] \
+        && [ "${AQ_KMOD_VERSION}" = "${AQ_NVIDIA_EXPECTED_DRIVER}" ]; then
+        ok "the driver is ${AQ_DRIVER_VERSION}, exactly what the pin asks for"
+    else
+        bad "the pin asks for driver ${AQ_NVIDIA_EXPECTED_DRIVER} but this image got driver ${AQ_DRIVER_VERSION} / module ${AQ_KMOD_VERSION} — check NVIDIA_PIN_* in aquarius-os.env"
+    fi
+fi
+
+# Write it down, so anybody can ask a finished machine which driver it has and
+# whether it was pinned:  cat /usr/share/aquarius/nvidia.txt
+install -d -m 0755 /usr/share/aquarius
+{
+    echo "# Which NVIDIA driver this image ships. Written by build_files/60-nvidia.sh."
+    echo "# See docs/restart/nvidia-notes.md."
+    echo "driver=${AQ_DRIVER_VERSION}"
+    echo "kmod=${AQ_KMOD_FULL}"
+    echo "kernel=${AQ_IMAGE_KERNEL_NOW}"
+    echo "box=${AQ_NVIDIA_BOX:-unknown}"
+    echo "pinned_driver=${AQ_NVIDIA_EXPECTED_DRIVER:-}"
+} > /usr/share/aquarius/nvidia.txt
+chmod 0644 /usr/share/aquarius/nvidia.txt
 
 # Put RPM Fusion back, and switch the NVIDIA repositories off again so that a
 # later `dnf install` on this machine cannot pull an unexpected driver update.

@@ -119,6 +119,123 @@ not there.
 
 ---
 
+## The driver pin (2026-10-06)
+
+> ⚠️ **Right now the NVIDIA image does NOT follow Universal Blue's newest
+> driver.** It is held on driver **610.57.04** with kernel **7.2.4-200.fc44**.
+> The AMD/Intel and handheld images are not affected and still follow
+> Universal Blue every day.
+
+### Why
+
+On 11 September 2026 Universal Blue moved their NVIDIA box to driver
+**615.71.09** (the first AquariusOS build with it was `c1c7d32`, the same day).
+That driver crashes the RTX 5080 under any sustained CUDA work — AI tools,
+ComfyUI, PyTorch. The kernel log fills with `Xid 13` / `Illegal Instruction
+Encoding` / `SKEDCHECK … failed`, and the graphics card locks up until the
+computer is restarted.
+
+It was proven on the bench on 6 October 2026: same machine, same PyTorch, same
+tests. On 615.71.09 it fails within seconds. Booted into the older image
+`aquarius-os-nvidia:20260910-fcd0793` (kernel 7.2.4 + driver 610.57.04) it
+passes everything — 174 TFLOPS sustained, zero Xid errors. Clocks, power, PCIe,
+the PyTorch build, cuBLAS and ComfyUI were all ruled out. The full log is the
+**Log** section of `Workflow/Branches/Animation/MoCap/Processing/ComfyUI
+Pipeline.md`.
+
+### How the pin works
+
+Normally the build takes Universal Blue's boxes by **tag** — `main-44`, which
+means "whatever they built most recently". A tag is a label they move every
+day. They even rebuild their very specific tags in place: on 6 October
+`main-44-7.2.4-200.fc44` already held the broken driver. So a tag cannot hold a
+pin.
+
+Instead the NVIDIA image takes both boxes by **fingerprint** (a *digest*, the
+long `@sha256:…` string). A fingerprint is a checksum of one exact build and can
+never point at anything else. The two fingerprints are Universal Blue's builds
+from 10 September 2026, the ones the good AquariusOS image `fcd0793` used:
+
+| Box | Fingerprint | What is in it |
+| --- | --- | --- |
+| `ghcr.io/ublue-os/akmods-nvidia-open` | `@sha256:d7620a16…a3e7cf8` | NVIDIA driver 610.57.04, built for kernel 7.2.4-200.fc44 |
+| `ghcr.io/ublue-os/akmods` | `@sha256:6801d0d5…b589d51b` | kernel 7.2.4-200.fc44 (and the webcam / Xbox modules for it) |
+
+**Both** are pinned, together. The common box decides which kernel the image
+gets (see [`kernel.md`](kernel.md)), and the driver only loads on the kernel it
+was built for. Pin only one and the build stops with "Universal Blue's two
+module boxes disagree".
+
+Where it lives:
+
+- **`aquarius-os.env`** — the three `NVIDIA_PIN_*` lines, under a big warning
+  that repeats everything on this page. **This is the only place to change.**
+- `Justfile` (`just build`) — passes those lines to the build, for the NVIDIA
+  image only.
+- `Containerfile` — takes either a tag or a fingerprint for each box
+  (`AKMODS_NVIDIA_REF`, `AKMODS_REF`); the default is still the `main-44` tag.
+- `build_files/60-nvidia.sh` — prints `AQUARIUS NVIDIA DRIVER` and
+  `AQUARIUS KERNEL` in the build log, **stops the build** if the driver is not
+  the pinned version, and writes `/usr/share/aquarius/nvidia.txt`.
+- `.github/workflows/build.yml` — reads that file back inside the finished image
+  and checks the driver again.
+
+On a machine running the NVIDIA image you can see it for yourself:
+
+```
+cat /usr/share/aquarius/nvidia.txt
+```
+
+`pinned_driver=610.57.04` means the pin is on; an empty `pinned_driver=` means it
+is off.
+
+### How to remove the pin
+
+Do this once NVIDIA have released a driver newer than 615.71.09 that fixes the
+crash, and Universal Blue have picked it up.
+
+1. Open `aquarius-os.env` and empty the three values, so each line ends in `""`:
+
+   ```
+   NVIDIA_PIN_AKMODS_NVIDIA_REF=""
+   NVIDIA_PIN_AKMODS_REF=""
+   NVIDIA_PIN_DRIVER=""
+   ```
+
+   Empty means "no pin". (Deleting the whole warning block works too.)
+2. Commit that on a side branch, add the branch name to the list at the top of
+   `.github/workflows/build.yml` like every other fix branch, and push. GitHub
+   builds all three images.
+3. In the NVIDIA build's log, open **Build the image** and search for
+   `AQUARIUS NVIDIA DRIVER`. It shows the driver the image now has. It must not
+   be 615.71.09.
+4. **Test on the bench before merging.** Put the bench on the new driver,
+   reboot, open a terminal and run:
+
+   ```
+   ~/ComfyUI/venv/bin/python "/run/media/rorobeckley/Internal Drive/Workflow/Branches/Animation/MoCap/Processing/gpu_stress.py"
+   ```
+
+   It must print **PASS**. Then run:
+
+   ```
+   journalctl -k | grep -i xid
+   ```
+
+   That must print **nothing at all**. Any line with `Xid` in it means the new
+   driver is still broken — put the three values back and wait for the next one.
+5. Only then merge.
+
+### One risk worth knowing
+
+The pinned builds are old, untagged builds sitting in Universal Blue's registry.
+If they ever clean those up, the NVIDIA build will stop with an error saying it
+cannot find the image. Nothing broken would ship — the build simply would not
+finish — and the fix is either to remove the pin (if a good driver exists by
+then) or to choose another known-good build.
+
+---
+
 ## What else goes in
 
 Not just the driver:

@@ -88,6 +88,31 @@ ARG AKMODS_NVIDIA_IMAGE=ghcr.io/ublue-os/akmods-nvidia-open
 # occasionally do.
 ARG AKMODS_IMAGE=ghcr.io/ublue-os/akmods
 
+# WHICH BUILD of those two boxes. These are glued straight onto the end of the
+# two names above, so each one is EITHER a tag (starts with a colon) OR a
+# fingerprint (starts with an @):
+#
+#   :main-44            "whatever Universal Blue published most recently"
+#   @sha256:d7620a…     "this one exact build, forever"
+#
+# The default is the tag, which is how AquariusOS has always worked: every
+# build picks up Universal Blue's newest kernel and drivers.
+#
+# ⚠️ SINCE 2026-10-06 THE NVIDIA IMAGE IS HELD ON AN OLDER BUILD. NVIDIA driver
+# 615.71.09 crashes the RTX 5080 under sustained CUDA work (Xid 13), so the
+# NVIDIA image is pinned to Universal Blue's boxes from 10 September 2026
+# (driver 610.57.04, kernel 7.2.4). The pin itself lives in aquarius-os.env —
+# the NVIDIA_PIN_* lines, with the full story and how to remove it — and the
+# Justfile passes it in here only for the NVIDIA image. Nothing in this file
+# needs to change to pin or un-pin.
+ARG AKMODS_NVIDIA_REF=:main-${FEDORA_VERSION}
+ARG AKMODS_REF=:main-${FEDORA_VERSION}
+
+# The NVIDIA driver version the image MUST end up with, or empty for "any".
+# Set from NVIDIA_PIN_DRIVER in aquarius-os.env while the pin above is on;
+# build_files/60-nvidia.sh stops the build if the driver is anything else.
+ARG NVIDIA_EXPECTED_DRIVER=
+
 # Which xremap — the program behind Aquarius Keys, the Mac-style keyboard
 # shortcuts. Nobody packages it for Fedora, so we compile it, and we compile
 # ONE exact version. The commit id is the real pin: it is a checksum of the
@@ -157,7 +182,10 @@ COPY kcm /kcm
 #
 # This is how "one recipe, two images" stays true without an `if` in the recipe.
 FROM scratch AS nvidia-src-0
-FROM ${AKMODS_NVIDIA_IMAGE}:main-${FEDORA_VERSION} AS nvidia-src-1
+#
+# (${AKMODS_NVIDIA_REF} is the tag or fingerprint explained at the top of this
+# file — on the NVIDIA image it is currently the 2026-09-10 fingerprint.)
+FROM ${AKMODS_NVIDIA_IMAGE}${AKMODS_NVIDIA_REF} AS nvidia-src-1
 FROM nvidia-src-${NVIDIA} AS nvidia-src
 
 # ------------------------------------------------------------------------------
@@ -205,7 +233,12 @@ FROM gamescope-src-${NVIDIA} AS gamescope-src
 # a computer with Secure Boot switched on refuses to load. Asking somebody to
 # turn Secure Boot off so that OBS can pretend to be a webcam is not a trade we
 # are willing to offer.
-FROM ${AKMODS_IMAGE}:main-${FEDORA_VERSION} AS akmods-src
+#
+# ${AKMODS_REF} is the tag or fingerprint explained at the top of this file. It
+# is pinned TOGETHER with the NVIDIA box on the NVIDIA image, because this box
+# decides the kernel (step 5.8) and the NVIDIA driver needs that exact kernel.
+# The AMD/Intel and handheld images keep the plain tag.
+FROM ${AKMODS_IMAGE}${AKMODS_REF} AS akmods-src
 
 # ------------------------------------------------------------------------------
 # The keyboard remapper — compiled here, so the finished OS never sees a compiler
@@ -436,11 +469,24 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 #     time Fedora got ahead of Universal Blue it published, green, with no
 #     virtual camera and no Xbox drivers (build 33900370878, 2026-09-04).
 #     One decision, one place, both images. See docs/restart/kernel.md.
+#
+#     The five ARGs below only let steps 5.8 and 6 PRINT which build of
+#     Universal Blue's boxes they were given (and, while the NVIDIA driver pin
+#     is on, check the driver version) — so the build log always says plainly
+#     which driver and kernel went in. They are declared here, not at the top
+#     of the stage, so steps 1–5 above are not affected by them.
+ARG AKMODS_NVIDIA_IMAGE
+ARG AKMODS_NVIDIA_REF
+ARG AKMODS_IMAGE
+ARG AKMODS_REF
+ARG NVIDIA_EXPECTED_DRIVER
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=nvidia-src,source=/,target=/ctx-nvidia \
     --mount=type=bind,from=akmods-src,source=/,target=/ctx-akmods \
     --mount=type=cache,dst=/var/cache/libdnf5 \
-    NVIDIA="${NVIDIA}" /ctx/build_files/58-kernel-pin.sh
+    NVIDIA="${NVIDIA}" \
+    AQ_AKMODS_BOX="${AKMODS_IMAGE}${AKMODS_REF}" \
+    /ctx/build_files/58-kernel-pin.sh
 
 # 6. NVIDIA. Does nothing at all on the AMD / Intel image.
 #
@@ -450,7 +496,10 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=nvidia-src,source=/,target=/ctx-nvidia \
     --mount=type=cache,dst=/var/cache/libdnf5 \
-    NVIDIA="${NVIDIA}" /ctx/build_files/60-nvidia.sh
+    NVIDIA="${NVIDIA}" \
+    AQ_NVIDIA_BOX="${AKMODS_NVIDIA_IMAGE}${AKMODS_NVIDIA_REF}" \
+    AQ_NVIDIA_EXPECTED_DRIVER="${NVIDIA_EXPECTED_DRIVER}" \
+    /ctx/build_files/60-nvidia.sh
 
 # 6b. DaVinci Resolve — everything except Resolve.
 #
