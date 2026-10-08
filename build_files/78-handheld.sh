@@ -346,14 +346,14 @@ rm -f /tmp/aq-ip-versions.txt
 
 if [ -n "${AQ_IP_WANTED}" ]; then
     say "Installing InputPlumber ${AQ_IP_WANTED} — inside the known-good window (>= 0.79.0, < 0.79.5)"
-    aq_dnf install "${AQ_TERRA_FLAG}" "inputplumber-${AQ_IP_WANTED}"
+    aq_dnf_retry install --refresh "${AQ_TERRA_FLAG}" "inputplumber-${AQ_IP_WANTED}"
 else
     say "Terra offers no InputPlumber in the known-good window — taking what it has"
     echo "  The window we would have picked is 0.79.0 up to (not including) 0.79.5."
     echo "  Terra publishes one version at a time, so this is normal, not a fault."
     echo "  Whatever goes in is written into the image's own note so the bench can"
     echo "  read it: ${AQ_HANDHELD_NOTE}"
-    aq_dnf install "${AQ_TERRA_FLAG}" inputplumber
+    aq_dnf_retry install --refresh "${AQ_TERRA_FLAG}" inputplumber
 fi
 
 aq_installed inputplumber
@@ -481,8 +481,8 @@ say "The handheld services, with Terra switched on for this one command"
 # "conflicts with" the powerstation build, and dnf will not remove a package
 # to satisfy a plain install (build 35431665659 died exactly here). `swap`
 # is dnf's word for "take this one out and put that one in, in one go".
-aq_dnf swap "${AQ_TERRA_FLAG}" steamos-manager steamos-manager-powerstation
-aq_dnf install "${AQ_TERRA_FLAG}" powerbuttond
+aq_dnf_retry swap --refresh "${AQ_TERRA_FLAG}" steamos-manager steamos-manager-powerstation
+aq_dnf_retry install --refresh "${AQ_TERRA_FLAG}" powerbuttond
 
 say "Where the handheld packages came from"
 rpm -q --queryformat '       %{NAME}-%{VERSION}-%{RELEASE}  (packaged by: %{VENDOR})\n' \

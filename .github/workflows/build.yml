@@ -431,6 +431,10 @@ on:
       # full-width on-screen keyboard that closes with a swipe down. Builds and
       # checks only; never publishes.
       - fix/handheld-desktop-round2
+      # Terra installs retried up to four times, with fresh package lists:
+      # three builds failed on 2026-10-05 on a list that did not match its
+      # index. Builds and checks only; never publishes.
+      - fix/terra-retry
       # The password boxes that asked for nothing. GNOME Software's rpm-ostree
       # plug-in — a weak dependency nobody chose — was asking polkit to upgrade
       # an operating system that does not update that way, about once an hour,
