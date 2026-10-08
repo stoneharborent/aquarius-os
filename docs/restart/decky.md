@@ -23,6 +23,13 @@ not a fault and there is no setting for it — it is what Decky is.
 
 ---
 
+## The one plugin AquariusOS ships (handheld only)
+
+On the handheld edition, Decky's tab has one plugin already: **Stick rings**
+(`AquariusRings`), the colour and effect of the ROG Xbox Ally X's stick rings.
+It is ours, not from the store, and it is put in at every boot by
+`aquarius-decky-rings.service` — see `handheld.md`, "The stick rings' colour".
+
 ## Installing it
 
 **From the app grid:** an icon called **Decky Loader**. Clicking it opens a

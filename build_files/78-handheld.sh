@@ -134,6 +134,12 @@ AQ_DESKTOP_FILES=(
     usr/lib/systemd/user/steamos-manager.service.d/60-aquarius-session.conf
     usr/lib/systemd/user/steamos-manager-session-cleanup.service.d/60-aquarius-timeout.conf
     usr/lib/systemd/logind.conf.d/60-aquarius-handheld.conf
+    usr/libexec/aquarius-decky-rings-sync
+    usr/lib/systemd/system/aquarius-decky-rings.service
+    usr/share/aquarius/decky/AquariusRings/plugin.json
+    usr/share/aquarius/decky/AquariusRings/package.json
+    usr/share/aquarius/decky/AquariusRings/main.py
+    usr/share/aquarius/decky/AquariusRings/dist/index.js
 )
 
 # ==============================================================================
@@ -881,6 +887,41 @@ aq_file_has /etc/xdg/autostart/aquarius-handheld-input.desktop '^OnlyShowIn=GNOM
 aq_file_has "/usr/lib/systemd/user/gamescope-session-plus@.service.d/60-aquarius-handheld-input.conf" \
     '^ExecStartPre=-/usr/libexec/aquarius-handheld-input game$' \
     "and Game Mode puts the ordinary controller back before Steam starts"
+# The stick rings in Game Mode: a Decky plugin of ours, hand-written (no build
+# step), copied into Decky's plugins folder at boot if Decky is installed.
+say "The AquariusRings Decky plugin, and the service that installs it"
+AQ_DR=/usr/share/aquarius/decky/AquariusRings
+if python3 - "${AQ_DR}" > /tmp/aq-decky.txt 2>&1 << 'PY'
+import ast, json, re, sys
+d = sys.argv[1]
+plugin = json.load(open(f"{d}/plugin.json"))
+package = json.load(open(f"{d}/package.json"))
+assert plugin["name"] and plugin["author"] is not None and isinstance(plugin["flags"], list), "plugin.json needs name, author, flags"
+assert plugin.get("api_version", 0) >= 1, "plugin.json api_version must be 1 or more"
+assert "root" not in plugin["flags"], "the backend must run as the person, not root"
+assert package.get("type") == "module" and package.get("version"), "package.json needs type=module and a version"
+ast.parse(open(f"{d}/main.py").read())
+js = open(f"{d}/dist/index.js").read()
+m = re.search(r'const NAME = "([^"]+)"', js)
+assert m and m.group(1) == plugin["name"], "dist/index.js NAME must equal plugin.json name"
+assert "export default function" in js, "dist/index.js must export a default function"
+print(f"plugin {plugin['name']} {package['version']}, api_version {plugin['api_version']}")
+PY
+then
+    ok "AquariusRings is shaped the way Decky 3.2 loads a plugin — $(cat /tmp/aq-decky.txt)"
+else
+    sed 's/^/       /' /tmp/aq-decky.txt
+    bad "the AquariusRings Decky plugin is malformed — Decky would refuse it"
+fi
+rm -f /tmp/aq-decky.txt
+if bash -n /usr/libexec/aquarius-decky-rings-sync 2> /dev/null; then
+    ok "aquarius-decky-rings-sync is valid bash"
+else
+    bad "aquarius-decky-rings-sync has a syntax error"
+fi
+aq_file_has /usr/libexec/aquarius-decky-rings-sync '^\[ -r "\$\{UNIT\}" \] \|\| \{' \
+    "and it does nothing at all when Decky is not installed"
+
 # Desktop → Game Mode hung on a black screen on the 2026-10-04 bench: GNOME's
 # logout killed the account's message bus, steamos-manager was left talking to
 # nothing, and the session clean-up waited on it for ever. The three files that
@@ -1029,6 +1070,8 @@ aq_link_on "${AQ_SYS}/multi-user.target.wants" "${AQ_SYS}" inputplumber.service
 aq_link_on "${AQ_SYS}/sleep.target.wants" "${AQ_SYS}" inputplumber-suspend.service
 aq_link_on "${AQ_SYS}/multi-user.target.wants" "${AQ_SYS}" steamos-manager.service
 aq_link_on "${AQ_SYS}/multi-user.target.wants" "${AQ_SYS}" powerstation.service
+# The AquariusRings Decky plugin's installer (section 4c checks the plugin).
+aq_link_on "${AQ_SYS}/multi-user.target.wants" "${AQ_SYS}" aquarius-decky-rings.service
 aq_link_on "${AQ_GAME_WANTS}" "${AQ_USR}" steamos-manager.service
 aq_link_on "${AQ_GAME_WANTS}" "${AQ_USR}" steamos-powerbuttond.service
 # The controller layout (section 2b). The udev rule starts it at boot and

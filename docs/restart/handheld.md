@@ -281,7 +281,16 @@ same from a terminal, with no password:
     aq handheld rings off
 
 The choice is saved in `~/.config/aquarius/rings.conf` and the ring service
-applies it at once. In Game Mode Steam may set its own colours.
+applies it at once.
+
+**In Game Mode:** if Decky Loader is installed (`aq decky install`), its tab in
+Steam's **"..."** menu has a **Stick rings** panel — the same switch, colours
+and effects. It is our own plugin, `AquariusRings`, shipped in the image at
+`/usr/share/aquarius/decky/AquariusRings` and copied into Decky at every boot
+by `aquarius-decky-rings.service` (and by `aq decky install` straight away). It
+runs `aq handheld rings` like everything else, so the desktop, the terminal and
+Game Mode are one setting with one service driving the lights. We do not use
+HueSync: it writes the lights itself and would fight that service.
 
 The LEDs' red is weaker than their green and blue — plain white came out light
 cyan on the bench — so every colour is white-balanced first. If white still
@@ -421,6 +430,9 @@ Royce, on the Ally. Work down it and put the answers in
 - [ ] **Rainbow**, **every colour in turn** and **breathing** all animate; the
       Keyboard slider still dims them
 - [ ] The Rings switch turns them off, and on again to the same effect
+- [ ] Game Mode → "..." → Decky's plug tab → **Stick rings**: a colour changes
+      the rings, and the desktop's Rings menu shows the same choice afterwards
+- [ ] Sleep and wake **in Game Mode**: the rings come back in the chosen colour
 
 ### F. Living with it
 

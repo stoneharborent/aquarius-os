@@ -1,0 +1,19 @@
+# =============================================================================
+# aquarius-decky-rings.service — keep the AquariusRings Decky plugin current
+# =============================================================================
+# HANDHELD IMAGE ONLY. Copies the plugin that ships in this image into Decky's
+# plugins folder, before Decky starts, if Decky is installed. Does nothing if it
+# is not. See /usr/libexec/aquarius-decky-rings-sync.
+# =============================================================================
+[Unit]
+Description=Put the AquariusOS stick-rings plugin into Decky Loader
+Documentation=https://github.com/stoneharborent/aquarius-os/blob/main/docs/restart/decky.md
+Before=plugin_loader.service
+ConditionPathExists=/etc/systemd/system/plugin_loader.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/aquarius-decky-rings-sync --boot
+
+[Install]
+WantedBy=multi-user.target

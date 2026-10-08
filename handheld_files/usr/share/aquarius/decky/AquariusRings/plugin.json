@@ -1,0 +1,11 @@
+{
+  "name": "AquariusRings",
+  "author": "AquariusOS",
+  "flags": [],
+  "api_version": 1,
+  "publish": {
+    "tags": ["controller", "rgb"],
+    "description": "The ROG Xbox Ally X's stick rings: the same colours and effects as the desktop's Rings menu. Ships with AquariusOS.",
+    "image": ""
+  }
+}
