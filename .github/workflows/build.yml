@@ -442,6 +442,13 @@ on:
       # recommendation. Same arrangement as every side branch: builds and
       # checks, never publishes.
       - fix/login-password-prompts
+      # The NVIDIA driver pin, 2026-10-06: driver 615.71.09 crashes the
+      # RTX 5080 under sustained CUDA work (Xid 13), so the NVIDIA image is held
+      # on Universal Blue's 2026-09-10 boxes — driver 610.57.04, kernel 7.2.4 —
+      # by fingerprint (NVIDIA_PIN_* in aquarius-os.env). The AMD/Intel and
+      # handheld images are untouched. Same arrangement as every side branch:
+      # builds and checks, never publishes.
+      - fix/pin-nvidia-610
       # Phase G2: the third image, aquarius-os-handheld, for the one ROG Xbox
       # Ally X Royce owns. The matrix builds all three here, and the third
       # image's own checks run on all three — because half of what they prove is
@@ -4004,6 +4011,27 @@ jobs:
             ok "kernel module and driver are both version ${k}"
           else
             bad "kernel module is ${k} but the driver is ${d}"
+          fi
+
+          # The driver pin (2026-10-06). While aquarius-os.env holds the NVIDIA
+          # image on driver 610.57.04 (615.71.09 crashes the RTX 5080 with
+          # Xid 13), the build writes the version it was pinned to into
+          # /usr/share/aquarius/nvidia.txt. Read it back and make sure the
+          # finished image really has that driver. With the pin removed the
+          # pinned_driver= line is empty and this only prints.
+          echo "== which driver, and was it pinned =="
+          if [ -r /usr/share/aquarius/nvidia.txt ]; then
+            sed 's/^/     /' /usr/share/aquarius/nvidia.txt
+            want="$(sed -n 's/^pinned_driver=//p' /usr/share/aquarius/nvidia.txt)"
+            if [ -z "${want}" ]; then
+              ok "no driver pin — this image follows Universal Blue's newest driver (${d})"
+            elif [ "${d}" = "${want}" ] && [ "${k}" = "${want}" ]; then
+              ok "driver PINNED to ${want}, and the image really has ${d}"
+            else
+              bad "the build was pinned to driver ${want} but the image has driver ${d} / module ${k}"
+            fi
+          else
+            bad "/usr/share/aquarius/nvidia.txt is missing — build_files/60-nvidia.sh did not finish"
           fi
 
           # And the module file has to be filed under the kernel that is

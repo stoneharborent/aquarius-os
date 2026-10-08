@@ -139,6 +139,18 @@ install -d -m 0755 /usr/share/aquarius
 # version baked into an RPM is a fact written by the tool that built it.
 say "Which kernel Universal Blue's modules were built for"
 
+# Which BUILD of the common box this is. Normally Universal Blue's newest (a tag
+# such as :main-44). On the NVIDIA image it can be one exact older build, held
+# by its fingerprint (@sha256:…) — the NVIDIA_PIN_* lines in aquarius-os.env
+# explain why (driver 615.71.09 crashes the RTX 5080) and how to remove it.
+echo "  module box used            : ${AQ_AKMODS_BOX:-<not told — an old Containerfile?>}"
+case "${AQ_AKMODS_BOX:-}" in
+    *@sha256:*)
+        echo "  ⚠️  PINNED to one exact older build of the box (see aquarius-os.env)."
+        echo "      The kernel below is therefore deliberately NOT Universal Blue's newest."
+        ;;
+esac
+
 if [ ! -d "${KERNEL_RPMS}" ] || [ -z "$(ls -A "${KERNEL_RPMS}" 2> /dev/null || true)" ]; then
     echo "AQUARIUS ERROR: ${KERNEL_RPMS} is missing or empty." >&2
     echo "                That folder is where Universal Blue ships a copy of the" >&2
@@ -361,6 +373,7 @@ rpm -qa --queryformat '  %{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n' 'kernel*' | so
     echo "# for. See docs/restart/kernel.md."
     echo "kernel=${AQ_BOX_KERNEL}"
     echo "source=ghcr.io/ublue-os/akmods (kernel-rpms)"
+    echo "box=${AQ_AKMODS_BOX:-unknown}"
     echo "action=${AQ_ACTION}"
 } > "${STAMP}"
 chmod 0644 "${STAMP}"
