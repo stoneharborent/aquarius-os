@@ -459,6 +459,9 @@ on:
       # controller badge, put together during the build. Same arrangement as
       # every side branch: builds and checks, never publishes.
       - claude/nice-fermi-w6lk1k
+      # App store: GNOME Software's RPM plug-in taken out (installs failed with
+      # 'Read-only file system'). Builds and checks only; never publishes.
+      - fix/gnome-software-no-dnf5
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
