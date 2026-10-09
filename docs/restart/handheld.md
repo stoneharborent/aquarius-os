@@ -155,6 +155,7 @@ is the whole reason this phase is small.
 | Steam's TDP slider and battery charge limit | works |
 | Brightness slider | works |
 | Sleep and wake, with the controller alive afterwards | works **if the MCU firmware is 313 or newer** |
+| Waking with the power button | **hold it for about a second.** A quick tap is sometimes missed — see "It takes two presses to wake up" |
 | Switch to Desktop → GNOME, and back | works (phase G1) |
 | RGB on the stick rings | brightness: GNOME's quick settings → **Keyboard** slider (off, low, medium, high). Colour: white on the desktop; Steam may set its own in Game Mode. There is no colour setting on purpose |
 | The controller on the desktop | works as a mouse and a few keys — see "The desktop on the handheld" |
@@ -347,6 +348,33 @@ GNOME and work out what happened from a desktop.
 Check `aq handheld status` says `mcu_powersave` is `1`, and check the MCU
 firmware version. Those two, in that order, are the whole of this fault.
 
+### It takes two presses to wake up
+
+**Hold the power button for about a second** instead of tapping it. A held
+press wakes it every time; a quick tap sometimes does nothing.
+
+This is the Ally's firmware, not AquariusOS, and nothing in the image can fix
+it. Measured on the bench, 2026-10-04, with the kernel's sleep debugging on
+(BIOS RC73XA 317):
+
+- While the Ally sleeps, the power button goes to ASUS's embedded controller
+  first, which then signals the processor on GPIO pin 0 (labelled `power` in
+  `/proc/interrupts`). Linux puts no debounce on that pin.
+- On a missed tap the processor stayed in its deepest sleep for 13 seconds
+  straight through the press: nothing arrived on any wake line. The embedded
+  controller simply never passed it on.
+- On a slow wake the embedded controller sent four ACPI events first (which
+  the kernel rightly ignores as "not a wake-up") and only then pin 0.
+
+The only real fix is an ASUS BIOS update, if one ever addresses it. Nothing
+found so far names a version that does.
+
+To look at a wake yourself: `echo 1 | sudo tee /sys/power/pm_debug_messages`
+(lasts until a restart), sleep and wake, then
+`journalctl -k -b -g 'Triggering wakeup|Rearming|suspend-to-idle'`. "Triggering
+wakeup from IRQ 7" is the button; "IRQ 9" with "Rearming ACPI SCI" is the
+embedded controller being ignored.
+
 ### The controller is dead after waking up
 
 Almost certainly MCU firmware below 313. See the top of this page: the fix is in
@@ -389,6 +417,8 @@ Royce, on the Ally. Work down it and put the answers in
 - [ ] Steam → Power → **Suspend**; wake with the power button; **the controller
       still works** — repeat three times
 - [ ] A **stick twitch does not wake it** from a bag
+- [ ] A **one-second hold** of the power button wakes it every time (a quick
+      tap may not — that is the firmware, see "It takes two presses")
 
 ### E. The switch, both ways
 
