@@ -683,6 +683,11 @@ aq_file_has /usr/libexec/aquarius-session-root '^aq_auto_login\(\)' \
     "the root helper can still write AutomaticLogin on its own, for a cold boot"
 aq_file_has /usr/libexec/aquarius-login-mode 'auto-login on' \
     "and the boot-time program uses it for mode=game"
+if python3 /ctx/tests/test-game-login.py /usr/libexec; then
+    ok "the installed login helpers pass the fresh-handheld and desktop boot rehearsals"
+else
+    bad "the installed login helpers failed the boot rehearsals"
+fi
 
 # ------------------------------------------------------------------------------
 # Bench 3, 2026-09-20 — 'plasma' from Steam means "the desktop", never Plasma

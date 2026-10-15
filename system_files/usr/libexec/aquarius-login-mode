@@ -127,8 +127,13 @@ case "${AQ_MODE}" in
         # timed login AND the automatic one, because since GDM 50 the daemon
         # refuses a timed login unless the automatic keys name the same
         # person. See the long note in /usr/libexec/aquarius-session-root.
-        "${AQ_ROOT_HELPER}" set-session "${AQ_USER}" "${AQ_GAME_SESSION}" \
-            || say "could not set the session — this computer will show the login screen instead, which is safe."
+        if ! "${AQ_ROOT_HELPER}" set-session "${AQ_USER}" "${AQ_GAME_SESSION}"; then
+            # Do not automatically log into a leftover desktop when setting
+            # Game Mode failed. Clear any automatic login from a prior boot.
+            "${AQ_ROOT_HELPER}" switch-login off || true
+            say "could not set Game Mode; leaving automatic login off."
+            exit 0
+        fi
         # ⚠️ CLEAR FIRST, THEN SET, AND THE ORDER IS NOT A STYLE CHOICE.
         # `switch-login off` removes BOTH the timed-login lines and the
         # automatic-login ones (since 2026-09-19 a switch writes both, because

@@ -134,6 +134,7 @@ AQ_DESKTOP_FILES=(
     usr/lib/systemd/user/steamos-manager.service.d/60-aquarius-session.conf
     usr/lib/systemd/user/steamos-manager-session-cleanup.service.d/60-aquarius-timeout.conf
     usr/lib/systemd/logind.conf.d/60-aquarius-handheld.conf
+    usr/lib/systemd/user/steamos-powerbuttond.service.d/60-aquarius-session.conf
 )
 
 # ==============================================================================
@@ -1031,6 +1032,18 @@ aq_link_on "${AQ_SYS}/multi-user.target.wants" "${AQ_SYS}" steamos-manager.servi
 aq_link_on "${AQ_SYS}/multi-user.target.wants" "${AQ_SYS}" powerstation.service
 aq_link_on "${AQ_GAME_WANTS}" "${AQ_USR}" steamos-manager.service
 aq_link_on "${AQ_GAME_WANTS}" "${AQ_USR}" steamos-powerbuttond.service
+aq_file_has /usr/lib/systemd/logind.conf.d/60-aquarius-handheld.conf '^HandlePowerKey=suspend$' \
+    "a power-button tap sleeps even if Steam's button service is unavailable"
+aq_file_has /usr/lib/systemd/user/steamos-powerbuttond.service.d/60-aquarius-session.conf \
+    '^ExecStart=/usr/bin/systemd-inhibit --what=handle-power-key ' \
+    "Steam's button service prevents logind from also handling the same press"
+AQ_POWER_ACTION="$(systemd-analyze cat-config systemd/logind.conf | grep '^HandlePowerKey=' | tail -1)"
+if [ "${AQ_POWER_ACTION}" = 'HandlePowerKey=suspend' ]; then
+    ok "logind's effective fallback power-button action is suspend"
+else
+    bad "another setting overrides the handheld's suspend action: ${AQ_POWER_ACTION}"
+fi
+[ -x /usr/bin/systemd-inhibit ] || bad "systemd-inhibit is missing"
 # The controller layout (section 2b). The udev rule starts it at boot and
 # whenever the chip comes back after sleep; these links are the second voice at
 # the end of a sleep, for the case where the chip stays on and udev stays quiet.

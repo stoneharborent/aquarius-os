@@ -15,6 +15,43 @@ because a handheld with no keyboard cannot get past a password box. And it
 carries the handful of small programs that machine needs so its built-in
 controller, its gyro, its speakers and Steam's power sliders all work.
 
+### Power button and first boot — repair prepared 2026-10-15
+
+A quick press should sleep the handheld, not shut it down. Steam's button
+service now holds a systemd inhibitor while Game Mode runs: this tells Linux
+that Steam is handling the button, so Linux must not also act on the same
+press. The service stops when you leave Game Mode. If the service is absent
+or exits, the handheld's fallback action is suspend. Desktop power settings
+continue to handle the button when a desktop is running.
+
+The repair was checked against [Valve's powerbuttond 4.2 source](https://gitlab.steamos.cloud/holo/powerbuttond/-/tree/v4.2)
+and [Terra's packaging](https://github.com/terrapkg/packages/blob/frawhide/anda/games/powerbuttond/powerbuttond.spec).
+The daemon sends button events to Steam but does not itself acquire a logind
+inhibitor. The source explains the conflicting handlers; a device journal is
+still needed to confirm the exact shutdown path on the affected handheld.
+
+This change needs a new image and a restart. It has passed a systemd service
+check, but physical sleep, wake, and the long-press menu still need an Ally
+bench test. Check these in both Steam's home screen and a running game, then
+switch to the desktop and back and repeat. After waking, confirm the same
+game is still open and the controller works. While in Game Mode,
+`systemd-inhibit --list` should show Steam holding `handle-power-key`.
+
+A **fresh handheld install** already ships with `mode=game`. The boot helper
+runs before both the account service and the login screen, picks the first
+ordinary account created during installation, and sets Steam as its session
+with automatic login. Seven automated rehearsals check this path, repeated
+boots, account selection, desktop defaults, and failure handling. A missing
+Game Mode session now leaves automatic login off rather than opening a
+leftover desktop. These rehearsals do not replace a real clean installation.
+The regular AMD/Intel desktop image still defaults to the login screen;
+choose the **handheld** installer for automatic Game Mode on first boot.
+
+**Steam intro: still under investigation.** No animation fix is included in
+this repair. The installed Steam client can end the movie on input, a video
+error, or a window restart. We need logs and playback observation from the
+affected handheld to identify the cause of the stutter and early cutoff.
+
 ---
 
 ## ⚠️ Before you do anything: check the controller chip's firmware, in Windows

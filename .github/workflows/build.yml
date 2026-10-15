@@ -535,6 +535,8 @@ jobs:
       # it is not.
       - name: Check the login-screen guard actually fires
         run: ./tests/test-gdm-guard.sh
+      - name: Rehearse first handheld boot and desktop boot settings
+        run: python3 tests/test-game-login.py
       - name: Check the login screen waits the right amount for the boot animation
         run: ./tests/test-boot-hold.sh
       # external drive, a Mac's internal disk with its five volumes, and a
@@ -6750,6 +6752,11 @@ jobs:
           # off on that machine permanently. The long version is in
           # build_files/aq-lib.sh.
           L=/usr/lib/systemd/system/graphical.target.wants/aquarius-login-mode.service
+          for prerequisite in accounts-daemon.service display-manager.service; do
+            grep '^Before=' /usr/lib/systemd/system/aquarius-login-mode.service | grep -qw "$prerequisite" \
+              && ok "boot selection runs before $prerequisite" \
+              || bad "boot selection could race $prerequisite"
+          done
           if [ -L "$L" ] && [ -e "$L" ]; then
             ok "aquarius-login-mode.service is switched on from /usr"
           else
@@ -7098,6 +7105,25 @@ jobs:
             "the session half of the sliders starts with OUR Game Mode session"
           check_link /usr/lib/systemd/user/gamescope-session-plus@steam.service.wants/steamos-powerbuttond.service \
             "a short press of the power button sleeps the handheld"
+          POWER=/usr/lib/systemd/user/steamos-powerbuttond.service.d/60-aquarius-session.conf
+          grep -qx 'BindsTo=gamescope-session-plus@steam.service' "$POWER" \
+            && ok "the power-button daemon belongs to our Game Mode session" \
+            || bad "the power-button daemon is not tied to Game Mode"
+          grep -qx 'PartOf=gamescope-session-plus@steam.service' "$POWER" \
+            && ok "switching to desktop releases Steam's button inhibitor" \
+            || bad "the power-button daemon could survive a session switch"
+          grep -q '^ExecStart=/usr/bin/systemd-inhibit --what=handle-power-key --mode=block ' "$POWER" \
+            && ok "Steam owns the power button without logind handling it twice" \
+            || bad "Steam's power-button inhibitor is missing"
+          POWER_ACTION="$(systemd-analyze cat-config systemd/logind.conf | grep '^HandlePowerKey=' | tail -1)"
+          [ "$POWER_ACTION" = 'HandlePowerKey=suspend' ] \
+            && ok "the effective fallback power-button action is sleep" \
+            || bad "the fallback power-button action is not sleep: $POWER_ACTION"
+          POWER_RUNTIME="$(mktemp -d)"
+          XDG_RUNTIME_DIR="$POWER_RUNTIME" systemd-analyze verify --user steamos-powerbuttond.service \
+            && ok "systemd accepts the installed power-button service and dependencies" \
+            || bad "systemd rejected the installed power-button service"
+          rmdir "$POWER_RUNTIME"
           ETC="$(find /etc/systemd \( -name 'inputplumber*.service' -o -name 'steamos-*.service' -o -name 'powerstation.service' \) 2>/dev/null || true)"
           if [ -z "$ETC" ]; then
             ok "nothing is switched on through /etc"
