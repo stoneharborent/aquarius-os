@@ -249,6 +249,28 @@ aq_dnf install gnome-software
 say "Removing GNOME Software's rpm-ostree plug-in (it asks for a password and does nothing)"
 aq_dnf remove --no-autoremove gnome-software-rpm-ostree
 
+# ------------------------------------------------------------------------------
+# ...and the RPM plug-in too
+# ------------------------------------------------------------------------------
+# ⚠️ IF YOU LEAVE THIS OUT, INSTALLING AN APP OR AN UPDATE FROM THE APP STORE
+#    FAILS WITH: "Failed to run transaction: filesystem error: cannot create
+#    directories: Read-only file system [/usr/lib/sysimage/libdnf5/offline]".
+#    That is the exact message Royce hit on the bench PC (2026-10-05).
+#
+# Taking out the rpm-ostree plug-in above left the OTHER system-package plug-in
+# behind: the RPM one (libgs_plugin_dnf5.so). With it switched on, GNOME
+# Software lists Fedora RPMs next to Flatpaks and offers "system updates" — and
+# both end in dnf trying to write into /usr, which on AquariusOS is the sealed,
+# read-only image. It can never succeed here. Same story as the plug-in above:
+# it contradicts "a Flatpak store and nothing else".
+#
+# This one is not its own package — it ships inside `gnome-software` itself — so
+# there is nothing to `dnf remove`. We delete the one file. GNOME Software loads
+# whatever plug-ins it finds in that folder and simply goes without the missing
+# one. OS updates keep coming from our own updater (step 77), never from here.
+say "Removing GNOME Software's RPM plug-in (it tries to write into the read-only system)"
+find /usr/lib64/gnome-software -name 'libgs_plugin_dnf5.so' -delete
+
 # Firefox from Fedora's own package for now. A Flatpak Firefox is arguably the
 # better long-term answer (faster updates, better sandbox) but it cannot be
 # preinstalled into an image — Flatpaks install onto the machine, not into the
@@ -413,6 +435,13 @@ if [ -n "${AQ_GS_OSTREE_PLUGIN}" ]; then
     bad "the rpm-ostree plug-in is still in the image at ${AQ_GS_OSTREE_PLUGIN} — it is what puts the pointless password box on screen"
 else
     ok "no rpm-ostree plug-in in GNOME Software — the app store cannot ask to upgrade the OS"
+fi
+
+AQ_GS_DNF5_PLUGIN="$(find /usr/lib64/gnome-software -name 'libgs_plugin_dnf5.so' -print -quit 2>/dev/null || true)"
+if [ -n "${AQ_GS_DNF5_PLUGIN}" ]; then
+    bad "the RPM plug-in is still in the image at ${AQ_GS_DNF5_PLUGIN} — installs and updates from the app store will fail with 'Read-only file system'"
+else
+    ok "no RPM plug-in in GNOME Software — the app store only offers Flatpaks"
 fi
 
 # And the other half of the same sentence: removing the plug-in must not have

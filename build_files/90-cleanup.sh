@@ -150,6 +150,15 @@ else
     ok "no rpm-ostree plug-in in the finished image"
 fi
 
+# The RPM plug-in lives inside the gnome-software package itself, so any later
+# step that reinstalls or upgrades gnome-software would quietly put it back.
+AQ_DNF5_PLUGIN="$(find /usr/lib64/gnome-software -name 'libgs_plugin_dnf5.so' -print -quit 2> /dev/null || true)"
+if [ -n "${AQ_DNF5_PLUGIN}" ]; then
+    bad "${AQ_DNF5_PLUGIN} is in the finished image — app store installs will fail with 'Read-only file system'. A later step reinstalled gnome-software."
+else
+    ok "no RPM plug-in in the finished image"
+fi
+
 # ------------------------------------------------------------------------------
 # How big did it get?
 # ------------------------------------------------------------------------------
