@@ -11,6 +11,7 @@ for name in (
     'usr/share/aquarius/installer/setup.css',
     'etc/anaconda/conf.d/99-aquarius.conf',
     'usr/bin/inputplumber', 'usr/bin/gnome-shell', 'usr/bin/ibus-daemon',
+    'usr/bin/setfacl',
     'usr/share/gnome-shell/extensions/installer@aquariusos/extension.js',
     'usr/share/gnome-shell/extensions/installer@aquariusos/metadata.json',
     'usr/lib/systemd/system/anaconda.service.d/60-aquarius-handheld.conf',
@@ -25,10 +26,14 @@ for name in (
         raise SystemExit(f'Installer is missing {name}')
 assert (root / 'usr/bin/gnome-kiosk').readlink() == Path('../libexec/aquarius-installer-compositor')
 assert (root / 'usr/lib/systemd/system/anaconda.target.wants/aquarius-installer-input.service').is_symlink()
+session = (root / 'usr/lib/systemd/system/anaconda.service.d/60-aquarius-handheld.conf').read_text()
+assert 'Environment=GSETTINGS_BACKEND=keyfile' in session
+assert 'Environment=XDG_CONFIG_HOME=/run/aquarius-installer-settings' in session
 profile = (root / 'usr/share/aquarius/inputplumber/installer.yaml').read_text()
 assert 'keyboard: KeyF12' in profile, 'Controller cannot toggle the keyboard'
 assert 'keyboard: KeyF5' in profile and 'name: RightStick' in profile
 assert 'motion:' not in profile, 'Installer navigation must not require pointer steering'
+assert 'target_devices:\n  - keyboard\n  - mouse' in profile
 for schema, key, expected in (
     ('org.gnome.desktop.a11y.applications', 'screen-keyboard-enabled', 'true'),
     ('org.gnome.desktop.interface', 'text-scaling-factor', '1.5'),
@@ -69,3 +74,16 @@ from gi.repository import Gtk
 Gtk.CssProvider().load_from_path('/usr/share/aquarius/installer/setup.css')
 print('AquariusOS installer CSS parsed successfully')
 """], check=True)
+
+# Content checks are needed because Lorax leaves package records and strips
+# actual modules. Use the USB runtime's kernel, never the build host's kernel.
+kernels = list((root / 'usr/lib/modules').iterdir())
+assert len(kernels) == 1
+kernel = kernels[0].name
+for driver in ('hid_asus', 'xpad', 'uinput', 'uhid'):
+    subprocess.run(['modinfo', '-b', str(root), '-k', kernel, driver],
+                   check=True, stdout=subprocess.DEVNULL)
+    subprocess.run(['modprobe', '-d', str(root), '-S', kernel,
+                    '--show-depends', driver], check=True)
+subprocess.run(['chroot', str(root), 'setfacl', '--version'], check=True)
+print('Controller kernel modules and ACL helper verified')

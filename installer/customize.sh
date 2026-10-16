@@ -12,6 +12,7 @@ xorriso -osirrox on -indev "$iso" \
     -extract /container "$work/payload"
 unsquashfs -no-progress -d "$root" "$work/install.img"
 grep -qx 'VERSION_ID=44' "$root/usr/lib/os-release"
+/installer/restore-controller-drivers.sh "$root" "$work/drivers"
 
 # Lorax moves the installer's repositories out of dnf's way. Use Fedora's
 # repositories from the tooling container solely to add the keyboard's shell
@@ -21,7 +22,7 @@ chmod 1777 "$root/var/tmp" "$root/tmp"
 cp /etc/yum.repos.d/fedora*.repo "$root/etc/yum.repos.d/"
 dnf -y --installroot="$root" --releasever=44 \
     --setopt=install_weak_deps=False --exclude='kernel*' \
-    install gnome-shell libevdev libiio dbus-daemon ibus
+    install gnome-shell libevdev libiio dbus-daemon ibus acl
 # Lorax strips files but keeps their RPM records. Restore tools, icon
 # loaders and the full MIME definitions before package triggers rebuild caches.
 # Otherwise a regenerated MIME cache contains almost no types and GTK aborts.

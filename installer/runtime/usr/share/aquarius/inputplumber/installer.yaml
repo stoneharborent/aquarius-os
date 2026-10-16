@@ -6,6 +6,10 @@ kind: DeviceProfile
 name: AquariusOS Installer
 description: Controller navigation and keyboard toggle for the USB installer
 
+target_devices:
+  - keyboard
+  - mouse
+
 mapping:
   # Controller-only F keys are handled by the installer shell. Outside the
   # keyboard: up/down move focus; left/right change choices. In the keyboard:

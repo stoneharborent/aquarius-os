@@ -1,4 +1,5 @@
 import GLib from 'gi://GLib';
+import Gio from 'gi://Gio';
 import Clutter from 'gi://Clutter';
 import Meta from 'gi://Meta';
 import Shell from 'gi://Shell';
@@ -9,9 +10,14 @@ import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 
 export default class InstallerExtension extends Extension {
     enable() {
-        // Give the native keyboard enough room for four complete rows at 1.5×.
-        const monitor = Main.layoutManager.primaryMonitor;
-        Main.keyboard.keyboardActor.height = Math.min(360, monitor.height / 2);
+        // Scale for the actual panel, not just the 1280px VM used initially.
+        // Keep the installer at roughly the same readable logical width.
+        this._interfaceSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
+        this._sizeInstaller();
+        this._monitorSignal = Main.layoutManager.connect('monitors-changed',
+            () => this._sizeInstaller());
+        this._keyboardSizeSignal = Main.keyboard.keyboardActor.connect('notify::height',
+            () => this._sizeKeyboard());
         this._visibilitySignal = Main.keyboard.connect('visibility-changed', () => {
             if (Main.keyboard.visible)
                 this._refreshSelection();
@@ -90,6 +96,25 @@ export default class InstallerExtension extends Extension {
             if (window.get_window_type() === Meta.WindowType.NORMAL)
                 window.maximize();
         });
+    }
+
+    _sizeInstaller() {
+        const monitor = Main.layoutManager.primaryMonitor;
+        if (!monitor) return;
+        const scale = Math.max(1.5, Math.min(3, monitor.width / 1280 * 1.5));
+        this._interfaceSettings.set_double('text-scaling-factor', scale);
+        this._interfaceSettings.set_int('cursor-size', Math.round(40 * scale / 1.5));
+        this._sizeKeyboard();
+    }
+
+    _sizeKeyboard() {
+        const monitor = Main.layoutManager.keyboardMonitor ?? Main.layoutManager.primaryMonitor;
+        if (!monitor) return;
+        const keyboard = Main.keyboard.keyboardActor;
+        // Four full rows use half the display on both 720p and 1080p panels.
+        // Reapply when GNOME's native relayout requests its smaller default.
+        const height = Math.floor(monitor.height / 2);
+        if (keyboard.height !== height) keyboard.height = height;
     }
 
     _controllerKeys() {
@@ -204,6 +229,9 @@ export default class InstallerExtension extends Extension {
     }
 
     disable() {
+        if (this._monitorSignal) Main.layoutManager.disconnect(this._monitorSignal);
+        if (this._keyboardSizeSignal)
+            Main.keyboard.keyboardActor.disconnect(this._keyboardSizeSignal);
         if (this._visibilitySignal) Main.keyboard.disconnect(this._visibilitySignal);
         this._title?.destroy();
         this._cancelClick();

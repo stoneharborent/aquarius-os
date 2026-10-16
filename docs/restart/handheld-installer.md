@@ -5,8 +5,9 @@ The handheld ISO adds AquariusOS artwork, larger text and controller input to th
 keep their existing installer. This change needs a newly built handheld ISO;
 updating an installed system does not update an old USB stick.
 
-The installer uses text at 150% size, AquariusOS Ice colors and a Midnight
-keyboard. Touch the controls
+The installer uses larger text that follows the screen width (225% at
+1920×1080; 150% at 1280 pixels wide), AquariusOS Ice colors and a Midnight
+keyboard occupying half the display height. Touch the controls
 and text fields directly, or use the handheld controller:
 
 | Control | Action |
@@ -39,7 +40,11 @@ support to AquariusOS alone does not make the installer support controllers.
 After Fedora builds the ISO, `installer/customize.sh` adds GNOME's keyboard and
 our small installer session to its live runtime. It copies InputPlumber and
 the Ally controller setup from the exact OS image already inside that ISO.
-It does not substitute a different controller version from a package server.
+It does not substitute a different InputPlumber version from a package server.
+Fedora strips controller kernel modules from its installer runtime, so the build
+also restores signed Fedora module packages matching the installer kernel
+exactly. It includes the ACL helper that InputPlumber needs to take control of
+the physical device. These checks cover both dependencies and actual files.
 
 The build checks the controller files, shared libraries, effective keyboard
 settings, image-format database, AquariusOS artwork and stylesheet, and the
@@ -58,6 +63,20 @@ The actual Fedora installer was also booted in a virtual machine at 1280×800:
 controller-equivalent commands navigate fields, focusing the account name opens
 the keyboard, and selecting a key types into that field. All four keyboard rows
 fit on screen. These checks do not replace testing the physical controller.
+
+## First handheld test and follow-up
+
+Royce’s 2026-10-15 photos showed that 150% text and the old 360-pixel keyboard
+were too small at native 1080p. Every controller button was unresponsive.
+The first test therefore **did not pass handheld acceptance**.
+
+The revision scales text with screen width and uses half the display height
+for the keyboard. Isolated GNOME/GTK tests pass at 1920×1080 and 1280×720.
+Inspection of the flashed installer also found missing controller modules
+and a missing `setfacl` helper. Restoring them lets ASUS and Xbox drivers load
+in the running installer. A virtual gamepad test through InputPlumber then
+reaches Anaconda navigation and keyboard typing. A virtual controller is still
+not proof that the Ally’s actual device works; repeat the hardware test.
 
 ## Bench checks before calling this hardware-tested
 

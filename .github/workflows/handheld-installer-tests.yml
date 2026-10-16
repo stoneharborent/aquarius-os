@@ -12,4 +12,4 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - run: python3 tests/test-handheld-installer.py
-      - run: bash -n installer/customize.sh installer/runtime/usr/libexec/aquarius-installer-compositor
+      - run: bash -n installer/customize.sh installer/restore-controller-drivers.sh installer/runtime/usr/libexec/aquarius-installer-compositor
