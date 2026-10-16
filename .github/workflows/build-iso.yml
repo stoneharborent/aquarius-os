@@ -271,7 +271,10 @@ jobs:
           iso_dir="$(dirname "$(realpath "${images[0]}")")"
           mkdir -p "${RUNNER_TEMP}/handheld-installer"
           sudo podman build -t aquarius-installer-tools -f installer/Containerfile .
-          sudo podman run --rm --security-opt label=disable \
+          # Ubuntu does not run SELinux. Restoring Fedora's security.selinux
+          # xattrs there requires SYS_ADMIN even as container root. Preserve
+          # the labels instead of stripping them from the installer runtime.
+          sudo podman run --rm --cap-add SYS_ADMIN --security-opt label=disable \
             -v "${iso_dir}:/output" \
             -v "${RUNNER_TEMP}/handheld-installer:/work" \
             aquarius-installer-tools
