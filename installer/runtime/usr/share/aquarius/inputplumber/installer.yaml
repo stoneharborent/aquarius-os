@@ -1,0 +1,183 @@
+# The same measured Ally X button mapping as the installed desktop.
+# Right stick: focus/keyboard selector; A/RT: select; left stick: scroll; View: next field;
+# RB: previous field; Menu: keyboard; B: cancel; Y: Enter; X: Backspace.
+version: 1
+kind: DeviceProfile
+name: AquariusOS Installer
+description: Controller navigation and keyboard toggle for the USB installer
+
+mapping:
+  # Controller-only F keys are handled by the installer shell. Outside the
+  # keyboard: up/down move focus; left/right change choices. In the keyboard:
+  # all directions move a visible key selector. No pointer steering required.
+  - name: Right stick up
+    source_event:
+      gamepad:
+        axis:
+          name: RightStick
+          direction: up
+          deadzone: 0.5
+    target_events:
+      - keyboard: KeyF1
+  - name: Right stick down
+    source_event:
+      gamepad:
+        axis:
+          name: RightStick
+          direction: down
+          deadzone: 0.5
+    target_events:
+      - keyboard: KeyF2
+  - name: Right stick left
+    source_event:
+      gamepad:
+        axis:
+          name: RightStick
+          direction: left
+          deadzone: 0.5
+    target_events:
+      - keyboard: KeyF3
+  - name: Right stick right
+    source_event:
+      gamepad:
+        axis:
+          name: RightStick
+          direction: right
+          deadzone: 0.5
+    target_events:
+      - keyboard: KeyF4
+
+  # --- scrolling ------------------------------------------------------------
+  - name: Left stick up scrolls up
+    source_event:
+      gamepad:
+        axis:
+          name: LeftStick
+          direction: up
+          deadzone: 0.5
+    target_events:
+      - mouse:
+          button: WheelUp
+  - name: Left stick down scrolls down
+    source_event:
+      gamepad:
+        axis:
+          name: LeftStick
+          direction: down
+          deadzone: 0.5
+    target_events:
+      - mouse:
+          button: WheelDown
+  - name: Left stick left scrolls left
+    source_event:
+      gamepad:
+        axis:
+          name: LeftStick
+          direction: left
+          deadzone: 0.5
+    target_events:
+      - mouse:
+          button: WheelLeft
+  - name: Left stick right scrolls right
+    source_event:
+      gamepad:
+        axis:
+          name: LeftStick
+          direction: right
+          deadzone: 0.5
+    target_events:
+      - mouse:
+          button: WheelRight
+
+  # --- selection ---------------------------------------------------------------
+  - name: RT selects the highlighted item
+    source_event:
+      gamepad:
+        trigger:
+          name: RightTrigger
+          deadzone: 0.2
+    target_events:
+      - keyboard: KeyF5
+  - name: A selects the highlighted item
+    source_event:
+      gamepad:
+        button: South
+    target_events:
+      - keyboard: KeyF5
+  - name: LT is Escape
+    source_event:
+      gamepad:
+        trigger:
+          name: LeftTrigger
+          deadzone: 0.2
+    target_events:
+      - keyboard: KeyEsc
+  - name: LB shows or hides the keyboard
+    source_event:
+      gamepad:
+        button: LeftBumper
+    target_events:
+      - keyboard: KeyF12
+
+  # --- keys -----------------------------------------------------------------
+  - name: RB moves to the previous field
+    source_event:
+      gamepad:
+        button: RightBumper
+    target_events:
+      - keyboard: KeyLeftShift
+      - keyboard: KeyTab
+  - name: B is Escape
+    source_event:
+      gamepad:
+        button: East
+    target_events:
+      - keyboard: KeyEsc
+  - name: X is Backspace
+    source_event:
+      gamepad:
+        button: North
+    target_events:
+      - keyboard: KeyBackspace
+  - name: Y is Enter
+    source_event:
+      gamepad:
+        button: West
+    target_events:
+      - keyboard: KeyEnter
+  - name: View is Tab
+    source_event:
+      gamepad:
+        button: Select
+    target_events:
+      - keyboard: KeyTab
+  - name: Menu shows or hides the on-screen keyboard
+    source_event:
+      gamepad:
+        button: Start
+    target_events:
+      - keyboard: KeyF12
+  - name: D-pad up
+    source_event:
+      gamepad:
+        button: DPadUp
+    target_events:
+      - keyboard: KeyF6
+  - name: D-pad down
+    source_event:
+      gamepad:
+        button: DPadDown
+    target_events:
+      - keyboard: KeyF7
+  - name: D-pad left
+    source_event:
+      gamepad:
+        button: DPadLeft
+    target_events:
+      - keyboard: KeyF8
+  - name: D-pad right
+    source_event:
+      gamepad:
+        button: DPadRight
+    target_events:
+      - keyboard: KeyF9

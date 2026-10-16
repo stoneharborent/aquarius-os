@@ -52,7 +52,8 @@
 # Bazzite-flavoured live session.
 #
 # AquariusOS is plain Fedora now and has none of those sources, so the standard
-# tool works. This whole workflow is one action call.
+# tool works. Handheld ISOs also add controller and touch-keyboard support
+# to the installer runtime after that action finishes.
 #
 # A note on that tool: bootc-image-builder was archived in June 2026 and folded
 # into osbuild's image-builder. The old form still works through a compatibility
@@ -76,10 +77,9 @@ on:
           - nvidia
           # ⚠️ THE HANDHELD ISO IS HOW THE ALLY GETS AQUARIUSOS AT ALL. There is
           # no other route onto that machine: it cannot boot from its SD card
-          # slot, so it has to be a USB-C stick through a dock. Nothing about the
-          # installer itself changes — same Anaconda, same artwork. The only
-          # difference is which published image it carries and points at for
-          # updates. See docs/restart/handheld.md.
+          # slot, so it has to be a USB-C stick through a dock. The
+          # installer keeps Anaconda, with larger text, controller input and
+          # an on-screen keyboard. See docs/restart/handheld-installer.md.
           - handheld
       tag:
         description: "Which build. Leave as 'latest' unless you want a specific dated one."
@@ -258,6 +258,24 @@ jobs:
           # /usr/lib/bootc/install/20-aquarius.toml. Saying it twice costs
           # nothing and means a mistake in one place is not a failed ISO.
           additional-args: --use-librepo=True --rootfs=btrfs
+
+      - name: Add handheld installer controls
+        if: steps.names.outputs.variant == 'handheld'
+        env:
+          OUT: ${{ steps.build.outputs.output-directory }}
+        run: |
+          set -euo pipefail
+          python3 tests/test-handheld-installer.py
+          mapfile -t images < <(find "${OUT}" -name install.iso -type f)
+          test "${#images[@]}" -eq 1
+          iso_dir="$(dirname "$(realpath "${images[0]}")")"
+          mkdir -p "${RUNNER_TEMP}/handheld-installer"
+          sudo podman build -t aquarius-installer-tools -f installer/Containerfile .
+          sudo podman run --rm --security-opt label=disable \
+            -v "${iso_dir}:/output" \
+            -v "${RUNNER_TEMP}/handheld-installer:/work" \
+            aquarius-installer-tools
+          sudo chown "$(id -u):$(id -g)" "${images[0]}"
 
       # A checksum file next to the ISO. Writing a corrupted ISO to a USB stick
       # produces an installer that fails halfway through with a confusing error;

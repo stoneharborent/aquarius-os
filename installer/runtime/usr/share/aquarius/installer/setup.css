@@ -1,0 +1,66 @@
+/* Aquarius Ice tokens from branding/tokens.md. Installer-only GTK3 styling. */
+@define-color aq_bg #EAF1F8;
+@define-color aq_surface #F7FBFE;
+@define-color aq_ink #16273A;
+@define-color aq_accent #2C8FC4;
+
+window, #background, .background, AnacondaHubWindow, AnacondaSpokeWindow {
+    background-color: @aq_bg;
+    color: @aq_ink;
+}
+.logo-sidebar {
+    background-image: linear-gradient(to bottom, #DFEAF4, #EAF1F8);
+    background-color: #DFEAF4;
+    border-right: 1px solid alpha(@aq_ink, 0.18);
+}
+.logo {
+    background-image: url('/usr/share/aquarius/installer/wordmark.png');
+    background-size: 152px auto;
+    background-position: 50% 24px;
+    background-repeat: no-repeat;
+    background-color: transparent;
+}
+.product-logo { background-image: none; background-color: transparent; }
+AnacondaSpokeWindow #nav-box {
+    background-image: none;
+    background-color: #F0F6FC;
+    color: @aq_ink;
+    border-bottom: 1px solid alpha(@aq_ink, 0.18);
+}
+AnacondaSpokeWindow #nav-box label { font-family: "Sora", sans-serif; }
+AnacondaLayoutIndicator {
+    background-color: @aq_surface;
+    color: @aq_ink;
+}
+button {
+    min-height: 32px;
+    padding: 4px 12px;
+    border-radius: 8px;
+}
+button:focus, treeview:focus, iconview:focus, checkbutton:focus, radiobutton:focus {
+    outline: 3px solid @aq_accent;
+    outline-offset: 1px;
+}
+button.suggested-action {
+    background-image: none;
+    background-color: @aq_ink;
+    color: @aq_surface;
+    border-color: @aq_accent;
+}
+button:disabled, button.suggested-action:disabled {
+    background-image: none;
+    background-color: #E4EDF6;
+    color: #7C90A4;
+    border-color: alpha(@aq_ink, 0.18);
+}
+AnacondaSpokeSelector:selected { background-color: @aq_accent; color: white; }
+entry {
+    min-height: 32px;
+    background-color: @aq_surface;
+    color: @aq_ink;
+    border-radius: 8px;
+}
+entry:focus { border-color: @aq_accent; box-shadow: inset 0 0 0 1px @aq_accent; }
+check, radio { min-width: 22px; min-height: 22px; }
+selection { background-color: @aq_accent; color: white; }
+/* Keep Fedora's warning/error colors: disk erasure must remain conspicuous. */

@@ -1,0 +1,15 @@
+name: Handheld installer input tests
+on:
+  pull_request:
+    paths: ['installer/**', 'tests/test-handheld-installer.py', '.github/workflows/*iso*', '.github/workflows/handheld-installer-tests.yml']
+  push:
+    paths: ['installer/**', 'tests/test-handheld-installer.py', '.github/workflows/*iso*', '.github/workflows/handheld-installer-tests.yml']
+permissions:
+  contents: read
+jobs:
+  input:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - run: python3 tests/test-handheld-installer.py
+      - run: bash -n installer/customize.sh installer/runtime/usr/libexec/aquarius-installer-compositor

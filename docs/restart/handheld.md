@@ -85,8 +85,9 @@ that version, so you can confirm it took.
 
 - A **USB-C dock or hub** with at least one ordinary USB socket.
 - A **USB stick** with the installer on it.
-- A **keyboard**, and ideally a **mouse**. The installer's touch support works
-  but its text is very small on a 7-inch screen.
+- For older USB images, a **keyboard**, and ideally a **mouse**. New handheld
+  ISO builds add larger text, controller navigation and an on-screen keyboard;
+  see [the installer guide](handheld-installer.md), including pending bench checks.
 
 ⚠️ **The SD card slot cannot boot.** It is not an option and it is not a
 setting. The installer has to arrive over USB-C.

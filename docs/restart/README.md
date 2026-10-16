@@ -318,6 +318,7 @@ thing locally. `just` with no arguments lists everything available.
 - **Gaming: what ships, the launch options worth knowing, and what is deliberately not here:** [`gaming.md`](gaming.md)
 - **Game Mode — Steam on the whole screen, how to switch both ways, the boot setting, and why the NVIDIA image carries its own gamescope:** [`game-mode.md`](game-mode.md)
 - **Decky Loader — the plugins menu inside Game Mode: what it is, how to install it, where the plug tab is, that it runs as root and listens only to this computer, and what to do when the icon is not there:** [`decky.md`](decky.md)
+- **Handheld USB setup — larger text, controller controls, touch keyboard and bench checks:** [`handheld-installer.md`](handheld-installer.md)
 - **⚠️ The handheld image — what `aquarius-os-handheld` is, how to install it on the ROG Xbox Ally X (including the controller-chip firmware you must check IN WINDOWS first), what works, what does not yet, `aq handheld status`, and the bench list:** [`handheld.md`](handheld.md)
 - **Homebrew — the `brew` command, why it is unpacked at first boot rather than baked in, and what it is (and is not) for:** [`homebrew.md`](homebrew.md)
 - **Swift — it is already installed, the five steps to build and run something, and the honest list of what does NOT work (no SwiftUI/AppKit/UIKit, and why the Mac Aquarius apps still do not run here):** [`swift.md`](swift.md)
