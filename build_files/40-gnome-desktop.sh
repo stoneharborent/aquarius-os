@@ -190,64 +190,14 @@ aq_dnf install \
     langpacks-en \
     langpacks-core-en
 
-# gnome-software is the app store. On this machine it is a Flatpak store and
-# nothing else — there is no such thing as installing an RPM onto a running
-# AquariusOS, because the system is an image that gets replaced wholesale.
-say "The app store (Flatpak only)"
-aq_dnf install gnome-software
-
-# ------------------------------------------------------------------------------
-# ...and taking the rpm-ostree plug-in straight back out again
-# ------------------------------------------------------------------------------
-# ⚠️ IF YOU LEAVE THIS OUT, THE MACHINE ASKS FOR A PASSWORD ROUGHLY ONCE AN HOUR,
-#    FOR NOTHING. That is not a theory — it is what the bench PC did, and the
-#    logs named the culprit: `gnome-software --gapplication-service` asking
-#    polkit for `org.projectatomic.rpmostree1.upgrade`, ten times in five days
-#    (bench finding, 2026-09-24).
-#
-# WHAT IS ACTUALLY GOING ON
-#
-# GNOME Software is built out of plug-ins, one per kind of thing it can install:
-# one for Flatpaks, one for firmware, one for RPMs, and one for rpm-ostree — the
-# "the whole operating system is one image" kind, which is what AquariusOS is.
-# That last plug-in ships as its own little package, `gnome-software-rpm-ostree`.
-#
-# Nothing REQUIRES that package. It arrives because `gnome-software` merely
-# *recommends* it, and dnf installs recommendations unless it is told not to.
-# So it lands on the image without anybody choosing it.
-#
-# And then it does the wrong thing. Left switched on it periodically asks
-# rpm-ostree to refresh its repositories and work out an upgrade — and both of
-# those are privileged jobs, so polkit puts a password box on Royce's screen.
-# He types his password, and NOTHING HAPPENS, because AquariusOS does not
-# update that way. Updates here come from `bootc upgrade` through our own
-# updater (/usr/libexec/aquarius-updater, build_files/77-updater.sh). The
-# password box is pure cost: an interruption in exchange for no outcome.
-#
-# WHY REMOVING IT IS THE RIGHT FIX AND NOT A HACK
-#
-# The comment three lines above this block already says what this app is meant
-# to be: "a Flatpak store and nothing else — there is no such thing as
-# installing an RPM onto a running AquariusOS". The plug-in contradicts that
-# sentence. Taking it out is not a workaround for the prompt; it is making the
-# image match the decision that was already written down.
-#
-# The package contains exactly ONE file — the plug-in itself — so there is no
-# collateral damage, and nothing on the system depends on it. GNOME Software
-# keeps every other plug-in and carries on being the Flatpak store.
-#
-# ⚠️ DO NOT "FIX" THIS INSTEAD BY GIVING rpm-ostree A PASSWORD-FREE POLKIT RULE.
-#    That would trade one prompt for a machine where anything can start an
-#    operating-system upgrade with no one looking. The prompt is not the
-#    problem; the useless request behind it is.
-#
-# `--no-autoremove` is deliberate. Without it dnf also sweeps up anything that
-# was pulled in for this package and now looks unused — and the libraries under
-# it are shared with rpm-ostree and bootc, which this operating system very much
-# still needs. We are taking out one plug-in, not opening a question about what
-# else might go with it.
-say "Removing GNOME Software's rpm-ostree plug-in (it asks for a password and does nothing)"
-aq_dnf remove --no-autoremove gnome-software-rpm-ostree
+# GNOME Software owns OS-image, Flatpak and firmware updates (2026-10-18).
+# Ship the image backend in the base so this does not require a local layer.
+# The DNF5 backend otherwise advertises individual RPM updates and tries to
+# write /usr/lib/sysimage/libdnf5/offline on the read-only host. Step 90 removes
+# the incompatible RPM backends after all package installation has finished.
+# Keep the existing polkit policy: this does not grant password-free upgrades.
+say "The app store and OS-image update backend"
+aq_dnf install gnome-software gnome-software-rpm-ostree
 
 # Firefox from Fedora's own package for now. A Flatpak Firefox is arguably the
 # better long-term answer (faster updates, better sandbox) but it cannot be
@@ -386,44 +336,21 @@ done
 echo "This image has: $(gnome-shell --version)"
 
 # ------------------------------------------------------------------------------
-# The app store is a Flatpak store — proved, not assumed
+# GNOME Software's image, application and firmware backends must all exist.
 # ------------------------------------------------------------------------------
-# Reads the finished image back for the plug-in we removed above. Two checks,
-# because "the package is gone" and "the file is gone" can come apart if a
-# future Fedora moves the plug-in into a different package: the file is the
-# thing that actually does the asking, so the file is the thing we look for.
-#
-# If either of these goes red, the bench PC is back to a password box about
-# once an hour that achieves nothing. The long comment beside the removal, up
-# near "The app store (Flatpak only)", explains the whole story.
 if rpm -q gnome-software-rpm-ostree > /dev/null 2>&1; then
-    bad "gnome-software-rpm-ostree is installed — GNOME Software will ask for a password to upgrade an OS it cannot upgrade"
+    ok "GNOME Software's image-update package is installed"
 else
-    ok "gnome-software-rpm-ostree is not installed"
+    bad "GNOME Software's image-update package is missing"
 fi
-
-# ⚠️ `-print -quit` AND NOT `| head -1`. Piping find into head is the trap
-# documented above aq_output_has() in aq-lib.sh: head stops after one line, find
-# is killed by a broken pipe, and `set -o pipefail` then fails the whole
-# assignment — which under `set -e` ends the build. find's own -quit stops it
-# after the first match with no pipe and no signal. The `|| true` covers the
-# ordinary case of finding nothing, which is the result we are hoping for here.
-AQ_GS_OSTREE_PLUGIN="$(find /usr/lib64/gnome-software -name 'libgs_plugin_rpm-ostree.so' -print -quit 2>/dev/null || true)"
-if [ -n "${AQ_GS_OSTREE_PLUGIN}" ]; then
-    bad "the rpm-ostree plug-in is still in the image at ${AQ_GS_OSTREE_PLUGIN} — it is what puts the pointless password box on screen"
-else
-    ok "no rpm-ostree plug-in in GNOME Software — the app store cannot ask to upgrade the OS"
-fi
-
-# And the other half of the same sentence: removing the plug-in must not have
-# taken the Flatpak store down with it. Without this line the two checks above
-# would also pass on an image with no app store at all.
-AQ_GS_FLATPAK_PLUGIN="$(find /usr/lib64/gnome-software -name 'libgs_plugin_flatpak.so' -print -quit 2>/dev/null || true)"
-if [ -n "${AQ_GS_FLATPAK_PLUGIN}" ]; then
-    ok "GNOME Software still has its Flatpak plug-in — the store still works"
-else
-    bad "GNOME Software has no Flatpak plug-in — the app store can no longer install anything"
-fi
+for aq_backend in rpm-ostree flatpak fwupd; do
+    aq_plugin="$(find /usr/lib64/gnome-software -name "libgs_plugin_${aq_backend}.so" -print -quit 2>/dev/null || true)"
+    if [ -n "${aq_plugin}" ]; then
+        ok "GNOME Software has its ${aq_backend} backend"
+    else
+        bad "GNOME Software is missing its ${aq_backend} backend"
+    fi
+done
 
 # The session file GDM reads. If this is missing the login screen appears and
 # offers nothing to log in to — a symptom that looks like a broken graphics
