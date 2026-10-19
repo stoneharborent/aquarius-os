@@ -71,6 +71,11 @@
 #   14. unplugging the drive really closes the mount and takes the empty folder
 #       away — because nothing else on the computer will. Every other drive is
 #       udisks2's to clean up; this one is ours.
+#   15. a Mac partition on the disk AquariusOS is installed on is refused — the
+#       same never-touch list as every other drive.
+#   16. since 2026-10-19 a Mac drive INSIDE the computer is opened at login too,
+#       read-only. (The never-touch list for every other kind of drive is
+#       tests/test-inside-drives.py.)
 #
 # HOW TO RUN IT
 #   ./tests/test-automount-mount.py
@@ -600,18 +605,40 @@ def _mac_drive_cases(agent, GLib, lines, media, mountinfo):
     else:
         bad("nothing was logged about the drive already being open: %s" % joined)
 
-    # --- the seatbelt still applies to Mac drives ---------------------------
-    bus = apfs_bus(agent, GLib, hint_system=True)
+    # --- the never-touch list still applies to Mac drives ------------------
+    # The fake mount table above says the system lives on /dev/sda2, so any
+    # partition of sda is the disk AquariusOS is installed on.
+    bus = apfs_bus(agent, GLib, device=b"/dev/sda5\x00", hint_system=True)
     mounter = agent.AutoMounter(bus)
     rec = Recorder(apfsutil_output=fixture("apfsutil-external-drive.fixture"))
     mounter.run, mounter.spawn = rec.run, rec.spawn
     del lines[:]
     mounter.consider(OBJECT)
     if not rec.calls:
-        ok("⚠️ a device udisks2 calls SYSTEM-INTERNAL is refused on the Mac path"
-           " too, exactly as on the udisks2 path")
+        ok("⚠️ a Mac partition on the disk AquariusOS is installed on is refused"
+           " on the Mac path too, exactly as on the udisks2 path")
     else:
-        bad("a system-internal device was opened as a Mac drive: %r" % (rec.calls,))
+        bad("a partition of the system disk was opened as a Mac drive: %r" % (rec.calls,))
+
+    # --- and since 2026-10-19 a Mac drive INSIDE the computer is opened ------
+    bus = apfs_bus(agent, GLib, device=b"/dev/sdy1\x00", hint_system=True)
+    bus.props["HintAuto"] = GLib.Variant("b", False)
+    mounter = agent.AutoMounter(bus)
+    rec = Recorder(apfsutil_output=fixture("apfsutil-external-drive.fixture"))
+    mounter.run, mounter.spawn = rec.run, rec.spawn
+    del lines[:]
+    mounter.consider(OBJECT)
+    fuses = rec.named("apfs-fuse")
+    if len(fuses) == 1 and "ro," in fuses[0][4]:
+        ok("a Mac drive INSIDE the computer is opened at login too — read-only,"
+           " like every Mac drive")
+    else:
+        bad("an inside Mac drive was not opened (apfs-fuse calls: %r)" % (fuses,))
+    for name in os.listdir(media):
+        try:
+            os.rmdir(os.path.join(media, name))
+        except OSError:
+            pass
 
 
 if __name__ == "__main__":

@@ -666,11 +666,20 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     /ctx/build_files/65-installer.sh
 
-# 7f. External drives mount by themselves, with no password. The agent, the user
-#     service and the polkit rule all arrived with system_files at step 5; this
-#     confirms udisks2 is there (from step 2), checks the agent loads with no
-#     screen, and — the sensitive part — checks the polkit rule grants a
-#     no-password mount for REMOVABLE drives only and never for internal disks.
+# 7f. Every drive mounts by itself, with no password — the ones inside the
+#     computer at login, and the ones you plug in the moment you plug them in.
+#     The agent, the user service and the polkit rule all arrived with
+#     system_files at step 5; this confirms udisks2 is there (from step 2),
+#     checks the agent loads with no screen, and — the sensitive part — runs the
+#     agent's never-touch list against fake drives (the disk the OS is on, the
+#     EFI partition, Windows Recovery, swap, hidden and encrypted partitions…)
+#     and checks the polkit rule is still for the person at the screen only.
+#
+#     ⚠️ CHANGED 2026-10-19. Until then inside drives asked for a password (or,
+#     from 2026-09-14, asked once and were written into /etc/fstab by step 83).
+#     Royce asked for every drive to just mount, so step 83 is gone and this
+#     step's old "internal disks must ask" gate is reversed on purpose. See
+#     ../docs/decision-2026-10-19-gnome-only-and-open-drives.md.
 #
 #     After step 5 (its files) and step 2 (udisks2, exfatprogs, ntfs-3g).
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
@@ -771,30 +780,12 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     /ctx/build_files/82-apfs-drives.sh
 
-# 7d-ii. An INSIDE drive asks once, and then opens at every login.
-#
-#     Step 7f is about drives you plug in. This is about the ones that live
-#     inside the machine — a second SSD full of footage, the disk Windows is on.
-#     They have always asked for an administrator password at every single
-#     login. Now AquariusOS asks ONCE per drive and, if the answer is yes,
-#     writes one UUID-keyed line into /etc/fstab, where mounting does not go
-#     through polkit at all.
-#
-#     ⚠️ THE NARROW RULE DID NOT MOVE. The obvious way to do this is to widen
-#     49-aquarius-udisks.rules to cover udisks2's internal-disk action, which
-#     would make EVERY internal partition mountable with no password — and step
-#     7f STOPS THE BUILD if that ever happens. This step checks that gate is
-#     still standing, and then checks the alternative that was built instead:
-#     a privileged helper with its own never-touch list (the OS disk, the EFI
-#     partition, swap, Windows' own volume, anything already in fstab), two
-#     polkit files of ours, and the question the session agent puts on screen.
-#
-#     The refusals are the safety, and no amount of reading proves a refusal, so
-#     the step runs the real decision code against fake drives.
-#
-#     After step 7d (the automount agent it extends) and step 5 (its files).
-RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
-    /ctx/build_files/83-remembered-drives.sh
+# ⚠️ STEP 7d-ii IS GONE (2026-10-19). It was build_files/83-remembered-drives.sh:
+#     an INSIDE drive asked "Mount every login?" once, and a yes was written into
+#     /etc/fstab by a privileged helper of ours. Royce retired that question —
+#     every inside drive now mounts at login with no prompt (step 7f). Lines it
+#     already wrote on somebody's machine keep working; `aq drives remembered`
+#     lists them. See ../docs/decision-2026-10-19-gnome-only-and-open-drives.md.
 
 # 7e. The gaming layer: Steam, Proton's supporting cast, gamescope, gamemode,
 #     MangoHud, the 32-bit graphics libraries a Windows game needs, and the

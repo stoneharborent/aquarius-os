@@ -35,8 +35,8 @@
 #     aq decky status         is it installed, and is it running
 #
 #     aq drives               what is plugged in right now
-#     aq drives remembered    which inside drives open at every login
-#     aq drives forget NAME   stop opening one of them by itself
+#     aq drives remembered    inside drives an older AquariusOS put in /etc/fstab
+#     aq drives forget NAME   hand one of those back to the automatic mounting
 #
 #     aq welcome              see the AquariusOS welcome again
 #
@@ -222,10 +222,12 @@ USAGE
                         is shown as you type and nothing is saved.
 
     aq drives remembered
-                        A drive that lives INSIDE this computer asks once
-                        whether it should open at every login. This lists the
-                        ones that said yes. 'aq drives forget NAME' stops one,
-                        and 'aq drives ask-again' undoes every "Never ask".
+                        Every drive — inside the computer or plugged in — now
+                        opens by itself, with no question. Before 2026-10-19 an
+                        inside drive asked once and a "yes" was written into
+                        /etc/fstab; this lists any such lines, which keep
+                        working. 'aq drives forget NAME' removes one, so that
+                        drive is opened the new way instead.
 
     aq usb4 status      The chip that runs this computer's fast USB-C sockets
                         (USB4 / Thunderbolt): is its driver attached, and what
@@ -3778,12 +3780,16 @@ usb4() {
 # -----------------------------------------------------------------------------
 AQ_DRIVE_UNLOCK="/usr/libexec/aquarius-drive-unlock"
 
-# The privileged helper behind "remember this inside drive". See its own header,
-# and docs/restart/hardware.md, "Why an inside drive asks once, and an outside
-# drive never asks".
-AQ_REMEMBER_DRIVE="/usr/libexec/aquarius-remember-drive"
+# ⚠️ THE RETIRED "ASK ONCE" FEATURE (2026-09-14 to 2026-10-19). An inside drive
+# used to ask "Mount every login?" and a yes wrote one line into /etc/fstab,
+# ending with this tag. Since 2026-10-19 every inside drive simply mounts at
+# login (/usr/libexec/aquarius-automount) and nothing writes these lines any
+# more — but a machine that said yes before then still HAS them, and they still
+# work. These two names let `aq drives` find and, if asked, remove them.
+# docs/restart/hardware.md, "Every drive opens by itself — inside or plugged in".
+AQ_REMEMBER_TAG="# aquarius-remember-drive"
 
-# Where a person's "never ask me about that drive again" answers are kept.
+# The old "Never ask" answers. Nothing reads this file any more.
 AQ_NEVER_ASK="${AQ_CONF_DIR}/remembered-drives.conf"
 
 drive_usage() {
@@ -3799,15 +3805,21 @@ aq drive — the drives plugged into this computer
 
 DRIVES THAT LIVE INSIDE THIS COMPUTER
 
-A drive you plug in never asks for a password. A drive inside the computer asks
-once, the first time AquariusOS sees it, and then never again.
+Every drive opens by itself with no password — the ones inside the computer
+when you log in, and the ones you plug in the moment you plug them in. The only
+drive that still asks for anything is an ENCRYPTED one, and it asks for its own
+passphrase, because without it there is nothing to read.
 
-    aq drives remembered  Which inside drives open by themselves at every login.
-    aq drives forget NAME Stop opening one by itself. NAME is the folder name
-                          shown by 'aq drives remembered' (or its UUID). It will
-                          be offered again next time.
-    aq drives ask-again   Forget every "Never ask" answer, so the questions come
-                          back at your next login.
+Before 19 October 2026 an inside drive asked once, and a "yes" was written into
+/etc/fstab. Those lines still work. These two commands are for them:
+
+    aq drives remembered  List any inside drives written into /etc/fstab that
+                          way.
+    aq drives forget NAME Remove one of those lines (asks for your password,
+                          because /etc/fstab belongs to the system). NAME is
+                          the folder name 'aq drives remembered' shows, or the
+                          UUID. From your next login that drive is opened the
+                          new way, at /run/media/<you>/<label>, like the rest.
 
 A Mac (APFS) drive is always read-only on AquariusOS. You can copy files OFF it;
 you cannot write TO it. See docs/restart/mac-drives.md.
@@ -3957,59 +3969,89 @@ drive_eject() {
 }
 
 # ------------------------------------------------------------------------------
-# aq drives remembered / forget / ask-again
+# aq drives remembered / forget
 # ------------------------------------------------------------------------------
-# The undo half of "an inside drive asks once". Everything privileged is done by
-# /usr/libexec/aquarius-remember-drive through pkexec — this is only the friendly
-# way in. Settings has no page for this yet; see docs/restart/hardware.md.
-drive_remembered() {
-    if [ ! -x "${AQ_REMEMBER_DRIVE}" ]; then
-        echo "aq: ${AQ_REMEMBER_DRIVE} is missing from this copy of AquariusOS." >&2
-        return 1
-    fi
-    "${AQ_REMEMBER_DRIVE}" list
-    if [ -r "${AQ_NEVER_ASK}" ] && grep -q '^never ' "${AQ_NEVER_ASK}" 2> /dev/null; then
-        echo "You also said \"Never ask\" about:"
-        sed -n 's/^never \([^ ]*\)  *# \(.*\)$/    \2 (UUID \1)/p' "${AQ_NEVER_ASK}"
-        echo
-        echo "Run 'aq drives ask-again' to be asked about those again."
-        echo
-    fi
+# The leftovers of the retired "ask once" feature. Read the note beside
+# AQ_REMEMBER_TAG above first. Nothing here is needed on a machine that never
+# said yes to the old question; on one that did, those drives keep opening the
+# old way (at /media/aquarius/<name>, mounted by the machine itself) until
+# somebody runs `aq drives forget`.
+
+# One line per remembered drive: UUID, folder, filesystem.
+drive_remembered_lines() {
+    awk -v tag="${AQ_REMEMBER_TAG}" '
+        index($0, tag) && $1 ~ /^UUID=/ {
+            folder = $2; gsub(/\\040/, " ", folder)
+            printf "%s\t%s\t%s\n", substr($1, 6), folder, $3
+        }
+    ' /etc/fstab 2> /dev/null
 }
 
-# NAME may be the folder name ('aq drives remembered' prints it) or the UUID
-# itself. Looking the folder up here means nobody has to type a UUID by hand.
+drive_remembered() {
+    local uuid folder fstype any=0
+    while IFS=$'\t' read -r uuid folder fstype; do
+        [ -n "${uuid}" ] || continue
+        any=1
+        printf '%s\n' "$(basename "${folder}")"
+        printf '    at %s (%s)\n' "${folder}" "${fstype}"
+        printf '    UUID %s\n\n' "${uuid}"
+    done < <(drive_remembered_lines)
+    if [ "${any}" -eq 0 ]; then
+        echo "No drives were remembered the old way. Nothing to do."
+        echo
+        echo "Every drive inside this computer opens by itself at login, and"
+        echo "'aq drive list' shows where."
+        return 0
+    fi
+    echo "These were written into /etc/fstab by the old \"Mount every login?\""
+    echo "question, before 19 October 2026. They still work exactly as before."
+    echo "To hand one back to the automatic mounting:  aq drives forget NAME"
+}
+
+# NAME may be the folder name ('aq drives remembered' prints it) or the UUID.
+#
+# ⚠️ IT ONLY EVER REMOVES A LINE THAT CARRIES OUR TAG. A line somebody wrote
+# into /etc/fstab by hand is nobody's business but its author's, even if it
+# names the same drive.
 drive_forget() {
-    local name="$1" uuid="" line
+    local name="$1" uuid="" folder="" u f t
     if [ -z "${name}" ]; then
         echo "aq: which drive? 'aq drives remembered' lists them." >&2
         return 1
     fi
-    if [ ! -x "${AQ_REMEMBER_DRIVE}" ]; then
-        echo "aq: ${AQ_REMEMBER_DRIVE} is missing from this copy of AquariusOS." >&2
+    while IFS=$'\t' read -r u f t; do
+        if [ "$(basename "${f}")" = "${name}" ] || [ "${u}" = "${name}" ]; then
+            uuid="${u}"
+            folder="${f}"
+        fi
+    done < <(drive_remembered_lines)
+    if [ -z "${uuid}" ]; then
+        echo "aq: \"${name}\" is not one of the drives remembered the old way." >&2
+        echo "    'aq drives remembered' lists the ones that are." >&2
         return 1
     fi
-    while IFS= read -r line; do
-        case "${line}" in
-            *"# aquarius-remember-drive")
-                set -- ${line}
-                if [ "$(basename "${2//\\040/ }")" = "${name}" ]; then
-                    uuid="${1#UUID=}"
-                fi
-                ;;
-        esac
-    done < <(cat /etc/fstab 2> /dev/null)
-    [ -n "${uuid}" ] || uuid="${name}"
-    pkexec "${AQ_REMEMBER_DRIVE}" forget --uuid "${uuid}"
-}
+    # The UUID is used inside a sed pattern, so it is held to what a UUID can
+    # be: letters, digits and dashes. Anything else is refused, not escaped.
+    case "${uuid}" in
+        *[!A-Za-z0-9-]*)
+            echo "aq: '${uuid}' does not look like a drive UUID. Nothing changed." >&2
+            return 1
+            ;;
+    esac
 
-drive_ask_again() {
-    if [ ! -e "${AQ_NEVER_ASK}" ]; then
-        echo "You have not told AquariusOS to stop asking about any drive."
-        return 0
+    echo "Removing \"$(basename "${folder}")\" from /etc/fstab. This needs your password,"
+    echo "because /etc/fstab belongs to the system."
+    if ! sudo umount "${folder}" 2> /dev/null; then
+        : # not mounted right now — fine
     fi
-    rm -f "${AQ_NEVER_ASK}"
-    echo "Done. AquariusOS will ask about those drives again at your next login."
+    if ! sudo sed -i "\\|^UUID=${uuid}[[:space:]].*${AQ_REMEMBER_TAG}\$|d" /etc/fstab; then
+        echo "aq: /etc/fstab could not be changed. Nothing was removed." >&2
+        return 1
+    fi
+    sudo rmdir "${folder}" 2> /dev/null || true
+    sudo systemctl daemon-reload
+    echo "Done. From your next login \"$(basename "${folder}")\" opens the new way,"
+    echo "at /run/media/${USER:-you}/<its label>, like every other drive."
 }
 
 drive() {
@@ -4017,7 +4059,13 @@ drive() {
         list | status | "") drive_list ;;
         remembered | remember) drive_remembered ;;
         forget) drive_forget "${2:-}" ;;
-        ask-again | askagain) drive_ask_again ;;
+        ask-again | askagain)
+            # The "Never ask" answers belonged to the retired question. Tidy the
+            # file away and say plainly that there is nothing left to ask.
+            rm -f "${AQ_NEVER_ASK}"
+            echo "Nothing to do: AquariusOS no longer asks about drives. Every drive"
+            echo "inside this computer opens by itself at login."
+            ;;
         eject | unmount) drive_eject "${2:-}" ;;
         unlock)
             if [ ! -x "${AQ_DRIVE_UNLOCK}" ]; then

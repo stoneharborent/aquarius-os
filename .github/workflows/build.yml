@@ -560,15 +560,19 @@ jobs:
           ./tests/test-automount-mount.py
 
       # ------------------------------------------------------------------------
-      # An INSIDE drive asks once — and never the wrong drive
+      # Every INSIDE drive mounts at login — and never the wrong drive
       # ------------------------------------------------------------------------
-      # Since 2026-09-14 a drive that lives inside the computer is offered once
-      # ("Mount Footage every login?") instead of asking for a password at every
-      # login. The dangerous half of that is the drives it must NEVER offer: the
-      # disk AquariusOS is on, the EFI partition, swap, Windows' own volume.
-      # No amount of reading proves a refusal, so the real decision code is run
-      # against fake drives here, before the image is even built.
-      - name: Check the right inside drives are offered, and the wrong ones refused
+      # Since 2026-10-19 (Royce: "Remove verification for all internal and
+      # external drives. Just mount them from login and show in dock.") every
+      # drive inside the computer is mounted at login with no question and no
+      # password. That replaced the 2026-09-14 "ask once" feature and its test,
+      # tests/test-remember-drive.py. The dangerous half of "every drive" is the
+      # drives it must NEVER mount: the disk AquariusOS is on, the EFI partition,
+      # Windows Recovery, swap, hidden recovery partitions, encrypted drives,
+      # anything in fstab, the installer stick. No amount of reading proves a
+      # refusal, so the real decision code is run against fake drives here,
+      # before the image is even built.
+      - name: Check every inside drive mounts, and the never-touch list holds
         run: |
           set -uo pipefail
           if ! python3 -c 'import gi' 2> /dev/null; then
@@ -580,7 +584,7 @@ jobs:
             echo "      finished image, and that run can fail the build."
             exit 0
           fi
-          ./tests/test-remember-drive.py
+          ./tests/test-inside-drives.py
 
       # ------------------------------------------------------------------------
       # The folder every drive appears in is made at login — and can never stop
@@ -7292,7 +7296,7 @@ jobs:
             --entrypoint /usr/bin/bash \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-iso-repos.sh
 
-      - name: Check external drives automount and the updater window are really in there
+      - name: Check every drive automounts and the updater window are really in there
         run: |
           set -euo pipefail
           cat > /tmp/verify-r6.sh <<'SCRIPT'
@@ -7322,9 +7326,24 @@ jobs:
           if "${AGENT}" --dry-run > /tmp/adry.txt 2>&1; then
             ok "'aquarius-automount --dry-run' runs and changes nothing"
           else bad "'aquarius-automount --dry-run' failed"; cat /tmp/adry.txt; fi
-          grep -q 'HintSystem = false' /tmp/adry.txt \
-            && ok "the agent states it leaves system-internal disks alone" \
-            || bad "the agent no longer states the system-disk guard"
+          grep -q 'HintSystem = true' /tmp/adry.txt \
+            && ok "the agent states it mounts drives INSIDE the computer too (2026-10-19)" \
+            || bad "the agent no longer states that inside drives are mounted"
+          for phrase in 'never-touch list' 'disk AquariusOS is installed on' \
+                        'EFI System Partition' 'Windows Recovery' 'already listed in /etc/fstab' \
+                        'encrypted' 'installer stick'; do
+            grep -q "${phrase}" /tmp/adry.txt \
+              && ok "the never-touch list names: ${phrase}" \
+              || bad "the agent's never-touch list no longer names: ${phrase}"
+          done
+          # (The never-touch list is PROVEN against fake drives by step 76 during
+          # the build, and by the fast check near the top of this file.)
+          for gone in /usr/libexec/aquarius-remember-drive \
+                      /usr/share/polkit-1/actions/org.aquariusos.rememberdrive.policy \
+                      /usr/share/polkit-1/rules.d/50-aquarius-remember-drive.rules; do
+            [ -e "${gone}" ] && bad "${gone} is still here — 'ask once' was retired 2026-10-19" \
+              || ok "${gone} is gone"
+          done
 
           echo "== the no-password polkit rule, and its limits =="
           RULE=/usr/share/polkit-1/rules.d/49-aquarius-udisks.rules
@@ -7332,20 +7351,28 @@ jobs:
           else bad "${RULE} is missing — mounting would ask for a password"; fi
           grep -q 'subject\.local'  "${RULE}" && ok "scoped to the LOCAL session"  || bad "the rule is not scoped to subject.local"
           grep -q 'subject\.active' "${RULE}" && ok "scoped to the ACTIVE session" || bad "the rule is not scoped to subject.active"
-          grep -q 'org\.freedesktop\.udisks2\.filesystem-mount' "${RULE}" && ok "allows mounting a removable filesystem" || bad "the rule does not allow filesystem-mount"
+          grep -q '"org\.freedesktop\.udisks2\.filesystem-mount"' "${RULE}" && ok "allows mounting a plugged-in drive" || bad "the rule does not allow filesystem-mount"
           grep -q 'org\.freedesktop\.udisks2\.eject-media'      "${RULE}" && ok "allows ejecting removable media"       || bad "the rule does not allow eject-media"
           grep -q 'polkit\.Result\.YES' "${RULE}" && ok "the rule actually grants something" || bad "the rule grants nothing"
-          # ⚠️ The safety line: the CODE must NEVER name the internal-disk action,
-          # or it would let an internal disk mount with no password. The comments
-          # do mention it (to explain it is deliberately absent), so strip the
-          # `//` comments before checking.
-          if sed 's://.*::' "${RULE}" | grep -q 'filesystem-mount-system'; then
-            bad "the rule grants filesystem-mount-system — internal disks would mount with no password"
+          # ⚠️ THE REVERSED GATE (2026-10-19). Until that day the CODE had to
+          # NEVER name the internal-disk action. Royce asked for every inside
+          # drive to mount with no password, so now its code MUST name it — and
+          # must still name nothing that unlocks, formats or reaches another
+          # seat. The `//` comments name those things to explain their absence,
+          # so they are stripped before checking.
+          RULE_CODE="$(sed 's://.*::' "${RULE}")"
+          if grep -q '"org\.freedesktop\.udisks2\.filesystem-mount-system"' <<< "${RULE_CODE}"; then
+            ok "the rule's code grants filesystem-mount-system — inside drives mount with no password"
           else
-            ok "the rule's code says nothing about internal disks — they still need a password"
+            bad "the rule's code does not grant filesystem-mount-system — every inside drive would ask for a password"
+          fi
+          if grep -Eq 'encrypted-unlock|other-seat|unmount-others|modify-|format|manage-|loop-setup' <<< "${RULE_CODE}"; then
+            bad "the rule's code grants more than mounting (unlock / format / other seat)"
+          else
+            ok "the rule's code grants mounting and ejecting only"
           fi
 
-          echo "== the auto-mount service, switched on for both desktops =="
+          echo "== the auto-mount service, switched on for the desktop =="
           UNIT=/usr/lib/systemd/user/aquarius-automount.service
           LINK=/usr/lib/systemd/user/graphical-session.target.wants/aquarius-automount.service
           grep -q '^ExecStart=/usr/libexec/aquarius-automount$' "${UNIT}" && ok "the service runs the agent" || bad "the service does not run the agent"

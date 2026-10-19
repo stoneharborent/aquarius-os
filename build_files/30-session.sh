@@ -138,11 +138,11 @@ aq_dnf install xorg-x11-server-Xwayland
 #
 #   libnotify   supplies `notify-send`, the standard way any program on this
 #               machine puts a message in the corner of the screen. Both desktops
-#               show them. It is how a drive announces itself when it mounts
-#               (7f), how the inside-drive question is ASKED with buttons (7d-ii,
-#               which needs libnotify 0.8 or newer for `--action`), how a
-#               finished ZIP extraction reports, how Aquarius Installer says it
-#               is done, and how Resolve says there is an update.
+#               show them. It is how a locked Mac drive offers to unlock
+#               (7f), how a finished ZIP extraction reports, how Aquarius
+#               Installer says it is done, and how Resolve says there is an
+#               update. (It also carried the inside-drive "Mount every login?"
+#               question until that was retired on 2026-10-19.)
 #   zenity      a plain dialog box from a shell script: a message, a question, a
 #               progress bar. The Resolve launcher and the app launcher use it to
 #               say something went wrong at a moment when there is no window of

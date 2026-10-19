@@ -1,12 +1,26 @@
 #!/usr/bin/bash
 # ==============================================================================
-# STEP 76 — External drives mount by themselves, with no password
+# STEP 76 — Every drive mounts by itself, with no password
 # ==============================================================================
 # WHAT THIS STEP IS FOR
 #
 # On AquariusOS, plugging in a USB stick, an SD card or an external SSD makes it
 # appear on its own — no password, and you eject it from the dock the same way.
-# That is what a creator coming off a Mac expects, and it is four pieces:
+# Since 2026-10-19 the drives INSIDE the computer do the same: every one of them
+# is mounted when you log in, with no question and no password, and shows in
+# the dock. Royce:
+#
+#     "Remove verification for all internal and external drives. Just mount
+#      them from login and show in dock."
+#
+# That retired the "ask once" feature (FEATURES 020: build_files/83-remembered-
+# drives.sh, /usr/libexec/aquarius-remember-drive and its two polkit files),
+# which used to ask "Mount every login?" and write a yes into /etc/fstab. Lines
+# it already wrote on somebody's machine keep working; the agent sees them in
+# fstab and leaves those drives to the machine. Decision record:
+# ../docs/decision-2026-10-19-gnome-only-and-open-drives.md.
+#
+# It is four pieces:
 #
 #   1. udisks2 — Fedora's drive-mounting service. It is already installed by
 #      step 20 (the hardware/media floor); this step confirms it, because the
@@ -15,9 +29,21 @@
 #      session, watches udisks2 for a drive being plugged in, and asks it to
 #      mount. This is the piece Fedora does not provide on its own.
 #   3. A polkit rule, /usr/share/polkit-1/rules.d/49-aquarius-udisks.rules, that
-#      lets the person at the screen mount/unmount/eject a REMOVABLE drive with
-#      no password — and, on purpose, does NOT do that for internal disks.
-#   4. A user service, wired on for both desktops, that starts the agent.
+#      lets the person at the screen mount/unmount/eject a drive — plugged in
+#      OR inside the computer — with no password. Only the person at the screen.
+#   4. A user service, switched on for the desktop session, that starts the
+#      agent.
+#
+# ⚠️ AND THE SAFETY MOVED. Until 2026-10-19 the safety of internal disks was
+# the polkit rule itself: it said nothing about udisks2's internal-disk action
+# (filesystem-mount-system), so an internal disk asked for a password, and this
+# step STOPPED THE BUILD if that action ever appeared in the rule. That gate is
+# reversed on purpose now — the rule must grant it. What keeps the machine's
+# own partitions safe instead is the agent's NEVER-TOUCH LIST (the disk the OS
+# is on, the EFI partition, Windows Recovery, swap, hidden partitions, anything
+# in fstab, encrypted drives…), and this step proves that list still holds by
+# running tests/test-inside-drives.py against fake drives, most of which must
+# be REFUSED.
 #
 # Pieces 2, 3 and 4 arrived in the image as plain files at step 50 (which copies
 # everything under system_files/ into place). This step CHECKS the whole thing,
@@ -92,13 +118,37 @@ else
     bad "'aquarius-automount --dry-run' failed — the agent cannot load in this image:"
     sed 's/^/       /' /tmp/aq-automount-dry.txt
 fi
-# The rehearsal must state the safety rules, so a future edit that drops the
-# HintSystem guard is caught here rather than on a machine that mounts its own
-# boot disk twice.
-aq_file_has /tmp/aq-automount-dry.txt 'HintSystem = false' \
-    "the agent's own rehearsal states that it leaves system-internal disks alone"
+# The rehearsal must state the never-touch list, word by word, so a future edit
+# that quietly drops "the EFI partition" from it is caught here rather than on
+# a machine that mounts its own start-up partition.
 aq_file_has /tmp/aq-automount-dry.txt 'no password' \
     "the agent's rehearsal states that mounting needs no password"
+aq_file_has /tmp/aq-automount-dry.txt 'HintSystem = true' \
+    "the agent's rehearsal states that drives INSIDE the computer are mounted too"
+aq_file_has /tmp/aq-automount-dry.txt 'never-touch list' \
+    "the agent's rehearsal states its never-touch list"
+aq_file_has /tmp/aq-automount-dry.txt 'disk AquariusOS is installed on' \
+    "  …which leaves alone the disk AquariusOS is installed on"
+aq_file_has /tmp/aq-automount-dry.txt '/sysroot' \
+    "  …found from /sysroot too (on bootc, / is not a disk)"
+aq_file_has /tmp/aq-automount-dry.txt 'EFI System Partition' \
+    "  …and the EFI System Partition"
+aq_file_has /tmp/aq-automount-dry.txt 'Windows Recovery' \
+    "  …and Windows Recovery"
+aq_file_has /tmp/aq-automount-dry.txt 'Microsoft Reserved' \
+    "  …and Microsoft Reserved"
+aq_file_has /tmp/aq-automount-dry.txt 'swap' \
+    "  …and swap"
+aq_file_has /tmp/aq-automount-dry.txt 'hidden' \
+    "  …and hidden partitions"
+aq_file_has /tmp/aq-automount-dry.txt 'already listed in /etc/fstab' \
+    "  …and anything already in /etc/fstab (where the old 'ask once' drives live)"
+aq_file_has /tmp/aq-automount-dry.txt 'installer stick' \
+    "  …and the AquariusOS installer stick"
+aq_file_has /tmp/aq-automount-dry.txt 'encrypted' \
+    "  …and encrypted drives, which stay locked"
+aq_file_has /tmp/aq-automount-dry.txt 'READ-ONLY' \
+    "  …and that an inside Windows drive is mounted read-only"
 rm -f /tmp/aq-automount-dry.txt
 
 # ------------------------------------------------------------------------------
@@ -146,6 +196,25 @@ else
     bad "/ctx/tests/test-automount-mount.py is missing — the only check that proves a drive is really mounted"
 fi
 
+# ⚠️ THE NEVER-TOUCH LIST, PROVEN RATHER THAN READ. Since 2026-10-19 this list
+# is the whole safety of mounting inside drives, and no amount of reading proves
+# a refusal. This runs the agent's real decision code against fake drives — the
+# EFI partition, Windows Recovery, a partition of the system disk, swap, an
+# encrypted drive, a hidden recovery partition, the installer stick, a drive
+# already in fstab — inside the finished image, with the Python really in it.
+say "Every drive mounts at login — and the never-touch list holds (fake drives)"
+if [ -r /ctx/tests/test-inside-drives.py ]; then
+    if python3 -B /ctx/tests/test-inside-drives.py "${AGENT}"; then
+        ok "inside drives are mounted, and every never-touch drive is refused"
+    else
+        bad "a drive that must NEVER be mounted was mounted, or an ordinary inside"
+        bad "drive was not. See the lines above — this is the safety of the feature."
+    fi
+    rm -rf /usr/libexec/__pycache__ /usr/lib/aquarius/python/__pycache__
+else
+    bad "/ctx/tests/test-inside-drives.py is missing — the only check that proves a refusal"
+fi
+
 # Python must be able to reach GLib and Gio in this image — the two the agent
 # imports. This is the automount equivalent of the GTK import check the Resolve
 # window has, and it catches a missing python3-gobject.
@@ -176,7 +245,7 @@ else
 fi
 
 # ------------------------------------------------------------------------------
-# 3. The polkit rule — scoped tightly, and NOT a blanket allow
+# 3. The polkit rule — every drive, but only for the person at the screen
 # ------------------------------------------------------------------------------
 # This is the security-sensitive part, so it is checked in both directions:
 # what it MUST say, and what it must NEVER say.
@@ -187,35 +256,99 @@ else
     bad "${RULE} is missing — mounting a drive would ask for a password"
 fi
 
-# What it must say: only the person physically at the machine, only in the
-# session that owns the screen, and a YES for mounting a removable drive.
-aq_file_has "${RULE}" 'subject\.local' \
-    "the rule is limited to the LOCAL session (not someone over SSH)"
-aq_file_has "${RULE}" 'subject\.active' \
-    "the rule is limited to the ACTIVE session (the one at the screen now)"
-aq_file_has "${RULE}" 'org\.freedesktop\.udisks2\.filesystem-mount' \
-    "the rule allows mounting a removable filesystem"
-aq_file_has "${RULE}" 'org\.freedesktop\.udisks2\.eject-media' \
-    "the rule allows ejecting removable media"
-aq_file_has "${RULE}" 'polkit\.Result\.YES' \
-    "the rule actually grants something (returns YES)"
+# The `//` comments are stripped before every check below. The comments explain
+# what the rule deliberately does NOT grant, by name, and must not trip the
+# alarms they describe.
+RULE_CODE="$(sed 's://.*::' "${RULE}" 2> /dev/null)"
 
-# ⚠️ What it must NEVER say. The whole safety of this feature is that mounting a
-# SYSTEM-INTERNAL disk still needs a password — udisks2 checks a different
-# action for those (filesystem-mount-system), and this rule's CODE must stay
-# silent about it so the request falls through to the default that asks for auth.
-# If that action name ever appears in the code, someone has widened a narrow
-# rule into a blanket "mount anything with no password", and the build must stop.
-#
-# The comments in the rule DO mention filesystem-mount-system — they explain why
-# it is deliberately absent — so we strip the `//` comments before checking, or
-# the explanation would trip the alarm it is describing.
-if sed 's://.*::' "${RULE}" | grep -q 'filesystem-mount-system'; then
-    bad "${RULE} grants filesystem-mount-system in its code — that would let an"
-    bad "INTERNAL disk be mounted with no password. Remove it: internal disks must ask."
+rule_code_has() {
+    if grep -Eq -- "$1" <<< "${RULE_CODE}"; then ok "$2"; else bad "$3"; fi
+}
+rule_code_lacks() {
+    if grep -Eq -- "$1" <<< "${RULE_CODE}"; then bad "$3"; else ok "$2"; fi
+}
+
+# What it must say: only the person physically at the machine, only in the
+# session that owns the screen. THIS DID NOT CHANGE on 2026-10-19.
+rule_code_has 'subject\.local' \
+    "the rule is limited to the LOCAL session (not someone over SSH)" \
+    "the rule no longer checks subject.local — someone over SSH could mount drives"
+rule_code_has 'subject\.active' \
+    "the rule is limited to the ACTIVE session (the one at the screen now)" \
+    "the rule no longer checks subject.active — a switched-away session could mount drives"
+rule_code_has '!\(subject\.local && subject\.active\)' \
+    "and anybody else is handed back to polkit's defaults before anything is granted" \
+    "the local-and-active guard is not the first thing the rule checks"
+
+# What it must grant.
+rule_code_has '"org\.freedesktop\.udisks2\.filesystem-mount"' \
+    "the rule allows mounting a plugged-in drive (filesystem-mount)" \
+    "the rule does not allow filesystem-mount — a USB stick would ask for a password"
+# ⚠️ THE REVERSED GATE (2026-10-19). Until that day the build STOPPED if this
+# action name appeared in the rule's code. Royce asked for every inside drive to
+# mount with no password, so now the build stops if it is MISSING.
+rule_code_has '"org\.freedesktop\.udisks2\.filesystem-mount-system"' \
+    "the rule allows mounting a drive INSIDE the computer (filesystem-mount-system) — reversed on purpose 2026-10-19" \
+    "the rule does not grant filesystem-mount-system — every inside drive would ask for a password at login"
+rule_code_has '"org\.freedesktop\.udisks2\.eject-media"' \
+    "the rule allows ejecting removable media" \
+    "the rule does not allow eject-media"
+rule_code_has 'polkit\.Result\.YES' \
+    "the rule actually grants something (returns YES)" \
+    "the rule never returns YES — it grants nothing"
+
+# ⚠️ What it must NEVER say. Mounting is reading and writing files. Unlocking an
+# encrypted drive, mounting for another seat, unmounting somebody else's mount,
+# or reshaping a disk (format, partition, change a filesystem) is something
+# else, and must still ask.
+rule_code_lacks 'encrypted-unlock' \
+    "the rule says nothing about unlocking encrypted drives — those still need their own passphrase" \
+    "the rule grants encrypted-unlock — an encrypted drive must never open without its key"
+rule_code_lacks 'other-seat' \
+    "the rule says nothing about drives on another seat" \
+    "the rule grants an -other-seat action, which nothing here needs"
+rule_code_lacks 'unmount-others' \
+    "the rule does not let you unmount somebody else's drive" \
+    "the rule grants filesystem-unmount-others"
+rule_code_lacks 'modify-device|modify-system|format|filesystem-take-ownership|loop-setup|manage-' \
+    "the rule grants nothing that formats, partitions or changes a disk" \
+    "the rule grants an action that changes a disk — mounting is all it may grant"
+rule_code_lacks 'action\.id\.indexOf|action\.id\.startsWith|action\.id\.match|udisks2\.\*' \
+    "every action is named in full — no wildcard that could match more than it says" \
+    "the rule matches actions by pattern; name each one in full instead"
+
+# The retired "ask once" pieces must be GONE. A leftover policy file would put
+# a second, dead route to editing /etc/fstab on every machine.
+for aq_gone in \
+    /usr/libexec/aquarius-remember-drive \
+    /usr/share/polkit-1/actions/org.aquariusos.rememberdrive.policy \
+    /usr/share/polkit-1/rules.d/50-aquarius-remember-drive.rules; do
+    if [ -e "${aq_gone}" ]; then
+        bad "${aq_gone} is still in the image — the 'ask once' feature was retired on 2026-10-19"
+    else
+        ok "${aq_gone} is gone (the retired 'ask once' feature)"
+    fi
+done
+if grep -q 'pkexec\|notify-send' < <(grep -v '^[[:space:]]*#' "${AGENT}"); then
+    bad "the agent still runs pkexec or notify-send — the inside-drive QUESTION is back"
 else
-    ok "the rule's code says nothing about internal disks (filesystem-mount-system) — so they still need a password"
+    ok "the agent puts no question on screen and asks for no password"
 fi
+
+# ------------------------------------------------------------------------------
+# The dock shows the drives
+# ------------------------------------------------------------------------------
+# "Show in dock" is half of what Royce asked for. Dash to Dock shows a tile for
+# every mounted drive when show-mounts is on; the keys are set out loud in our
+# override file so a future upstream default cannot quietly hide them.
+DOCK_OVERRIDE="/usr/share/glib-2.0/schemas/zz1-aquarius-30-dash-to-dock.gschema.override"
+say "Mounted drives show in the dock"
+aq_file_has "${DOCK_OVERRIDE}" '^show-mounts=true$' \
+    "the dock shows mounted drives (show-mounts=true)"
+aq_file_has "${DOCK_OVERRIDE}" '^show-mounts-only-mounted=true$' \
+    "and only MOUNTED ones — never a tile for a partition the never-touch list left alone"
+aq_file_has "${DOCK_OVERRIDE}" '^show-mounts-network=true$' \
+    "and a network share you opened in Files too"
 
 # polkit refuses to load a rule file it cannot parse, silently, at runtime. If
 # the tool that checks that is in the image, use it; if not, say so honestly
@@ -230,7 +363,7 @@ else
 fi
 
 # ------------------------------------------------------------------------------
-# 4. The service, and the fact that it is switched on for both desktops
+# 4. The service, and the fact that it is switched on for the desktop
 # ------------------------------------------------------------------------------
 say "The service that starts the agent at login"
 aq_file_has "${UNIT}" '^ExecStart=/usr/libexec/aquarius-automount$' \
@@ -238,7 +371,7 @@ aq_file_has "${UNIT}" '^ExecStart=/usr/libexec/aquarius-automount$' \
 aq_file_has "${UNIT}" '^PartOf=graphical-session\.target$' \
     "the service ends when the desktop does"
 aq_file_has "${UNIT}" '^WantedBy=graphical-session\.target$' \
-    "the service belongs to the graphical session (which both desktops reach)"
+    "the service belongs to the graphical session (which GNOME reaches)"
 aq_file_has "${UNIT}" '^ConditionUser=!@system$' \
     "the LOGIN SCREEN does not run this — only real people, not the gdm account"
 
@@ -285,4 +418,4 @@ if aq_have systemd-analyze; then
     fi
 fi
 
-aq_finish "External drives automount"
+aq_finish "Every drive automounts"

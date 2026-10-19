@@ -1,61 +1,90 @@
 // ===========================================================================
-// 49-aquarius-udisks.rules — mount/unmount a removable drive with no password
+// 49-aquarius-udisks.rules — mount any drive, inside or plugged in, with no
+// password, for the person sitting at this computer
 // ===========================================================================
 // PLAIN ENGLISH
 //
 // polkit is the part of Linux that decides "is this person allowed to do this,
-// and do they need to type a password first?". This file is one narrow rule:
-// the person actually sitting at this computer may mount, unmount and eject a
-// REMOVABLE drive — a USB stick, an SD card, an external SSD — without a
-// password, exactly like on a Mac.
+// and do they need to type a password first?". This file is one rule: the
+// person actually sitting at this computer may mount, unmount and eject a
+// drive — a USB stick, an SD card, an external SSD, AND (since 2026-10-19) a
+// drive that lives inside the computer — without a password, exactly like on
+// a Mac.
 //
-// It is what makes two things work with no prompt:
-//   * a drive mounting by itself when you plug it in
-//     (/usr/libexec/aquarius-automount asks udisks2 to do it), and
-//   * the dock's right-click "Eject / Unmount"
-//     (the shell runs `udisksctl unmount` / `udisksctl power-off`).
+// It is what makes these work with no prompt:
+//   * every drive inside the computer opening by itself when you log in, and
+//     every drive you plug in opening the moment you plug it in
+//     (/usr/libexec/aquarius-automount asks udisks2 to do both), and
+//   * the dock's and Files' right-click "Eject / Unmount".
 //
 // It is loaded before Fedora's own udisks rules because its filename sorts
 // before "50-" — so for the actions below, our answer is the one that stands.
 //
 // ---------------------------------------------------------------------------
-// WHY THIS IS SAFE — AND WHAT IT DELIBERATELY DOES NOT DO
+// ⚠️ WHAT CHANGED ON 2026-10-19, AND WHY
 // ---------------------------------------------------------------------------
-// Two things keep this tight, and both matter:
+// udisks2 uses a DIFFERENT polkit action depending on the kind of drive:
 //
+//     filesystem-mount          a drive you PLUG IN
+//     filesystem-mount-system   a drive INSIDE the computer
+//
+// Until 2026-10-19 this rule answered only the first one, on purpose: an
+// inside drive asked for an administrator password, and the build STOPPED if
+// filesystem-mount-system ever appeared here. A feature called "ask once"
+// (FEATURES 020) softened that by writing chosen inside drives into
+// /etc/fstab.
+//
+// Royce reversed that on 2026-10-19:
+//
+//     "Remove verification for all internal and external drives. Just mount
+//      them from login and show in dock."
+//
+// So filesystem-mount-system is now granted too, the "ask once" feature is
+// retired, and the build gate was reversed deliberately — it now checks that
+// this rule DOES grant it, and that the session agent's never-touch list (the
+// thing that actually keeps the machine's own partitions safe) still holds.
+// The decision record: ../docs/decision-2026-10-19-gnome-only-and-open-drives.md
+// (in the AquariusOS project folder, one level above this repository).
+//
+// ---------------------------------------------------------------------------
+// WHY THIS IS STILL SAFE — AND WHAT IT DELIBERATELY DOES NOT DO
+// ---------------------------------------------------------------------------
 // 1. WHO. `subject.local && subject.active` means "the login session that owns
-//    the screen and keyboard right now". Not someone connected over SSH
-//    (not local), not a session that has been switched away from (not active),
-//    and never the login screen (that is a system account, handled below).
-//    A password-free mount is only ever granted to the person physically here.
+//    the screen and keyboard right now". Not someone connected over SSH (not
+//    local), not a session that has been switched away from (not active), and
+//    never the login screen. A password-free mount is only ever granted to the
+//    person physically here. This line did NOT change, and the build checks it.
 //
-// 2. WHAT. udisks2 uses a DIFFERENT polkit action depending on the kind of
-//    device:
+// 2. THE MACHINE'S OWN DISK IS ALREADY MOUNTED. The partitions AquariusOS runs
+//    from are mounted by the system at start-up, before anybody logs in, and a
+//    mounted partition cannot be mounted again. The EFI partition, Windows'
+//    recovery partition and the rest of the start-up plumbing are left alone by
+//    the agent's never-touch list (see the header of
+//    /usr/libexec/aquarius-automount), and udisks2 hides most of them anyway.
 //
-//        filesystem-mount          a REMOVABLE / hotplugged drive
-//        filesystem-mount-system   a SYSTEM-INTERNAL disk (the boot drive, an
-//                                  extra internal disk, anything in /etc/fstab)
+// 3. ENCRYPTED STAYS ENCRYPTED. Unlocking an encrypted drive is a different
+//    action (encrypted-unlock), not granted here. A LUKS or BitLocker drive
+//    still needs its own passphrase — the only "verification" left, because
+//    without the key there is nothing to read.
 //
-//    This rule answers ONLY for the removable set — filesystem-mount,
-//    eject-media and power-off-drive. It says nothing about
-//    filesystem-mount-system, so a request to mount an internal disk falls
-//    through to Fedora's default, which still asks for an administrator
-//    password. That is the whole point: convenient for the drives you carry,
-//    unchanged for the disk the operating system lives on.
-//
-// It also does NOT grant filesystem-unmount-others. Unmounting a drive that
-// YOU mounted never needs a password in the first place, and the automount
-// agent mounts as you — so the dock's unmount is already password-free without
-// it. Granting the "others" variant would let you unmount a mount that belongs
-// to a different user with no password, which is not something we need.
+// It also does NOT grant:
+//   * filesystem-mount-other-seat — a drive attached to ANOTHER seat (another
+//     screen-and-keyboard on a multi-seat machine). Not something this
+//     computer has, so not something to hand out.
+//   * filesystem-unmount-others — unmounting a drive somebody ELSE mounted.
+//     Unmounting a drive YOU mounted never needs a password in the first place,
+//     and the agent mounts as you, so the dock's unmount is already free.
+//   * anything about formatting, partitioning, or changing a drive. Mounting is
+//     reading and writing files; reshaping a disk still asks.
 //
 // ---------------------------------------------------------------------------
 // CHECK IT DID WHAT IT SAYS
 // ---------------------------------------------------------------------------
-// The build (build_files/76-automount.sh) and CI both grep this file to prove
-// it still names subject.active and subject.local, still returns YES for
-// filesystem-mount, and still says NOTHING about filesystem-mount-system — so a
-// future edit cannot quietly turn this into a blanket "mount anything with no
+// The build (build_files/76-automount.sh) and CI both read this file to prove
+// it still names subject.active and subject.local, returns YES for
+// filesystem-mount AND filesystem-mount-system, and says NOTHING about
+// encrypted-unlock, the -other-seat action, or any modify/format action — so a
+// future edit cannot quietly turn it into "do anything to any disk with no
 // password".
 // ===========================================================================
 
@@ -66,10 +95,10 @@ polkit.addRule(function(action, subject) {
         return polkit.Result.NOT_HANDLED;
     }
 
-    // The removable-drive actions, and ONLY these. Note there is no
-    // "org.freedesktop.udisks2.filesystem-mount-system" here on purpose:
-    // mounting an internal/system disk must still ask for a password.
+    // Mounting a drive (plugged in, or inside the computer), ejecting it, and
+    // switching it off before it is unplugged. These, and ONLY these.
     if (action.id == "org.freedesktop.udisks2.filesystem-mount" ||
+        action.id == "org.freedesktop.udisks2.filesystem-mount-system" ||
         action.id == "org.freedesktop.udisks2.eject-media" ||
         action.id == "org.freedesktop.udisks2.power-off-drive") {
         return polkit.Result.YES;
