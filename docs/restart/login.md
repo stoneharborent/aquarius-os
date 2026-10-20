@@ -1,8 +1,20 @@
 # The login screen
 
+> ## ⚠️ AND THEN — 19 October 2026: ONE DESKTOP, NO CHOICE
+>
+> AquariusOS is **GNOME only** since 19 October 2026. GDM is still the one
+> login screen, and it now offers exactly one desktop — GNOME — so the small
+> session button under the password box is gone: click your name, type your
+> password, and you are in GNOME. Game Mode is still on the computer but not on
+> the login screen's menu (it is reached from the **Game Mode** icon or
+> `aq game`). An account whose last desktop was KDE Plasma is pointed at GNOME
+> at boot. The whole story: [`desktops.md`](desktops.md). Everything below that
+> talks about choosing between GNOME and KDE Plasma is history.
+
 > ## ⚠️ READ THIS FIRST — 15 September 2026
 >
 > **There is now exactly ONE login screen, GDM, and it lists BOTH desktops.**
+> *(Until 19 October 2026 — see the note above.)*
 >
 > Most of this page is about a second one: a branded AquariusOS login screen
 > (greetd plus a greeter drawn by the Aquarius Shell), called "Part B"
@@ -96,8 +108,10 @@ TimedLogin=<your account>
 ```
 
 Which session you land in is a separate answer, in your own account's file:
-`/var/lib/AccountsService/users/<your account>`, as `Session=gnome`,
-`Session=plasma` or `Session=gamescope-session-steam`.
+`/var/lib/AccountsService/users/<your account>`, as `Session=gnome` or
+`Session=gamescope-session-steam`. (`Session=plasma` was possible from
+2026-09-15 to 2026-10-19; `aquarius-login-mode` now turns it back into
+`Session=gnome` at boot, because Plasma is no longer installed.)
 
 Both are written by one small program, `/usr/libexec/aquarius-session-root`,
 behind polkit — the person at this screen, in the active session, in the `wheel`

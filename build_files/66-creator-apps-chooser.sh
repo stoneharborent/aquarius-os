@@ -216,14 +216,17 @@ if grep -q 'first_app' "${CHOOSER}"; then
 else
     ok "it no longer picks one app to open on the person's behalf"
 fi
-# The two desktops AquariusOS ships, and the way out if neither answers.
-# (Until 2026-09-15 the first of these was the Aquarius Session's own search
-# palette, `qs ipc call search toggle`. That desktop was retired and Plasma
-# took its place — see ../docs/decision-2026-09-15-two-desktops.md.)
+# The desktop AquariusOS ships, and the way out if it does not answer.
+# (Until 2026-09-15 there was also a route to the Aquarius Session's own search
+# palette, and from then until 2026-10-19 one to KDE Plasma's KRunner. Both
+# desktops are gone; AquariusOS is GNOME only.)
 aq_file_has "${CHOOSER}" '"ShowApplications"' \
-    "in GNOME it asks GNOME Shell for the app grid"
-aq_file_has "${CHOOSER}" '"org.kde.krunner"' \
-    "in KDE Plasma it opens KRunner, which lists applications"
+    "it asks GNOME Shell for the app grid"
+if grep -q '"org.kde.krunner"' "${CHOOSER}"; then
+    bad "it still calls KDE Plasma's KRunner — Plasma left the image on 2026-10-19"
+else
+    ok "no route to a desktop that is no longer here"
+fi
 # Again the call and not the name: "Eval" in quotes is a D-Bus method being
 # asked for; Eval in a sentence is the comment saying why we do not ask for it.
 if grep -q '"Eval"' "${CHOOSER}"; then
@@ -232,7 +235,7 @@ else
     ok "it does not call Eval, which would be refused"
 fi
 aq_file_has "${CHOOSER}" 'def _back_to_the_list' \
-    "and if neither desktop answers it goes back to the app list instead"
+    "and if GNOME does not answer it goes back to the app list instead"
 aq_file_has "${CHOOSER}" 'self\.footer\.set_visible\(True\)' \
     "which puts the footer back, so that page still has its buttons"
 
@@ -281,9 +284,9 @@ fi
 # ⚠️ THERE USED TO BE A SECOND PLACE TO CHECK HERE, AND THAT IS THE GOOD NEWS.
 # The Aquarius Session did not read /etc/xdg/autostart at all — labwc reads
 # exactly one file of its own — so every login-time fact in this operating
-# system had to be written down twice and checked twice. GNOME and KDE Plasma
-# BOTH read /etc/xdg/autostart, so from 2026-09-15 there is one file, one
-# check, and nothing that can drift.
+# system had to be written down twice and checked twice. GNOME reads
+# /etc/xdg/autostart (and so did KDE Plasma, on the image until 2026-10-19), so
+# from 2026-09-15 there is one file, one check, and nothing that can drift.
 
 # ==============================================================================
 # 4b. ...but it knows how to BE the welcome's second step

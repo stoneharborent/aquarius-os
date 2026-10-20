@@ -201,7 +201,7 @@ keymap:
   # To stop Aquarius Keys touching an app, add its id to this list. To find
   # out what an app calls itself, click on its window and run:
   #
-  #     xremap-wlroots --list-windows      (on KDE Plasma, which answers it)
+  #     xremap-wlroots --list-windows      (on a non-GNOME Wayland session)
   #
   # On GNOME's Wayland desktop that command cannot work — GNOME does not let
   # any program ask. There, turn on the "Xremap" add-on in the Extensions app
@@ -257,8 +257,7 @@ keymap:
       Super-r: C-r                 # reload / refresh
       Super-l: C-l                 # jump to the address bar (this is why the lock
                                    # is Ctrl+Cmd+Q, not Cmd+L — see
-                                   # zz1-aquarius-40-keys.gschema.override and
-                                   # /etc/xdg/kglobalshortcutsrc)
+                                   # zz1-aquarius-40-keys.gschema.override)
 
       # -----------------------------------------------------------------------
       # Windows and tabs
@@ -271,7 +270,7 @@ keymap:
       # Quit. This one is not a Control shortcut at all.
       #
       # Alt-F4 is the "close this window" instruction that the window manager
-      # itself listens for — both GNOME's Mutter and KDE's KWin use it — so it
+      # itself listens for — GNOME's Mutter uses it — so it
       # works even in
       # apps that have no Quit shortcut of their own. That makes it more
       # reliable than sending Control-Q, which only some apps understand.
@@ -307,8 +306,8 @@ keymap:
       Super-Down: C-End            # to the very bottom
                                    # (the note that used to be here was about the
                                    #  retired Aquarius app switcher and how it
-                                   #  handled Cmd being released. GNOME's and
-                                   #  KWin's switchers handle that themselves.)
+                                   #  handled Cmd being released. GNOME's
+                                   #  switcher handles that itself.)
       Super-Shift-Up: C-Shift-Home
       Super-Shift-Down: C-Shift-End
 
@@ -350,27 +349,26 @@ keymap:
       # the swap at the top of this file they are already Super combinations,
       # which is exactly what the desktop is listening for:
       #
-      #   Command-Space          the search box. On KDE Plasma this opens
-      #                          KRunner (added by /etc/xdg/kglobalshortcutsrc).
-      #                          ⚠️ ON GNOME IT DOES NOT, and that is honest
+      #   Command-Space          the search box — but ⚠️ ON GNOME IT IS NOT
+      #                          (yet), and that is honest
       #                          rather than broken: GNOME already uses
       #                          Super-Space for "switch keyboard layout", and
       #                          taking that away is a decision of Royce's, not
       #                          a side effect of swapping the desktop. Logged
       #                          as a follow-up.
       #   Command-Tab            switch apps. GNOME listens for Super-Tab out
-      #                          of the box; KWin is TAUGHT to, alongside its
-      #                          own Alt-Tab, by /etc/xdg/kglobalshortcutsrc.
-      #   Command-Shift-Tab      switch apps backwards. Same two answers.
+      #                          of the box.
+      #   Command-Shift-Tab      switch apps backwards. The same.
       #   Command-`              switch between windows of the same app. GNOME
-      #                          listens for Super-`; KWin is taught the same.
+      #                          listens for Super-`.
       #
       # ⚠️ THE TWO DESKTOPS CHANGED ON 2026-09-15 AND THESE LINES CHANGED WITH
       # THEM. They used to describe the Aquarius Session, our own desktop, which
-      # was retired that day in favour of GNOME and KDE Plasma. Command-Shift-E
-      # ("log out of the Aquarius Session") went with it — each desktop has its
-      # own log-out now. See docs/restart/aquarius-keys.md,
-      # docs/restart/desktops.md and ../docs/decision-2026-09-15-two-desktops.md.
+      # was retired that day in favour of GNOME and KDE Plasma (and on
+      # 2026-10-19, GNOME alone). Command-Shift-E ("log out of the Aquarius
+      # Session") went with it — GNOME has its own log-out. See
+      # docs/restart/aquarius-keys.md, docs/restart/desktops.md and
+      # ../docs/decision-2026-10-19-gnome-only-and-open-drives.md.
 
   # ===========================================================================
   # BLOCK 4 — A NOTE ON WHAT IS *NOT* HERE

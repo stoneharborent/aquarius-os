@@ -26,7 +26,16 @@
 > only undoes its own handwriting — if you moved them yourself to some other
 > arrangement, that is left exactly as you set it.
 
-> ## ⚠️ TWO DESKTOPS NOW — 15 September 2026
+> ## ⚠️ GNOME ONLY — 19 October 2026
+>
+> KDE Plasma left AquariusOS on 19 October 2026 ([`desktops.md`](desktops.md)).
+> Everything on this page about **KDE Plasma** — the "Mac or Windows" page in
+> its System Settings, `/etc/xdg/kglobalshortcutsrc`, KRunner on Command-Space —
+> is history. The keyboard itself is unchanged: the remapper, `mac.yaml`,
+> `aq keys`, and the switch in GNOME's top-right menu all work exactly as
+> described.
+
+> ## ⚠️ TWO DESKTOPS NOW — 15 September 2026 *(until 19 October 2026)*
 >
 > Everywhere below that says **"the Aquarius Session"** or **"the Aquarius
 > Desktop"**, read **"KDE Plasma"**. That desktop was retired on 2026-09-15 and
@@ -148,9 +157,9 @@ itself: `system_files/usr/share/aquarius/keys/mac.yaml`.
 
 *Added 16 September 2026.*
 
-You do **not** have to type anything to change this. Each desktop has a switch,
-and they are the same switch — change it in one place and every other place
-agrees, straight away, with no logging out.
+You do **not** have to type anything to change this. There is a switch in
+GNOME's top-right menu, and it is the same switch as `aq keys` — change it in
+one place and every other place agrees, straight away, with no logging out.
 
 ### On GNOME
 
@@ -163,16 +172,11 @@ agrees, straight away, with no logging out.
    of the tile. A little menu opens listing **Mac** and **Windows**, with a tick
    beside the one that is on. Click either.
 
-### On KDE Plasma
+### On KDE Plasma — retired 19 October 2026
 
-1. Open **System Settings** (it is in your apps; on Mac keys, ⌘Space and type
-   "system settings").
-2. In the list down the left, click **Appearance & Style**.
-3. Click the page called **"Mac or Windows"**. You can also just type *mac*,
-   *windows*, *keyboard* or *shortcuts* into the search box at the top — the
-   page answers to all of them.
-4. Pick **Mac** or **Windows**. There is no Apply button and there does not need
-   to be: it happens when you click.
+From 16 September to 19 October 2026 KDE Plasma had the same switch as a page
+called "Mac or Windows" in its System Settings. Plasma is no longer in the
+image, and the page went with it.
 
 ### What the switch changes
 
@@ -216,10 +220,7 @@ is the honest version of that.
   off in the Extensions app after that stays off — the script only ever does
   this once per account.
 
-- **On KDE, no "Mac or Windows" page under Appearance & Style.** Close System
-  Settings completely and open it again — it reads the list of pages once, when
-  it starts.
-- **Either way, it still works from a terminal**, with the commands in the next
+- **It still works from a terminal**, with the commands in the next
   section. Nothing about the keyboard depends on the switch; the switch is only
   a way of reaching it.
 
@@ -228,10 +229,10 @@ is the honest version of that.
 | Desktop | What it is | In this repo |
 | --- | --- | --- |
 | GNOME | a small add-on of ours, `aquarius-keys@stoneharborent.github.io` | `system_files/usr/share/gnome-shell/extensions/` |
-| KDE Plasma | a System Settings page, `kcm_aquariuskeys` | `kcm/aquarius-keys/`, compiled by `build_files/73-keys-kcm-build.sh` |
+| ~~KDE Plasma~~ | ~~a System Settings page, `kcm_aquariuskeys`~~ — retired 2026-10-19 with Plasma | was `kcm/aquarius-keys/` and `build_files/73-keys-kcm-build.sh`; in git history |
 
-Neither one stores the setting itself. Both read the same file, `aq` reads —
-`~/.config/aquarius/keys.conf` — and both change it by running `aq keys`. There
+It does not store the setting itself. It reads the same file `aq` reads —
+`~/.config/aquarius/keys.conf` — and changes it by running `aq keys`. There
 is one owner of this setting and it is `/usr/bin/aq`.
 
 ---

@@ -895,7 +895,7 @@ aq_file_has /usr/bin/aq 'AQ_RESOLVE_ENTRY=/usr/libexec/aquarius-resolve-entry' \
 # The Aquarius Session is retired (../docs/decision-2026-09-15-two-desktops.md)
 # and labwc is no longer in the image, so there is no rc.xml to read.
 #
-# ⚠️ THE UNDERLYING FAULT IS NOT FIXED, IT IS UNTESTED ON THE NEW DESKTOPS, and
+# ⚠️ THE UNDERLYING FAULT IS NOT FIXED, IT IS UNTESTED ON GNOME, and
 # that is worth knowing rather than forgetting:
 #
 #   GNOME (Mutter)  has no per-application window rules at all. If Resolve
@@ -903,15 +903,12 @@ aq_file_has /usr/bin/aq 'AQ_RESOLVE_ENTRY=/usr/libexec/aquarius-resolve-entry' \
 #                   in GNOME to correct it — the honest answer would be an
 #                   extension, or Resolve's own window memory (which
 #                   aquarius-resolve-settings already writes).
-#   KDE (KWin)      HAS per-application window rules, and they are stronger
-#                   than labwc's: a KWin rule can force size, position and
-#                   "fit to screen" for a window class. Shipping one as a
-#                   /usr/share/kwin file is a real option.
+#   (KDE Plasma's KWin had real per-application window rules, and shipping one
+#   was an option while Plasma was in the image, 2026-09-15 to 2026-10-19. It
+#   is not any more: AquariusOS is GNOME only.)
 #
-# Neither is done here, deliberately: this change is "swap the desktop", not
-# "rebuild the features on it". It is logged as a follow-up in the decision
-# record, and the bench is where it gets answered — open Resolve on the 4K
-# screen on each desktop and see whether it misbehaves at all.
+# Nothing is done here, deliberately. The bench is where it gets answered —
+# open Resolve on the 4K screen and see whether it misbehaves at all.
 
 # ------------------------------------------------------------------------------
 # Your drives are in the same places inside

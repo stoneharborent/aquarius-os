@@ -131,8 +131,9 @@ ARG XREMAP_COMMIT=7e6649e442ca445b781e4cf0e90c165f86e717db
 # Aquarius Session.
 #
 # Royce retired that desktop on 15 September 2026 and asked for GNOME and KDE
-# Plasma instead (steps 4 and 4b below). Nothing in this file compiles a
-# desktop any more; both come from Fedora's own packages, hand-picked.
+# Plasma instead; on 19 October 2026 he made it GNOME only (step 4 below).
+# Nothing in this file compiles a desktop any more; GNOME comes from Fedora's
+# own packages, hand-picked.
 #
 # Nothing is lost: the shell repository is tagged `aquarius-session-final`, and
 # the last image that shipped it is in the registry. The reasoning is in
@@ -156,9 +157,6 @@ COPY system_files /system_files
 COPY handheld_files /handheld_files
 COPY ingest /ingest
 COPY tests /tests
-# The source of the KDE "Mac or Windows" settings page. The kcm-build workshop
-# further down compiles it; without this line it finds an empty folder.
-COPY kcm /kcm
 
 # ------------------------------------------------------------------------------
 # The NVIDIA driver parts — fetched ONLY when we are building the NVIDIA image
@@ -260,23 +258,13 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/build_files/74-xremap-build.sh
 
 # ------------------------------------------------------------------------------
-# The KDE half of the Mac-or-Windows switch
+# ⚠️ THE kcm-build WORKSHOP IS GONE (2026-10-19)
 # ------------------------------------------------------------------------------
-# AquariusOS has one Mac-or-Windows choice, and since 2026-09-16 it has a switch
-# on each desktop. On GNOME the switch is a small add-on of ours made of plain
-# text files, so it just ships in system_files/ with everything else. On KDE it
-# is a page in System Settings, and a page in System Settings has to be a
-# compiled program — kcm/aquarius-keys/CMakeLists.txt sets out the evidence for
-# that, checked against Fedora 44's own packages rather than assumed.
-#
-# So it is built here, in its own throwaway workshop, for the same reason
-# xremap is: the KDE development libraries and a C++ compiler come to several
-# hundred megabytes, and the finished plugin is about a hundred kilobytes. Only
-# the plugin crosses into the operating system, in step 7b below.
-FROM quay.io/fedora/fedora:${FEDORA_VERSION} AS kcm-build
-RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
-    --mount=type=cache,dst=/var/cache/libdnf5 \
-    /ctx/build_files/73-keys-kcm-build.sh
+# A workshop here compiled the KDE "Mac or Windows" page for Plasma's System
+# Settings (build_files/73-keys-kcm-build.sh, source in kcm/). KDE Plasma left
+# the image on 2026-10-19 — AquariusOS is GNOME only — so the page, its source
+# and this workshop went with it. The Mac-or-Windows switch on GNOME is plain
+# text files and needs no workshop. Everything is in git history.
 
 # ==============================================================================
 # THE THREE WORKSHOPS
@@ -301,8 +289,9 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 
 # ⚠️ THERE USED TO BE THREE MORE WORKSHOPS HERE, AND THEY ARE GONE (2026-09-15).
 # labwc-build, quickshell-build and aquarius-shell-src compiled or fetched the
-# Aquarius Session. That desktop was retired in favour of GNOME and KDE Plasma,
-# both of which come from Fedora's own packages and need no workshop at all.
+# Aquarius Session. That desktop was retired (in favour of GNOME and KDE Plasma
+# then, GNOME alone since 2026-10-19), and GNOME comes from Fedora's own
+# packages and needs no workshop at all.
 # See ../docs/decision-2026-09-15-two-desktops.md.
 
 # Resolve's small menu adapter runs INSIDE the Rocky 9 app container. Build it
@@ -376,31 +365,19 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     /ctx/build_files/30-session.sh
 
-# 4. The first desktop: a deliberately short list of GNOME, not the whole of it.
+# 4. The desktop: a deliberately short list of GNOME, not the whole of it.
+#
+#     ⚠️ GNOME ONLY, SINCE 2026-10-19. From 2026-09-15 a step 4b here added KDE
+#     Plasma beside it (build_files/41-kde-desktop.sh) so Royce could bench
+#     both. On 2026-10-19 he chose: "Remove the first login screen where you can
+#     choose the desktop version and just go full GNOME." Step 4b is gone, the
+#     login screen offers GNOME and nothing else, and an account whose last
+#     login was Plasma is pointed at GNOME at boot by aquarius-login-mode.
+#     Decision record: ../docs/decision-2026-10-19-gnome-only-and-open-drives.md.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     /ctx/build_files/40-gnome-desktop.sh
 
-# 4b. The SECOND desktop: a deliberately short list of KDE Plasma, the same way.
-#
-#     ⚠️ TWO DESKTOPS, ONE LOGIN SCREEN — Royce's decision of 2026-09-15. Until
-#     that day AquariusOS was building a desktop of its own (the Aquarius
-#     Session: labwc + Quickshell, steps 5.5 and 5.7, which no longer exist).
-#     He stopped that work and asked for GNOME and KDE Plasma side by side so he
-#     can use each one for real and pick. GDM stays the one login screen and
-#     lists both; GNOME is what a brand-new account lands in.
-#
-#     Everything else in this file is UNCHANGED by that decision, because the
-#     desktop was only ever the top layer. The reasoning and the full feature
-#     map: ../docs/decision-2026-09-15-two-desktops.md. The plain-language guide
-#     for a person at the machine: docs/restart/desktops.md.
-#
-#     After step 4 because it checks GDM and the boot target that step set, and
-#     because Firefox, the language pack and the app store are installed once,
-#     there, for both desktops.
-RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
-    --mount=type=cache,dst=/var/cache/libdnf5 \
-    /ctx/build_files/41-kde-desktop.sh
 
 # 5. How that desktop looks and behaves out of the box: Ice light theme, our
 #    wallpaper, our fonts, our dock, our logo. This step also copies in
@@ -416,16 +393,15 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 #     ⚠️ THIS STEP USED TO BE THE AQUARIUS DESKTOP (2026-09-15). Three more
 #     COPY lines and 55-aquarius-session.sh lived here: our own shell on the
 #     labwc window manager, added beside GNOME. Royce retired that desktop and
-#     asked for GNOME and KDE Plasma instead — steps 4 and 4b. What that step
-#     installed and is NOT lost: libnotify, zenity and wlr-randr moved up to
-#     step 3, because the features that use them (drive notifications, the
-#     inside-drive question, the Resolve launcher) are the same on both
-#     desktops. Everything else it did was about a desktop that no longer
+#     asked for GNOME and KDE Plasma instead (GNOME alone since 2026-10-19).
+#     What that step installed and is NOT lost: libnotify, zenity and wlr-randr
+#     moved up to step 3, because the features that use them (drive
+#     notifications, the Resolve launcher) do not belong to any one desktop. Everything else it did was about a desktop that no longer
 #     exists. See ../docs/decision-2026-09-15-two-desktops.md.
 COPY --from=resolve-menu-build /aq-stage/ /
 
-# 5.6 The app icons — the eight pictures Royce looks at every day. Both
-#     desktops, and the login screen, use them.
+# 5.6 The app icons — the eight pictures Royce looks at every day. The
+#     desktop and the login screen use them.
 #
 #     Nothing is DRAWN here. The two icon themes were drawn on the Mac by
 #     branding/render-app-icons.sh, committed, and copied in with everything
@@ -435,11 +411,11 @@ COPY --from=resolve-menu-build /aq-stage/ /
 #
 #     ⚠️ WHY THAT IS WORTH A STEP OF ITS OWN. A missing icon is not an error
 #     anywhere. Our themes say Inherits=Adwaita,hicolor, so anything we fail to
-#     provide falls silently through to GNOME's or Breeze's artwork and the machine looks
+#     provide falls silently through to GNOME's artwork and the machine looks
 #     perfectly fine — it just is not AquariusOS. There would be no red text to
 #     find. This step is the red text.
 #
-#     After steps 4 and 4b, so that both desktops are fully in place — and after
+#     After step 4, so that the desktop is fully in place — and after
 #     step 5, whose settings file names Aquarius-Ice as the default and whose
 #     dconf write does the same for the login screen.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
@@ -447,10 +423,10 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 
 # ⚠️ STEP 5.7 IS GONE (2026-09-15). It was the operating system's half of the
 #     Aquarius Session's lock screen: the /etc/pam.d/aquarius-lock rules, the
-#     lock-before-sleep service, and wlopm to blank the monitor. GNOME and KDE
-#     Plasma each bring a complete, maintained lock screen of their own, with
-#     their own PAM rules and their own idle handling, so none of ours is
-#     needed or wanted. Locking is Super+L on both. See
+#     lock-before-sleep service, and wlopm to blank the monitor. GNOME brings a
+#     complete, maintained lock screen of its own, with its own PAM rules and
+#     its own idle handling, so none of ours is needed or wanted. Locking is
+#     Super+L (and Control-Command-Q in Mac mode). See
 #     docs/restart/desktops.md and docs/restart/history/aquarius-session.md.
 
 # 5.8 The kernel pin. Runs on BOTH images, and must run before ANY step that
@@ -582,15 +558,14 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 #     the rule files, the service and the `aq keys` switch that came in with
 #     system_files at step 5.
 #
-#     Since 2026-09-16 it also installs the two GRAPHICAL switches for the same
-#     choice: the GNOME toggle in the quick settings menu (plain text files,
-#     already in the image from step 5, checked here) and the KDE "Mac or
-#     Windows" page in System Settings, which comes from the kcm-build workshop
-#     above. Both of them just run `aq keys`, so the whole feature stays in one
-#     step and is checked in one place.
+#     Since 2026-09-16 it also checks the GRAPHICAL switch for the same choice:
+#     the GNOME toggle in the quick settings menu (plain text files, already in
+#     the image from step 5). It just runs `aq keys`, so the whole feature stays
+#     in one step and is checked in one place. (Until 2026-10-19 there was a
+#     second switch for KDE Plasma, built in a kcm-build workshop; it left with
+#     Plasma.)
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=xremap-build,source=/out,target=/ctx-xremap \
-    --mount=type=bind,from=kcm-build,source=/out,target=/ctx-kcm \
     /ctx/build_files/75-aquarius-keys.sh
 
 # 7c. The creator layer: Aquarius Editor and Aquarius Writer baked in, the list
@@ -705,10 +680,9 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 #     name.
 #
 #     With the Aquarius Session retired there is no session left that fails to
-#     start that helper: GNOME starts it, and Plasma does not use it at all
-#     (bluedevil talks to BlueZ directly and has its own aeroplane-mode
-#     switch). The service, its /usr-shipped "switched on" link and this step
-#     are removed rather than ported to a bug neither desktop has.
+#     start that helper: GNOME starts it. The service, its /usr-shipped
+#     "switched on" link and this step are removed rather than ported to a bug
+#     GNOME does not have.
 
 # 7i. When the USB4 / Thunderbolt chip does not wake up, try it again — instead
 #     of leaving every drive on a dock invisible.

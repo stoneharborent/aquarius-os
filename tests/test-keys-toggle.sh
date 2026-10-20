@@ -1,23 +1,24 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Tests for the two Mac-or-Windows switches, before anything is built
+# Tests for the Mac-or-Windows switch, before anything is built
 # ==============================================================================
 # WHAT THESE SWITCHES ARE
 #
 # AquariusOS has one Mac-or-Windows choice — Mac-style keyboard shortcuts, where
 # copy is Command-C, or the normal Linux and Windows ones, where copy is Ctrl+C
-# — and since 2026-09-16 it has a switch on each desktop:
+# — and since 2026-09-16 it has a switch on the desktop: an add-on of ours in
+# GNOME's quick settings menu at the top-right of the screen.
+# Source: system_files/usr/share/gnome-shell/extensions/ .
 #
-#   GNOME   an add-on of ours in the quick settings menu at the top-right of the
-#           screen. Source: system_files/usr/share/gnome-shell/extensions/ .
-#   KDE     a page in System Settings called "Mac or Windows".
-#           Source: kcm/aquarius-keys/ .
+# (From 2026-09-16 to 2026-10-19 there was a second switch, a "Mac or Windows"
+# page in KDE Plasma's System Settings, source kcm/aquarius-keys/. KDE Plasma
+# left the image on 2026-10-19 and the page and its checks went with it; this
+# file now checks that they are really gone.)
 #
 # ------------------------------------------------------------------------------
 # WHAT THIS FILE CAN AND CANNOT CHECK, SAID HONESTLY
 # ------------------------------------------------------------------------------
-# It runs on a plain checkout, with no desktop, no GNOME, no KDE and nothing
-# built. So it checks the things that are true of the SOURCE and that fail
+# It runs on a plain checkout, with no desktop, no GNOME and nothing built. So it checks the things that are true of the SOURCE and that fail
 # silently if they are wrong:
 #
 #   * metadata.json is real JSON, and the id inside it matches the folder name —
@@ -28,8 +29,7 @@
 #   * the add-on cleans up after itself (a disable() that destroys what enable()
 #     made). GNOME's own review rules require this, and a leak here happens
 #     every time the screen locks;
-#   * the KDE page's description is real JSON and says it belongs in Appearance;
-#   * neither switch writes the settings file itself — both must run
+#   * the switch does not write the settings file itself — it must run
 #     `aq keys`, because that command does four things, not one;
 #   * the id of the add-on is in the image's list of switched-on add-ons, or it
 #     would be installed and invisible;
@@ -37,11 +37,10 @@
 #     list above is only a DEFAULT, and an account that has logged in before has
 #     long since written its own copy of it (bench bug, 2026-09-17).
 #
-# ⚠️ IT CANNOT CHECK THAT EITHER SWITCH ACTUALLY WORKS. That needs a running
-# GNOME and a running KDE Plasma, which means the bench machine. The build
-# itself checks more — build_files/75-aquarius-keys.sh reads both of them back
-# out of the finished image — but "it appears and it flips the setting" is a
-# bench test and always will be.
+# ⚠️ IT CANNOT CHECK THAT THE SWITCH ACTUALLY WORKS. That needs a running
+# GNOME, which means the bench machine. The build itself checks more —
+# build_files/75-aquarius-keys.sh reads it back out of the finished image — but
+# "it appears and it flips the setting" is a bench test and always will be.
 # ==============================================================================
 
 set -uo pipefail
@@ -50,7 +49,6 @@ REPO="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
 
 EXT_UUID="aquarius-keys@stoneharborent.github.io"
 EXT_DIR="${REPO}/system_files/usr/share/gnome-shell/extensions/${EXT_UUID}"
-KCM_DIR="${REPO}/kcm/aquarius-keys"
 OVERRIDE="${REPO}/system_files/usr/share/glib-2.0/schemas/zz1-aquarius-20-shell.gschema.override"
 RUNNER="${REPO}/system_files/usr/libexec/aquarius-keys-run"
 
@@ -165,70 +163,16 @@ has "${RUNNER}" "XDG_STATE_HOME" \
     "the marker lives under the user's own state folder"
 
 echo
-echo "== the KDE System Settings page =="
-
-if python3 - "${KCM_DIR}/kcm_aquariuskeys.json" << 'PY'; then
-import json
-import sys
-
-with open(sys.argv[1]) as handle:
-    meta = json.load(handle)
-
-problems = []
-plugin = meta.get("KPlugin", {})
-if plugin.get("Name") != "Mac or Windows":
-    problems.append(f"the page's name is {plugin.get('Name')!r}, expected 'Mac or Windows'")
-if not plugin.get("Description"):
-    problems.append("the page has no one-line description")
-if not plugin.get("Icon"):
-    problems.append("the page has no icon")
-
-# Where it appears. "appearance" is the id of System Settings' own
-# "Appearance & Style" category — checked against the category files that
-# plasma-systemsettings installs.
-if meta.get("X-KDE-System-Settings-Parent-Category") != "appearance":
-    problems.append("the page is not filed under Appearance & Style")
-
-# It has to be findable by the words a person would actually type.
-keywords = meta.get("X-KDE-Keywords", "").lower()
-# ⚠️ "window buttons" WAS ONE OF THESE UNTIL 2026-09-17, and must not come
-# back: the page does not touch the window buttons any more, and a settings
-# page that turns up when you search for something it cannot change is worse
-# than one that does not turn up at all.
-for word in ("mac", "windows", "keyboard", "shortcuts"):
-    if word not in keywords:
-        problems.append(f"searching for {word!r} would not find the page")
-if "window buttons" in keywords:
-    problems.append(
-        "it still advertises 'window buttons', which it has not changed since 2026-09-17"
-    )
-
-for problem in problems:
-    print(f"       {problem}")
-sys.exit(1 if problems else 0)
-PY
-    ok "the page's description is valid, filed under Appearance, and findable"
+echo "== the retired KDE System Settings page is gone (2026-10-19) =="
+if [ -e "${REPO}/kcm" ]; then
+    bad "${REPO}/kcm is still in the repository — KDE Plasma left on 2026-10-19"
 else
-    bad "kcm_aquariuskeys.json is wrong — the page would be missing or misplaced"
+    ok "no KDE settings-page source left behind"
 fi
-
-has "${KCM_DIR}/kcm_aquariuskeys.cpp" '/usr/bin/aq' \
-    "the page changes the setting by running /usr/bin/aq, not by writing the file"
-has "${KCM_DIR}/kcm_aquariuskeys.cpp" 'keys\.conf' \
-    "the page reads the same settings file aq reads"
-
-# ⚠️ AQUARIUSOS SHIPS BOTH DESKTOPS. A menu entry for a KDE-only settings page
-# would be a dead icon in GNOME's app grid, because both desktops read
-# /usr/share/applications/.
-has "${KCM_DIR}/CMakeLists.txt" 'DISABLE_DESKTOP_FILE_GENERATION' \
-    "the page is built with no menu entry, so it cannot appear in GNOME"
-
-# KDE's build macro bakes whatever is in the ui/ folder into the plugin, and
-# only that folder. A page whose QML lives anywhere else opens empty.
-if [ -r "${KCM_DIR}/ui/main.qml" ]; then
-    ok "the page's interface is in the ui/ folder, where KDE's build macro looks"
+if [ -e "${REPO}/build_files/73-keys-kcm-build.sh" ]; then
+    bad "build_files/73-keys-kcm-build.sh is still here — it would build a page for a desktop that is gone"
 else
-    bad "${KCM_DIR}/ui/main.qml is missing — the page would open empty"
+    ok "no KDE settings-page build step left behind"
 fi
 
 # ==============================================================================
@@ -237,8 +181,8 @@ fi
 # Until that day, choosing Mac also moved the close, minimise and maximise
 # buttons to the LEFT of the title bar. It was dropped because applications that
 # draw their own title bar never followed it, so some windows moved and some did
-# not. The buttons are stock and on the RIGHT now, for everybody, on both
-# desktops — and three things in the source have to stay true for that.
+# not. The buttons are stock and on the RIGHT now, for everybody — and three
+# things in the source have to stay true for that.
 echo
 echo "== the window buttons do not move, and the old ones are put back =="
 
@@ -262,8 +206,6 @@ has "${LOOK_OVERRIDE}" "^button-layout=':minimize,maximize,close'$" \
 # our own handwriting, once per account, marked by a file.
 has "${RUNNER}" "button-layout" \
     "the login script resets an old left-hand GNOME layout"
-has "${RUNNER}" "ButtonsOnLeft" \
-    "and clears the KDE half of it out of kwinrc"
 has "${RUNNER}" "gtk-decoration-layout" \
     "and fixes the stale GTK settings.ini files sandboxed apps read"
 has "${RUNNER}" "window-buttons-unpinned" \

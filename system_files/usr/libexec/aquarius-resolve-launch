@@ -53,7 +53,7 @@
 # X11 applications a screen with no scale on it at all — always 96 dots per
 # inch, always 100%. So a desktop running at 125% or 150% draws everything
 # correctly EXCEPT the X11 programs, which come out at their raw size and look
-# small beside everything else. GNOME and KDE have exactly the same problem;
+# small beside everything else. GNOME (and every other desktop) has this problem;
 # no desktop solves it, because there is nothing in X11 to solve it with.
 #
 # What CAN be done is to tell the toolkit inside the application. Resolve is

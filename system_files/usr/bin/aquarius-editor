@@ -53,7 +53,7 @@ APPDIR="${APP_PARENT}/${APP_ID}"
 # sentence rather than a shrug:
 #
 #   * somebody types `aquarius-editor` in a terminal without having installed it
-#   * the app is pinned to the dock — which it is, in both desktops, on purpose,
+#   * the app is pinned to the dock — which it is, on purpose,
 #     so that the icon appears the moment it is installed — and the desktop lets
 #     a pinned entry be clicked before its files are there.
 #

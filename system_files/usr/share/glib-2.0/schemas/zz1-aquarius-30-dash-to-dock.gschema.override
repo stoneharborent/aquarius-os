@@ -26,8 +26,7 @@
 # ------------------------------------------------------------------------------
 # Where it lives: along the bottom, in the middle, always there
 # ------------------------------------------------------------------------------
-# This is the macOS-shaped dock Royce asked for, and the same shape the KDE line
-# already has.
+# This is the macOS-shaped dock Royce asked for.
 #
 # It takes FOUR settings together to get "always visible", and leaving any one
 # of them out gives a dock that hides at the wrong moment:

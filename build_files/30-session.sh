@@ -21,9 +21,9 @@
 # Aquarius Session. Royce retired that desktop on 2026-09-15
 # (../docs/decision-2026-09-15-two-desktops.md) and greetd went with it.
 #
-# GDM — GNOME's own — is THE login screen, and it lists both desktops this image
-# ships. Choosing between GNOME and KDE Plasma happens there, per person, and
-# GDM remembers. See docs/restart/desktops.md.
+# GDM — GNOME's own — is THE login screen. Since 2026-10-19 it offers exactly
+# one desktop, GNOME, with nothing to choose (from 2026-09-15 to then it also
+# listed KDE Plasma). See docs/restart/desktops.md.
 # ==============================================================================
 
 # shellcheck source=build_files/aq-lib.sh
@@ -96,15 +96,15 @@ aq_dnf install fprintd fprintd-pam
 # Leaving out the -gnome one is the classic cause of "OBS records a black
 # screen", because screen capture on Wayland goes through this and nothing else.
 #
-# A FOURTH, xdg-desktop-portal-kde, is installed by step 4b with the rest of KDE
-# Plasma. It is the same doorway with Plasma's dialogs behind it.
+# (A fourth, xdg-desktop-portal-kde, came with KDE Plasma from 2026-09-15 to
+# 2026-10-19. AquariusOS is GNOME only now, and it went with Plasma.)
 #
 # ⚠️ NOTHING CHOOSES BETWEEN THEM BY HAND, AND THAT IS NEW. AquariusOS used to
 # ship a written rule (/usr/share/xdg-desktop-portal/aquarius-portals.conf)
 # saying which backend to use, because the Aquarius Session was a desktop
-# xdg-desktop-portal had never heard of. GNOME and KDE are two it has shipped
-# rules for since 2021: it reads XDG_CURRENT_DESKTOP and picks. Our file was
-# deleted on 2026-09-15 rather than ported.
+# xdg-desktop-portal had never heard of. GNOME is one it has shipped rules for
+# since 2021: it reads XDG_CURRENT_DESKTOP and picks. Our file was deleted on
+# 2026-09-15 rather than ported.
 say "Portals (file pickers, screen sharing, printing)"
 aq_dnf install \
     xdg-desktop-portal \
@@ -132,13 +132,13 @@ aq_dnf install xorg-x11-server-Xwayland
 # installed by 55-aquarius-session.sh, the step that built our own desktop. That
 # step is gone (the Aquarius Session was retired; see
 # ../docs/decision-2026-09-15-two-desktops.md), and these three are not about a
-# desktop at all — they belong to features that survive on BOTH GNOME and Plasma.
+# desktop at all — they belong to features that do not care which desktop runs.
 # Leaving them in a deleted step would have taken working features down with it,
 # silently, because nothing in this repo asked for them by name anywhere else.
 #
 #   libnotify   supplies `notify-send`, the standard way any program on this
-#               machine puts a message in the corner of the screen. Both desktops
-#               show them. It is how a locked Mac drive offers to unlock
+#               machine puts a message in the corner of the screen. GNOME
+#               shows them. It is how a locked Mac drive offers to unlock
 #               (7f), how a finished ZIP extraction reports, how Aquarius
 #               Installer says it is done, and how Resolve says there is an
 #               update. (It also carried the inside-drive "Mount every login?"
@@ -149,8 +149,8 @@ aq_dnf install xorg-x11-server-Xwayland
 #               ours to say it in.
 #   wlr-randr   reads the monitors. /usr/libexec/aquarius-display-scale asks it
 #               first and falls back to GNOME's own monitors.xml when it gets no
-#               answer — which is what happens on GNOME and on Plasma, because
-#               neither Mutter nor KWin speaks the protocol it uses. It is kept
+#               answer — which is what happens on GNOME, because Mutter does
+#               not speak the protocol it uses. It is kept
 #               because that fallback is a FALLBACK: a helper that cannot even
 #               ask is a different failure from one that asked and was refused,
 #               and the Resolve launcher reads its answer.
@@ -283,7 +283,7 @@ aq_dnf install \
 #
 # en_US.UTF-8 is the default, not a decision about what language anyone must
 # use. Changing it is `localectl set-locale LANG=...`, or a personal
-# ~/.config/locale.conf, and both desktops honour both.
+# ~/.config/locale.conf, and GNOME honours both.
 say "The language the machine speaks (en_US.UTF-8)"
 aq_dnf install glibc-langpack-en
 

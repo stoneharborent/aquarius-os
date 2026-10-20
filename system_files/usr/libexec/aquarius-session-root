@@ -10,7 +10,10 @@
 #   1. WHICH SESSION THE LOGIN SCREEN WILL START FOR YOU NEXT TIME.
 #      The login screen keeps that for each account in a small file at
 #      /var/lib/AccountsService/users/<your name>, in a line that reads
-#      `Session=gnome`, `Session=plasma` or `Session=gamescope-session-steam`.
+#      `Session=gnome` or `Session=gamescope-session-steam`. (Until
+#      2026-10-19 it could also say `Session=plasma`; KDE Plasma has left the
+#      image, and /usr/libexec/aquarius-login-mode points any such account
+#      back at GNOME at boot.)
 #
 #   2. WHETHER THE LOGIN SCREEN LOGS YOU STRAIGHT BACK IN.
 #      Every switch is a full logout (that is how Steam's Game Mode works on
@@ -150,8 +153,8 @@ aq_check_account() {
 # -----------------------------------------------------------------------------
 # aq_check_session <name>
 # -----------------------------------------------------------------------------
-# Only a session this image really ships. On AquariusOS that is exactly three:
-# gnome, plasma, and gamescope-session-steam (Game Mode). Checking the file is
+# Only a session this image really ships. On AquariusOS that is exactly two
+# since 2026-10-19: gnome, and gamescope-session-steam (Game Mode). Checking the file is
 # on disk rather than checking against a list written here means the answer
 # cannot drift away from what the login screen can actually offer.
 aq_check_session() {

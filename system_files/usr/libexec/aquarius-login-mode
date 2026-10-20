@@ -64,6 +64,83 @@ if [ ! -x "${AQ_ROOT_HELPER}" ]; then
 fi
 
 # -----------------------------------------------------------------------------
+# 0. Nobody is sent to a desktop that is no longer on this computer
+# -----------------------------------------------------------------------------
+# ⚠️ ADDED 2026-10-19, THE DAY KDE PLASMA LEFT THE IMAGE. From 2026-09-15 every
+# AquariusOS image shipped two desktops, GNOME and KDE Plasma, and the login
+# screen remembered — per person, in /var/lib/AccountsService/users/<name> — the
+# one each person last used. On 2026-10-19 Royce made AquariusOS GNOME only.
+#
+# So a person whose last login was Plasma has `Session=plasma` written in that
+# file, and after the update there is no Plasma to start. The login screen would
+# try to start a desktop that is not there, fail, and put the person back at the
+# password box with nothing on screen to say why.
+#
+# This step looks at EVERY account's file, at every boot, before the login
+# screen starts, and wherever `Session=` or `XSession=` names a desktop this
+# image no longer has, it points that account at GNOME instead. It does nothing
+# to a session that IS still here (GNOME, or Game Mode's
+# gamescope-session-steam), so it can never undo a real choice. It is the same
+# fix for the Aquarius Session (retired 2026-09-15), and for any desktop that is
+# ever retired after this one.
+#
+# Every change is one line in the journal: journalctl -t aquarius-login-mode,
+# or `journalctl -b -u aquarius-login-mode`.
+AQ_SESSION_DIR="/usr/share/wayland-sessions"
+AQ_X_SESSION_DIR="/usr/share/xsessions"
+AQ_DESKTOP_SESSION="gnome"
+
+aq_session_exists() {
+    local name="$1"
+    [ -r "${AQ_SESSION_DIR}/${name}.desktop" ] || [ -r "${AQ_X_SESSION_DIR}/${name}.desktop" ]
+}
+
+aq_retire_gone_sessions() {
+    local f key val account
+    [ -d "${AQ_ACCOUNTS_DIR}" ] || return 0
+    # Only ever point somebody AT a desktop that is really here.
+    if ! aq_session_exists "${AQ_DESKTOP_SESSION}"; then
+        say "NOTE: ${AQ_SESSION_DIR}/${AQ_DESKTOP_SESSION}.desktop is missing, so no account is changed."
+        return 0
+    fi
+    for f in "${AQ_ACCOUNTS_DIR}"/*; do
+        [ -f "${f}" ] || continue
+        account="$(basename "${f}")"
+        for key in Session XSession; do
+            val="$(sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*//p" "${f}" | tail -n 1 | tr -d '[:space:]')"
+            # Empty means "the login screen's default", which is GNOME. Fine.
+            [ -n "${val}" ] || continue
+            # Still on this computer? Then it is a real choice; leave it alone.
+            aq_session_exists "${val}" && continue
+            case "${val}" in
+                *[!a-zA-Z0-9._-]*)
+                    say "${account}: ${key}= holds something that is not a session name; leaving it alone."
+                    continue
+                    ;;
+            esac
+            if [ "${key}" = "Session" ]; then
+                if sed -i "s|^[[:space:]]*Session[[:space:]]*=.*|Session=${AQ_DESKTOP_SESSION}|" "${f}"; then
+                    say "${account}: last used '${val}', which is no longer on this computer; the next login goes to GNOME."
+                else
+                    say "${account}: could not rewrite ${f}; the login screen may try '${val}' once."
+                fi
+            else
+                # XSession= is the X11 twin of Session=. AquariusOS has no X11
+                # desktops, so the right value for it is empty.
+                if sed -i "s|^[[:space:]]*XSession[[:space:]]*=.*|XSession=|" "${f}"; then
+                    say "${account}: cleared XSession='${val}' (no such desktop here)."
+                else
+                    say "${account}: could not clear XSession= in ${f}."
+                fi
+            fi
+        done
+    done
+    return 0
+}
+
+aq_retire_gone_sessions
+
+# -----------------------------------------------------------------------------
 # 1. What does the setting say?
 # -----------------------------------------------------------------------------
 AQ_MODE="desktop"
@@ -162,19 +239,13 @@ case "${AQ_MODE}" in
 
         aq_file="${AQ_ACCOUNTS_DIR}/${AQ_USER}"
         if [ -r "${aq_file}" ] && grep -qx "Session=${AQ_GAME_SESSION}" "${aq_file}"; then
-            # Where did they come from? The switch writes it into their own home
-            # folder. If it cannot be read — an encrypted home that is not
-            # unlocked yet, for instance — GNOME is the safe answer, because
-            # every AquariusOS image has it.
-            aq_home="$(getent passwd "${AQ_USER}" | cut -d: -f6)"
+            # Back to the desktop. Since 2026-10-19 there is exactly one —
+            # GNOME — so there is nothing to look up. (Until then the switch
+            # wrote down whether you came from GNOME or KDE Plasma, in
+            # ~/.local/state/aquarius/desktop-session; that note is now
+            # ignored, and an old one saying "plasma" cannot send anybody to a
+            # desktop that is not here.)
             aq_back="gnome"
-            aq_note="${aq_home}/.local/state/aquarius/desktop-session"
-            if [ -r "${aq_note}" ]; then
-                aq_said="$(tr -d '[:space:]' < "${aq_note}" 2> /dev/null)"
-                case "${aq_said}" in
-                    gnome | plasma) aq_back="${aq_said}" ;;
-                esac
-            fi
             say "this account was still set to start in Game Mode; putting it back to ${aq_back}."
             "${AQ_ROOT_HELPER}" set-session "${AQ_USER}" "${aq_back}" \
                 || say "could not put the session back — the login screen will simply offer Game Mode as the default."
