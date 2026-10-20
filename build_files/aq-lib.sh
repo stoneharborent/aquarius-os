@@ -235,3 +235,37 @@ AQ_DNF="$(command -v dnf5 2> /dev/null || command -v dnf 2> /dev/null || echo dn
 aq_dnf() {
     "${AQ_DNF}" -y "$@"
 }
+
+# ------------------------------------------------------------------------------
+# aq_dnf_retry <arguments...>  — the same, tried up to four times
+# ------------------------------------------------------------------------------
+# FOR TERRA. On 2026-10-05 three builds in a row failed the same way: Terra's
+# package list arrived with a checksum that did not match its index ("Usable
+# URL not found"), so a package Terra really has — umu-launcher — was "No
+# match". Asked directly a minute later, Terra had it. Terra's download network
+# sometimes serves an index and a list from two different moments, and which
+# server a build lands on is luck: the NVIDIA build passed the same step while
+# the other two failed.
+#
+# So a Terra install is tried up to four times. Between tries the downloaded
+# metadata is thrown away (so the next try fetches it fresh, possibly from
+# another server) and the wait grows: 20, 40, 60 seconds. A genuine mistake —
+# a package that really does not exist — still fails, about two minutes later
+# and with every attempt's output in the log.
+aq_dnf_retry() {
+    local try
+    for try in 1 2 3 4; do
+        if "${AQ_DNF}" -y "$@"; then
+            [ "${try}" -gt 1 ] && echo "  (succeeded on attempt ${try} of 4)"
+            return 0
+        fi
+        [ "${try}" -eq 4 ] && break
+        echo "  dnf failed (attempt ${try} of 4). Throwing away its downloaded package lists"
+        echo "  and trying again in $((try * 20)) seconds — Terra's servers sometimes serve"
+        echo "  a list that does not match its own index for a few minutes."
+        "${AQ_DNF}" clean metadata > /dev/null 2>&1 || true
+        sleep $((try * 20))
+    done
+    echo "AQUARIUS ERROR: dnf $* failed four times in a row." >&2
+    return 1
+}

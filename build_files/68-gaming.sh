@@ -277,7 +277,7 @@ aq_dnf install \
 # under the hood, so having it here means those two work properly the moment
 # somebody installs them.
 say "Steam and umu-launcher, with Terra switched on for this one command"
-aq_dnf install "${AQ_TERRA_FLAG}" steam umu-launcher
+aq_dnf_retry install --refresh "${AQ_TERRA_FLAG}" steam umu-launcher
 
 # ⚠️ WHICH REPOSITORY STEAM ACTUALLY CAME FROM, and why we stopped caring.
 #

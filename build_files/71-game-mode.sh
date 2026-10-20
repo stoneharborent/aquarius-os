@@ -219,7 +219,7 @@ rm -f /tmp/aq-terra-probe.txt
 # would be maintaining for ever, and the first upstream fix we missed would be a
 # bench day nobody could explain.
 say "The Game Mode packages, with Terra switched on for this one command"
-aq_dnf install "${AQ_TERRA_FLAG}" gamescope-session gamescope-session-steam steamos-manager
+aq_dnf_retry install --refresh "${AQ_TERRA_FLAG}" gamescope-session gamescope-session-steam steamos-manager
 
 say "Where the Game Mode packages came from"
 rpm -q --queryformat '       %{NAME}-%{VERSION}-%{RELEASE}  (packaged by: %{VENDOR})\n' \
