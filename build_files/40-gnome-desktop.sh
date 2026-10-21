@@ -10,14 +10,19 @@
 # not log into.
 #
 # There is no "ours" any more. Royce retired the Aquarius Session and asked for
-# GNOME and KDE Plasma side by side, so he can use each one for real and pick
-# (../docs/decision-2026-09-15-two-desktops.md). GNOME is now one of the two
-# desktops AquariusOS ships, not a safety net for a third — and it is the one a
-# brand-new account lands in, because it is the look Royce approved on the bench
-# on 2026-08-31 and because every AquariusOS window is a GTK 4 window.
+# GNOME and KDE Plasma side by side, so he could use each one for real and pick
+# (../docs/decision-2026-09-15-two-desktops.md).
 #
-# The other desktop is step 4b, build_files/41-kde-desktop.sh, which is written
-# to match this file line for line.
+# ⚠️ AND ON 19 OCTOBER 2026 HE PICKED. GNOME is THE desktop — the only one:
+#
+#     "Remove the first login screen where you can choose the desktop version
+#      and just go full GNOME. That way on startup we go straight into GNOME
+#      login."
+#
+# KDE Plasma (step 4b, build_files/41-kde-desktop.sh) left the image that day.
+# The login screen offers GNOME and nothing else, with no session button; the
+# end of this file checks that. Decision record:
+# ../docs/decision-2026-10-19-gnome-only-and-open-drives.md.
 #
 # WHY THIS IS A LIST AND NOT `dnf group install "GNOME Desktop"`
 #
@@ -86,7 +91,7 @@ aq_dnf install \
 # ------------------------------------------------------------------------------
 # gnome-control-center is the Settings app — including the About page that the
 # next step brands. gnome-tweaks is where a person finds the settings GNOME
-# hides, and a machine set up for someone coming from KDE needs it on day one.
+# hides, and a person who likes to adjust things needs it on day one.
 say "Settings and system tools"
 aq_dnf install \
     gnome-control-center \
@@ -472,5 +477,82 @@ for aq_theme_dir in \
         bad "${aq_theme_dir} is missing — a desktop-identity default would silently fall back"
     fi
 done
+
+# ------------------------------------------------------------------------------
+# Which desktop a brand-new person lands in: GNOME, the only one
+# ------------------------------------------------------------------------------
+# GDM remembers, per person, which session they last logged into. It keeps that
+# in AccountsService, one small file per account under /var/lib/AccountsService.
+# A brand-new account has no such file yet, and what fills it in the first time
+# is a TEMPLATE at /usr/share/accountsservice/user-templates/standard.
+#
+# Since 2026-10-19 GNOME is the only desktop, so this is less a choice than a
+# statement of fact — but it is written down so that a brand-new account never
+# depends on GDM's own guess. (This block lived in the KDE step, 41, from
+# 2026-09-15 to 2026-10-19, when GNOME was the default of two.)
+#
+# Accounts that already exist and last used KDE Plasma are pointed at GNOME at
+# every boot by /usr/libexec/aquarius-login-mode, before the login screen
+# starts — see that file's step 0.
+say "GNOME is the desktop a brand-new account lands in"
+AQ_TEMPLATE_DIR="/usr/share/accountsservice/user-templates"
+AQ_TEMPLATE="${AQ_TEMPLATE_DIR}/standard"
+if [ -r "${AQ_TEMPLATE}" ] && grep -Eq '^[[:space:]]*Session[[:space:]]*=[[:space:]]*gnome[[:space:]]*$' "${AQ_TEMPLATE}"; then
+    echo "  ${AQ_TEMPLATE} already names GNOME — leaving it alone:"
+    sed 's/^/       /' "${AQ_TEMPLATE}"
+else
+    mkdir -p "${AQ_TEMPLATE_DIR}"
+    cat > "${AQ_TEMPLATE}" << 'AQ_TEMPLATE_EOF'
+# AquariusOS — what a brand-new account starts in.
+#
+# AccountsService copies this into /var/lib/AccountsService/users/<name> the
+# first time somebody logs in, and GDM reads it to decide which session to
+# start. Since 2026-10-19 AquariusOS has one desktop, GNOME, and this says so.
+#
+# Session=gnome  means the GNOME Wayland session (/usr/share/wayland-sessions/
+# gnome.desktop).
+[User]
+Session=gnome
+XSession=
+SystemAccount=false
+AQ_TEMPLATE_EOF
+fi
+aq_file_has "${AQ_TEMPLATE}" '^Session=gnome$' \
+    "a brand-new account is given GNOME to start in"
+if [ -r /usr/share/wayland-sessions/gnome.desktop ]; then
+    ok "and /usr/share/wayland-sessions/gnome.desktop really exists"
+else
+    bad "the template names gnome, but /usr/share/wayland-sessions/gnome.desktop is not in this image"
+fi
+
+# ------------------------------------------------------------------------------
+# One desktop, one login screen — and nothing that would bring a choice back
+# ------------------------------------------------------------------------------
+# GDM shows a session button under the password box only when it has more than
+# one session to list. This step is where the desktop is installed, so this is
+# where we prove nothing else crept in as somebody's dependency. (Game Mode's
+# session arrives later, in step 71, which takes it off the menu and checks the
+# whole list again.)
+say "GNOME is the only desktop, and GDM the only login screen"
+for aq_forbidden in plasma-workspace plasma-desktop kwin sddm lightdm greetd; do
+    if rpm -q "${aq_forbidden}" > /dev/null 2>&1; then
+        bad "${aq_forbidden} is installed — AquariusOS is GNOME only since 2026-10-19, with GDM as its one login screen. Pulled in by: $(rpm -q --whatrequires "${aq_forbidden}" 2> /dev/null | tr '\n' ' ')"
+    else
+        ok "${aq_forbidden} is not in the image"
+    fi
+done
+for aq_gone in /usr/share/wayland-sessions/plasma.desktop \
+    /usr/share/xsessions/plasmax11.desktop \
+    /usr/share/wayland-sessions/aquarius.desktop; do
+    if [ -e "${aq_gone}" ]; then
+        bad "${aq_gone} is in the image — the login screen would offer a desktop that is not supposed to be here"
+    else
+        ok "no $(basename "${aq_gone}") at the login screen"
+    fi
+done
+# Anything else a GNOME package brought along (a "GNOME Classic", say) is kept
+# but taken off the menu, for the same reason as Game Mode's session.
+aq_hide_extra_login_sessions
+aq_check_login_offers_only_gnome
 
 aq_finish "The GNOME desktop"

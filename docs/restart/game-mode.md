@@ -2,13 +2,27 @@
 
 *Written 2026-09-17, for Phase G1. Assumes you have never used Linux.*
 
+> ## ⚠️ GNOME ONLY — 19 October 2026
+>
+> KDE Plasma left AquariusOS on 19 October 2026 ([`desktops.md`](desktops.md)).
+> For Game Mode that means three things:
+>
+> 1. **"Switch to Desktop" always lands in GNOME** — there is no other desktop
+>    to remember. An old note that still says `plasma` is ignored.
+> 2. **Game Mode is no longer a choice at the login screen.** Its session is
+>    still installed (the switch and the handheld log straight into it, by
+>    name), but it is marked `NoDisplay=true`, so the login screen's menu has
+>    only GNOME in it and the session button is gone. Use the **Game Mode** icon
+>    or `aq game`. How that is safe is in [`desktops.md`](desktops.md).
+> 3. Everything below about Plasma — the bench items "from Plasma", bench 3's
+>    Plasma black screen — is history, kept as the record of what happened.
+
 ---
 
 ## The one-paragraph version
 
 AquariusOS can show you two completely different faces on the same computer.
-One is **the desktop** — GNOME or KDE Plasma, windows, Files, Resolve; what you
-work in. The other is **Game Mode** — Steam owning the entire screen, big
+One is **the desktop** — GNOME: windows, Files, Resolve; what you work in. The other is **Game Mode** — Steam owning the entire screen, big
 tiles, driven with a controller from the sofa. It is the same thing a Steam
 Deck shows, and it is the same computer underneath: the same games, the same
 drives, the same save files. You move between them with one click, in either
@@ -49,9 +63,9 @@ safely is at the bottom of this page.
 In Game Mode, press the **power button at the bottom-left of Steam's screen**,
 then **Switch to Desktop**.
 
-It puts you back in **the desktop you came from** — GNOME if you were in GNOME,
-Plasma if you were in Plasma. AquariusOS writes that down on the way out and
-reads it on the way back. No password there either.
+It puts you back on **the desktop — GNOME**. (From 15 September to 19 October
+2026, when KDE Plasma shipped too, it put you back in whichever of the two you
+came from.) No password there either.
 
 Steam shows a "Switching to Desktop…" card while that happens. It should be
 gone within a few seconds. If it is not — see "What went wrong on
@@ -225,8 +239,9 @@ answers — and losing the lock screen to gain a games menu is the wrong trade.
 does this with GDM. Three moving parts:
 
 1. **Which session starts next** is written into the account's own file,
-   `/var/lib/AccountsService/users/<your name>`, as `Session=gnome`,
-   `Session=plasma` or `Session=gamescope-session-steam`. GDM reads it.
+   `/var/lib/AccountsService/users/<your name>`, as `Session=gnome` or
+   `Session=gamescope-session-steam`. GDM reads it. (`Session=plasma` was
+   possible until 2026-10-19; it is turned back into `gnome` at boot now.)
 2. **Getting back in without a password** uses GDM's *timed* login — "log this
    person in one second after the login screen appears" — **together with**
    GDM's *automatic* login, for the same person. Both, every time, since
@@ -792,9 +807,9 @@ installing first.*
       most: if it fails, stop and read `/etc/aquarius/login-mode`.
 - [ ] `aq game status` says Game Mode is installed and that this computer starts
       at the login screen.
-- [ ] The login screen's session button (click your name, then the small button
-      bottom-right of the password box) now lists **three** things: GNOME, KDE
-      Plasma and **Steam Big Picture**.
+- [ ] *(Changed 2026-10-19.)* The login screen has **no session button** at
+      all: it offers GNOME and nothing else. `aq login status` lists Steam Big
+      Picture under "on this computer but not on the login screen's menu".
 
 ### B. The switch, from GNOME
 
@@ -883,7 +898,7 @@ program has to run once with the new code before the rest of this is honest.*
 
 ### B4. Switch to Desktop goes back where you came from (added 2026-09-20)
 
-*This is the bench 3 fix. It needs both desktops, so do it in two halves.*
+*This is the bench 3 fix. (It used to need both desktops; since 2026-10-19 there is only GNOME.)*
 
 **From GNOME**
 
@@ -892,21 +907,13 @@ program has to run once with the new code before the rest of this is honest.*
 - [ ] Steam's power menu → **Switch to Desktop**. You land back in **GNOME**.
       (Before the fix this always landed in Plasma.)
 
-**From Plasma**
-
-- [ ] Log into **KDE Plasma**. Switch to Game Mode and back the same way. You
-      land back in **Plasma**.
-- [ ] ⚠️ If Plasma gives you a black screen rather than a desktop, that is the
-      *other* bench 3 finding and it is not this fix failing — see Bench 3,
-      bug 2. Check where you actually landed with the next item instead of
-      judging by what you can see.
+**From Plasma** — *retired 2026-10-19; Plasma is no longer in the image.*
 
 **What the machine thinks it remembers**
 
 - [ ] `aq game status` prints a line reading `desktop to come back to:` and it
-      names the desktop you last used — `gnome` or `plasma`. That single line
-      is the whole feature; if it is right and you still land somewhere else,
-      the bug is back.
+      says `gnome` — since 2026-10-19 the only answer. If it is right and you
+      still land somewhere else, the bug is back.
 - [ ] `journalctl -t os-session-select -b` shows the switch's own sentence,
       e.g. `asked for 'plasma' from 'Game Mode'; next session: gnome`. **The
       word after `next session:` is the one that matters** — it should match
@@ -1002,10 +1009,13 @@ prove the ugly paths also come back.*
       loop. Confirm with `journalctl -t aquarius-login-loop-guard -b` that it
       said nothing about switching anything off.
 
-### C. The same from Plasma
+### C. The same from Plasma — retired 2026-10-19
 
-- [ ] Log into KDE Plasma. Switch to Game Mode and back. **You land back in
-      Plasma, not GNOME.** That is the "remember where you came from" half.
+Plasma is no longer in the image. Instead:
+
+- [ ] On a machine that was last logged into Plasma before the update, the
+      first login after it lands in **GNOME**, and `journalctl -b -u
+      aquarius-login-mode` says the account was pointed back at GNOME.
 
 ### D. The boot setting
 
@@ -1016,13 +1026,13 @@ prove the ugly paths also come back.*
 
 ### E. Nothing else broke
 
-- [ ] The lock screen still works on GNOME and on Plasma. *(This is the whole
+- [ ] The lock screen still works on GNOME. *(This is the whole
       reason we did not move to SDDM; if it has gone, something has changed the
       login screen.)*
 - [ ] **Log Out** from the desktop menu really logs out — it does not log you
       straight back in. Test this *after* a Game Mode round trip, which is when
       it used to break.
-- [ ] Suspend and resume, from both desktops.
+- [ ] Suspend and resume, from the desktop and from Game Mode.
 - [ ] The Bluetooth keyboard survives a switch, and so does a controller.
 - [ ] `aq keys status` works after a switch, and the journal does **not** show
       `aquarius-keys` restarting over and over

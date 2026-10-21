@@ -553,7 +553,13 @@ if [ -r /usr/share/wayland-sessions/gamescope-session-ogui-steam.desktop ]; then
 fi
 echo "  every session this image can offer:"
 ls -1 /usr/share/wayland-sessions/ 2> /dev/null | sed 's/^/       /'
-for aq_s in gnome plasma gamescope-session-steam; do
+# The extra session above arrives AFTER step 71 took Game Mode off the login
+# screen's menu, so it is taken off here too: since 2026-10-19 the login screen
+# offers GNOME and nothing else (see aq_hide_extra_login_sessions in aq-lib.sh).
+aq_hide_extra_login_sessions
+aq_check_login_offers_only_gnome
+# GNOME and Game Mode. (KDE Plasma left every image on 2026-10-19.)
+for aq_s in gnome gamescope-session-steam; do
     if [ -r "/usr/share/wayland-sessions/${aq_s}.desktop" ]; then
         ok "the login screen can still start '${aq_s}'"
     else

@@ -50,9 +50,9 @@
 #   * The old first-login entry is GONE and the new one exists. ⚠️ This used to
 #     be a check on TWO files: GNOME reads /etc/xdg/autostart and the retired
 #     Aquarius Session read exactly one file of its own and never that folder,
-#     so the same fact was written down twice and could drift. GNOME and KDE
-#     Plasma both read /etc/xdg/autostart, so since 2026-09-15 there is one
-#     file and one check.
+#     so the same fact was written down twice and could drift. GNOME reads
+#     /etc/xdg/autostart, so since 2026-09-15 there is one file and one check.
+#     (KDE Plasma, on the image from 2026-09-15 to 2026-10-19, read it too.)
 # ==============================================================================
 
 set -euo pipefail
@@ -290,7 +290,7 @@ aq_file_has "${AUTOSTART}" '^X-GNOME-Autostart-Delay=10$' \
     "and waits ten seconds so the desktop has settled"
 
 # ==============================================================================
-# 6. One autostart file, and BOTH desktops read it
+# 6. One autostart file, and the desktop reads it
 # ==============================================================================
 # ⚠️ THIS SECTION USED TO BE THE HARD ONE, AND IT IS NOW THE EASY ONE.
 #
@@ -301,19 +301,24 @@ aq_file_has "${AUTOSTART}" '^X-GNOME-Autostart-Delay=10$' \
 # twice, and a check had to prove the two copies still said the same thing. It
 # is the sort of fault that shows up only on the one session nobody tested.
 #
-# GNOME and KDE Plasma BOTH read /etc/xdg/autostart — it is the shared
-# freedesktop standard both have implemented for years. So the welcome opens at
-# a first login on either desktop from the single file checked above, there is
-# no second copy, and there is nothing left to drift.
-say "One first-login entry, read by both desktops"
+# GNOME reads /etc/xdg/autostart — it is the shared freedesktop standard. So
+# the welcome opens at a first login from the single file checked above, there
+# is no second copy, and there is nothing left to drift. (Since 2026-10-19
+# GNOME is the only desktop; until then KDE Plasma read the same file.)
+say "One first-login entry, read by the desktop"
 GNOME_CMD="$(sed -n 's/^Exec=//p' "${AUTOSTART}" | head -n 1)"
 echo "  ${AUTOSTART} runs: ${GNOME_CMD}"
-if [ -d /usr/share/wayland-sessions ] \
-    && [ -r /usr/share/wayland-sessions/gnome.desktop ] \
-    && [ -r /usr/share/wayland-sessions/plasma.desktop ]; then
-    ok "both desktops are in this image, and both read /etc/xdg/autostart"
+if [ -r /usr/share/wayland-sessions/gnome.desktop ]; then
+    ok "GNOME is in this image, and it reads /etc/xdg/autostart"
 else
-    bad "one of the two desktops is missing from /usr/share/wayland-sessions — the welcome would only open on the one that is there"
+    bad "/usr/share/wayland-sessions/gnome.desktop is missing — there is no desktop for the welcome to open on"
+fi
+# The welcome must not promise a second desktop that is no longer here. Comment
+# lines are skipped: they record the history, which is allowed to name Plasma.
+if grep -qi 'plasma\|one arrow key away' < <(grep -v '^[[:space:]]*#' /usr/libexec/aquarius-welcome); then
+    bad "the welcome still talks about KDE Plasma or a desktop choice — AquariusOS is GNOME only since 2026-10-19"
+else
+    ok "the welcome says nothing about a second desktop"
 fi
 
 # ==============================================================================

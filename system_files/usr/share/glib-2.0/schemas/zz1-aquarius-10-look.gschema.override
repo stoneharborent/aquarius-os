@@ -297,14 +297,11 @@ secondary-color='#111A2B'
 # than a choice. Royce's rule: if it cannot be universal, drop it.
 #
 # So the side is no longer a setting at all. It is the stock, right-hand
-# arrangement, on GNOME and on KDE Plasma, for everybody. The Mac-or-Windows
+# arrangement, for everybody. The Mac-or-Windows
 # switch is now about THE KEYBOARD ONLY. Nothing writes this key any more —
 # this default is the whole story for a fresh account, and accounts that got a
 # left-hand layout written into them before 2026-09-17 are put back by the
 # one-per-account repair in /usr/libexec/aquarius-keys-run.
 #
-# (KDE Plasma is not mentioned in this file because there is nothing to say:
-# Plasma's own stock layout is already the right-hand one, so AquariusOS writes
-# nothing for it.)
 [org.gnome.desktop.wm.preferences]
 button-layout=':minimize,maximize,close'

@@ -235,3 +235,96 @@ AQ_DNF="$(command -v dnf5 2> /dev/null || command -v dnf 2> /dev/null || echo dn
 aq_dnf() {
     "${AQ_DNF}" -y "$@"
 }
+
+# ------------------------------------------------------------------------------
+# The login screen offers ONE desktop: GNOME  (2026-10-19)
+# ------------------------------------------------------------------------------
+# Royce, 2026-10-19: "Remove the first login screen where you can choose the
+# desktop version and just go full GNOME. That way on startup we go straight
+# into GNOME login." KDE Plasma left the image that day (decision record:
+# ../docs/decision-2026-10-19-gnome-only-and-open-drives.md).
+#
+# GDM puts a small session button (a gear) under the password box ONLY when it
+# has more than one session to offer. With Plasma gone, what is left besides
+# GNOME is Game Mode's own session — gamescope-session-steam, "Steam Big
+# Picture" — and, on the handheld, one more that a dependency brings along.
+# Those still have to EXIST, because Game Mode's switch logs straight into
+# gamescope-session-steam by name. They just must not be a CHOICE.
+#
+# The desktop-entry key `NoDisplay=true` does exactly that, and the reason it
+# is safe is in GDM's own source (checked 2026-10-19, GNOME/gdm main):
+#
+#   libgdm/gdm-sessions.c  key_file_is_relevant() — the list the login screen
+#                          shows — skips a session with NoDisplay OR Hidden.
+#   daemon/gdm-session.c   get_session_command_for_file() — what actually
+#                          STARTS a session, for the timed and automatic logins
+#                          Game Mode uses — refuses only Hidden. NoDisplay is
+#                          not looked at.
+#
+# So NoDisplay=true takes a session off the menu and leaves it startable.
+# (Hidden=true would do neither job: it would stop Game Mode starting at all.)
+#
+# aq_hide_extra_login_sessions        edits every session file except GNOME's.
+# aq_check_login_offers_only_gnome    reads them all back.
+
+# The session files that ARE GNOME. Fedora has shipped it under both names.
+AQ_GNOME_SESSIONS="gnome.desktop gnome-wayland.desktop"
+
+aq_is_gnome_session() {
+    local name
+    name="$(basename "$1")"
+    case " ${AQ_GNOME_SESSIONS} " in
+        *" ${name} "*) return 0 ;;
+    esac
+    return 1
+}
+
+aq_hide_extra_login_sessions() {
+    local f
+    for f in /usr/share/wayland-sessions/*.desktop /usr/share/xsessions/*.desktop; do
+        [ -f "${f}" ] || continue
+        aq_is_gnome_session "${f}" && continue
+        if grep -q '^NoDisplay=' "${f}"; then
+            sed -i 's/^NoDisplay=.*/NoDisplay=true/' "${f}"
+        else
+            sed -i '0,/^\[Desktop Entry\]/s//[Desktop Entry]\nNoDisplay=true/' "${f}"
+        fi
+        echo "  kept, but taken off the login screen's menu: ${f}"
+    done
+}
+
+aq_check_login_offers_only_gnome() {
+    local f visible=0 gnome=0
+    for f in /usr/share/wayland-sessions/*.desktop /usr/share/xsessions/*.desktop; do
+        [ -f "${f}" ] || continue
+        if aq_is_gnome_session "${f}"; then
+            gnome=1
+            visible=$((visible + 1))
+            if grep -q '^NoDisplay=true' "${f}" || grep -q '^Hidden=true' "${f}"; then
+                bad "${f} is hidden — the login screen would have NO desktop to offer"
+            fi
+            continue
+        fi
+        if grep -q '^Hidden=true' "${f}"; then
+            bad "${f} has Hidden=true — GDM would refuse to START it, not just hide it. Use NoDisplay=true."
+        elif grep -q '^NoDisplay=true' "${f}"; then
+            ok "$(basename "${f}") is startable but not on the login screen's menu"
+        else
+            bad "$(basename "${f}") is offered at the login screen — the session button (and a choice) would come back"
+            visible=$((visible + 1))
+        fi
+    done
+    if [ "${gnome}" -eq 1 ]; then
+        ok "the login screen offers GNOME"
+    else
+        bad "no GNOME session file — the login screen would have nothing to log into"
+    fi
+    # gnome.desktop and gnome-wayland.desktop, if both exist, carry the same
+    # name and GDM folds them into one entry, so two of those still mean one.
+    if [ -e /usr/share/wayland-sessions/plasma.desktop ] || [ -e /usr/share/xsessions/plasmax11.desktop ]; then
+        bad "a KDE Plasma session file is in the image — Plasma left on 2026-10-19"
+    else
+        ok "no KDE Plasma session anywhere"
+    fi
+    echo "  session files GDM will list: ${visible}, all of them GNOME"
+}

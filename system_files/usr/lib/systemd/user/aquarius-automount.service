@@ -10,11 +10,10 @@
 # /usr/share/polkit-1/rules.d/49-aquarius-udisks.rules lets the person at the
 # screen do it with no password.
 #
-# It runs in BOTH desktops. The link that switches it on lives at
+# The link that switches it on lives at
 #   /usr/lib/systemd/user/graphical-session.target.wants/aquarius-automount.service
-# and graphical-session.target is reached by GNOME and by KDE Plasma
-# session alike, so one link covers both. The program itself is the same either
-# way — it talks to udisks2, which does not care which desktop is drawing.
+# and graphical-session.target is reached by the GNOME session. The program
+# talks to udisks2, which does not care which desktop is drawing.
 #
 # -----------------------------------------------------------------------------
 # HOW TO CONTROL IT BY HAND

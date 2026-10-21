@@ -73,12 +73,11 @@
 # went with the Aquarius Session
 # (../docs/decision-2026-09-15-two-desktops.md).
 #
-# What replaces it is each desktop's own machinery, which is better at this than
-# we were: GNOME's libadwaita already follows the accent colour and the
-# light/dark flip, and on KDE Plasma `kde-gtk-config` (step 4b) tells GTK apps
-# to use the Breeze theme and keeps them in step when Plasma flips. Writing an
-# Aquarius colour scheme that both of those read from our own tokens is
-# Workstream C, not this step.
+# What replaces it is GNOME's own machinery, which is better at this than we
+# were: libadwaita already follows the accent colour and the light/dark flip.
+# (From 2026-09-15 to 2026-10-19 KDE Plasma was here too, with kde-gtk-config
+# doing the same job for GTK apps; AquariusOS is GNOME only since.) Writing an
+# Aquarius colour scheme from our own tokens is Workstream C, not this step.
 #
 # EXCEPTION 1 — THE APP ICONS.
 # This list used to say "no icon theme" as well, and now AquariusOS does ship
@@ -255,7 +254,7 @@ fi
 #         our logo on it — and, since 2026-09-15, that is the WHOLE story. There
 #         used to be a "Part B" here: our own branded greeter, drawn by the
 #         Aquarius Shell on top of greetd. It went with that shell. GDM is the
-#         one login screen, it lists both desktops, and it is the thing to brand
+#         one login screen, it offers one desktop (GNOME, since 2026-10-19), and it is the thing to brand
 #         if branding it is ever worth the treadmill. See
 #         docs/restart/login.md and docs/restart/desktops.md.
 #

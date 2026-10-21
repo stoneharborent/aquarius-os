@@ -74,18 +74,15 @@ GNOME_EXT_DIR="/usr/share/gnome-shell/extensions/${GNOME_EXT_UUID}"
 AQ_EXT_UUID="aquarius-keys@stoneharborent.github.io"
 AQ_EXT_DIR="/usr/share/gnome-shell/extensions/${AQ_EXT_UUID}"
 
-# Where the throwaway `kcm-build` stage left the compiled KDE settings page.
-# Mounted by the Containerfile, exactly like /ctx-xremap above.
-KCM_BUILD="/ctx-kcm"
-
 say "Aquarius Keys — installing the two remapper programs"
 
 # ==============================================================================
 # 1. The two compiled programs
 # ==============================================================================
-# There are two because no single program can do this job on both desktops —
-# 74-xremap-build.sh explains why at length, with the line of upstream source
-# that proves it. The service picks one at login.
+# There are two because no single program can ask every desktop which window is
+# focused — 74-xremap-build.sh explains why at length. GNOME uses the gnome
+# build; the wlroots one is the fallback for any other Wayland session. The
+# service picks one at login.
 for feature in wlroots gnome; do
     src="${XREMAP_BUILD}/bin/xremap-${feature}"
     if [ ! -s "${src}" ]; then
@@ -256,18 +253,19 @@ aq_file_has "${KEYS_DIR}/mac.yaml" '^ *Super_L: Alt_L$' \
     "mac.yaml makes the Windows key Option"
 aq_file_has "${KEYS_DIR}/mac.yaml" 'ids:0x05ac' \
     "mac.yaml recognises Apple keyboards and leaves them alone"
-# The lock key is Ctrl+Cmd+Q on BOTH desktops. Cmd+L was the lock for one day,
+# The lock key is Ctrl+Cmd+Q. Cmd+L was the lock for one day,
 # 2026-09-06, and never fired: this file turns Cmd+L into Ctrl+L for the address
 # bar, so Super+L never reaches the desktop while Mac keys are on. So the one
 # rule about the lock key is that this file must NOT touch it — a remap of
-# Ctrl+Super+q here would kill the lock again, silently, on both desktops.
+# Ctrl+Super+q here would kill the lock again, silently.
 # (xremap spells the chord either way round.)
 #
-# The two halves that make Ctrl+Cmd+Q actually lock something are checked
-# further down: zz1-aquarius-40-keys.gschema.override for GNOME and
-# /etc/xdg/kglobalshortcutsrc for KDE Plasma.
+# The half that makes Ctrl+Cmd+Q actually lock something is checked further
+# down: zz1-aquarius-40-keys.gschema.override for GNOME. (Until 2026-10-19
+# /etc/xdg/kglobalshortcutsrc did the same for KDE Plasma; Plasma has left the
+# image and that file with it.)
 if grep -qE '^ *(C-Super-q|Super-C-q|C-Super-Q|Super-C-Q) *:' "${KEYS_DIR}/mac.yaml"; then
-    bad "mac.yaml remaps Ctrl+Cmd+Q — that is the lock key, and neither desktop would ever see it"
+    bad "mac.yaml remaps Ctrl+Cmd+Q — that is the lock key, and GNOME would never see it"
 else
     ok "mac.yaml leaves Ctrl+Cmd+Q alone, so the lock key reaches the desktop"
 fi
@@ -318,21 +316,19 @@ for combo in 'Super-space' 'Super-Tab' 'Super-grave'; do
 done
 
 # ==============================================================================
-# 4b. ...and the desktop is actually listening for them — on BOTH desktops
+# 4b. ...and the desktop is actually listening for them
 # ==============================================================================
 # ⚠️ THIS SECTION IS NEW ON 2026-09-15 AND IT IS THE HALF THAT USED TO BE
 # SOMEBODY ELSE'S JOB. Until that day, "the desktop answers Command-Tab" was a
 # fact about the Aquarius Session, written in a labwc file this repository
 # owned, and checked by the shell's own drift test. That desktop is retired
-# (../docs/decision-2026-09-15-two-desktops.md) and the same fact is now two
-# facts, one per desktop — which is exactly the sort of thing that goes quietly
-# missing on whichever one nobody used that week.
+# (../docs/decision-2026-09-15-two-desktops.md). From 2026-09-15 to 2026-10-19
+# the same fact was two facts, one per desktop (GNOME and KDE Plasma); since
+# 2026-10-19 AquariusOS is GNOME only and it is one fact again.
 #
 # GNOME answers Super-Tab and Super-` from the factory. It answers nothing for
 # the lock in Mac mode, which is what the gschema override fixes.
-# KWin answers Alt-Tab and Alt-` from the factory and nothing for Meta-Tab,
-# which is what the kglobalshortcutsrc adds — without removing the Alt ones.
-say "Both desktops are listening for the Mac keys"
+say "GNOME is listening for the Mac keys"
 
 AQ_GNOME_KEYS=/usr/share/glib-2.0/schemas/zz1-aquarius-40-keys.gschema.override
 aq_file_has "${AQ_GNOME_KEYS}" "^screensaver=.*<Control><Super>q" \
@@ -352,27 +348,13 @@ if aq_have gsettings; then
     esac
 fi
 
-AQ_KDE_KEYS=/etc/xdg/kglobalshortcutsrc
-if [ ! -r "${AQ_KDE_KEYS}" ]; then
-    bad "${AQ_KDE_KEYS} is missing — on KDE Plasma, Command-Tab would do nothing at all"
+# KDE Plasma's half of this (/etc/xdg/kglobalshortcutsrc) left with Plasma on
+# 2026-10-19. A leftover copy would do nothing harmful, but it would be a file
+# nothing reads, so its absence is checked.
+if [ -e /etc/xdg/kglobalshortcutsrc ]; then
+    bad "/etc/xdg/kglobalshortcutsrc is still in the image — KDE Plasma left on 2026-10-19 and nothing reads it"
 else
-    aq_file_has "${AQ_KDE_KEYS}" '^Walk Through Windows=.*Meta\+Tab' \
-        "KDE: Command-Tab switches apps"
-    aq_file_has "${AQ_KDE_KEYS}" '^Walk Through Windows=Alt\+Tab' \
-        "KDE: and Alt-Tab still does too (it is listed first, so it is not replaced)"
-    aq_file_has "${AQ_KDE_KEYS}" '^Walk Through Windows of Current Application=.*Meta\+`' \
-        "KDE: Command-\` switches between one app's windows"
-    aq_file_has "${AQ_KDE_KEYS}" '^Lock Session=.*Ctrl\+Meta\+Q' \
-        "KDE: Control-Command-Q locks the screen"
-    aq_file_has "${AQ_KDE_KEYS}" '^_launch=.*Meta\+Space' \
-        "KDE: Command-Space opens the search box (KRunner)"
-    # KDE's format is "now,factory,name" and a missing field silently disables
-    # the line. Count the commas rather than trusting the eye.
-    if awk -F= '/^(Walk Through|Lock Session|_launch)/ { n=split($2, parts, ","); if (n != 3) { print "  FAIL " $1 " has " n " fields, not 3"; bad=1 } } END { exit bad }' "${AQ_KDE_KEYS}"; then
-        ok "every shortcut line has all three fields KDE expects"
-    else
-        bad "a shortcut line in ${AQ_KDE_KEYS} is malformed — KDE would ignore it in silence"
-    fi
+    ok "no leftover KDE shortcut file"
 fi
 
 # ==============================================================================
@@ -673,7 +655,7 @@ aq_file_has "${RUN_SCRIPT}" '^AQ_MODE="mac"$' \
 # not be made universal: applications that draw their own title bar (Chrome's
 # Flatpak on the bench) ignored it, so some windows moved and some did not.
 #
-# The buttons are now stock and on the RIGHT, on both desktops, for everybody.
+# The buttons are now stock and on the RIGHT, for everybody.
 # Three things have to be true for that, and losing any one of them brings the
 # old behaviour back in a way nobody would notice until the bench.
 say "The window buttons are stock, on the right, and nothing moves them"
@@ -707,11 +689,9 @@ aq_file_has "${RUN_SCRIPT}" "button-layout" \
     "the login script puts an old left-hand layout back to the default"
 aq_file_has "${RUN_SCRIPT}" "window-buttons-unpinned" \
     "and does it once per account, remembered by a marker file"
-aq_file_has "${RUN_SCRIPT}" "ButtonsOnLeft" \
-    "it clears the KDE half of the old layout out of kwinrc too"
 
 # ==============================================================================
-# 7. The two graphical switches (added 2026-09-16)
+# 7. The graphical switch (added 2026-09-16)
 # ==============================================================================
 # WHAT THIS PART IS FOR
 #
@@ -720,20 +700,21 @@ aq_file_has "${RUN_SCRIPT}" "ButtonsOnLeft" \
 # Welcome window asks it once, on a person's first login, and after that the
 # only answer was to know that a command called `aq` exists.
 #
-# So since 2026-09-16 the same choice has a switch on each desktop:
+# So since 2026-09-16 the same choice has a switch on the desktop: a toggle in
+# GNOME's quick settings menu at the top-right of the screen, beside Wi-Fi and
+# Dark Style. It is a small add-on of ours, plain text files, shipped in
+# system_files/ and switched on for everybody in the image's own list of
+# add-ons.
 #
-#   GNOME   a toggle in the quick settings menu at the top-right of the screen,
-#           beside Wi-Fi and Dark Style. It is a small add-on of ours, plain
-#           text files, shipped in system_files/ and switched on for everybody
-#           in the image's own list of add-ons.
-#   KDE     a page called "Mac or Windows" in System Settings, under
-#           "Appearance & Style". It is a compiled plugin, built in the
-#           throwaway `kcm-build` stage by build_files/73-keys-kcm-build.sh.
+# (From 2026-09-16 to 2026-10-19 there was a second switch, a "Mac or Windows"
+# page in KDE Plasma's System Settings, compiled by build_files/
+# 73-keys-kcm-build.sh from kcm/aquarius-keys/. It left with Plasma; both are
+# in git history.)
 #
-# ⚠️ NEITHER OF THEM DECIDES ANYTHING. Both read the same settings file this
-# whole step is about, and both change it by running `aq keys mac` or
-# `aq keys windows` — the same command a person would type. There is one owner
-# of this setting and it is /usr/bin/aq.
+# ⚠️ IT DECIDES NOTHING. It reads the same settings file this whole step is
+# about, and changes it by running `aq keys mac` or `aq keys windows` — the
+# same command a person would type. There is one owner of this setting and it
+# is /usr/bin/aq.
 
 # ------------------------------------------------------------------------------
 # 7a. The GNOME toggle
@@ -818,68 +799,13 @@ PY
 fi
 
 # ------------------------------------------------------------------------------
-# 7b. The KDE System Settings page
+# 7b. The KDE System Settings page — gone with KDE Plasma (2026-10-19)
 # ------------------------------------------------------------------------------
-say "The KDE 'Mac or Windows' page in System Settings"
-
-if [ ! -s "${KCM_BUILD}/kcm/kcm_aquariuskeys.so" ]; then
-    bad "the settings page did not come through from the kcm-build stage"
-elif [ ! -s "${KCM_BUILD}/kcm/install-path" ]; then
-    bad "${KCM_BUILD}/kcm/install-path is missing — the build did not say where the page belongs"
+say "The retired KDE 'Mac or Windows' page is not in the image"
+if [ -n "$(find /usr/lib /usr/lib64 -name 'kcm_aquariuskeys*' -print -quit 2> /dev/null)" ]; then
+    bad "the KDE 'Mac or Windows' page is still in the image — it was retired with KDE Plasma on 2026-10-19"
 else
-    # The build stage wrote down the exact folder its own KDE libraries chose,
-    # rather than us guessing between lib and lib64.
-    KCM_DEST="$(cat "${KCM_BUILD}/kcm/install-path")"
-    install -D -m 0755 "${KCM_BUILD}/kcm/kcm_aquariuskeys.so" "${KCM_DEST}"
-    ok "installed at ${KCM_DEST}"
-
-    # ⚠️ IT IS ONLY A SETTINGS PAGE IF IT IS IN THE ONE FOLDER SYSTEM SETTINGS
-    # READS. Anywhere else and it is just a file.
-    case "${KCM_DEST}" in
-        */plasma/kcms/systemsettings/kcm_aquariuskeys.so)
-            ok "that is the folder System Settings looks in"
-            ;;
-        *)
-            bad "${KCM_DEST} is not a folder System Settings reads — the page would never appear"
-            ;;
-    esac
-
-    # Does it have every library it needs, HERE, in the image that ships? This
-    # is the check the header of 73-keys-kcm-build.sh promises: the page was
-    # compiled in a different container, and `ldd` prints "not found" beside
-    # anything missing.
-    echo "--- what the page needs ---"
-    ldd "${KCM_DEST}" || true
-    echo "---"
-    if ldd "${KCM_DEST}" 2>&1 | grep -q "not found"; then
-        bad "the settings page needs a library that is not in this image (see above) — it would fail to load"
-    else
-        ok "every library the page needs is in the image"
-    fi
-
-    # The page's name, its search words and WHERE IT APPEARS are baked into the
-    # plugin as text. Read them back out of the finished file: if the
-    # description did not make it in, System Settings shows nothing at all.
-    for aq_kcm_text in \
-        "Mac or Windows" \
-        "X-KDE-System-Settings-Parent-Category" \
-        "appearance"; do
-        if grep -aq -- "${aq_kcm_text}" "${KCM_DEST}"; then
-            ok "the page carries its own description: ${aq_kcm_text}"
-        else
-            bad "the page does not contain '${aq_kcm_text}' — System Settings would not know what it is or where to put it"
-        fi
-    done
-
-    # ⚠️ IT MUST NOT TURN UP IN GNOME. Both desktops read
-    # /usr/share/applications/, so a menu entry for a KDE-only settings page
-    # would be a dead icon in GNOME's app grid. The build is told not to make
-    # one; this is what catches it if that ever changes.
-    if ls /usr/share/applications/kcm_aquariuskeys* > /dev/null 2>&1; then
-        bad "a menu entry for the KDE page was installed — it would appear in GNOME's app grid"
-    else
-        ok "it has no menu entry, so GNOME never shows it"
-    fi
+    ok "no KDE settings page left behind"
 fi
 
 aq_finish "Aquarius Keys"

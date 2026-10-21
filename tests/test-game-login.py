@@ -26,7 +26,8 @@ class LoginTest(unittest.TestCase):
         self.accounts = self.root / 'accounts'
         self.sessions = self.root / 'sessions'
         self.sessions.mkdir()
-        for session in ('gnome', 'plasma', 'gamescope-session-steam'):
+        # GNOME and Game Mode only, since 2026-10-19: KDE Plasma left the image.
+        for session in ('gnome', 'gamescope-session-steam'):
             (self.sessions / (session + '.desktop')).write_text('[Desktop Entry]\n')
         self.flag = self.root / 'login-mode'
         self.gdm = self.root / 'custom.conf'
@@ -114,6 +115,46 @@ fi
         self.boot()
         self.assertNotIn('Login=', self.gdm.read_text())
         self.assertNotIn('LoginEnable=', self.gdm.read_text())
+
+    def test_plasma_account_lands_in_gnome_after_the_update(self):
+        # 2026-10-19: KDE Plasma left the image. An account whose last login
+        # was Plasma must be pointed at GNOME before the login screen starts,
+        # on every image, whatever the boot setting says.
+        self.flag.write_text((REPO / 'system_files/etc/aquarius/login-mode').read_text())
+        self.accounts.mkdir()
+        (self.accounts / 'owner').write_text(
+            '[User]\nLanguage=en_US.UTF-8\nSession=plasma\nXSession=plasmax11\n'
+            'SystemAccount=false\n')
+        (self.accounts / 'second').write_text('[User]\nSession=gnome\nXSession=\n')
+        (self.accounts / 'gamer').write_text('[User]\nSession=gamescope-session-steam\n')
+        (self.accounts / 'oldshell').write_text('[User]\nSession=aquarius\n')
+        self.boot()
+        self.assertEqual((self.accounts / 'owner').read_text(),
+                         '[User]\nLanguage=en_US.UTF-8\nSession=gnome\nXSession=\n'
+                         'SystemAccount=false\n')
+        self.assertEqual((self.accounts / 'second').read_text(),
+                         '[User]\nSession=gnome\nXSession=\n')
+        # A session that IS still here is a real choice and is never touched.
+        self.assertEqual((self.accounts / 'gamer').read_text(),
+                         '[User]\nSession=gamescope-session-steam\n')
+        self.assertEqual((self.accounts / 'oldshell').read_text(),
+                         '[User]\nSession=gnome\n')
+
+    def test_plasma_cleanup_never_points_at_a_missing_gnome(self):
+        self.flag.write_text('mode=desktop\n')
+        (self.sessions / 'gnome.desktop').unlink()
+        self.accounts.mkdir()
+        (self.accounts / 'owner').write_text('[User]\nSession=plasma\n')
+        self.boot()
+        self.assertEqual((self.accounts / 'owner').read_text(), '[User]\nSession=plasma\n')
+
+    def test_handheld_still_boots_game_mode_after_plasma_cleanup(self):
+        self.flag.write_text((REPO / 'handheld_files/etc/aquarius/login-mode').read_text())
+        self.accounts.mkdir()
+        (self.accounts / 'owner').write_text('[User]\nSession=plasma\n')
+        self.boot()
+        self.assertEqual((self.accounts / 'owner').read_text(),
+                         '[User]\nSession=gamescope-session-steam\n')
 
     def test_boot_precedes_accounts_cache_and_login_screen(self):
         # The actual race that previously made the first handheld boot GNOME.

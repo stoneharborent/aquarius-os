@@ -1,6 +1,12 @@
 # Desktop identity — the pointer, the icons and the sounds
 
-> ## ⚠️ TWO DESKTOPS NOW — 15 September 2026
+> ## ⚠️ GNOME ONLY — 19 October 2026
+>
+> KDE Plasma left AquariusOS on 19 October 2026 ([`desktops.md`](desktops.md)).
+> Everything below about Plasma — its wallpaper settings, its window buttons,
+> `kwinrc` — is history. What this page says about GNOME is unchanged.
+
+> ## ⚠️ TWO DESKTOPS NOW — 15 September 2026 *(until 19 October 2026)*
 >
 > This page was written when AquariusOS had GNOME plus a desktop of our own. The
 > Aquarius Session was retired on 2026-09-15 and **KDE Plasma** took its place
@@ -326,8 +332,8 @@ step, because the second copy is made rather than typed.
 
 **Royce's decision, 2026-09-17.** All three buttons — minimise, maximise, close
 — sit on the **RIGHT** of every title bar, with close on the outside, because
-close is the one press you cannot take back. This is true on GNOME, on KDE
-Plasma, in both keyboard styles, on every account. It is not a setting.
+close is the one press you cannot take back. This is true in both keyboard
+styles, on every account. It is not a setting.
 
 GNOME is told once, in the image, by a default:
 
@@ -337,8 +343,9 @@ button-layout=':minimize,maximize,close'
 ```
 
 (in `system_files/usr/share/glib-2.0/schemas/zz1-aquarius-10-look.gschema.override`).
-KDE Plasma is told nothing at all, because Plasma's own stock layout is already
-this one. The part that is ours is that all three buttons are present — stock
+(While KDE Plasma was in the image, 2026-09-15 to 2026-10-19, it was told
+nothing, because its own stock layout was already this one.) The part that is
+ours is that all three buttons are present — stock
 GNOME ships a title bar with only a close button, and that decision, made
 2026-09-06, still stands.
 
@@ -370,7 +377,6 @@ remembered by a marker file at
 | What it finds | What it does |
 |---|---|
 | GNOME's `button-layout` is exactly `close,minimize,maximize:` or `:minimize,maximize,close` | `gsettings reset` it, so the image's default applies again |
-| `~/.config/kwinrc` has exactly `ButtonsOnLeft=XIA` + empty `ButtonsOnRight` (or the Windows pair) | deletes both keys and asks a running KWin to re-read them |
 | `~/.config/gtk-3.0/settings.ini` or `gtk-4.0/settings.ini` has exactly `gtk-decoration-layout=close,minimize,maximize:` | rewrites that one line to the right-hand layout |
 
 **It only undoes its own handwriting.** Any other value, in any of those files,

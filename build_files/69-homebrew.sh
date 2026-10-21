@@ -484,8 +484,8 @@ fi
 #                                      window, an SSH session, a `su -`.
 #   /usr/lib/environment.d/70-aquarius-brew.conf
 #                                      everything started from the DESKTOP —
-#                                      GNOME and KDE Plasma both run
-#                                      their apps under systemd's user manager,
+#                                      GNOME runs its apps under
+#                                      systemd's user manager,
 #                                      which reads this folder at login.
 #
 # ⚠️ THE PROFILE FILE IS IN /etc AND THAT IS CORRECT, unlike our systemd links.

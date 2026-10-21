@@ -375,14 +375,17 @@ computer did not notice", and because there was nowhere better for it.*
 ### What is meant to happen
 
 You plug in a USB stick, an SD card or an external SSD, and it appears — no
-password, and you put it away from the dock. Four pieces do that:
+password, and you put it away from the dock. (Since 2026-10-19 the drives
+*inside* the computer appear the same way, at login — see [Every drive opens by
+itself](#every-drive-opens-by-itself--inside-or-plugged-in).) Four pieces do
+that:
 
 | | |
 | --- | --- |
 | **udisks2** | Fedora's drive-mounting service. It does the actual mounting. |
 | **`/usr/libexec/aquarius-automount`** | ours. It watches udisks2 and says "mount that" the moment something is plugged in. GNOME's Files app does this while Files is running; the Aquarius Desktop has no Files app running in the background, so without this nothing would. |
-| **A polkit rule** | `49-aquarius-udisks.rules`, which is why there is no password box — and which deliberately still asks for one for an internal disk. |
-| **A user service** | starts the agent when you log in, on both desktops. |
+| **A polkit rule** | `49-aquarius-udisks.rules`, which is why there is no password box. Since 2026-10-19 it covers drives inside the computer too — see [the next-but-one section](#every-drive-opens-by-itself--inside-or-plugged-in). |
+| **A user service** | starts the agent when you log in. |
 
 Drives land at `/run/media/<you>/<label>`, which is where both the dock and
 Files look.
@@ -477,132 +480,142 @@ read:** [`mac-drives.md`](mac-drives.md).
 
 ---
 
-## Why an inside drive asks once, and an outside drive never asks
+## Every drive opens by itself — inside or plugged in
 
-*Added 2026-09-14 (FEATURES 020, at Royce's request: "have the internal drives
-also be automatically verified with permissions when logging in").*
-
-### The two kinds of drive, and why Linux treats them differently
-
-| | |
-| --- | --- |
-| **A drive you plug in** — USB stick, SD card, external SSD | opens by itself, no password, ever. That is what the section above is about. |
-| **A drive that lives inside the computer** — a second SSD full of footage, the disk Windows is on | used to ask for an administrator password **every single login**. |
-
-That difference is not an accident or an oversight. Linux uses two separate
-permissions for mounting a drive: one for the removable ones, and a different,
-stricter one for the disks inside the case. AquariusOS grants the first and
-deliberately does not grant the second, because "mount any internal partition,
-no password, no questions" is the kind of permission that is convenient on
-Tuesday and regretted on Friday.
-
-**So it asks for a password. Right the first time, annoying the tenth.**
+*Rewritten 2026-10-19. Royce: "Remove verification for all internal and
+external drives. Just mount them from login and show in dock."*
 
 ### What happens now
 
-The first time AquariusOS sees an inside drive it does not know, it asks you
-**once**, with a notification:
+| | |
+| --- | --- |
+| **A drive you plug in** — USB stick, SD card, external SSD | opens the moment you plug it in. No password, ever. (The section above.) |
+| **A drive that lives inside the computer** — a second SSD full of footage, the disk Windows is on | opens **when you log in**. No question, no password. |
+
+Both appear in **the dock** (a tile per drive — click to open it in Files,
+right-click to eject it) and in the **Files sidebar**, and both live in the
+same folder: **`/run/media/<you>/<name of the drive>`**.
+
+That is all there is to it. There is nothing to answer and nothing to set up.
+
+### The one exception: an encrypted drive
+
+A drive locked with **LUKS** (Linux's own encryption) or **BitLocker**
+(Windows') is **not** opened at login. It cannot be: the files on it are
+scrambled, and the only thing that unscrambles them is the drive's own
+passphrase, which AquariusOS does not have and must never keep.
+
+It still shows in the **Files** sidebar. Click it, type the drive's passphrase,
+and it opens. That is the only password left anywhere in this, and it is only
+there because the data really is encrypted.
+
+A **Mac** drive locked with FileVault works the same way it always has: a
+notification offers to unlock it. See [`mac-drives.md`](mac-drives.md).
+
+### Windows drives inside the computer open read-only
+
+An NTFS (Windows) drive **inside the computer** — typically the Windows side
+of a computer that has both — opens **read-only**: you can open and copy every
+file on it, but you cannot change anything on it.
+
+That is deliberate. Windows' "fast startup", which is on by default, does not
+really shut Windows down — it leaves the drive half-closed, and writing to a
+drive in that state is one of the standard ways people lose a Windows install.
+Reading is perfectly safe.
+
+A Windows-formatted drive you **plug in** is opened normally, read and write,
+exactly as before.
+
+### The drives it will never open
+
+"Every drive" never means the machine's own plumbing. This list is checked for
+every drive, every time, before anything is mounted:
+
+- **Anything already open.** Nothing is ever opened twice.
+- **The disk AquariusOS is installed on** — any partition of it.
+- **Anything already listed in `/etc/fstab`** — the computer's own list of
+  drives. It mounts those itself.
+- **The computer's start-up machinery**, recognised by the partition's type (a
+  fixed code, set by a standard): the EFI partition, BIOS boot, Microsoft
+  Reserved, Windows Recovery, Apple Boot, Windows dynamic-disk pieces, swap,
+  LVM and RAID members, `/boot` partitions.
+- **Hidden partitions** — anything marked hidden, "required by the platform" or
+  "do not automount". That is how computer makers hide their recovery
+  partitions.
+- **The AquariusOS installer stick.**
+- **Encrypted drives** (above).
+
+The build runs the real decision code against fake drives — most of them drives
+that must be **refused** — and stops if a single one is opened
+(`tests/test-inside-drives.py`).
+
+### What it used to do, and why that changed
+
+From 14 September to 19 October 2026 a drive inside the computer asked **once**:
 
 ```
 Mount "Footage" every login?
-"Footage" lives inside this computer (/dev/sdb1, formatted ext4).
-Right now it asks for a password every time you log in.
-Say yes once and it will simply be there from now on.
-
   [ Mount every login ]        [ Never ask ]
 ```
 
-Three answers, and all three are undoable:
+…and a "yes" (with your administrator password) wrote it into `/etc/fstab`.
+Before 14 September it asked for an administrator password at **every** login.
+Both were there because Linux uses a separate, stricter permission for the
+disks inside the case, and AquariusOS had decided not to grant it.
 
-| You click | What happens |
-| --- | --- |
-| **Mount every login** | You type your administrator password once. The drive is written into the computer's own list of drives (`/etc/fstab`) and opened straight away. From then on it is simply there, at every login and after every restart, with no password ever again. |
-| **Never ask** | One line in your own settings file, and the question never comes back for that drive. `aq drives ask-again` brings it back. |
-| **Neither — you close it or ignore it** | Nothing at all is changed, and you will be asked again at your next login. A question somebody walked away from is not an answer. |
+On 19 October 2026 Royce asked for exactly that permission to be granted: every
+drive should just open. So it is granted now — **only to the person sitting at
+the computer**, never to somebody connected over the network — and the
+question, its helper program and its two permission files are gone. What keeps
+the machine's own partitions safe is the never-touch list above, not a
+password. The decision record:
+[`../decision-2026-10-19-gnome-only-and-open-drives.md`](../../../docs/decision-2026-10-19-gnome-only-and-open-drives.md)
+(in the AquariusOS project folder).
 
-### Why it is done this way, and not the obvious way
+### If you said yes to the old question
 
-The obvious way is to change the permission rule so internal disks stop asking.
-**We deliberately did not, and the build stops anybody who tries.**
+Nothing changes for that drive. Its line in `/etc/fstab` is still there and
+still works: the drive is opened by the computer itself, before anybody logs
+in, at **`/media/aquarius/<name>`**. AquariusOS never deletes a line from
+`/etc/fstab` on its own.
 
-Changing the rule would have made *every* internal partition on the machine
-mountable with no password — including ones you never chose, on a machine you
-might one day hand to somebody else. What AquariusOS does instead is narrower
-and, we think, more honest: **the handful of drives you actually picked are
-opened by the machine itself, and nothing else changes at all.** The rule stays
-exactly as tight as it was.
-
-There is a nice side effect. A drive in `/etc/fstab` is mounted by the computer
-*before anybody logs in*, so it is not really "no password" — it is "no
-permission needed, because this is now one of the computer's own drives".
-
-### The drives it will never, ever offer
-
-This list is checked twice — once by the part that asks, and again by the
-privileged part that writes — because a program running as the administrator
-must not simply believe what it was told.
-
-- **The disk AquariusOS is installed on.** Any partition of it.
-- **The EFI partition**, the small one the computer boots from.
-- **Swap**, and anything that is not a plain filesystem (encrypted containers,
-  LVM, RAID members).
-- **Windows' own system volume** — an NTFS partition with a `Windows` folder on
-  it, or one locked with BitLocker. If you say yes to one of those by mistake,
-  it is refused and tells you why.
-- **Anything already in `/etc/fstab`.** It is already remembered.
-- **A drive with no UUID**, because there would be no safe way to name it.
-
-### Windows drives are opened read-only
-
-An NTFS drive that *is* remembered is mounted **read-only**. Windows' "fast
-startup" does not really shut the computer down, which leaves the drive
-half-closed; writing to a drive in that state is one of the standard ways people
-lose a Windows install. Read-only is the honest default, and the notification
-says so before you answer.
-
-### Where a remembered drive appears
-
-At **`/media/aquarius/<name of the drive>`**, not in the usual
-`/run/media/<you>/` folder. That is not a quirk, it is the point: the usual
-folder only exists *after* you log in, and a drive that is supposed to be ready
-*before* you log in cannot live there.
-
-> ⚠️ **Not yet confirmed on the bench:** the dock lists the drives in
-> `/run/media/<you>/`, so a remembered drive may appear in Files and the
-> sidebar but **not as a dock tile**. That is expected from reading the code and
-> has not been seen with eyes yet. If it matters, the fix is a one-line change
-> in the shell repository (have the dock watch `/media/aquarius` too), not here.
-
-### Seeing and undoing your choices
+If you would rather it behaved like every other drive — opened at login, in
+`/run/media/<you>/`, with a dock tile — hand it back:
 
 ```bash
-# Which inside drives open at every login?
+# Which drives did the old question remember?
 aq drives remembered
 
-# Stop opening one by itself (it will be offered again next time).
+# Hand one back to the automatic mounting. Asks for your password, because
+# /etc/fstab belongs to the system. Only ever removes a line AquariusOS wrote.
 aq drives forget Footage
-
-# Undo every "Never ask" answer, so the questions come back next login.
-aq drives ask-again
 ```
 
-`aq drives forget` asks for your administrator password, because it is editing
-the computer's own list of drives.
+Log out and back in, and it is opened the new way.
 
-> **Settings has no page for this yet.** Everything here is the notification and
-> the `aq drives` commands. A "Remembered drives" panel in Settings is a small
-> follow-up job, listed in FEATURES 020's build list as item 3.
+Your old "Never ask" answers (`~/.config/aquarius/remembered-drives.conf`) mean
+nothing any more; `aq drives ask-again` simply tidies that file away.
+
+### Checking it on your own machine
+
+```bash
+# Everything that is open right now, and where:
+aq drive list
+
+# What the agent did at login, one line per drive — including WHY it left a
+# drive alone ("not mounting it — it is the EFI System Partition…"):
+journalctl --user -b -u aquarius-automount
+```
 
 ### The pieces, for whoever changes this next
 
 | Piece | Where |
 | --- | --- |
-| The question on screen | `/usr/libexec/aquarius-automount`, the `maybe_offer()` method and the `--ask` worker. It **mounts nothing**; it only asks. |
-| The part that writes | `/usr/libexec/aquarius-remember-drive`. Runs as the administrator, carries its own copy of the never-touch list. |
-| Who may run it | `/usr/share/polkit-1/actions/org.aquariusos.rememberdrive.policy` and `/usr/share/polkit-1/rules.d/50-aquarius-remember-drive.rules` — the person at this screen, in the active local session, in the `wheel` group, with their password (remembered for polkit's own short window, so three drives are one prompt). |
-| Your "never ask" answers | `~/.config/aquarius/remembered-drives.conf`. A plain text file; delete a line to be asked again. |
-| The build checks | `build_files/83-remembered-drives.sh` and `tests/test-remember-drive.py`. Most of the test is drives that must **never** be offered. |
-| ⚠️ The rule that did **not** change | `/usr/share/polkit-1/rules.d/49-aquarius-udisks.rules`, and the gate in `build_files/76-automount.sh` that stops the build if it ever does. Do not touch either. |
+| The part that mounts | `/usr/libexec/aquarius-automount` — `should_mount()` and `never_touch_reason()`. Its header lists every rule in plain English. |
+| The permission | `/usr/share/polkit-1/rules.d/49-aquarius-udisks.rules` — `filesystem-mount` (plugged in) **and** `filesystem-mount-system` (inside), for the local, active session only. Nothing that unlocks, formats or reaches another seat. |
+| The dock | `/usr/share/glib-2.0/schemas/zz1-aquarius-30-dash-to-dock.gschema.override` — `show-mounts`, `show-mounts-only-mounted`, `show-mounts-network`. |
+| The build checks | `build_files/76-automount.sh`, `tests/test-inside-drives.py` (the never-touch list, against fake drives) and `tests/test-automount-mount.py`. |
+| Retired 2026-10-19 | `build_files/83-remembered-drives.sh`, `/usr/libexec/aquarius-remember-drive`, `org.aquariusos.rememberdrive.policy`, `50-aquarius-remember-drive.rules`, `tests/test-remember-drive.py`. All in git history. |
 
 ---
 

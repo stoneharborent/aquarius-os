@@ -10,6 +10,12 @@
 > `aquarius-shell` repository — was replaced by **GNOME and KDE Plasma** on
 > 2026-09-15. Same posture as Bazzite: archived, not deleted.
 >
+> And a third: **KDE Plasma** itself left on 2026-10-19, when AquariusOS became
+> GNOME only. Its build step (`build_files/41-kde-desktop.sh`), its "Mac or
+> Windows" settings page (`kcm/`, `build_files/73-keys-kcm-build.sh`) and its
+> shortcut file (`etc/xdg/kglobalshortcutsrc`) are in git history; every image
+> built before that date still has Plasma. See [`desktops.md`](desktops.md).
+>
 > | | Where it is |
 > |---|---|
 > | The shell's code | the `aquarius-shell` repository, tagged **`aquarius-session-final`** |

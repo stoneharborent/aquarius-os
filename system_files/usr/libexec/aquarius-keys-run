@@ -246,27 +246,25 @@ fi
 # "which window is focused?". Every desktop answers that differently, so there
 # are two copies of the remapper, each built to ask one desktop:
 #
-#   /usr/bin/xremap-wlroots   for KDE Plasma, and for any other Wayland desktop
-#   /usr/bin/xremap-gnome     for GNOME
+#   /usr/bin/xremap-gnome     for GNOME — THE desktop on AquariusOS
+#   /usr/bin/xremap-wlroots   for any other Wayland session
 #
 # The desktop announces itself in XDG_CURRENT_DESKTOP. On GNOME that is
-# "GNOME"; on KDE Plasma it is "KDE".
+# "GNOME".
 #
-# ⚠️ WHY PLASMA USES THE "wlroots" BUILD, WHICH SOUNDS WRONG. wlroots is a
-# library KWin does not use. But the NAME of that build is about the QUESTION it
-# knows how to ask — the wlr-foreign-toplevel-management protocol, "tell me
-# about the windows" — and KWin implements that protocol, because it is what
-# every third-party taskbar and window switcher on Wayland speaks. GNOME is the
-# odd one out: it implements nothing of the sort, which is the entire reason
-# there are two builds of this program. (The retired Aquarius Session used this
-# build too, for the same reason.)
+# ⚠️ WHY THERE ARE STILL TWO. Since 2026-10-19 GNOME is the only desktop in the
+# image (KDE Plasma, which used the wlroots build, left that day — decision
+# ../docs/decision-2026-10-19-gnome-only-and-open-drives.md). The wlroots build
+# is kept as the fallback for anything that is not GNOME — the name is about
+# the QUESTION it knows how to ask, the wlr-foreign-toplevel-management
+# protocol that every Wayland desktop except GNOME speaks — so that a session
+# nobody planned for degrades to "the keys work" rather than "every shortcut
+# silently stops". It costs a few megabytes. Removing it is a separate,
+# deliberate change, not a side effect of removing a desktop.
 #
 # ⚠️ AND SOMETIMES IT IS EMPTY. A systemd user service only sees the variables
-# that the desktop pushed into the user's systemd manager when it started, and
-# not every desktop remembers to push them. GNOME does. KDE Plasma does too —
-# startplasma-wayland imports its environment into the user manager before it
-# starts anything. (This paragraph used to describe the extra work the Aquarius
-# Session needed to do the same thing; that desktop was retired on 2026-09-15.)
+# that the desktop pushed into the user's systemd manager when it started.
+# GNOME does push them.
 #
 # The three questions below are kept anyway. This service has to work on a
 # desktop nobody has written yet, and an empty variable should degrade to a
@@ -290,11 +288,10 @@ case "${aq_desktop}" in
         #
         # The user manager remembers the last thing it was told, and it is not
         # emptied between logins within one boot. So an account that logged into
-        # GNOME earlier and is now in KDE Plasma can still have the word GNOME
-        # sitting in its environment. Believing it would run the GNOME remapper
-        # on KWin, where it exits immediately and every shortcut silently stops
-        # working. This matters far more now than it used to: AquariusOS ships
-        # two desktops and Royce is deliberately switching between them.
+        # GNOME earlier and is now in some other session (Game Mode, say) can
+        # still have the word GNOME sitting in its environment. Believing it
+        # would run the GNOME remapper where GNOME is not, where it exits
+        # immediately and every shortcut silently stops working.
         #
         # GNOME Shell is the thing that would actually be there. Ask.
         if pgrep -x gnome-shell > /dev/null 2>&1; then
@@ -303,14 +300,13 @@ case "${aq_desktop}" in
         else
             aq_binary="/usr/bin/xremap-wlroots"
             say "the environment says '${aq_desktop}', but GNOME Shell is not"
-            say "running — so this is not GNOME. Using the wlroots build, which"
-            say "is what KDE Plasma needs."
+            say "running — so this is not GNOME. Using the wlroots build."
         fi
         ;;
     ?*)
-        # Anything else that named itself: KDE Plasma, and any other Wayland
-        # desktop somebody installs later (sway, niri, wayfire). All of them
-        # speak the wlroots way of asking.
+        # Anything else that named itself: any other Wayland session somebody
+        # installs later (sway, niri, wayfire). All of them speak the wlroots
+        # way of asking.
         aq_binary="/usr/bin/xremap-wlroots"
         say "desktop is '${aq_desktop}' — using the wlroots build."
         ;;
@@ -322,7 +318,7 @@ case "${aq_desktop}" in
         else
             aq_binary="/usr/bin/xremap-wlroots"
             say "nothing named the desktop and GNOME Shell is not running —"
-            say "using the wlroots build, which is what KDE Plasma needs."
+            say "using the wlroots build."
         fi
         ;;
 esac
@@ -344,7 +340,7 @@ fi
 # fires, and Command-C in a terminal becomes Control-C, which interrupts
 # whatever is running.
 #
-# So both desktops get the one thing they need, here, before anything starts.
+# So each build gets the one thing it needs, here, before anything starts.
 # =============================================================================
 case "${aq_binary}" in
 
@@ -513,8 +509,8 @@ esac
 # Royce dropped that on 2026-09-17, because it could not be made universal —
 # applications that draw their own title bar (Chrome's Flatpak was the one the
 # bench caught) ignored it completely, so some windows moved and some did not.
-# The buttons are now stock and on the RIGHT for everybody, on both desktops,
-# and the Mac-or-Windows switch is about the keyboard only.
+# The buttons are now stock and on the RIGHT for everybody, and the
+# Mac-or-Windows switch is about the keyboard only.
 #
 # WHY A REPAIR IS NEEDED AT ALL. The new right-hand arrangement is a DEFAULT
 # compiled into the image. A default only reaches an account that has never
@@ -534,10 +530,9 @@ esac
 # ~/.local/state/aquarius/ records that the repair has been done, the same
 # convention as keys-toggle-enabled below.
 #
-# ⚠️ AND IT RUNS ON WHICHEVER DESKTOP YOU LOG INTO. It is deliberately OUTSIDE
-# the GNOME-only block below: the GNOME value and the KDE values were both
-# written by one run of `aq keys`, whichever desktop was in front of you at the
-# time, so both have to be undone whichever desktop you are in now.
+# (Until 2026-10-19 this also took the same layout back out of KDE Plasma's
+# ~/.config/kwinrc. Plasma has left the image, so that half is gone; a kwinrc
+# left in somebody's home folder is read by nothing.)
 #
 # Never fatal. Every failure here is a warning in the log and nothing more; the
 # keyboard remapper below does not depend on any of it.
@@ -572,45 +567,6 @@ else
                 fi
                 ;;
         esac
-    fi
-
-    # --- KDE Plasma --------------------------------------------------------
-    # `aq keys` wrote two keys into the person's own ~/.config/kwinrc, under
-    # [org.kde.kdecoration2]. KDE spells each button as one letter: X is close,
-    # I is minimise, A is maximise. The two pairs it wrote were:
-    #   mac      ButtonsOnLeft=XIA   ButtonsOnRight=(empty)
-    #   windows  ButtonsOnLeft=      ButtonsOnRight=IAX
-    # Deleting both keys hands the decision back to Plasma's own stock layout,
-    # which is already the right-hand one.
-    if command -v kreadconfig6 > /dev/null 2>&1 \
-        && command -v kwriteconfig6 > /dev/null 2>&1; then
-        aq_kwin_left="$(kreadconfig6 --file kwinrc --group org.kde.kdecoration2 --key ButtonsOnLeft 2> /dev/null || true)"
-        aq_kwin_right="$(kreadconfig6 --file kwinrc --group org.kde.kdecoration2 --key ButtonsOnRight 2> /dev/null || true)"
-        if { [ "${aq_kwin_left}" = "XIA" ] && [ -z "${aq_kwin_right}" ]; } \
-            || { [ -z "${aq_kwin_left}" ] && [ "${aq_kwin_right}" = "IAX" ]; }; then
-            if kwriteconfig6 --file kwinrc --group org.kde.kdecoration2 \
-                    --key ButtonsOnLeft --delete 2> /dev/null \
-                && kwriteconfig6 --file kwinrc --group org.kde.kdecoration2 \
-                    --key ButtonsOnRight --delete 2> /dev/null; then
-                say "removed the window-button layout AquariusOS wrote into kwinrc; Plasma's own is back."
-                aq_buttons_did_something=1
-                # Ask a running KWin to re-read kwinrc, so nobody has to log
-                # out. If Plasma is not running this says and changes nothing,
-                # which is correct. Best-effort: never fails the login.
-                if command -v qdbus6 > /dev/null 2>&1; then
-                    qdbus6 org.kde.KWin /KWin reconfigure > /dev/null 2>&1 || true
-                elif command -v busctl > /dev/null 2>&1; then
-                    busctl --user call org.kde.KWin /KWin org.kde.KWin reconfigure \
-                        > /dev/null 2>&1 || true
-                elif command -v dbus-send > /dev/null 2>&1; then
-                    dbus-send --session --dest=org.kde.KWin /KWin \
-                        org.kde.KWin.reconfigure > /dev/null 2>&1 || true
-                fi
-            else
-                say "WARNING: could not remove the window-button keys from kwinrc."
-                say "System Settings > Appearance & Style > Window Decorations will also fix it."
-            fi
-        fi
     fi
 
     # --- the GTK settings files -------------------------------------------

@@ -1930,15 +1930,13 @@ def run_window(first_run, embedded=False):
         # six apps and the very next thing they want is to see them.
         #
         # It does NOT start an app. It asks the desktop that is already running
-        # to show its list of apps, which is a different thing on each of the
-        # two desktops AquariusOS ships:
+        # to show its list of apps: GNOME's Activities app grid, asked for over
+        # D-Bus with org.gnome.Shell.ShowApplications.
         #
-        #   GNOME    the Activities app grid, asked for over D-Bus with
-        #            org.gnome.Shell.ShowApplications
-        #   KDE      KRunner, Plasma's search box, asked for over D-Bus with
-        #            org.kde.krunner /App display(). KRunner with an empty
-        #            query lists applications, which is the nearest thing
-        #            Plasma has to "show me everything I just installed".
+        # ⚠️ THE KDE PLASMA ROUTE IS GONE (2026-10-19). From 2026-09-15 it asked
+        #    Plasma's KRunner (org.kde.krunner /App display()). AquariusOS is
+        #    GNOME only since 2026-10-19; see
+        #    ../docs/decision-2026-10-19-gnome-only-and-open-drives.md.
         #
         # ⚠️ THE AQUARIUS DESKTOP'S ROUTE IS GONE (2026-09-15). It used to be
         #    `qs ipc call search toggle`, which asked our own shell for its
@@ -1951,7 +1949,7 @@ def run_window(first_run, embedded=False):
         #    ShowApplications method is part of the same interface, is meant to
         #    be called, and is not gated.
         #
-        # AND IF NEITHER WORKS — a desktop we have not met, a shell that is not
+        # AND IF THAT DOES NOT WORK — a desktop we have not met, a shell that is not
         # answering — nothing is thrown away: the window goes back to its own
         # first page, which lists every app with an Open button beside the ones
         # that are installed. That is a worse route, not a dead end, and it is
@@ -1962,37 +1960,8 @@ def run_window(first_run, embedded=False):
             if "GNOME" in desktop and self._show_gnome_app_grid():
                 self.close()
                 return
-            if "KDE" in desktop and self._show_kde_app_list():
-                self.close()
-                return
 
             self._back_to_the_list()
-
-        def _show_kde_app_list(self):
-            """Ask Plasma's KRunner to open, listing applications.
-
-            org.kde.krunner is the bus name plasma-workspace publishes for the
-            search box. `display("")` opens it with an empty query, which is
-            the state that lists applications. It is the nearest thing Plasma
-            has to GNOME's app grid, and it is a method meant to be called
-            rather than a back door.
-            """
-            try:
-                bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
-                bus.call_sync(
-                    "org.kde.krunner",
-                    "/App",
-                    "org.kde.krunner.App",
-                    "display",
-                    GLib.Variant("(s)", ("",)),
-                    None,
-                    Gio.DBusCallFlags.NONE,
-                    2000,
-                    None,
-                )
-            except GLib.Error:
-                return False
-            return True
 
         def _show_gnome_app_grid(self):
             """Ask GNOME Shell for the app grid, over the session bus."""

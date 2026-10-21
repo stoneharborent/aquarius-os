@@ -1,53 +1,79 @@
 #!/usr/bin/python3
 # =============================================================================
-# aquarius-automount — plug a drive in, it appears; no password ever
+# aquarius-automount — every drive appears, inside or plugged in; no password
 # =============================================================================
 # PLAIN ENGLISH
 #
 # On a Mac, when you plug in a USB stick, an SD card, or an external SSD, it
 # just appears — you never type a password, and you drag it to the bin (or
 # right-click Eject) to put it away safely. That is what a creator expects, and
-# it is what this program gives both AquariusOS desktops.
+# it is what this program gives the AquariusOS desktop.
 #
 # Fedora already ships the machinery that does the actual mounting — a service
 # called udisks2 — and it already lets the person sitting at the screen mount
 # and unmount a removable drive without a password. What Fedora does NOT do on
-# its own is mount a drive the MOMENT you plug it in. GNOME's Files app does it
-# while Files is running; a Plasma session has no Nautilus running in
-# the background, so nothing was doing it. This program is that missing piece.
+# its own is mount a drive the MOMENT you plug it in, or mount the drives inside
+# the computer when you log in. GNOME mounts some plugged-in drives itself, but
+# only some, and never the inside ones. This program is that missing piece.
 #
-# It sits quietly in your logged-in session, watches udisks2 for a drive being
-# plugged in (or already plugged in when you logged in), and asks udisks2 to
-# mount it. udisks2 mounts it under /run/media/<you>/<label>, exactly where the
+# It sits quietly in your logged-in session. When you log in it mounts every
+# drive that is already there — inside the computer or plugged in — and then it
+# watches udisks2 for a drive being plugged in and asks udisks2 to mount that
+# too. udisks2 mounts it under /run/media/<you>/<label>, exactly where the
 # dock and Files look for it.
 #
 # -----------------------------------------------------------------------------
 # WHAT IT WILL AND WILL NOT MOUNT — READ THIS BEFORE CHANGING THE FILTER
 # -----------------------------------------------------------------------------
-# It mounts a drive ONLY when udisks2 says all three of these are true:
+# ⚠️ CHANGED 2026-10-19. Until that day this program only mounted drives you
+# PLUG IN; a drive that lives INSIDE the computer asked "Mount every login?"
+# once and was then written into /etc/fstab (FEATURES 020). Royce:
 #
-#   HintAuto = true    udisks2's own word for "this is the kind of device that
-#                      should be auto-mounted" — i.e. a removable/hotplugged
-#                      drive, not something built into the machine.
-#   HintIgnore = false the drive has not asked to be left alone.
-#   HintSystem = false this is NOT a system-internal disk. This is the line
-#                      that keeps us away from the disk the operating system
-#                      itself lives on.
+#     "Remove verification for all internal and external drives. Just mount
+#      them from login and show in dock."
 #
-# Those three together are udisks2's blessed way of saying "this is a USB stick
-# / SD card / external SSD and not the boot drive". We do NOT invent our own
-# idea of removable — we ask udisks2, which knows.
+# So now it mounts BOTH kinds, with no question and no password:
 #
-# As a second, independent seatbelt, it also refuses to touch any device that
-# is already providing one of the critical system mounts (/, /boot, /var,
-# /home, and the EFI partition). If a filter change ever let one of those
-# through, this catches it before anything is mounted twice. It should never
-# fire; it exists so that a mistake is harmless rather than dangerous.
+#   A drive you plug in      (udisks2 says HintSystem = false). Mounted when
+#                            HintAuto = true — udisks2's own word for "this is
+#                            the kind of device that should be auto-mounted".
+#   A drive inside the PC    (udisks2 says HintSystem = true). Mounted at login
+#                            when it holds a real filesystem people keep files
+#                            on: ext4, xfs, btrfs, f2fs, FAT, exFAT, NTFS,
+#                            HFS+ — the MOUNTABLE_FILESYSTEMS list below. A
+#                            Windows (NTFS) drive inside the computer is
+#                            mounted READ-ONLY; see READ_ONLY_INSIDE below.
 #
-# It also skips a drive that is already mounted (nothing to do) and one that is
-# still locked (an encrypted drive shows no filesystem until it is unlocked,
-# and unlocking asks for the passphrase — that is a deliberate, separate step
-# and not ours to automate).
+# Both land in /run/media/<you>/<label>, which is where Files and the dock look.
+#
+# ⚠️ THE NEVER-TOUCH LIST. "Every drive" never means the machine's own
+# plumbing. This list is the one /usr/libexec/aquarius-remember-drive carried
+# from 2026-09-14 until it was retired on 2026-10-19 — it was the best record
+# anybody had of what is dangerous — and it is checked for EVERY drive, plugged
+# in or built in, before anything is mounted:
+#
+#   * anything already mounted (nothing to do, and never twice)
+#   * any partition of the disk AquariusOS is installed on — the bootc root,
+#     /sysroot, /boot, /var, /usr; see CRITICAL_MOUNTS below
+#   * anything already listed in /etc/fstab (the machine mounts those itself —
+#     this is what keeps a drive the old "ask once" feature remembered working
+#     exactly as before, instead of being mounted a second time)
+#   * the EFI System Partition, BIOS boot, Microsoft Reserved, Windows
+#     Recovery, Apple Boot, Windows dynamic-disk metadata, swap, LVM and RAID
+#     members, and /boot partitions — by their partition TYPE, which is fixed
+#     by a standard; see NEVER_TOUCH_PARTITION_TYPES below
+#   * a partition marked hidden, "required by the platform" or "do not
+#     automount" — how computer makers hide their recovery partitions
+#   * anything udisks2 itself says to ignore (HintIgnore = true)
+#   * the AquariusOS installer stick (an ISO image labelled AQUARIUSOS)
+#   * an encrypted drive — LUKS or BitLocker. It cannot be read without its
+#     key, so it is left LOCKED and unmounted. Files still shows it, and
+#     clicking it there asks for the drive's own passphrase. That passphrase is
+#     the only "verification" left on this machine, and only because the data
+#     really is encrypted.
+#
+# tests/test-automount-mount.py runs this decision against fake drives — mostly
+# drives that must be REFUSED — and the build stops if any of them is mounted.
 #
 # -----------------------------------------------------------------------------
 # THE ONE EXCEPTION: A MAC DRIVE (APFS), WHICH WE MOUNT OURSELVES
@@ -91,16 +117,16 @@
 # -----------------------------------------------------------------------------
 # The mount call is made as YOU — this program runs in your own session with no
 # special powers. udisks2 asks polkit "is this person allowed?", and the rule
-# in /usr/share/polkit-1/rules.d/49-aquarius-udisks.rules answers "yes, for a
-# removable drive, for the person actually sitting at this machine". So there is
-# no prompt. Unmounting from the dock is the same story in reverse, and the same
-# rule covers it. The rule is deliberately narrow: it never grants a
-# no-password mount of an internal disk. See that file's own header.
+# in /usr/share/polkit-1/rules.d/49-aquarius-udisks.rules answers "yes, for the
+# person actually sitting at this machine". So there is no prompt. Since
+# 2026-10-19 that rule covers inside drives too (udisks2's
+# filesystem-mount-system action). It still says yes ONLY to the person at the
+# screen — never to somebody connected over the network. See its own header.
 #
 # We pass "auth.no_user_interaction = true" on every mount so that, in the one
 # case where a mount is NOT allowed without a password, it fails quietly and is
-# logged rather than popping a password box at you for a drive you plugged in a
-# second ago. Auto-mounting must never interrupt you.
+# logged rather than popping a password box at you at login. Auto-mounting must
+# never interrupt you.
 #
 # -----------------------------------------------------------------------------
 # HOW IT IS RUN
@@ -115,10 +141,6 @@
 #                                  udisks2 and no screen — it prints its rules
 #                                  and exits 0. This is what CI runs.
 #   aquarius-automount --help      this header.
-#   aquarius-automount --ask …     internal use: the little worker that asks
-#                                  "mount this INSIDE drive every login?". See
-#                                  the "DRIVES THAT LIVE INSIDE THE COMPUTER"
-#                                  block further down. Nobody types this.
 #
 # It never runs at the login screen: the service carries ConditionUser=!@system,
 # so it starts for people and not for the machine's own login account.
@@ -168,9 +190,17 @@ PROPS_IFACE = "org.freedesktop.DBus.Properties"
 BLOCK_IFACE = "org.freedesktop.UDisks2.Block"
 FS_IFACE = "org.freedesktop.UDisks2.Filesystem"
 
-# The mounts we will never, ever put a second mount on top of. udisks2's
-# HintSystem should already keep us away from these; this is the seatbelt.
-CRITICAL_MOUNTS = ("/", "/boot", "/boot/efi", "/efi", "/var", "/home", "/usr")
+# The mounts that mean "this is the operating system". Any partition of the
+# same physical disk as one of these is never mounted by this program.
+#
+#   /sysroot   on a bootc machine "/" is not a disk at all (it is a composefs
+#              image), so the REAL disk the system lives on shows up here. It
+#              is the most important line in this list.
+#   /run/install/repo, /run/initramfs/live
+#              where the installer stick is mounted while the installer runs.
+CRITICAL_MOUNTS = ("/", "/sysroot", "/boot", "/boot/efi", "/efi", "/var",
+                   "/home", "/usr", "/etc", "/run/install/repo",
+                   "/run/initramfs/live")
 
 # ⚠️ The one filesystem udisks2 cannot mount and we mount ourselves. Read the
 # "MAC DRIVE" section of this file's header before touching anything below that
@@ -190,96 +220,102 @@ UNLOCK_HELPER = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "aquarius-drive-unlock")
 
 # =============================================================================
-# DRIVES THAT LIVE INSIDE THE COMPUTER — "ask once, then never again"
+# DRIVES THAT LIVE INSIDE THE COMPUTER — mounted at login, no question asked
 # =============================================================================
-# Everything above is about a drive you PLUG IN. A drive that lives INSIDE the
-# machine — a second SSD full of footage, the disk Windows is on — is a
-# different thing, and udisks2 marks it so: HintSystem = true. This program has
-# always left those alone, and it still does: it never mounts one by itself.
+# Read the "WHAT IT WILL AND WILL NOT MOUNT" section of the header first.
 #
-# What it does now (FEATURES 020, September 2026) is ASK. Once, per drive:
-#
-#     Mount "Footage" every login?
-#     [ Mount every login ]  [ Never ask ]        (closing it = "not now")
-#
-# "Mount every login" hands the drive to /usr/libexec/aquarius-remember-drive,
-# which writes one line into /etc/fstab. After that the drive is mounted by the
-# machine itself, before anybody logs in, and no password is ever asked again —
-# because a drive in fstab does not go through polkit at all.
-#
-# ⚠️ AND THE THING THAT DID NOT CHANGE, WHICH IS THE POINT.
-# /usr/share/polkit-1/rules.d/49-aquarius-udisks.rules is exactly as narrow as
-# it was: it still says nothing about mounting internal disks, and the build
-# still stops if it ever does. The alternative design — widening that rule —
-# would have made EVERY internal partition mountable with no password. This one
-# makes the handful you chose open, and nothing else.
-#
-# "Never ask" is remembered per person, in the file below. It is a plain text
-# file you can open and edit; deleting a line makes that drive ask again, and so
-# does `aq drives ask-again`.
-REMEMBER_HELPER = "/usr/libexec/aquarius-remember-drive"
-PKEXEC = "/usr/bin/pkexec"
-NOTIFY_SEND = "/usr/bin/notify-send"
+# ⚠️ HISTORY, so nobody goes looking for the old question. From 2026-09-14 to
+# 2026-10-19 an inside drive put a notification on screen — "Mount Footage
+# every login?" — and a "yes" wrote a line into /etc/fstab through a privileged
+# helper (/usr/libexec/aquarius-remember-drive). Royce retired that on
+# 2026-10-19: every inside drive now simply mounts at login. Lines the old
+# feature wrote into /etc/fstab are LEFT IN PLACE and keep working; this
+# program sees them in fstab and leaves those drives to the machine.
 
-# The filesystems worth offering. Everything else — swap, LUKS, LVM and RAID
-# members, a partition with nothing recognisable on it — is silently skipped,
-# because there is nothing a person could usefully be asked about.
-OFFERABLE_FILESYSTEMS = (
+# The filesystems an INSIDE drive is mounted with. Everything else — swap,
+# LUKS, BitLocker, LVM and RAID members, a partition with nothing recognisable
+# on it — is skipped, because there is nothing a person could open.
+# (A drive you PLUG IN is not held to this list: udisks2's own HintAuto decides
+# for those, exactly as it always has.)
+MOUNTABLE_FILESYSTEMS = (
     "ext2", "ext3", "ext4", "xfs", "btrfs", "f2fs",
-    "vfat", "exfat", "ntfs",
+    "vfat", "exfat", "ntfs", "hfsplus",
 )
 
-# The partition type that marks the EFI System Partition — the small one the
-# computer boots from. Fixed by the UEFI standard. Never offered, and the
-# privileged helper refuses it a second time.
+# ⚠️ An NTFS (Windows) drive INSIDE the computer is mounted READ-ONLY.
+# Windows' "fast startup" — on by default — does not really shut Windows down:
+# it leaves the volume half-closed, and writing to a volume in that state is
+# how a Windows install is lost. Reading is perfectly safe, and reading is what
+# a person wants from the Windows side of a dual-boot machine. If somebody one
+# day wants read-write, that is a decision with a warning attached, not a
+# default. (A plugged-in NTFS drive is mounted normally, as it always was.)
+READ_ONLY_INSIDE = ("ntfs",)
+
+# Encrypted drives. Never mounted by this program — it has no key and must
+# never have one. One plain line in the journal says why it is not there.
+ENCRYPTED_TYPES = ("crypto_luks", "bitlocker", "crypto_bitlocker")
+
+# ⚠️ THE NEVER-TOUCH PARTITION TYPES. A partition's TYPE is a fixed code,
+# written into the partition table when the partition is made, and the codes
+# are set by standards bodies (UEFI) or by Microsoft and Apple. These are the
+# ones that mean "this belongs to a computer's start-up machinery, not to a
+# person". GPT types are long codes; old-style (MBR) disks use a two-digit
+# number, which udisks2 writes as "0x27".
+NEVER_TOUCH_PARTITION_TYPES = {
+    "c12a7328-f81f-11d2-ba4b-00a0c93ec93b": "the EFI System Partition (what the computer starts from)",
+    "21686148-6449-6e6f-744e-656564454649": "a BIOS boot partition",
+    "bc13c2ff-59e6-4262-a352-b275fd6f7172": "a /boot partition",
+    "e3c9e316-0b5c-4db8-817d-f92df00215ae": "Microsoft Reserved (Windows' own bookkeeping)",
+    "de94bba4-06d1-4d40-a16a-bfd50179d6ac": "Windows Recovery",
+    "5808c8aa-7e8f-42e0-85d2-e1e90434cfb3": "Windows dynamic-disk metadata",
+    "af9b60a0-1431-4f62-bc68-3311714a69ad": "a Windows dynamic-disk member",
+    "426f6f74-0000-11aa-aa11-00306543ecac": "Apple Boot (a Mac's recovery)",
+    "0657fd6d-a4ab-43c4-84e5-0933c84b4f4f": "swap",
+    "e6d6d379-f507-44c2-a23c-238f2a3df928": "an LVM member",
+    "a19d880f-05fc-4d3b-a006-743f0f84911e": "a RAID member",
+    "0xef": "the EFI System Partition (what the computer starts from)",
+    "0x82": "swap",
+    "0x8e": "an LVM member",
+    "0xfd": "a RAID member",
+    "0x27": "a hidden Windows Recovery partition",
+    "0x12": "a computer maker's hidden diagnostics or recovery partition",
+    "0x84": "a hibernation partition",
+    "0xde": "a computer maker's hidden utility partition",
+    "0x11": "a hidden partition", "0x14": "a hidden partition",
+    "0x16": "a hidden partition", "0x17": "a hidden partition",
+    "0x1b": "a hidden partition", "0x1c": "a hidden partition",
+    "0x1e": "a hidden partition",
+}
+
+# The GPT attribute bits that say "leave me alone". Computer makers use these to
+# hide their recovery partitions, and Windows uses the last one for "give this
+# no drive letter".
+#   bit 0   required by the platform
+#   bit 62  hidden
+#   bit 63  do not automount
+HIDDEN_PARTITION_FLAGS = (1 << 0) | (1 << 62) | (1 << 63)
+
+# The AquariusOS installer stick. disk_config/iso.toml names it AQUARIUSOS.
+INSTALLER_LABEL = "AQUARIUSOS"
+INSTALLER_TYPES = ("iso9660", "udf")
+
+# The partition type that marks the EFI System Partition, kept under its own
+# name because the tests refer to it.
 EFI_PARTTYPE = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
 
 # udisks2's interface for "this block device is a partition of something".
 PARTITION_IFACE = "org.freedesktop.UDisks2.Partition"
 
 
-def never_ask_file():
-    """Where this person's "never ask me about that drive again" list lives."""
-    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
-        os.path.expanduser("~"), ".config")
-    return os.path.join(base, "aquarius", "remembered-drives.conf")
-
-
-def never_ask_list():
-    """The UUIDs this person has said "never ask" about. Never raises."""
-    found = set()
-    try:
-        with open(never_ask_file(), "r") as handle:
-            for line in handle:
-                line = line.split("#", 1)[0].strip()
-                if line.lower().startswith("never "):
-                    found.add(line.split(None, 1)[1].strip())
-    except OSError:
-        pass
-    return found
-
-
-def never_ask_add(uuid, label):
-    """Write one "never ask" line. A file we cannot write is not a crash."""
-    path = never_ask_file()
-    try:
-        os.makedirs(os.path.dirname(path), 0o700, exist_ok=True)
-        fresh = not os.path.exists(path)
-        with open(path, "a") as handle:
-            if fresh:
-                handle.write(
-                    "# Drives inside this computer that AquariusOS must not ask\n"
-                    "# about again. Delete a line to be asked again, or run\n"
-                    "# 'aq drives ask-again'.\n")
-            handle.write("never %s  # %s\n" % (uuid, label or "no label"))
-        return True
-    except OSError as error:
-        log("could not write %s: %s" % (path, error))
-        return False
-
-
 def uuid_in_fstab(uuid):
-    """Is this drive already in /etc/fstab — ours, or somebody else's line?"""
+    """Is this drive already in /etc/fstab — ours, or somebody else's line?
+
+    udisks2 usually says so itself (the Block's Configuration property), but a
+    line naming the drive by UUID is checked here too, because a drive the old
+    "ask once" feature remembered must never be mounted a second time.
+    """
+    if not uuid:
+        return False
     try:
         with open("/etc/fstab", "r") as handle:
             for line in handle:
@@ -314,18 +350,43 @@ def dry_run():
     print("")
     print("What it does when it runs for real:")
     print("  * connects to udisks2 on the system bus")
-    print("  * mounts every drive already plugged in, then watches for more")
-    print("  * mounts a drive only when udisks2 says it is:")
-    print("      HintAuto = true   (a removable/hotplugged drive)")
-    print("      HintIgnore = false")
-    print("      HintSystem = false  (NOT a system-internal disk)")
-    print("  * never mounts a device already backing one of: %s" % ", ".join(CRITICAL_MOUNTS))
-    print("  * skips a drive that is already mounted or still locked")
+    print("  * at login, mounts every drive already there — inside the computer")
+    print("    or plugged in — then watches for more being plugged in")
+    print("  * a drive you PLUG IN is mounted when udisks2 says HintAuto = true")
+    print("  * a drive INSIDE the computer (HintSystem = true) is mounted when")
+    print("    it holds one of: %s" % ", ".join(MOUNTABLE_FILESYSTEMS))
+    print("  * an inside NTFS (Windows) drive is mounted READ-ONLY, because")
+    print("    Windows' fast startup leaves the volume half-closed and writing")
+    print("    to it is how a Windows install is lost")
+    print("  * everything lands in /run/media/<user>/<label>, where Files and")
+    print("    the dock look")
     print("  * mounts as the logged-in user, with no password, because")
     print("    /usr/share/polkit-1/rules.d/49-aquarius-udisks.rules allows it")
-    print("    for a removable drive in the active local session")
+    print("    for the person in the active local session (inside drives too)")
     print("  * passes auth.no_user_interaction=true so a disallowed mount fails")
     print("    quietly instead of interrupting the person")
+    print("")
+    print("The never-touch list — it never mounts, for any drive:")
+    print("  * anything already mounted")
+    print("  * the disk AquariusOS is installed on (any partition of it),")
+    print("    found from these mounts: %s" % ", ".join(CRITICAL_MOUNTS))
+    print("  * anything already listed in /etc/fstab (the machine mounts those)")
+    print("  * anything udisks2 says to ignore (HintIgnore = true)")
+    print("  * these partition types, by their fixed code:")
+    seen = []
+    for reason in NEVER_TOUCH_PARTITION_TYPES.values():
+        if reason not in seen:
+            seen.append(reason)
+    for reason in seen:
+        print("      %s" % reason)
+    print("  * a partition marked hidden, platform-required or do-not-automount")
+    print("  * the AquariusOS installer stick (%s, label %s)"
+          % (" or ".join(INSTALLER_TYPES), INSTALLER_LABEL))
+    print("  * an encrypted drive (LUKS, BitLocker): left locked; unlock it in")
+    print("    Files with its own passphrase — the only password left, because")
+    print("    the data really is encrypted")
+    print("  * an inside partition holding anything else (swap, LVM, RAID,")
+    print("    nothing recognisable)")
     print("")
     print("And the one exception, a Mac drive (APFS), which udisks2 cannot mount:")
     print("  * asks apfsutil which volumes are inside it")
@@ -340,28 +401,7 @@ def dry_run():
     print("  * never stores a password, anywhere, ever")
     print("  * when the drive is unplugged, unmounts with %s -u -z and" % FUSERMOUNT)
     print("    removes the empty folder it made")
-    print("")
-    print("And a drive INSIDE the computer (HintSystem = true), which it still")
-    print("never mounts by itself — it asks, once, and then leaves it to fstab:")
-    print("  * raises ONE notification per drive: Mount every login / Never ask")
-    print("    (closing the notification means 'not now', and it asks again)")
-    print("  * 'Mount every login' runs %s through %s" % (REMEMBER_HELPER, PKEXEC))
-    print("  * 'Never ask' is remembered in this person's own file, %s"
-          % never_ask_file())
-    print("  * it only ever offers a real filesystem: %s"
-          % ", ".join(OFFERABLE_FILESYSTEMS))
-    print("  * the never-touch list — it will not even ask about:")
-    print("      the disk AquariusOS is on (any partition of it)")
-    print("      the EFI partition (partition type %s)" % EFI_PARTTYPE)
-    print("      swap, LUKS, LVM and RAID members, and anything unrecognised")
-    print("      Windows' system volume (NTFS with a Windows folder, or BitLocker)")
-    print("      anything already in /etc/fstab")
-    print("      a drive with no UUID")
-    print("      anything backing one of: %s" % ", ".join(CRITICAL_MOUNTS))
-    print("  * NTFS drives are remembered READ-ONLY, because Windows' fast")
-    print("    startup leaves the volume dirty and writing to it is how a")
-    print("    Windows install is lost")
-    print("  * it NEVER widens 49-aquarius-udisks.rules — that rule is unchanged")
+    print("  * the same never-touch list applies to a Mac drive too")
     return 0
 
 
@@ -422,10 +462,10 @@ class AutoMounter:
         #   {object_path: [{"mount_point": ..., "device": ...}, ...]}
         self.apfs_mounts = {}
 
-        # The inside drives we have already put a question on screen about in
-        # THIS session, by UUID. Without it, a drive udisks2 announces twice —
-        # which it does, routinely — would put up two identical notifications.
-        self.offered = set()
+        # The drives we have already written a "not mounting this, because…"
+        # line about in THIS session. udisks2 announces the same device more
+        # than once, routinely, and the journal should say each reason once.
+        self.told = set()
 
     # -- running other programs (the two places this program is faked) ------
     #
@@ -519,39 +559,100 @@ class AutoMounter:
 
     # -- the decision -------------------------------------------------------
 
+    def _tell_once(self, object_path, message):
+        """Log why a drive was left alone — once per drive per session."""
+        if object_path in self.told:
+            return
+        self.told.add(object_path)
+        log(message)
+
+    def never_touch_reason(self, object_path, device=None):
+        """Why this drive must be left alone, in plain words — or '' if it is fine.
+
+        ⚠️ THIS IS THE NEVER-TOUCH LIST. Read the header's "WHAT IT WILL AND WILL
+        NOT MOUNT" section before changing it. It is checked for EVERY drive,
+        plugged in or inside, on the udisks2 path and the Mac path alike.
+        """
+        if device is None:
+            device = self._device_node(object_path)
+        if not device:
+            return "udisks2 did not say which device it is"
+
+        # The disk AquariusOS lives on. Any partition of it.
+        if _whole_disk(device) in self.protected:
+            return "it is on the disk AquariusOS is installed on"
+
+        # Already in /etc/fstab: the machine mounts it itself (this is where a
+        # drive the retired "ask once" feature remembered ends up).
+        if self._get_prop(object_path, BLOCK_IFACE, "Configuration"):
+            return "it is already listed in /etc/fstab, so the machine mounts it itself"
+        uuid = str(self._get_prop(object_path, BLOCK_IFACE, "IdUUID") or "").strip()
+        if uuid_in_fstab(uuid):
+            return "it is already listed in /etc/fstab, so the machine mounts it itself"
+
+        # The partition's own type, and the "leave me alone" flags.
+        if self._has_interface(object_path, PARTITION_IFACE):
+            parttype = str(self._get_prop(object_path, PARTITION_IFACE, "Type") or "").lower()
+            if parttype in NEVER_TOUCH_PARTITION_TYPES:
+                return "it is %s" % NEVER_TOUCH_PARTITION_TYPES[parttype]
+            try:
+                flags = int(self._get_prop(object_path, PARTITION_IFACE, "Flags") or 0)
+            except (TypeError, ValueError):
+                flags = 0
+            if flags & HIDDEN_PARTITION_FLAGS:
+                return "it is marked hidden (a computer maker's recovery partition, usually)"
+
+        # The AquariusOS installer stick.
+        fstype = self.id_type(object_path).lower()
+        label = str(self._get_prop(object_path, BLOCK_IFACE, "IdLabel") or "")
+        if fstype in INSTALLER_TYPES and label.upper().startswith(INSTALLER_LABEL):
+            return "it is the AquariusOS installer stick"
+
+        return ""
+
     def should_mount(self, object_path):
-        """True only for a removable drive that is safe and not already up."""
+        """True for a drive that is safe to mount and not already up.
+
+        Plugged-in drives: udisks2's HintAuto decides, as it always has.
+        Inside drives: mounted at login when they hold a real filesystem.
+        Both: the never-touch list above, every time.
+        """
+        fstype = self.id_type(object_path).lower()
+
+        # An encrypted drive is not mounted, and not silently: one line says
+        # why it is missing. Files still shows it and can unlock it.
+        if fstype in ENCRYPTED_TYPES:
+            self._tell_once(object_path, "%s is encrypted (%s) — leaving it locked."
+                            " Open it from Files, with its own passphrase."
+                            % (self._device_node(object_path) or object_path, fstype))
+            return False
+
         # It has to be a filesystem at all. A whole disk, or a locked encrypted
         # drive, has no Filesystem interface and there is nothing to mount.
         if not self._has_interface(object_path, FS_IFACE):
             return False
 
-        hint_auto = self._get_prop(object_path, BLOCK_IFACE, "HintAuto")
-        hint_ignore = self._get_prop(object_path, BLOCK_IFACE, "HintIgnore")
-        hint_system = self._get_prop(object_path, BLOCK_IFACE, "HintSystem")
-
-        # udisks2's own verdict. This is the real filter.
-        if not hint_auto:
-            return False
-        if hint_ignore:
-            return False
-        if hint_system:
-            log("%s is a system device — leaving it alone" % object_path)
+        if self._get_prop(object_path, BLOCK_IFACE, "HintIgnore"):
             return False
 
         # Already mounted? MountPoints is a list of NUL-terminated byte
         # strings; a non-empty list means it is up already.
-        mount_points = self._get_prop(object_path, FS_IFACE, "MountPoints")
-        if mount_points:
+        if self._get_prop(object_path, FS_IFACE, "MountPoints"):
             return False
 
-        # The seatbelt: never a device that is part of the system disk.
-        device = self._device_node(object_path)
-        if device:
-            disk = _whole_disk(device)
-            if disk in self.protected:
-                log("%s (%s) is on the system disk — refusing" % (object_path, device))
+        inside = bool(self._get_prop(object_path, BLOCK_IFACE, "HintSystem"))
+        if inside:
+            if fstype not in MOUNTABLE_FILESYSTEMS:
                 return False
+        elif not self._get_prop(object_path, BLOCK_IFACE, "HintAuto"):
+            # A plugged-in device udisks2 says should not be auto-mounted.
+            return False
+
+        reason = self.never_touch_reason(object_path)
+        if reason:
+            self._tell_once(object_path, "%s: not mounting it — %s"
+                            % (self._device_node(object_path) or object_path, reason))
+            return False
 
         return True
 
@@ -584,7 +685,11 @@ class AutoMounter:
     # as the person and put the result exactly where udisks2 would have.
 
     def apfs_should_mount(self, object_path):
-        """The same three udisks2 hints and the same seatbelt as everything else.
+        """The same udisks2 hints and the same never-touch list as everything else.
+
+        A Mac drive inside the computer is opened too, since 2026-10-19 — read-
+        only, like every Mac drive. A plugged-in one still needs udisks2's
+        HintAuto, exactly as before.
 
         It deliberately does NOT ask whether udisks2 has a Filesystem interface
         for the device, the way should_mount() does. udisks2 publishes one for
@@ -597,19 +702,18 @@ class AutoMounter:
         hint_ignore = self._get_prop(object_path, BLOCK_IFACE, "HintIgnore")
         hint_system = self._get_prop(object_path, BLOCK_IFACE, "HintSystem")
 
-        if not hint_auto:
-            return False
         if hint_ignore:
             return False
-        if hint_system:
-            log("%s is a system device — leaving it alone" % object_path)
+        if not hint_system and not hint_auto:
             return False
 
         device = self._device_node(object_path)
         if not device:
             return False
-        if _whole_disk(device) in self.protected:
-            log("%s (%s) is on the system disk — refusing" % (object_path, device))
+        reason = self.never_touch_reason(object_path, device)
+        if reason:
+            self._tell_once(object_path, "%s: not opening this Mac drive — %s"
+                            % (device, reason))
             return False
 
         # Already done? Two ways this happens and both are ordinary: the initial
@@ -851,12 +955,20 @@ class AutoMounter:
             "auth.no_user_interaction": GLib.Variant("b", True),
         }
 
+        # ⚠️ A Windows (NTFS) drive INSIDE the computer is opened READ-ONLY.
+        # See READ_ONLY_INSIDE near the top of this file for why. "ro" is one of
+        # the options udisks2 always accepts from an ordinary user.
+        read_only = (bool(self._get_prop(object_path, BLOCK_IFACE, "HintSystem"))
+                     and self.id_type(object_path).lower() in READ_ONLY_INSIDE)
+        if read_only:
+            options["options"] = GLib.Variant("s", "ro")
+
         # One plain line per attempt. ⚠️ ADDED 2026-09-08 FOR THE SAME REASON:
         # the crash above happened on every plug-in and the journal showed only
         # a Python traceback, which reads as "something is broken" and not as
         # "we tried to mount SHOOT-2026 and could not". A line before and a line
         # after means the journal tells the story either way.
-        log("mounting %s (%s)" % (label, device))
+        log("mounting %s (%s%s)" % (label, device, ", read-only" if read_only else ""))
 
         try:
             reply = self.bus.call_sync(
@@ -906,10 +1018,8 @@ class AutoMounter:
                 if self.apfs_should_mount(object_path):
                     self.mount_apfs(object_path)
                 return
-            # A drive INSIDE the computer is never mounted here — it is asked
-            # about, once, and then it is fstab's job. should_mount() below
-            # still says no to it, exactly as it always did.
-            self.maybe_offer(object_path)
+            # Every other drive — inside the computer or plugged in — goes to
+            # udisks2, if the never-touch list in should_mount() allows it.
             if self.should_mount(object_path):
                 self.mount(object_path)
         except Exception as error:  # noqa: BLE001 — deliberate; see above
@@ -918,76 +1028,6 @@ class AutoMounter:
             log("        (the full details are below; the drive was not mounted,")
             log("         and this agent is still watching for others)")
             traceback.print_exc()
-
-    # -- a drive inside the computer: ask once, mount never ------------------
-
-    def maybe_offer(self, object_path):
-        """An inside drive nobody has been asked about yet — ask, once.
-
-        ⚠️ THIS METHOD MOUNTS NOTHING. It puts a question on screen and stops.
-        The only thing that can turn "yes" into a mounted drive is
-        /usr/libexec/aquarius-remember-drive, which runs as the administrator
-        with the person's own password and has its own copy of the never-touch
-        list. Read the "DRIVES THAT LIVE INSIDE THE COMPUTER" block near the top
-        of this file before changing anything here.
-        """
-        # Only a real filesystem, and only a drive udisks2 calls internal —
-        # anything removable was handled the old way, above.
-        if not self._has_interface(object_path, FS_IFACE):
-            return
-        if not self._get_prop(object_path, BLOCK_IFACE, "HintSystem"):
-            return
-        if self._get_prop(object_path, BLOCK_IFACE, "HintIgnore"):
-            return
-
-        # The seatbelt, and it is the same one everything else in this file
-        # uses: never a partition of the disk AquariusOS is living on.
-        device = self._device_node(object_path)
-        if not device:
-            return
-        if _whole_disk(device) in self.protected:
-            return
-
-        # The EFI partition. udisks2 knows its partition type, so we can leave
-        # it alone without ever touching it.
-        if self._has_interface(object_path, PARTITION_IFACE):
-            parttype = str(self._get_prop(object_path, PARTITION_IFACE, "Type") or "")
-            if parttype.lower() == EFI_PARTTYPE:
-                return
-
-        fstype = self.id_type(object_path).lower()
-        if fstype not in OFFERABLE_FILESYSTEMS:
-            return
-
-        uuid = str(self._get_prop(object_path, BLOCK_IFACE, "IdUUID") or "").strip()
-        if not uuid:
-            # No UUID means no safe way to name it in fstab. Nothing to offer.
-            return
-
-        # Already up? Then somebody has already dealt with it (fstab, or a
-        # person who typed a password), and a question would be noise.
-        if self._get_prop(object_path, FS_IFACE, "MountPoints"):
-            return
-
-        if uuid in self.offered:
-            return
-        self.offered.add(uuid)
-
-        if uuid in never_ask_list():
-            log("%s is an inside drive you asked not to be asked about again"
-                % device)
-            return
-        if uuid_in_fstab(uuid):
-            return
-
-        label = str(self._get_prop(object_path, BLOCK_IFACE, "IdLabel") or "")
-        log("%s (%s) is a drive inside this computer that has never been asked"
-            " about — asking once" % (label or "no label", device))
-
-        # A separate short-lived process, because the notification waits for an
-        # answer and this agent must carry on mounting other drives meanwhile.
-        self.spawn([sys.executable, os.path.abspath(__file__),
-                    "--ask", uuid, label, fstype, device])
 
     # -- the two ways in ----------------------------------------------------
 
@@ -1083,136 +1123,6 @@ class AutoMounter:
         log("watching for drives")
 
 
-# =============================================================================
-# --ask — the question itself, in its own little process
-# =============================================================================
-# This is what the agent starts when it meets an inside drive it has never asked
-# about. It puts ONE notification on screen, waits for the answer, and then does
-# one of three things. It talks to no bus, mounts nothing itself, and cannot
-# take the agent down with it, because it is not in the agent's process.
-#
-# The three answers:
-#
-#   Mount every login   run the privileged helper through pkexec. The person
-#                       types their administrator password once; the helper
-#                       writes the fstab line and opens the drive straight away.
-#   Never ask           one line in this person's own config file, and silence
-#                       for ever — until they delete it, or run
-#                       'aq drives ask-again'.
-#   (closed / ignored)  "not now". Nothing is written, and the question comes
-#                       back at the next login. That is deliberate: a question
-#                       somebody walked away from is not an answer.
-def notify(summary, body, actions=(), urgency="normal"):
-    """One notification. Returns the name of the button pressed, or ''.
-
-    ⚠️ `--action` needs `--wait`, and both need libnotify 0.8 or newer. Where
-    buttons are not available the notification still appears WITHOUT them and
-    says in its body what to type instead — a plain notification is a much
-    smaller loss than no notification at all. Same rule, same reason, as
-    /usr/libexec/aquarius-resolve-update-notify.
-    """
-    if not os.path.exists(NOTIFY_SEND):
-        log("%s: %s" % (summary, body))
-        return ""
-    base = [NOTIFY_SEND, "--app-name=Drives", "--icon=drive-harddisk",
-            "--urgency=%s" % urgency]
-    if actions and _notify_send_has_actions():
-        argv = list(base) + ["--wait"]
-        for name, text in actions:
-            argv.append("--action=%s=%s" % (name, text))
-        argv += ["--", summary, body]
-        try:
-            result = subprocess.run(argv, capture_output=True, text=True,
-                                    timeout=3600)
-        except (OSError, subprocess.SubprocessError):
-            return ""
-        return (result.stdout or "").strip()
-    try:
-        subprocess.run(base + ["--", summary, body], check=False, timeout=60)
-    except (OSError, subprocess.SubprocessError):
-        log("%s: %s" % (summary, body))
-    return ""
-
-
-def _notify_send_has_actions():
-    try:
-        result = subprocess.run([NOTIFY_SEND, "--help"], capture_output=True,
-                                text=True, timeout=30)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return "--action" in ((result.stdout or "") + (result.stderr or ""))
-
-
-def ask_about_drive(uuid, label, fstype, device):
-    name = label or device
-    kind = {"ntfs": "a Windows drive", "vfat": "a FAT drive",
-            "exfat": "an exFAT drive"}.get(fstype, "formatted %s" % fstype)
-
-    body = ("\"%s\" lives inside this computer (%s, %s).\n"
-            "Right now it asks for a password every time you log in.\n"
-            "Say yes once and it will simply be there from now on."
-            % (name, device, kind))
-    if fstype == "ntfs":
-        body += ("\nWindows drives are opened READ-ONLY: Windows' fast startup"
-                 " leaves them half-closed, and writing to one in that state is"
-                 " how a Windows install is lost.")
-
-    answer = notify("Mount \"%s\" every login?" % name, body, actions=(
-        ("yes", "Mount every login"),
-        ("never", "Never ask"),
-    ))
-
-    if answer == "never":
-        if never_ask_add(uuid, label):
-            log("will never ask about %s (%s) again" % (name, uuid))
-        return 0
-
-    if answer != "yes":
-        # "Not now", or a notification server with no buttons. Either way,
-        # nothing is written and the question comes back next login.
-        log("no answer about %s — leaving it alone, and asking again next login"
-            % name)
-        return 0
-
-    if not os.path.exists(REMEMBER_HELPER) or not os.path.exists(PKEXEC):
-        notify("Cannot remember \"%s\"" % name,
-               "This copy of AquariusOS is missing %s." % REMEMBER_HELPER,
-               urgency="critical")
-        return 1
-
-    try:
-        result = subprocess.run(
-            [PKEXEC, REMEMBER_HELPER, "remember",
-             "--uuid", uuid, "--label", label, "--fstype", fstype,
-             "--uid", str(os.getuid()), "--gid", str(os.getgid())],
-            capture_output=True, text=True, timeout=600,
-        )
-    except (OSError, subprocess.SubprocessError) as error:
-        notify("Cannot remember \"%s\"" % name, str(error), urgency="critical")
-        return 1
-
-    if result.returncode == 0:
-        log((result.stdout or "").strip())
-        notify("\"%s\" will open at every login" % name,
-               "It is set up now, and you will not be asked again.")
-        return 0
-
-    # ⚠️ A REFUSAL IS NEVER SILENT, AND IT SAYS WHY IN THE SAME WORDS THE HELPER
-    # USED. The helper refuses Windows' own system volume, the EFI partition and
-    # the disk AquariusOS is on — and the person who just clicked a button
-    # deserves the reason, not a notification that never arrives.
-    reason = (result.stderr or result.stdout or "").strip().splitlines()
-    reason = reason[-1] if reason else "it exited with code %d" % result.returncode
-    reason = reason.replace("aquarius-remember-drive: ", "")
-    # 126/127 is pkexec's own "you cancelled / you are not allowed".
-    if result.returncode in (126, 127):
-        reason = ("No administrator password was given, so nothing was changed."
-                  " You will be asked again next login.")
-    log("did not remember %s: %s" % (name, reason))
-    notify("\"%s\" was not remembered" % name, reason, urgency="normal")
-    return 0
-
-
 def run(once=False):
     import gi
 
@@ -1246,15 +1156,13 @@ def run(once=False):
 
 def main(argv):
     once = False
-    # --ask UUID LABEL FSTYPE DEVICE — the little worker that puts the "mount
-    # this inside drive every login?" question on screen. The agent starts it;
-    # nobody needs to type it.
+    # --ask was the little worker behind the retired "Mount every login?"
+    # question (2026-09-14 to 2026-10-19). A notification still on screen from
+    # before an update can still call it; it now just says so and exits.
     if len(argv) > 1 and argv[1] == "--ask":
-        if len(argv) < 6:
-            print("aquarius-automount --ask needs UUID LABEL FSTYPE DEVICE.",
-                  file=sys.stderr)
-            return 1
-        return ask_about_drive(argv[2], argv[3], argv[4], argv[5])
+        print("aquarius-automount: the inside-drive question was retired on"
+              " 2026-10-19 — every inside drive now mounts at login by itself.")
+        return 0
     for arg in argv[1:]:
         if arg == "--dry-run":
             return dry_run()
@@ -1264,7 +1172,7 @@ def main(argv):
             # Print this file's header, stripped of the leading "# ".
             here = os.path.abspath(__file__)
             with open(here, "r") as handle:
-                for line in handle.readlines()[1:120]:
+                for line in handle.readlines()[1:175]:
                     if line.startswith("#"):
                         print(line[2:].rstrip() if line.startswith("# ") else line[1:].rstrip())
             return 0

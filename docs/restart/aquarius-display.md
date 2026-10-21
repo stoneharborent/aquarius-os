@@ -4,18 +4,17 @@
 >
 > This page exists because the **Aquarius Session** started every monitor at
 > 100%, so a 55" 4K screen drew everything far too small. That desktop was
-> retired on 2026-09-15 ([`desktops.md`](desktops.md)), and **both desktops that
-> replaced it set the screen size themselves**:
->
-> - **GNOME** — Settings → Displays → Scale
-> - **KDE Plasma** — System Settings → Display Configuration
+> retired on 2026-09-15 ([`desktops.md`](desktops.md)), and **GNOME, the
+> desktop that replaced it, sets the screen size itself**: Settings → Displays
+> → Scale. (KDE Plasma, which shipped beside GNOME from 2026-09-15 to
+> 2026-10-19, did the same in its System Settings.)
 >
 > So the everyday answer to "things are too small" is now a slider in your
 > desktop's own settings, not a command.
 >
 > **`aq display scale` is KEPT, and not as a leftover.** The number it writes is
 > what `/usr/libexec/aquarius-resolve-launch` reads to size **DaVinci Resolve**
-> — an X11 program that neither desktop scales for you. If Resolve's interface
+> — an X11 program that GNOME does not scale for you. If Resolve's interface
 > is the wrong size, this is still the command.
 >
 > **`aq display ui` no longer does anything**: it sized our own bar and dock,
@@ -24,8 +23,7 @@
 > Anything below about labwc, `wlr-randr` applying a scale, or logging into "the
 > Aquarius Desktop" is history. The order the helper reads its answer in — your
 > own setting, then GNOME's `monitors.xml`, then a guess from the monitor — is
-> unchanged, and on Plasma it currently falls through to the guess, which is
-> logged as a follow-up.
+> unchanged.
 
 *Written 2026-09-03, after the bench test. Assumes you have never used Linux.*
 

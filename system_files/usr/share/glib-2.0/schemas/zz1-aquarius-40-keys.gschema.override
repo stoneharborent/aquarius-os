@@ -29,9 +29,9 @@
 # build if that ever changes). Adding it here makes the lock reachable in both
 # modes without taking Super+L away from anybody.
 #
-# KDE Plasma is given the same key, in its own format, by
-# /etc/xdg/kglobalshortcutsrc. One shortcut, both desktops — that is the rule
-# this whole two-desktop change is trying to hold to.
+# (From 2026-09-15 to 2026-10-19 KDE Plasma was given the same key, in its own
+# format, by /etc/xdg/kglobalshortcutsrc. Plasma has left the image; GNOME,
+# here, is the whole story now.)
 #
 # -----------------------------------------------------------------------------
 # WHAT IS DELIBERATELY NOT HERE
@@ -41,8 +41,7 @@
 #       key for changing keyboard layout. Freeing it and pointing it at the
 #       Overview is a real change to somebody's typing and belongs in a
 #       decision of Royce's, not in a change whose job was to swap the desktop.
-#       It is logged as a follow-up. On Plasma it is bound, to KRunner, by
-#       /etc/xdg/kglobalshortcutsrc.
+#       It is logged as a follow-up.
 # =============================================================================
 
 [org.gnome.settings-daemon.plugins.media-keys]
