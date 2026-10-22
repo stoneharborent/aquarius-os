@@ -459,6 +459,20 @@ on:
       # controller badge, put together during the build. Same arrangement as
       # every side branch: builds and checks, never publishes.
       - claude/nice-fermi-w6lk1k
+      # The X20's speakers, 2026-10-21: the handheld image compiles two patched
+      # sound drivers for its own kernel every build (78-handheld-audio-build.sh)
+      # and a loader uses them only on board RC74XA. The desktop images are
+      # proven untouched. Same arrangement as every side branch: builds and
+      # checks, never publishes.
+      - fix/x20-speakers-in-image
+      # The login screen must not automount drives, 2026-10-21: gdm-greeter had
+      # mounted a second NVMe and hidden it from the real user. Same arrangement
+      # as every side branch: builds and checks, never publishes.
+      - fix/gdm-no-automount
+      # Handheld bench fixes for the RC74XA Ally (paddles, Armoury button, Steam
+      # first launch) and the simpler installer, 2026-10-22. Same arrangement:
+      # builds and checks, never publishes.
+      - fix/handheld-installer-input
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -543,6 +557,13 @@ jobs:
           python3 tests/test-ally-armoury.py
           python3 tests/test-handheld-display.py
           python3 tests/test-steam-session.py
+      # The X20 (board RC74XA) speaker loader decides, at every boot, between
+      # the two patched sound drivers the handheld image compiles and Fedora's
+      # own. This runs it against a fake machine for every reason it must fall
+      # back to Fedora's (wrong board, Secure Boot, missing or wrong firmware,
+      # a driver already running ...). Logic only — no driver is loaded.
+      - name: Rehearse the X20 speaker loader's decisions
+        run: python3 tests/test-x20-audio-loader.py
       - name: Check the login screen waits the right amount for the boot animation
         run: ./tests/test-boot-hold.sh
       # external drive, a Mac's internal disk with its five volumes, and a
@@ -566,15 +587,19 @@ jobs:
           ./tests/test-automount-mount.py
 
       # ------------------------------------------------------------------------
-      # An INSIDE drive asks once — and never the wrong drive
+      # Every INSIDE drive mounts at login — and never the wrong drive
       # ------------------------------------------------------------------------
-      # Since 2026-09-14 a drive that lives inside the computer is offered once
-      # ("Mount Footage every login?") instead of asking for a password at every
-      # login. The dangerous half of that is the drives it must NEVER offer: the
-      # disk AquariusOS is on, the EFI partition, swap, Windows' own volume.
-      # No amount of reading proves a refusal, so the real decision code is run
-      # against fake drives here, before the image is even built.
-      - name: Check the right inside drives are offered, and the wrong ones refused
+      # Since 2026-10-19 (Royce: "Remove verification for all internal and
+      # external drives. Just mount them from login and show in dock.") every
+      # drive inside the computer is mounted at login with no question and no
+      # password. That replaced the 2026-09-14 "ask once" feature and its test,
+      # tests/test-remember-drive.py. The dangerous half of "every drive" is the
+      # drives it must NEVER mount: the disk AquariusOS is on, the EFI partition,
+      # Windows Recovery, swap, hidden recovery partitions, encrypted drives,
+      # anything in fstab, the installer stick. No amount of reading proves a
+      # refusal, so the real decision code is run against fake drives here,
+      # before the image is even built.
+      - name: Check every inside drive mounts, and the never-touch list holds
         run: |
           set -uo pipefail
           if ! python3 -c 'import gi' 2> /dev/null; then
@@ -586,7 +611,7 @@ jobs:
             echo "      finished image, and that run can fail the build."
             exit 0
           fi
-          ./tests/test-remember-drive.py
+          ./tests/test-inside-drives.py
 
       # ------------------------------------------------------------------------
       # The folder every drive appears in is made at login — and can never stop
@@ -610,16 +635,17 @@ jobs:
         run: ./tests/test-media-dir.sh
 
       # ------------------------------------------------------------------------
-      # The two Mac-or-Windows switches, before anything is built
+      # The Mac-or-Windows switch, before anything is built
       # ------------------------------------------------------------------------
       # AquariusOS has one Mac-or-Windows choice and, since 2026-09-16, a switch
-      # for it on each desktop: our own add-on in GNOME's quick settings menu,
-      # and a page in KDE's System Settings. Seconds, and it catches the two
+      # for it: our own add-on in GNOME's quick settings menu. (KDE Plasma's
+      # System Settings page left with Plasma on 2026-10-19; the test now checks
+      # that it is really gone.) Seconds, and it catches the two
       # mistakes that are completely silent — a GNOME add-on whose id does not
       # match its folder (loaded, then refused, with nothing said) and a syntax
       # error in its code (simply absent). The build checks more, inside the
       # finished image; "it appears and it flips the setting" is a bench test.
-      - name: Check the Mac-or-Windows switches
+      - name: Check the Mac-or-Windows switch
         run: ./tests/test-keys-toggle.sh
 
       # ------------------------------------------------------------------------
@@ -1331,6 +1357,14 @@ jobs:
           #               growth, and still far less than 4.1 GB of head room,
           #               so Aquarius Editor creeping back in is caught on the
           #               very next build.
+          #   2026-10-19  KDE Plasma LEFT every image (GNOME only — decision
+          #               docs/decision-2026-10-19-gnome-only-and-open-drives.md
+          #               in the AquariusOS project folder). That gives back
+          #               roughly the 1.6 GB it cost. The ceilings were NOT
+          #               lowered on the same day, on purpose: lowering a limit
+          #               before a single build has measured the new size is a
+          #               guess. Lower them once a green build has printed the
+          #               real number below.
           #   2026-09-16  The environment DaVinci Resolve runs in is now carried
           #               inside the NVIDIA image — about 0.33 GB, and NVIDIA
           #               only (build_files/63-resolve-runtime-bake.sh). It buys
@@ -1360,7 +1394,8 @@ jobs:
           GB="$(awk -v b="${BYTES}" 'BEGIN { printf "%.1f", b / 1000000000 }')"
 
           # WAS is the last size measured BEFORE the two desktops went in on
-          # 2026-09-15 — the number this build should land about 1.6 GB above.
+          # 2026-09-15, when GNOME was the only desktop — which it is again since
+          # 2026-10-19, so this build should land near it again.
           #   2026-09-19  The handheld image (phase G2) is the AMD image plus
           #               four small userspace packages — InputPlumber,
           #               steamos-manager, powerstation and the power-button
@@ -1372,16 +1407,16 @@ jobs:
           #               been pulled in that was not asked for — start with
           #               what steamos-manager-powerstation requires.
           if [ "${NVIDIA}" = "1" ]; then
-            WAS="13.1"; CEILING=16000000000   # +1 GB on 2026-09-15: KDE Plasma is ~1.6 GB
+            WAS="13.1"; CEILING=16000000000   # raised 2026-09-15 for KDE Plasma (~1.6 GB), which left 2026-10-19
           else
-            WAS="11.1"; CEILING=14000000000   # +2 GB on 2026-09-15: KDE Plasma is ~1.6 GB
+            WAS="11.1"; CEILING=14000000000   # raised 2026-09-15 for KDE Plasma (~1.6 GB), which left 2026-10-19
           fi
 
           echo
           echo "=== how big this image is ==="
           echo "  now:    ${GB} GB"
-          echo "  before: ${WAS} GB  (the last build with GNOME as the only desktop, up to 2026-09-15)"
-          echo "  change: $(awk -v w="${WAS}" -v g="${GB}" 'BEGIN { printf "%+.1f", g - w }') GB  (KDE Plasma is about +1.6 GB of that)"
+          echo "  before: ${WAS} GB  (the last GNOME-only build before KDE Plasma came and went, 2026-09-15)"
+          echo "  change: $(awk -v w="${WAS}" -v g="${GB}" 'BEGIN { printf "%+.1f", g - w }') GB  (Swift, Game Mode and the Resolve runtime are most of that)"
 
           if [ "${BYTES}" -eq 0 ]; then
             echo "::warning::podman would not say how big the image is; skipping the size check"
@@ -1389,9 +1424,9 @@ jobs:
             echo "  OK   under the ceiling of $(awk -v c="${CEILING}" 'BEGIN { printf "%.1f", c / 1000000000 }') GB"
           else
             echo "::error::this image is ${GB} GB, over the $(awk -v c="${CEILING}" 'BEGIN { printf "%.1f", c / 1000000000 }') GB ceiling."
-            echo "The second desktop is already paid for here: KDE Plasma added about 1.6 GB"
-            echo "on 2026-09-15 and the ceiling was raised past that on the same day."
-            echo "So something ELSE large has been added. The usual suspect is Aquarius Editor,"
+            echo "The ceiling still has the room KDE Plasma used (about 1.6 GB) and Plasma left"
+            echo "on 2026-10-19, so this image is well over what it should be."
+            echo "Something ELSE large has been added. The usual suspect is Aquarius Editor,"
             echo "which is 4.1 GB and stopped being baked in on 2026-09-04 — check"
             echo "AQUARIUS_APPS in build_files/64-creator-apps.sh."
             exit 1
@@ -1509,10 +1544,6 @@ jobs:
             gnome-shell-extension-dash-to-dock gnome-shell-extension-appindicator \
             gnome-shell-extension-caffeine gnome-shell-extension-gsconnect \
             xdg-desktop-portal-gnome xorg-x11-server-Xwayland flatpak \
-            plasma-desktop plasma-workspace kwin plasma-systemsettings \
-            kscreen plasma-nm plasma-pa bluedevil powerdevil \
-            dolphin konsole spectacle gwenview okular \
-            xdg-desktop-portal-kde breeze-gtk kde-gtk-config breeze-icon-theme \
             libnotify zenity wlr-randr \
             podman toolbox distrobox \
             langpacks-en langpacks-core-en \
@@ -2663,6 +2694,18 @@ jobs:
               set -e
               bash /tmp/t/tests/test-gdm-guard.sh /usr/libexec/aquarius-gdm-guard
             '
+      # The X20 speaker loader, rehearsed again on the copy INSIDE the finished
+      # handheld image (with the image's own bash, xz and coreutils). The test
+      # runs a rewritten copy against a fake machine; nothing is loaded.
+      - name: Rehearse the X20 speaker loader in the finished image
+        if: matrix.handheld == 1
+        run: |
+          set -euo pipefail
+          podman run --rm --pull=never \
+            -v "${GITHUB_WORKSPACE}/tests/test-x20-audio-loader.py:/tmp/t/tests/test-x20-audio-loader.py:ro" \
+            --entrypoint /usr/bin/python3 \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" \
+            /tmp/t/tests/test-x20-audio-loader.py /usr/libexec/aquarius-x20-audio
       - name: Check the USB4 rescue in the finished image
         run: |
           set -euo pipefail
@@ -2724,14 +2767,42 @@ jobs:
       # CLI checks never construct GTK widgets. Open the actual shipped window
       # on an invisible desktop as well, so a bad page cannot ship again.
       #
-      # --cap-add=SYS_NICE on every step below that mounts aquarius_headless.py:
-      # the invisible desktop is KDE's kwin_wayland, and Fedora ships that
-      # program with a file capability (cap_sys_nice+ep — permission to raise
-      # its own scheduling priority). The kernel refuses to run a program
-      # carrying a capability the container does not have in its bounding set,
-      # so without this flag it fails at exec with "Operation not permitted"
-      # before KWin runs a single line. Adding SYS_NICE lets it start; it grants
-      # the container nothing more than the right to be nice to itself.
+      # ⚠️ THE INVISIBLE DESKTOP IS ADDED TO A THROWAWAY COPY (2026-10-19).
+      # Until 2026-10-19 these window tests ran on KDE's kwin_wayland, which was
+      # in every image. AquariusOS is GNOME only since then, and GNOME's own
+      # compositor cannot be pointed at the software-rendering Xwayland the
+      # Resolve window test needs (tests/aquarius_headless.py explains why).
+      # So this step copies the finished image, adds labwc — a small compositor
+      # from Fedora's own repositories, and the one these tests were first
+      # written against — and saves the copy as localhost/aq-window-test. The
+      # window tests below run on that copy. The image that SHIPS is untouched:
+      # labwc is never in it.
+      - name: Prepare an invisible desktop for the window tests
+        run: |
+          set -euo pipefail
+          podman rm -f aq-window-test-prep > /dev/null 2>&1 || true
+          podman run --name aq-window-test-prep --pull=never \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" -c '
+              set -e
+              if ! dnf -y install --setopt=install_weak_deps=False labwc > /tmp/labwc.txt 2>&1; then
+                cat /tmp/labwc.txt
+                echo "::error::could not add labwc to the throwaway copy for the window tests"
+                exit 1
+              fi
+              command -v labwc
+              rm -rf /var/cache/libdnf5 /var/cache/dnf
+            '
+          podman commit aq-window-test-prep "localhost/aq-window-test:${DEFAULT_TAG}"
+          podman rm aq-window-test-prep
+
+      # --cap-add=SYS_NICE on the steps below that mount aquarius_headless.py is
+      # a leftover from KWin, which Fedora ships with a file capability
+      # (cap_sys_nice+ep) the kernel refuses to run without. KWin is not in the
+      # image any more; the flag is kept because it is harmless — it grants the
+      # container nothing more than the right to be nice to itself — and it
+      # keeps the KWin fallback in aquarius_headless.py working for anybody who
+      # runs these by hand on a machine that has it.
       - name: Open Aquarius Installer in the finished image
         run: |
           set -euo pipefail
@@ -2740,7 +2811,7 @@ jobs:
             -v "${GITHUB_WORKSPACE}/tests/test-installer-window.py:/tmp/test-installer-window.py:ro" \
             -v "${GITHUB_WORKSPACE}/tests/aquarius_headless.py:/tmp/aquarius_headless.py:ro" \
             --entrypoint /usr/bin/python3 \
-            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" /tmp/test-installer-window.py /
+            "localhost/aq-window-test:${DEFAULT_TAG}" /tmp/test-installer-window.py /
 
       - name: Check Resolve completion page in the finished image
         run: |
@@ -2751,7 +2822,7 @@ jobs:
             -v "${GITHUB_WORKSPACE}/tests/aquarius_headless.py:/tmp/aquarius_headless.py:ro" \
             -v "${GITHUB_WORKSPACE}/tests/test-resolve-done-window.py:/tmp/test-resolve-done-window.py:ro" \
             --entrypoint /usr/bin/python3 \
-            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" /tmp/test-resolve-done-window.py /
+            "localhost/aq-window-test:${DEFAULT_TAG}" /tmp/test-resolve-done-window.py /
 
       # ------------------------------------------------------------------------
       # The environment Resolve runs in is really inside the NVIDIA image
@@ -2924,13 +2995,13 @@ jobs:
             -v "${GITHUB_WORKSPACE}/tests/aquarius_headless.py:/tmp/aquarius_headless.py:ro" \
             -v "${GITHUB_WORKSPACE}/tests/test-resolve-settings.py:/tmp/test-resolve-settings.py:ro" \
             --entrypoint /usr/bin/python3 \
-            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" /tmp/test-resolve-settings.py /
+            "localhost/aq-window-test:${DEFAULT_TAG}" /tmp/test-resolve-settings.py /
           podman run --rm --pull=never \
             --cap-add=SYS_NICE \
             -v "${GITHUB_WORKSPACE}/tests/test-resolve-window.py:/tmp/test-resolve-window.py:ro" \
             -v "${GITHUB_WORKSPACE}/tests/aquarius_headless.py:/tmp/aquarius_headless.py:ro" \
             --entrypoint /usr/bin/python3 \
-            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" /tmp/test-resolve-window.py /
+            "localhost/aq-window-test:${DEFAULT_TAG}" /tmp/test-resolve-window.py /
 
       - name: Check Resolve scale choices in the finished image
         run: |
@@ -3452,24 +3523,25 @@ jobs:
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-remount.sh
 
       # ------------------------------------------------------------------------
-      # BOTH DESKTOPS, IN THE FINISHED IMAGE
+      # ONE DESKTOP — GNOME — IN THE FINISHED IMAGE
       # ------------------------------------------------------------------------
       # ⚠️ WHAT THIS STEP USED TO BE. Until 15 September 2026 this was "Check
       # the Aquarius Desktop is really in there": eight hundred lines that ran
       # labwc and Quickshell inside the finished image and read what they said,
       # because two of the three parts of our own desktop were COMPILED during
       # the build and a compiled part that goes wrong does not announce itself.
-      # `qs --version` in particular was the exact thing that failed on the
-      # bench on 2026-09-02 and left an empty desktop.
+      # From 2026-09-15 to 2026-10-19 it was "Check both desktops are really in
+      # there", for GNOME and KDE Plasma side by side.
       #
-      # Royce retired that desktop (../docs/decision-2026-09-15-two-desktops.md).
-      # Nothing is compiled any more: GNOME and KDE Plasma are Fedora packages,
-      # read back by name in steps 4 and 4b of the build itself. So what is left
-      # to prove HERE, on the finished image, is the small set of facts those
-      # two steps cannot see from inside themselves — chiefly that the login
-      # screen really ends up offering both, and that neither desktop has
-      # smuggled in a second login screen or a second app store.
-      - name: Check both desktops are really in there
+      # On 2026-10-19 Royce made AquariusOS GNOME only: "Remove the first login
+      # screen where you can choose the desktop version and just go full GNOME.
+      # That way on startup we go straight into GNOME login." (Decision record:
+      # docs/decision-2026-10-19-gnome-only-and-open-drives.md in the AquariusOS
+      # project folder.) So what is proved HERE, on the finished image, is that
+      # the login screen offers GNOME and nothing else — no session button —
+      # that Game Mode is still startable by name, and that nothing of KDE
+      # Plasma is left behind.
+      - name: Check GNOME is the one desktop, with no choice at the login screen
         run: |
           set -euo pipefail
           cat > /tmp/verify-desktops.sh <<'SCRIPT'
@@ -3478,46 +3550,67 @@ jobs:
           ok()  { echo "  OK   $*"; }
           bad() { echo "  FAIL $*"; fails=1; }
 
-          echo "== the login screen offers both desktops =="
-          # This is the whole feature in one check. GDM builds its session list
-          # from this folder and nothing else; a missing file here is a login
-          # screen that looks completely normal and silently has one desktop.
+          echo "== the login screen offers GNOME, and only GNOME =="
+          # GDM builds its menu from this folder, and skips any file marked
+          # NoDisplay=true or Hidden=true (libgdm/gdm-sessions.c). It shows the
+          # session button only when MORE than one entry is left. So: exactly
+          # one visible entry, and it is GNOME.
           ls -l /usr/share/wayland-sessions/ || true
-          for s in gnome plasma; do
-            f="/usr/share/wayland-sessions/${s}.desktop"
-            if [ -r "${f}" ]; then
-              ok "${s}.desktop — $(sed -n 's/^Name=//p' "${f}" | head -n 1)"
-              # A session file names the command that starts it. If that command
-              # is not in the image, the entry is in the menu and picking it
-              # drops you straight back to the login screen with no message.
-              exec_line="$(sed -n 's/^Exec=//p' "${f}" | head -n 1)"
-              prog="${exec_line%% *}"
-              case "${prog}" in
-                /*) [ -x "${prog}" ] && ok "  and ${prog} is runnable" || bad "  but ${prog} is not runnable" ;;
-                *)  command -v "${prog}" > /dev/null 2>&1 \
-                      && ok "  and ${prog} is on the path" \
-                      || bad "  but ${prog} is not in this image" ;;
-              esac
+          visible=""
+          for f in /usr/share/wayland-sessions/*.desktop; do
+            [ -r "${f}" ] || continue
+            if grep -q '^Hidden=true' "${f}"; then
+              bad "$(basename "${f}") has Hidden=true — GDM would refuse to START it (use NoDisplay=true)"
+            elif grep -q '^NoDisplay=true' "${f}"; then
+              ok "$(basename "${f}") is on the computer but not on the login screen's menu"
             else
-              bad "${f} is missing — the login screen would not offer that desktop"
+              visible="${visible} $(basename "${f}")"
             fi
           done
-
-          echo "== and it offers nothing that no longer exists =="
-          # The retired Aquarius Session. A leftover file would be a third
-          # choice that fails the moment somebody picks it.
-          if [ -e /usr/share/wayland-sessions/aquarius.desktop ]; then
-            bad "the retired Aquarius Session is still offered at the login screen"
+          case "${visible}" in
+            " gnome.desktop" | " gnome-wayland.desktop" | " gnome.desktop gnome-wayland.desktop" | " gnome-wayland.desktop gnome.desktop")
+              ok "the login screen lists GNOME and nothing else — no session button" ;;
+            *)
+              bad "the login screen would list:${visible:- nothing} — it must be GNOME alone" ;;
+          esac
+          f=/usr/share/wayland-sessions/gnome.desktop
+          if [ -r "${f}" ]; then
+            exec_line="$(sed -n 's/^Exec=//p' "${f}" | head -n 1)"
+            prog="${exec_line%% *}"
+            command -v "${prog}" > /dev/null 2>&1 \
+              && ok "gnome.desktop starts ${prog}, which is on the path" \
+              || bad "gnome.desktop starts ${prog}, which is not in this image"
           else
-            ok "the retired Aquarius Session is not offered"
+            bad "${f} is missing — the login screen would have nothing to log into"
           fi
-          for gone in /usr/bin/labwc /usr/bin/qs /usr/bin/quickshell \
+          # Game Mode is still there, by name, for the switch and the handheld.
+          if [ -r /usr/share/wayland-sessions/gamescope-session-steam.desktop ]; then
+            ok "Game Mode's session is still installed (the switch logs into it by name)"
+          else
+            bad "gamescope-session-steam.desktop is missing — Game Mode would have nowhere to go"
+          fi
+
+          echo "== and nothing that no longer exists =="
+          for gone in /usr/share/wayland-sessions/aquarius.desktop \
+                      /usr/share/wayland-sessions/plasma.desktop \
+                      /usr/share/xsessions/plasmax11.desktop \
+                      /usr/bin/labwc /usr/bin/qs /usr/bin/quickshell \
                       /usr/bin/aquarius-session /usr/share/aquarius/labwc \
-                      /usr/share/aquarius/shell /usr/libexec/aquarius-greeter; do
+                      /usr/share/aquarius/shell /usr/libexec/aquarius-greeter \
+                      /usr/bin/startplasma-wayland /usr/bin/plasmashell /usr/bin/kwin_wayland \
+                      /etc/xdg/kglobalshortcutsrc; do
             if [ -e "${gone}" ]; then
-              bad "${gone} is still in the image — the shell removal is incomplete"
+              bad "${gone} is still in the image — a retired desktop is not fully gone"
             else
               ok "${gone} is gone"
+            fi
+          done
+          for pkg in plasma-workspace plasma-desktop kwin plasma-discover plasma-welcome \
+                     xdg-desktop-portal-kde kde-gtk-config; do
+            if rpm -q "${pkg}" > /dev/null 2>&1; then
+              bad "${pkg} is installed — KDE Plasma left the image on 2026-10-19"
+            else
+              ok "${pkg} is not in the image"
             fi
           done
 
@@ -3536,25 +3629,8 @@ jobs:
           done
           echo "       default target: $(systemctl get-default 2>/dev/null || echo unknown)"
 
-          echo "== one app store, not two =="
-          # 65-installer.sh hides the older chooser so there is one visible
-          # app-store icon. A KDE Discover would put a second one back.
-          if rpm -qa 'plasma-discover*' | grep -q .; then
-            bad "plasma-discover is installed — a second app store beside Aquarius Installer"
-            rpm -qa 'plasma-discover*' | sed 's/^/       /'
-          else
-            ok "no Discover — Aquarius Installer is the app store"
-          fi
-
-          echo "== one welcome, not two =="
-          if rpm -q plasma-welcome > /dev/null 2>&1; then
-            bad "plasma-welcome is installed — two welcome windows at a first login"
-          else
-            ok "no plasma-welcome — the AquariusOS welcome is the only one"
-          fi
-
-          echo "== the two things that start a desktop =="
-          for prog in gnome-shell startplasma-wayland kwin_wayland plasmashell mutter; do
+          echo "== the desktop itself =="
+          for prog in gnome-shell mutter; do
             if command -v "${prog}" > /dev/null 2>&1; then
               ok "${prog}"
             else
@@ -3562,62 +3638,37 @@ jobs:
             fi
           done
           echo "       GNOME: $(gnome-shell --version 2>&1 | head -n 1)"
-          echo "       Plasma: $(plasmashell --version 2>&1 | head -n 1)"
 
-          echo "== a portal backend for each =="
-          # Nothing chooses between them by hand any more: xdg-desktop-portal
-          # reads XDG_CURRENT_DESKTOP and picks. Both have to BE there.
-          for pkg in xdg-desktop-portal xdg-desktop-portal-gnome xdg-desktop-portal-gtk xdg-desktop-portal-kde; do
+          echo "== its portal backends =="
+          for pkg in xdg-desktop-portal xdg-desktop-portal-gnome xdg-desktop-portal-gtk; do
             rpm -q "${pkg}" > /dev/null 2>&1 && ok "${pkg}" || bad "${pkg} is missing"
           done
-          # And OUR written rule must be gone, or it would override the shipped
-          # ones and send Plasma to GNOME's file picker.
           if [ -e /usr/share/xdg-desktop-portal/aquarius-portals.conf ]; then
-            bad "aquarius-portals.conf is still here — it would override each desktop's own portal rule"
+            bad "aquarius-portals.conf is still here — it would override GNOME's own portal rule"
           else
-            ok "no hand-written portal rule of ours (each desktop uses its own)"
+            ok "no hand-written portal rule of ours (GNOME uses its own)"
           fi
 
-          echo "== a brand-new account is given a desktop to start in =="
+          echo "== a brand-new account starts in GNOME =="
           T=/usr/share/accountsservice/user-templates/standard
           if [ -r "${T}" ]; then
             sed 's/^/       /' "${T}"
-            want="$(sed -n 's/^Session=//p' "${T}" | head -n 1)"
-            if [ -n "${want}" ] && [ -r "/usr/share/wayland-sessions/${want}.desktop" ]; then
-              ok "new accounts start in '${want}', and that session exists"
+            if grep -qx 'Session=gnome' "${T}" && [ -r /usr/share/wayland-sessions/gnome.desktop ]; then
+              ok "new accounts start in GNOME, and that session exists"
             else
-              bad "the template names '${want:-nothing}', which is not a session in this image"
+              bad "the template does not name gnome — a brand-new account would be sent somewhere else"
             fi
           else
             bad "${T} is missing — a brand-new account would be sent to whatever GDM guessed"
           fi
 
-          echo "== GTK apps have something to follow on Plasma =="
-          # Aquarius Installer, the Updater, the welcome and the chooser are all
-          # GTK 4. On Plasma they need a theme and something to select it.
-          for d in /usr/share/themes/Breeze /usr/share/themes/Breeze-Dark \
-                   /usr/share/icons/breeze /usr/share/icons/breeze-dark; do
-            [ -d "${d}" ] && ok "${d}" || bad "${d} is missing"
-          done
-          rpm -q kde-gtk-config > /dev/null 2>&1 \
-            && ok "kde-gtk-config is here — something actually selects that theme" \
-            || bad "kde-gtk-config is missing — the Breeze GTK theme would be on disk and never used"
+          echo "== an account that last used Plasma lands in GNOME =="
+          # The boot-time fix for machines updating from the two-desktop line.
+          grep -q 'aq_retire_gone_sessions' /usr/libexec/aquarius-login-mode \
+            && ok "aquarius-login-mode points accounts at a vanished desktop back to GNOME" \
+            || bad "aquarius-login-mode has no fix for accounts whose last desktop was Plasma"
 
-          echo "== the Mac keys reach BOTH desktops =="
-          # The bug shape this guards against: a key that works on the desktop
-          # you tested and does nothing on the other one.
-          if [ -r /etc/xdg/kglobalshortcutsrc ]; then
-            ok "/etc/xdg/kglobalshortcutsrc is here"
-            grep -E '^(Walk Through Windows=|Lock Session=|_launch=)' /etc/xdg/kglobalshortcutsrc | sed 's/^/       /'
-            grep -q 'Meta+Tab' /etc/xdg/kglobalshortcutsrc \
-              && ok "KDE: Command-Tab switches apps" \
-              || bad "KDE: Command-Tab is not bound — it would do nothing on Plasma"
-            grep -q 'Ctrl+Meta+Q' /etc/xdg/kglobalshortcutsrc \
-              && ok "KDE: Control-Command-Q locks the screen" \
-              || bad "KDE: Control-Command-Q is not bound"
-          else
-            bad "/etc/xdg/kglobalshortcutsrc is missing — Command-Tab would do nothing on Plasma"
-          fi
+          echo "== the Mac lock key reaches GNOME =="
           if command -v gsettings > /dev/null 2>&1; then
             lock="$(gsettings get org.gnome.settings-daemon.plugins.media-keys screensaver 2>/dev/null || echo '')"
             echo "       GNOME lock keys: ${lock}"
@@ -3628,10 +3679,10 @@ jobs:
           fi
 
           if [ "$fails" -ne 0 ]; then
-            echo "::error::Something is wrong with one of the two desktops. Scroll up for the FAIL lines. See docs/restart/desktops.md."
+            echo "::error::Something is wrong with the desktop or the login screen. Scroll up for the FAIL lines. See docs/restart/desktops.md."
             exit 1
           fi
-          echo "All two-desktop checks passed."
+          echo "All one-desktop checks passed."
           SCRIPT
           podman run --rm --pull=never -i \
             --entrypoint /usr/bin/bash \
@@ -4266,7 +4317,6 @@ jobs:
               bad "the image's button-layout default is ${AQ_BTN}, not ':minimize,maximize,close'" ;;
           esac
           check "an old left-hand GNOME layout is reset"  'button-layout'            "${RUNNER}"
-          check "the KDE half is cleared out of kwinrc"   'ButtonsOnLeft'            "${RUNNER}"
           check "the stale GTK settings.ini files are fixed" 'gtk-decoration-layout'  "${RUNNER}"
           check "and that repair runs once per account"   'window-buttons-unpinned'  "${RUNNER}"
 
@@ -4274,9 +4324,8 @@ jobs:
           # ⚠️ THIS FEATURE CHANGED SHAPE ON 2026-09-15. It existed because the
           # Aquarius Session started every monitor at 100%: on a 55" 4K bench
           # monitor the whole desktop was tiny, while GNOME had been running the
-          # same screen at 125% for weeks. That session is retired, and BOTH
-          # desktops now do their own scaling — GNOME in Settings → Displays,
-          # KDE Plasma in System Settings → Display Configuration (kscreen).
+          # same screen at 125% for weeks. That session is retired, and GNOME
+          # does its own scaling, in Settings → Displays.
           #
           # The helper is KEPT, and not as a leftover: `aq display scale` writes
           # the number that /usr/libexec/aquarius-resolve-launch reads to size
@@ -4328,8 +4377,8 @@ jobs:
           if [ -s "${EXT}/extension.js" ]; then ok "its code is present"; else bad "${EXT}/extension.js is missing"; fi
 
           echo
-          echo "== the two graphical switches for Mac or Windows (2026-09-16) =="
-          # Before these existed, the only ways to change this were the Welcome
+          echo "== the graphical switch for Mac or Windows (2026-09-16) =="
+          # Before it existed, the only ways to change this were the Welcome
           # window — seen once, on a first login — and typing a command. A
           # switch that is installed but invisible is worth nothing, and both
           # ways of being invisible are silent, so both are checked here.
@@ -4348,38 +4397,11 @@ jobs:
             bad "the GNOME toggle is not in enabled-extensions — it would be installed and invisible"
           fi
 
-          # The KDE page. There is exactly one folder System Settings reads, and
-          # anywhere else it is just a file.
-          KCM="$(find /usr/lib /usr/lib64 -type f -name kcm_aquariuskeys.so 2>/dev/null | head -n 1)"
-          if [ -z "${KCM}" ]; then
-            bad "the KDE 'Mac or Windows' page is not in this image"
+          # The KDE Plasma page left with Plasma on 2026-10-19 (GNOME only).
+          if [ -n "$(find /usr/lib /usr/lib64 -name 'kcm_aquariuskeys*' -print -quit 2>/dev/null)" ]; then
+            bad "the KDE 'Mac or Windows' page is still in the image — KDE Plasma left on 2026-10-19"
           else
-            ok "the KDE page is installed at ${KCM}"
-            case "${KCM}" in
-              */plasma/kcms/systemsettings/kcm_aquariuskeys.so)
-                ok "that is the folder System Settings reads" ;;
-              *)
-                bad "${KCM} is not a folder System Settings reads — the page would never appear" ;;
-            esac
-            # It was compiled in a different container from the one it runs in.
-            if ldd "${KCM}" 2>&1 | grep -q "not found"; then
-              bad "the KDE page needs a library that is not in this image"
-              ldd "${KCM}" || true
-            else
-              ok "every library the KDE page needs is here"
-            fi
-            # Its name and its place in System Settings are baked into the file.
-            for want in "Mac or Windows" "X-KDE-System-Settings-Parent-Category"; do
-              if grep -aq -- "${want}" "${KCM}"; then ok "the page carries: ${want}"
-              else bad "the page does not contain '${want}'"; fi
-            done
-          fi
-          # ⚠️ AND IT MUST NOT TURN UP IN GNOME. Both desktops read
-          # /usr/share/applications/.
-          if ls /usr/share/applications/kcm_aquariuskeys* > /dev/null 2>&1; then
-            bad "the KDE page has a menu entry — it would be a dead icon in GNOME's app grid"
-          else
-            ok "the KDE page has no menu entry, so GNOME never shows it"
+            ok "no KDE settings page left behind"
           fi
 
           if [ "$fails" -ne 0 ]; then
@@ -4888,14 +4910,18 @@ jobs:
           else
             ok "it no longer picks a single app to open"
           fi
-          # Two desktops, two routes. (Until 2026-09-15 the first of these was
-          # the Aquarius Session's own search palette, `qs ipc call search
-          # toggle`; Plasma's KRunner took its place.)
-          if grep -q '"org.kde.krunner"' "${CHOOSER}" \
-             && grep -q '"ShowApplications"' "${CHOOSER}"; then
-            ok "'Open apps' knows both desktops: KDE's KRunner and GNOME's app grid"
+          # One desktop, one route: GNOME's app grid. (The Aquarius Session's
+          # search palette went on 2026-09-15 and KDE Plasma's KRunner on
+          # 2026-10-19.)
+          if grep -q '"ShowApplications"' "${CHOOSER}"; then
+            ok "'Open apps' opens GNOME's app grid"
           else
-            bad "'Open apps' is missing one of its two routes (org.kde.krunner / org.gnome.Shell.ShowApplications)"
+            bad "'Open apps' has no route to GNOME's app grid (org.gnome.Shell.ShowApplications)"
+          fi
+          if grep -q '"org.kde.krunner"' "${CHOOSER}"; then
+            bad "'Open apps' still calls KDE's KRunner — Plasma left the image on 2026-10-19"
+          else
+            ok "no route to a desktop that is no longer here"
           fi
 
           # ------------------------------------------------------------------
@@ -5133,8 +5159,7 @@ jobs:
           # it too. That desktop was retired
           # (../docs/decision-2026-09-15-two-desktops.md) and the file is gone.
           # GNOME's dock is Dash to Dock, whose list is the favourite-apps
-          # setting checked just above; KDE Plasma's task manager keeps its own
-          # list per person and there is nothing of ours to check.
+          # setting checked just above.
           if [ -e /etc/skel/.config/aquarius-shell/dock.json ]; then
             bad "/etc/skel/.config/aquarius-shell/dock.json is still here — it belonged to the retired Aquarius Session"
           else
@@ -5247,8 +5272,8 @@ jobs:
       #     SEES.
       #   * Exactly ONE thing may open at login. ⚠️ This used to be TWO checks:
       #     the retired Aquarius Session did not read /etc/xdg/autostart at all,
-      #     so the same fact was written down twice and could drift. GNOME and
-      #     KDE Plasma both read that folder, so there is one file now.
+      #     so the same fact was written down twice and could drift. GNOME reads
+      #     that folder, so there is one file now.
       - name: Check the welcome flow in the finished image
         run: |
           set -euo pipefail
@@ -5324,7 +5349,7 @@ jobs:
           fi
 
           echo
-          echo "== exactly one thing opens at login, and both desktops read it =="
+          echo "== exactly one thing opens at login, and GNOME reads it =="
           if [ -e "${OLD}" ]; then
             bad "${OLD} is still here — the creator-apps window would open twice at a first login"
           else
@@ -5339,16 +5364,13 @@ jobs:
             ok "the welcome's first-login entry is here"
             CMD="$(sed -n 's/^Exec=//p' "${AUTOSTART}" | head -n 1)"
             echo "       it runs: ${CMD}"
-            # /etc/xdg/autostart is the shared freedesktop folder. GNOME reads
-            # it and so does KDE Plasma, so one file covers both desktops — the
-            # write-it-twice problem is simply gone.
-            for s in gnome plasma; do
-              if [ -r "/usr/share/wayland-sessions/${s}.desktop" ]; then
-                ok "  ${s} is in this image, and reads /etc/xdg/autostart"
-              else
-                bad "  ${s} is missing, so the welcome would only open on one desktop"
-              fi
-            done
+            # /etc/xdg/autostart is the shared freedesktop folder, and GNOME
+            # reads it — so one file is the whole story.
+            if [ -r /usr/share/wayland-sessions/gnome.desktop ]; then
+              ok "  GNOME is in this image, and reads /etc/xdg/autostart"
+            else
+              bad "  GNOME is missing, so there is no desktop for the welcome to open on"
+            fi
           else
             bad "${AUTOSTART} is missing — a first login would show no welcome at all"
           fi
@@ -5924,13 +5946,12 @@ jobs:
           #
           # That desktop was retired on 2026-09-15
           # (../docs/decision-2026-09-15-two-desktops.md), so there is no rc.xml
-          # to read. What is true on the two desktops that replaced it:
+          # to read. What is true on GNOME, the desktop that replaced it:
+          # Mutter has no per-application window rules at all. (KDE's KWin did,
+          # while Plasma was in the image, 2026-09-15 to 2026-10-19.)
           #
-          #   GNOME (Mutter)  has no per-application window rules at all.
-          #   KDE (KWin)      has them, and they are stronger than labwc's.
-          #
-          # Neither is done yet. It is a bench question first — open Resolve on
-          # the 4K screen on each desktop and see whether it misbehaves at all —
+          # Nothing is done yet. It is a bench question first — open Resolve on
+          # the 4K screen and see whether it misbehaves at all —
           # and a follow-up in the decision record. What DOES still ship is
           # Resolve's own window memory, which is checked elsewhere in this job.
           if [ -e /usr/share/aquarius/labwc/rc.xml ]; then
@@ -6637,11 +6658,19 @@ jobs:
               && ok "it starts 'gamescope-session-plus steam'" \
               || bad "the Game Mode session does not start 'gamescope-session-plus steam'"
           else
-            bad "${SESSION} is missing — the login screen would have no Game Mode to offer"
+            bad "${SESSION} is missing — Game Mode would have nowhere to go"
           fi
-          echo "     every session this image offers:"
+          # Since 2026-10-19 Game Mode is startable but NOT on the login screen's
+          # menu (NoDisplay=true): the login screen offers GNOME alone.
+          grep -q '^NoDisplay=true' "${SESSION}" 2>/dev/null \
+            && ok "Game Mode is not a choice on the login screen (NoDisplay=true)" \
+            || bad "Game Mode is on the login screen's menu — the session button would come back"
+          ! grep -q '^Hidden=true' "${SESSION}" 2>/dev/null \
+            && ok "and it is not Hidden=true, which would stop GDM starting it at all" \
+            || bad "${SESSION} has Hidden=true — GDM would refuse to start Game Mode"
+          echo "     every session this image has:"
           ls -1 /usr/share/wayland-sessions/ 2>/dev/null | sed 's/^/       /'
-          for s in gnome plasma gamescope-session-steam; do
+          for s in gnome gamescope-session-steam; do
             [ -r "/usr/share/wayland-sessions/${s}.desktop" ] \
               && ok "the login screen can start '${s}'" \
               || bad "/usr/share/wayland-sessions/${s}.desktop is missing"
@@ -6966,9 +6995,21 @@ jobs:
                      /usr/lib/udev/rules.d/72-aquarius-ally-rings.rules \
                      /usr/share/gnome-shell/extensions/aquarius-handheld@stoneharborent.github.io \
                      /usr/lib/systemd/user/steamos-manager.service.d/60-aquarius-session.conf \
-                     /usr/lib/systemd/logind.conf.d/60-aquarius-handheld.conf; do
+                     /usr/lib/systemd/logind.conf.d/60-aquarius-handheld.conf \
+                     /usr/libexec/aquarius-x20-audio \
+                     /usr/lib/modprobe.d/10-aquarius-x20-audio.conf \
+                     /usr/lib/depmod.d/aquarius-x20-audio.conf \
+                     /usr/lib/dracut/dracut.conf.d/90-aquarius-x20-audio.conf \
+                     /usr/share/aquarius/audio/tas2783.conf \
+                     /usr/share/aquarius/x20-audio; do
               [ -e "$f" ] && bad "$f is on a desktop image" || ok "$f is not on this image"
             done
+            # The X20's patched sound drivers belong to the handheld image only.
+            if [ -n "$(find /usr/lib/modules -maxdepth 2 -name aquarius-x20-audio 2>/dev/null)" ]; then
+              bad "patched X20 sound drivers (aquarius-x20-audio) are on a desktop image"
+            else
+              ok "no patched X20 sound drivers on this image"
+            fi
             # `aq` is ONE program on all three images, so `aq handheld` exists
             # here. It must refuse politely rather than look broken.
             if /usr/bin/aq handheld status > /tmp/hh.txt 2>&1; then
@@ -7189,6 +7230,85 @@ jobs:
           mod snd-soc-tas2781-i2c "the speakers"
           mod asus-armoury        "the power-limit knobs Steam's TDP slider moves"
 
+          echo "== the X20's built-in speakers (board RC74XA): two patched drivers =="
+          # Fedora's kernel is unchanged; the handheld image adds two patched
+          # copies of Fedora's own sound drivers, compiled for this image's
+          # kernel, and a loader that uses them only on an RC74XA. Everything
+          # here is read out of the finished image. None of it proves the
+          # speakers make sound — that needs the handheld (handheld.md).
+          K="$(rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core)"
+          XD="/usr/lib/modules/${K}/aquarius-x20-audio"
+          echo "     this image's kernel: ${K}"
+          for m in snd-acp-config snd-soc-acpi-amd-match; do
+            if [ -f "${XD}/${m}.ko" ]; then
+              ok "patched ${m} is filed for this kernel"
+              vm="$(modinfo -F vermagic "${XD}/${m}.ko" 2>/dev/null)"
+              [ "${vm%% *}" = "${K}" ] \
+                && ok "${m} vermagic is exactly ${K}" \
+                || bad "${m} vermagic is '${vm%% *}', not ${K} — the kernel would refuse it"
+            else
+              bad "no patched ${m} for kernel ${K} — the X20's speakers would stay silent"
+            fi
+          done
+          [ "$(modinfo -F aquarius_x20 "${XD}/snd-acp-config.ko" 2>/dev/null)" = rc74xa-acp-config ] \
+            && ok "snd-acp-config carries the RC74XA board exception" \
+            || bad "snd-acp-config has no RC74XA label"
+          [ "$(modinfo -F aquarius_x20 "${XD}/snd-soc-acpi-amd-match.ko" 2>/dev/null)" = rc74xa-soundwire-links ] \
+            && ok "snd-soc-acpi-amd-match carries the RC74XA speaker wiring" \
+            || bad "snd-soc-acpi-amd-match has no RC74XA label"
+          strings "${XD}/snd-acp-config.ko" > /tmp/x20-strings.txt 2>/dev/null || true
+          grep -qx RC74XA /tmp/x20-strings.txt \
+            && ok "the board name RC74XA is inside the compiled snd-acp-config" \
+            || bad "RC74XA is not inside the compiled snd-acp-config"
+          for n in snd_acp_config snd_soc_acpi_amd_match; do
+            how="$(modprobe -S "${K}" --show-depends "${n}" 2>&1 || true)"
+            grep -qx "install /bin/bash /usr/libexec/aquarius-x20-audio ${n} *" <<< "${how}" \
+              && ok "asking for ${n} runs the X20 loader" \
+              || bad "asking for ${n} does not run the X20 loader: ${how}"
+            stock="$(modprobe -S "${K}" --show-depends --ignore-install "${n}" 2>&1 | tail -n 1 || true)"
+            case "${stock}" in
+              "insmod /lib/modules/${K}/kernel/"*|"insmod /usr/lib/modules/${K}/kernel/"*)
+                ok "the fallback for ${n} is Fedora's own driver" ;;
+              *) bad "the fallback for ${n} is not Fedora's driver: ${stock}" ;;
+            esac
+          done
+          grep -q aquarius-x20-audio "/usr/lib/modules/${K}/modules.dep" \
+            && bad "the patched drivers are in modules.dep — 'stock' could load ours" \
+            || ok "the patched drivers are kept out of the normal driver index"
+          bash -n /usr/libexec/aquarius-x20-audio \
+            && ok "the loader is valid bash" \
+            || bad "the loader has a syntax error"
+          grep -Eq '^[0-9a-f]{64}  1954-1-0-0x8\.bin$' /usr/share/aquarius/x20-audio/firmware.sha256 2>/dev/null \
+            && grep -Eq '^[0-9a-f]{64}  1954-1-0-0xB\.bin$' /usr/share/aquarius/x20-audio/firmware.sha256 \
+            && ok "the image lists the bench unit's speaker firmware (speaker ID 1)" \
+            || bad "the image's firmware list has no speaker ID 1 pair"
+          # The list must match the firmware actually on disk, byte for byte.
+          while read -r sum name; do
+            id="${name#1954-}"; id="${id%%-*}"; amp="${name##*-}"; amp="${amp%.bin}"
+            base="/usr/lib/firmware/1954-${id}-0-${amp}.bin"
+            if [ -e "${base}.xz" ]; then got="$(xz -dc "${base}.xz" | sha256sum | cut -d' ' -f1)"
+            elif [ -e "${base}.zst" ]; then got="$(zstd -dcq "${base}.zst" | sha256sum | cut -d' ' -f1)"
+            else got="$(sha256sum "${base}" 2>/dev/null | cut -d' ' -f1)"; fi
+            [ "${got}" = "${sum}" ] \
+              && ok "${name}: the firmware on disk matches the image's list" \
+              || bad "${name}: the firmware on disk does not match the image's list"
+          done < /usr/share/aquarius/x20-audio/firmware.sha256
+          [ -f /usr/share/alsa/ucm2/sof-soundwire/tas2783.conf ] \
+            && ok "ALSA has the TAS2783 speaker profile (sof-soundwire/tas2783.conf)" \
+            || bad "ALSA has no sof-soundwire/tas2783.conf — no 'Speaker' output would appear"
+          # Neither driver may be in the boot ramdisk, where the loader cannot run.
+          IR="/usr/lib/modules/${K}/initramfs.img"
+          if [ -r "${IR}" ] && command -v lsinitrd > /dev/null 2>&1; then
+            lsinitrd "${IR}" > /tmp/x20-initrd.txt 2>/dev/null || true
+            if grep -Eq 'snd[-_](acp[-_]config|soc[-_]acpi[-_]amd[-_]match)\.ko' /tmp/x20-initrd.txt; then
+              bad "a sound driver the X20 loader decides about is inside the boot ramdisk"
+            else
+              ok "neither X20 sound driver is in the boot ramdisk"
+            fi
+          else
+            bad "could not inspect ${IR}"
+          fi
+
           echo "== the one command a bench session runs =="
           # It has to survive a machine with none of the hardware — which is
           # exactly what this runner is. A status command that stops half way
@@ -7301,7 +7421,7 @@ jobs:
             --entrypoint /usr/bin/bash \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-iso-repos.sh
 
-      - name: Check external drives automount and the updater window are really in there
+      - name: Check every drive automounts and the updater window are really in there
         run: |
           set -euo pipefail
           cat > /tmp/verify-r6.sh <<'SCRIPT'
@@ -7331,9 +7451,24 @@ jobs:
           if "${AGENT}" --dry-run > /tmp/adry.txt 2>&1; then
             ok "'aquarius-automount --dry-run' runs and changes nothing"
           else bad "'aquarius-automount --dry-run' failed"; cat /tmp/adry.txt; fi
-          grep -q 'HintSystem = false' /tmp/adry.txt \
-            && ok "the agent states it leaves system-internal disks alone" \
-            || bad "the agent no longer states the system-disk guard"
+          grep -q 'HintSystem = true' /tmp/adry.txt \
+            && ok "the agent states it mounts drives INSIDE the computer too (2026-10-19)" \
+            || bad "the agent no longer states that inside drives are mounted"
+          for phrase in 'never-touch list' 'disk AquariusOS is installed on' \
+                        'EFI System Partition' 'Windows Recovery' 'already listed in /etc/fstab' \
+                        'encrypted' 'installer stick'; do
+            grep -q "${phrase}" /tmp/adry.txt \
+              && ok "the never-touch list names: ${phrase}" \
+              || bad "the agent's never-touch list no longer names: ${phrase}"
+          done
+          # (The never-touch list is PROVEN against fake drives by step 76 during
+          # the build, and by the fast check near the top of this file.)
+          for gone in /usr/libexec/aquarius-remember-drive \
+                      /usr/share/polkit-1/actions/org.aquariusos.rememberdrive.policy \
+                      /usr/share/polkit-1/rules.d/50-aquarius-remember-drive.rules; do
+            [ -e "${gone}" ] && bad "${gone} is still here — 'ask once' was retired 2026-10-19" \
+              || ok "${gone} is gone"
+          done
 
           echo "== the no-password polkit rule, and its limits =="
           RULE=/usr/share/polkit-1/rules.d/49-aquarius-udisks.rules
@@ -7341,20 +7476,28 @@ jobs:
           else bad "${RULE} is missing — mounting would ask for a password"; fi
           grep -q 'subject\.local'  "${RULE}" && ok "scoped to the LOCAL session"  || bad "the rule is not scoped to subject.local"
           grep -q 'subject\.active' "${RULE}" && ok "scoped to the ACTIVE session" || bad "the rule is not scoped to subject.active"
-          grep -q 'org\.freedesktop\.udisks2\.filesystem-mount' "${RULE}" && ok "allows mounting a removable filesystem" || bad "the rule does not allow filesystem-mount"
+          grep -q '"org\.freedesktop\.udisks2\.filesystem-mount"' "${RULE}" && ok "allows mounting a plugged-in drive" || bad "the rule does not allow filesystem-mount"
           grep -q 'org\.freedesktop\.udisks2\.eject-media'      "${RULE}" && ok "allows ejecting removable media"       || bad "the rule does not allow eject-media"
           grep -q 'polkit\.Result\.YES' "${RULE}" && ok "the rule actually grants something" || bad "the rule grants nothing"
-          # ⚠️ The safety line: the CODE must NEVER name the internal-disk action,
-          # or it would let an internal disk mount with no password. The comments
-          # do mention it (to explain it is deliberately absent), so strip the
-          # `//` comments before checking.
-          if sed 's://.*::' "${RULE}" | grep -q 'filesystem-mount-system'; then
-            bad "the rule grants filesystem-mount-system — internal disks would mount with no password"
+          # ⚠️ THE REVERSED GATE (2026-10-19). Until that day the CODE had to
+          # NEVER name the internal-disk action. Royce asked for every inside
+          # drive to mount with no password, so now its code MUST name it — and
+          # must still name nothing that unlocks, formats or reaches another
+          # seat. The `//` comments name those things to explain their absence,
+          # so they are stripped before checking.
+          RULE_CODE="$(sed 's://.*::' "${RULE}")"
+          if grep -q '"org\.freedesktop\.udisks2\.filesystem-mount-system"' <<< "${RULE_CODE}"; then
+            ok "the rule's code grants filesystem-mount-system — inside drives mount with no password"
           else
-            ok "the rule's code says nothing about internal disks — they still need a password"
+            bad "the rule's code does not grant filesystem-mount-system — every inside drive would ask for a password"
+          fi
+          if grep -Eq 'encrypted-unlock|other-seat|unmount-others|modify-|format|manage-|loop-setup' <<< "${RULE_CODE}"; then
+            bad "the rule's code grants more than mounting (unlock / format / other seat)"
+          else
+            ok "the rule's code grants mounting and ejecting only"
           fi
 
-          echo "== the auto-mount service, switched on for both desktops =="
+          echo "== the auto-mount service, switched on for the desktop =="
           UNIT=/usr/lib/systemd/user/aquarius-automount.service
           LINK=/usr/lib/systemd/user/graphical-session.target.wants/aquarius-automount.service
           grep -q '^ExecStart=/usr/libexec/aquarius-automount$' "${UNIT}" && ok "the service runs the agent" || bad "the service does not run the agent"
@@ -7546,7 +7689,8 @@ jobs:
   # (the trap written up at length in build_files/aq-lib.sh).
   #
   # Royce retired the Aquarius Session and asked for GNOME and KDE Plasma
-  # instead (../docs/decision-2026-09-15-two-desktops.md). This image pins no
+  # instead (../docs/decision-2026-09-15-two-desktops.md; GNOME alone since
+  # 2026-10-19). This image pins no
   # shell commit, ships no labwc files, and has nothing to drift against. The
   # shell repository is tagged `aquarius-session-final` and keeps its own tests
   # for anybody who ever goes back to it.

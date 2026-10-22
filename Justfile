@@ -229,8 +229,9 @@ build $target_image=image_name $tag=default_tag $nvidia="0" $handheld="0":
     BUILD_ARGS+=("--build-arg" "IMAGE_NAME=${target_image}")
     BUILD_ARGS+=("--build-arg" "IMAGE_VENDOR={{ repo_organization }}")
     # (The Aquarius Desktop's three pinned pieces used to be passed here. That
-    # desktop was retired on 2026-09-15 — both desktops now come from Fedora's
-    # own packages, so FEDORA_VERSION is the only pin left.)
+    # desktop was retired on 2026-09-15 — the desktop (GNOME, the only one since
+    # 2026-10-19) comes from Fedora's own packages, so FEDORA_VERSION is the
+    # only pin left.)
     LABELS=()
     if [[ -z "$(git status -s)" ]]; then
         GIT_SHA=$(git rev-parse --short HEAD)

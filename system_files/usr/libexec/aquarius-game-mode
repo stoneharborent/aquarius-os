@@ -12,7 +12,7 @@
 #      way around that (the reason is in docs/restart/game-mode.md), so the
 #      least this can do is say so before it happens and let you say no.
 #   2. Write down where you are going: /usr/libexec/os-session-select gamescope.
-#   3. End the desktop session. GNOME and Plasma are asked in their own
+#   3. End the desktop session — GNOME is asked to log out in its own
 #      language. The login screen then logs you straight into Game Mode, with
 #      no password, one second later.
 #
@@ -48,24 +48,15 @@ say() { echo "aquarius-game-mode: $*"; }
 # -----------------------------------------------------------------------------
 # Ask, in whatever way this desktop can be asked
 # -----------------------------------------------------------------------------
-# zenity ships with AquariusOS and works on both desktops. kdialog is tried
-# first because on Plasma it looks native, and it costs one failed `command -v`
-# on a machine that does not have it — the same pattern, for the same reason, as
-# aquarius-app-launch.
+# zenity ships with AquariusOS and is GNOME's own dialog box. (Until
+# 2026-10-19 KDE's kdialog was tried first, for Plasma; Plasma is no longer in
+# the image, so that branch is gone.)
 #
 # ⚠️ IF NEITHER IS THERE, WE DO NOT PROCEED SILENTLY. A switch that closes every
 # window without asking, because the program that asks was missing, is the worst
 # possible failure. Without a way to ask, this refuses and says how to do it on
 # purpose.
 aq_ask() {
-    if command -v kdialog > /dev/null 2>&1; then
-        kdialog --title "${AQ_TITLE}" \
-            --yes-label "Close my desktop and go" --no-label "Stay here" \
-            --warningyesno "${AQ_HEADLINE}
-
-${AQ_BODY}" > /dev/null 2>&1
-        return $?
-    fi
     if command -v zenity > /dev/null 2>&1; then
         zenity --question \
             --title="${AQ_TITLE}" \
@@ -85,29 +76,20 @@ ${AQ_BODY}" > /dev/null 2>&1
 # -----------------------------------------------------------------------------
 # GNOME:  gnome-session-quit --no-prompt  (--no-prompt because we have already
 #         asked, and a second "are you sure" from GNOME is noise)
-# Plasma: the Shutdown service on the session bus, which is what Plasma's own
-#         Log Out menu entry calls. qdbus6 is the Plasma 6 name; qdbus is kept
-#         as a fallback.
-# If neither works, logind can end the session, and that is the last resort
-# because it is less polite — applications are not asked to save anything.
+# If that does not work, logind can end the session, and that is the last
+# resort because it is less polite — applications are not asked to save
+# anything. (Until 2026-10-19 there was a KDE Plasma branch here too.)
 aq_logout() {
     if command -v gnome-session-quit > /dev/null 2>&1 && pgrep -x gnome-shell > /dev/null 2>&1; then
         say "asking GNOME to log out."
         exec gnome-session-quit --no-prompt --logout
     fi
-    local qd
-    for qd in qdbus6 qdbus qdbus-qt6; do
-        if command -v "${qd}" > /dev/null 2>&1 && pgrep -x kwin_wayland > /dev/null 2>&1; then
-            say "asking KDE Plasma to log out."
-            exec "${qd}" org.kde.Shutdown /Shutdown org.kde.Shutdown.logout
-        fi
-    done
     if command -v loginctl > /dev/null 2>&1; then
         say "no desktop answered, so ending this session directly."
         exec loginctl terminate-session "${XDG_SESSION_ID:-self}"
     fi
-    say "ERROR: nothing here can end the session. Log out by hand and pick"
-    say "'Steam Big Picture' at the login screen."
+    say "ERROR: nothing here can end the session. Log out by hand; the login"
+    say "screen will take you straight into Game Mode."
     exit 1
 }
 
@@ -173,8 +155,8 @@ if [ "${AQ_ASKED}" -eq 0 ]; then
     case "$?" in
         0) : ;;
         2)
-            say "ERROR: there is no way to ask you first on this computer (neither"
-            say "zenity nor kdialog is installed), and this closes every window."
+            say "ERROR: there is no way to ask you first on this computer (not even"
+            say "zenity is installed), and this closes every window."
             say "Refusing. To go anyway, on purpose:  aq game --yes"
             exit 1
             ;;
@@ -196,9 +178,7 @@ if ! "${AQ_SELECT}" gamescope; then
 Nothing was closed. The reason is in the journal:
 
     journalctl -t os-session-select -t aquarius-session-root"
-    if command -v kdialog > /dev/null 2>&1; then
-        kdialog --title "${AQ_TITLE}" --error "${AQ_FAIL}" > /dev/null 2>&1 || true
-    elif command -v zenity > /dev/null 2>&1; then
+    if command -v zenity > /dev/null 2>&1; then
         zenity --error --title="${AQ_TITLE}" --width=460 --text="${AQ_FAIL}" > /dev/null 2>&1 || true
     fi
     exit 1

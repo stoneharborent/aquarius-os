@@ -186,6 +186,193 @@ affected handheld to identify the cause of the stutter and early cutoff.
 
 ---
 
+## The built-in speakers (ROG Xbox Ally X20)
+
+*Added 2026-10-21. Status: **builds and passes every automated check; needs a
+bench test on the handheld.** Nothing here has made a sound yet on an image
+built this way — only the 2026-10-16 bench experiment has.*
+
+### What was wrong, in plain words
+
+Royce's handheld is the **ROG Xbox Ally X20**. Its motherboard calls itself
+**`RC74XA`**, made by **`ASUSTeK COMPUTER INC.`** With Fedora's kernel exactly as
+Fedora ships it, the built-in speakers make no sound, and the sound menu shows
+**"Dummy Output"**. Two things go wrong, and neither is ours:
+
+1. The machine's own firmware tells Linux "this machine only has digital
+   microphones" (a table called SSDT8 sets `acp-audio-config-flag=0x10`). That is
+   not true — the speakers and headphone socket sit on newer wiring called
+   **SoundWire**. Linux believes the firmware and picks the wrong sound path.
+   Linux keeps a short list of laptops whose firmware says this wrongly;
+   `RC74XA` is not on it yet.
+2. Even on the right path, Linux's list of "which SoundWire parts are on which
+   wire" does not describe this machine: here the two speaker amplifiers (TI
+   **TAS2783**, addresses 8 and B) are on wire 0, and the headphone chip
+   (Realtek **RT721**) is on wire 1.
+
+On top of that, the amplifiers need the right TI firmware for this unit (it is
+chosen by a number the machine stores, its **speaker ID** — `1` on the bench
+unit), and ALSA needs a small speaker profile (`sof-soundwire/tas2783.conf`)
+that Fedora's `alsa-ucm` package does not have yet.
+
+On **2026-10-16** a bench experiment fixed all four by hand and the owner heard
+the **left and right speakers separately**. That experiment was compiled for one
+kernel, **7.2.10**. The image of 2026-10-21 (`20261021-91affcf`) moved to
+**7.2.11**, the workaround correctly stepped aside for the new kernel, and the
+speakers went silent again.
+
+### What the image does now
+
+**Fedora's kernel is not changed or replaced.** The handheld image (only) adds
+two small **patched copies of two of Fedora's own sound drivers**, and a little
+program that decides when to use them:
+
+| Piece | What it is |
+| --- | --- |
+| `snd-acp-config` (patched) | Adds `RC74XA` to Linux's list of "the firmware is wrong, use SoundWire". |
+| `snd-soc-acpi-amd-match` (patched) | Adds this machine's exact speaker wiring. |
+| `/usr/libexec/aquarius-x20-audio` | The loader. Decides, every start-up, between our two drivers and Fedora's. |
+| `/usr/share/alsa/ucm2/sof-soundwire/tas2783.conf` | The ALSA speaker profile, so a **Speaker** output appears. Only added if Fedora's package does not have one. |
+
+**The two drivers are compiled fresh in every build, for whatever kernel that
+build ships.** The build reads the kernel version from the same place the kernel
+pin does ([`kernel.md`](kernel.md)), downloads **Fedora's own signed source code
+for that exact kernel**, applies two small patches, and compiles. When the kernel
+moves, the drivers move with it — there is no pinned version to go stale. If a
+patch ever stops fitting the new source exactly, **the build stops** with a
+message saying so; it never quietly ships a silent handheld.
+
+**The loader only uses our drivers when everything checks out.** At start-up,
+when Linux asks for those two sound drivers, the loader checks: this is an
+`RC74XA` by ASUSTeK; neither driver is already running; Secure Boot is not
+blocking unsigned drivers; our drivers exist for the running kernel; the
+machine's speaker ID is one this image has firmware for; and that firmware
+unpacks to exactly the bytes recorded when the image was built. If **any**
+check fails, it loads **Fedora's normal drivers** instead — the machine then
+behaves like stock Fedora (no speaker sound, but everything else normal). It
+never guesses a firmware variant, and it never swaps a driver that is already
+running (doing that on 2026-10-16 froze the handheld; never repeat it).
+
+### ⚠️ Secure Boot must stay OFF on the X20
+
+These two drivers are compiled by us and **not signed**. With Secure Boot
+**on**, Linux refuses unsigned drivers. The loader sees that, uses Fedora's
+drivers, and the result is: **no speaker sound, everything else working.**
+Nothing breaks, nothing loops. Secure Boot is off on the bench unit today. To
+check it at any time:
+
+    mokutil --sb-state
+
+It should say `SecureBoot disabled`.
+
+### How to see which way it went
+
+    cat /run/aquarius-x20-audio-status
+
+The good answer on the X20 is a line saying **`patched RC74XA speaker drivers
+loaded`**. Any line starting **`Fedora's stock`** says exactly why it fell back.
+`aq handheld status` prints the same thing, and warns if pieces of the old bench
+workaround are still on the machine. The kernel log has it too:
+
+    journalctl -k -b | grep aquarius-x20-audio
+
+To **switch it off** (back to Fedora's drivers) without changing the image:
+
+    sudo touch /etc/aquarius/x20-audio-off
+    sudo systemctl reboot
+
+and to switch it back on: `sudo rm /etc/aquarius/x20-audio-off`, then restart.
+
+### After you update: remove the old bench workaround
+
+The 2026-10-16 experiment left files in `/etc` on the handheld. `/etc` is yours
+and survives every update, so the new image does not remove them. The new image
+already **wins over them** (its setting file sorts first), so nothing is urgent
+— but they should go, so there is exactly one way the speakers are set up.
+
+**Step 1.** Update and restart into the new image, the usual way:
+
+    sudo bootc upgrade
+    sudo systemctl reboot
+
+**Step 2.** Check the new loader ran:
+
+    cat /run/aquarius-x20-audio-status
+
+You want `patched RC74XA speaker drivers loaded`. (If it says `Fedora's stock`,
+stop here and paste the line into the bench log — do not remove anything yet.)
+
+**Step 3.** Remove the old pieces, **in this order**. The order matters: the
+old sound-profile service has to be switched off *before* its files go, or
+the next start-up would point the sound system at a folder that no longer
+exists. Copy these one line at a time:
+
+    sudo rm -f /etc/systemd/user/wireplumber.service.d/81-aquarius-x20-ucm.conf
+    sudo systemctl disable aquarius-x20-ucm.service
+    sudo rm -f /etc/systemd/system/aquarius-x20-ucm.service
+    sudo rm -f /etc/modprobe.d/99-aquarius-x20-audio-test.conf
+    mkdir -p ~/x20-audio-old-workaround
+    sudo mv /etc/aquarius/x20-audio-persistent ~/x20-audio-old-workaround/
+    sudo systemctl daemon-reload
+
+If they are there, the two earlier experiment folders can go the same way (an
+error saying "No such file or directory" just means it was never there):
+
+    sudo mv /etc/aquarius/x20-audio-v2 ~/x20-audio-old-workaround/
+    sudo mv /etc/aquarius/x20-audio-test ~/x20-audio-old-workaround/
+
+The old files are **moved, not deleted**, into a folder in your home, in case
+anything needs comparing later. Delete that folder once the bench list below is
+done: `sudo rm -r ~/x20-audio-old-workaround`.
+
+**Step 4.** Restart, and check again:
+
+    sudo systemctl reboot
+    cat /run/aquarius-x20-audio-status
+    aq handheld status
+
+The status should say `patched RC74XA speaker drivers loaded`, and
+`aq handheld status` should **not** list any "old bench workaround" lines.
+
+### Bench checklist — the speakers (Royce, on the X20)
+
+Put the answers in `docs/design/bench-run-<date>.md`. Use a moderate volume:
+on 2026-10-16 a very quiet first test was inaudible and looked like a failure.
+
+- [ ] `cat /run/aquarius-x20-audio-status` says **patched RC74XA speaker
+      drivers loaded**
+- [ ] The sound menu shows a **Speaker** output, not "Dummy Output"
+- [ ] **Both channels**, headphones unplugged. In a terminal:
+      `speaker-test -c 2 -t wav -l 1` — a voice says "Front Left" from the
+      **left** speaker and "Front Right" from the **right** one
+- [ ] **Headphone jack switching:** plug headphones in → sound moves to them;
+      unplug → sound comes back to the speakers. Do it three times
+- [ ] **Suspend and resume:** play something, sleep the handheld (Steam →
+      Power → Suspend), wake it, and the speakers still play. Three times
+- [ ] **Steam intro sound:** cold boot into Game Mode; the Steam start-up
+      animation plays **with sound**
+- [ ] **Two cold boots in a row**, speakers working after each (this is what
+      broke on 2026-10-21)
+- [ ] Paste `aq handheld status` and
+      `journalctl -k -b | grep -iE 'aquarius-x20|tas2783|sdw'` into the bench log
+
+Still unexplained from 2026-10-16, worth a line in the log if seen: boot-time
+errors about `SDW0-PIN4-CAPTURE-SmartAmp`. Speaker playback working does not
+prove that capture path.
+
+### When this can be retired
+
+When Fedora's kernel itself contains both changes (an `RC74XA` entry in
+`sound/soc/amd/acp-config.c` and the RC74XA wiring in
+`sound/soc/amd/acp/amd-acp70-acpi-match.c`) the patches will stop applying and
+the build will say so. Then: delete `build_files/78-handheld-audio-build.sh`,
+`build_files/x20-audio/`, the `x20-audio-src` stages in the `Containerfile`,
+section 7b of `78-handheld.sh` and the X20 files under `handheld_files/` — and
+bench-test again on Fedora's own drivers. The same goes for `tas2783.conf` once
+Fedora's `alsa-ucm` ships it (the build already prefers Fedora's copy).
+
+---
+
 ## ⚠️ Before you do anything: check the controller chip's firmware, in Windows
 
 **Do this while Windows is still on the machine. Once it is gone, you cannot.**
@@ -305,9 +492,11 @@ Five things, and that is all.
 Plus the one-line setting that makes it start in Game Mode, and
 `aq handheld status`.
 
-**And no kernel change of any kind.** Fedora's own kernel already drives this
-machine's controller, gyro, speakers, power limits, Wi-Fi and Bluetooth. That
-is the whole reason this phase is small.
+**Fedora's kernel is not changed.** Fedora's own kernel drives this machine's
+controller, gyro, power limits, Wi-Fi and Bluetooth as it is. The one addition,
+since 2026-10-21, is sound on the **X20** (board `RC74XA`): two patched copies
+of Fedora's own sound drivers, compiled for the image's exact kernel, used only
+on that board — see [The built-in speakers](#the-built-in-speakers-rog-xbox-ally-x20).
 
 ---
 
@@ -320,7 +509,7 @@ is the whole reason this phase is small.
 | Back paddles | work, **as one button**: the chip sends the same signal for left and right without the ASUS driver |
 | The `...` button | **not yet.** Without the ASUS driver nothing reads it. Steam's **Xbox + A** opens the Quick Access menu instead |
 | Gyro in Steam | works |
-| Speakers, at full volume | works |
+| Speakers, at full volume | **X20 (`RC74XA`): needs a bench test** of the image-built drivers — see [The built-in speakers](#the-built-in-speakers-rog-xbox-ally-x20). Proven by hand on 2026-10-16 only |
 | Wi-Fi and Bluetooth | works |
 | Steam's TDP slider and battery charge limit | works |
 | Brightness slider | works |
@@ -544,6 +733,7 @@ Royce, on the Ally. Work down it and put the answers in
 ### B. Sound and radio
 
 - [ ] Sound from **both speakers** at full volume, no crackle, no dropouts
+      (on the X20, work through [the speaker checklist](#bench-checklist--the-speakers-royce-on-the-x20) first)
 - [ ] **Wi-Fi** connects
 - [ ] **Bluetooth** pairs with something
 
@@ -645,6 +835,14 @@ To see the controller set itself up: `journalctl -b -u aquarius-ally-controller`
 | `handheld_files/usr/libexec/aquarius-handheld-input` | Loads that map when a desktop starts (`etc/xdg/autostart/aquarius-handheld-input.desktop`) and puts the ordinary one back before Game Mode's Steam (`usr/lib/systemd/user/gamescope-session-plus@.service.d/60-aquarius-handheld-input.conf`). |
 | `handheld_files/usr/share/gnome-shell/extensions/aquarius-handheld@stoneharborent.github.io/` | The large app grid. |
 | `handheld_files/usr/libexec/aquarius-ally-rings` | Makes the Keyboard slider dim the stick rings. Run by `aquarius-ally-rings.service`, started by `72-aquarius-ally-rings.rules`. |
+| `build_files/78-handheld-audio-build.sh` | The X20 speaker-driver workshop: compiles the two patched sound drivers for the image's exact kernel from Fedora's signed source. Handheld image only. |
+| `build_files/x20-audio/rc74xa-acp-config.patch`, `rc74xa-soundwire-links.patch` | The two bench-proven patches (2026-10-16), byte-identical to the experiment's. |
+| `handheld_files/usr/libexec/aquarius-x20-audio` | The loader: our drivers on an RC74XA when every check passes, Fedora's otherwise. |
+| `handheld_files/usr/lib/modprobe.d/10-aquarius-x20-audio.conf` | Routes the two driver names through the loader. |
+| `handheld_files/usr/lib/depmod.d/aquarius-x20-audio.conf` | Keeps our two copies out of Linux's normal driver index, so "Fedora's driver" always means Fedora's. |
+| `handheld_files/usr/lib/dracut/dracut.conf.d/90-aquarius-x20-audio.conf` | Keeps both drivers out of the boot ramdisk, where the loader cannot run. |
+| `handheld_files/usr/share/aquarius/audio/tas2783.conf` | The upstream ALSA speaker profile; copied into ALSA's folder only if Fedora's package lacks it. |
+| `tests/test-x20-audio-loader.py` | Runs the loader against a fake machine for every reason it must fall back. Logic only. |
 | `.github/workflows/build.yml` | Builds all three images, and runs the handheld checks on **all three** — half of what they prove is that the other two are untouched. |
 | `.github/workflows/build-iso.yml` | Has **handheld** as a choice. That ISO is the only way onto the Ally. |
 

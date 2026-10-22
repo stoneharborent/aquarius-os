@@ -1,6 +1,40 @@
 # Check for Update — how AquariusOS updates itself
 
-*Written 2026-09-13. Assumes you have never used Linux.*
+*Updated 2026-10-18.*
+
+## GNOME Software is the combined update interface
+
+Open **Software → Updates** for AquariusOS image updates, Flatpak applications,
+and supported device firmware. Install the updates and restart when requested.
+The system still updates as a complete published AquariusOS image; newer Fedora
+RPMs do not become independent host updates. Homebrew, manually installed apps,
+and application-specific updaters remain separate.
+
+The image now includes `gnome-software-rpm-ostree`. The final build step removes
+GNOME Software's DNF5 and PackageKit plugins, which attempt unsupported writes to
+the read-only host. This replaces the September decision to remove the image
+backend. Authentication uses the existing system policy; no password-free
+polkit rule has been added. The previous reports of background authentication
+prompts remain a regression to check on a built image.
+
+On the bench, the plugin was first installed as a local layer. After the
+2026-10-18 reboot, the layer was active and `rpm-ostree upgrade --check` reported
+no updates. GNOME Software was running with `dnf5,packagekit` blocked through
+user service and launcher overrides. An actual new-image upgrade through the
+GUI has not yet been verified. These user overrides are redundant once the
+image-level backend removal ships, but are safe to retain.
+
+For that locally layered installation, use GNOME Software or
+`rpm-ostree upgrade`; direct `bootc upgrade` rejects local package layers.
+Shipping the plugin in the base image avoids requiring this layer on new
+installations. Do not remove the bench layer until an image containing the
+plugin is deployed and its presence is verified.
+
+The existing **Check for Update** tool described below remains a bootc-based
+alternative for deployments without local layers. Its password-free checking
+behavior is specific to that tool, not a promise about GNOME Software.
+
+## Existing AquariusOS Check for Update tool
 
 ---
 

@@ -73,12 +73,11 @@
 # went with the Aquarius Session
 # (../docs/decision-2026-09-15-two-desktops.md).
 #
-# What replaces it is each desktop's own machinery, which is better at this than
-# we were: GNOME's libadwaita already follows the accent colour and the
-# light/dark flip, and on KDE Plasma `kde-gtk-config` (step 4b) tells GTK apps
-# to use the Breeze theme and keeps them in step when Plasma flips. Writing an
-# Aquarius colour scheme that both of those read from our own tokens is
-# Workstream C, not this step.
+# What replaces it is GNOME's own machinery, which is better at this than we
+# were: libadwaita already follows the accent colour and the light/dark flip.
+# (From 2026-09-15 to 2026-10-19 KDE Plasma was here too, with kde-gtk-config
+# doing the same job for GTK apps; AquariusOS is GNOME only since.) Writing an
+# Aquarius colour scheme from our own tokens is Workstream C, not this step.
 #
 # EXCEPTION 1 — THE APP ICONS.
 # This list used to say "no icon theme" as well, and now AquariusOS does ship
@@ -255,7 +254,7 @@ fi
 #         our logo on it — and, since 2026-09-15, that is the WHOLE story. There
 #         used to be a "Part B" here: our own branded greeter, drawn by the
 #         Aquarius Shell on top of greetd. It went with that shell. GDM is the
-#         one login screen, it lists both desktops, and it is the thing to brand
+#         one login screen, it offers one desktop (GNOME, since 2026-10-19), and it is the thing to brand
 #         if branding it is ever worth the treadmill. See
 #         docs/restart/login.md and docs/restart/desktops.md.
 #
@@ -382,6 +381,25 @@ font-name='Inter 11'
 monospace-font-name='JetBrains Mono 10'
 cursor-theme='Adwaita'
 icon-theme='Aquarius-Ice'
+EOF
+
+# ------------------------------------------------------------------------------
+# THE LOGIN SCREEN MUST NOT MOUNT DRIVES — 04-aquarius-no-automount
+# ------------------------------------------------------------------------------
+# The login screen runs as its own user, gdm-greeter, with GNOME's normal
+# automount on. On 2026-10-21 it mounted Royce's second NVMe ("Internal Drive")
+# at /run/media/gdm-greeter/Internal Drive before anyone logged in. udisks then
+# refused to mount it again for the real user, so the drive vanished from Files
+# and every project path under /run/media/<user>/ was dead until it was unmounted
+# with sudo and remounted. Nothing at the login screen needs a drive, so it gets
+# none; the user's own session still automounts as before.
+#
+# (Named 04, not 03: 03-aquarius-scale is the removed file described below, and
+# reusing its number would make that history harder to read.)
+cat > /etc/dconf/db/gdm.d/04-aquarius-no-automount << 'EOF'
+[org/gnome/desktop/media-handling]
+automount=false
+automount-open=false
 EOF
 
 # ------------------------------------------------------------------------------
@@ -570,7 +588,10 @@ fi
 #
 # 'Adwaita' here is the CURSOR theme; 'Aquarius-Ice' is the icon theme. Both are
 # in the file above, and both have to survive into the database.
-for aq_want in prefer-light 'Inter 11' 'JetBrains Mono 10' Adwaita Aquarius-Ice; do
+#
+# 'automount-open' is the no-automount file's key NAME: its value is a boolean,
+# stored as a byte, so the name surviving is the only thing grep can see.
+for aq_want in prefer-light 'Inter 11' 'JetBrains Mono 10' Adwaita Aquarius-Ice automount-open; do
     if grep -a -q "${aq_want}" /etc/dconf/db/gdm 2> /dev/null; then
         ok "the login screen database carries '${aq_want}'"
     else

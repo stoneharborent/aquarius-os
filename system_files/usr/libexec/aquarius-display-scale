@@ -94,7 +94,7 @@ import xml.etree.ElementTree as ET
 
 # The scales we are willing to choose on our own. Every one of these is a value
 # GNOME's own Settings panel offers, which matters: a person who later moves the
-# GNOME slider should find the same numbers on both desktops.
+# GNOME slider should find the same numbers there.
 LADDER = (1.0, 1.25, 1.5, 1.75, 2.0)
 
 # The lowest and highest we will ever apply, however we arrived at the number.

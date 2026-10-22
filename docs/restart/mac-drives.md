@@ -267,6 +267,12 @@ Built and checked by `build_files/82-apfs-drives.sh`; exercised by
 `tests/test-automount-mount.py` (against three captured `apfsutil` listings and
 a fake bus) and `tests/test-media-dir.sh`.
 
+*Since 2026-10-19* a Mac drive **inside** the computer (an Intel Mac's own SSD,
+or a Mac SSD fitted in a PC) is opened at login too — read-only, like every
+Mac drive — because every inside drive now opens by itself. The same
+never-touch list applies to it as to every other drive; see
+[`hardware.md`](hardware.md#every-drive-opens-by-itself--inside-or-plugged-in).
+
 ### Why no privilege anywhere
 
 AquariusOS is never installed on APFS — Linux cannot write it, so no installer

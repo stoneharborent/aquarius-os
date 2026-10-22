@@ -1,0 +1,179 @@
+#!/bin/bash
+# ==============================================================================
+# aquarius-x20-audio — switches on the ROG Xbox Ally X20's built-in speakers
+# ==============================================================================
+# HANDHELD IMAGE ONLY. Shipped by build_files/78-handheld.sh. Plain-language
+# guide: docs/restart/handheld.md, "The built-in speakers".
+#
+# WHAT RUNS THIS, AND WHEN
+#
+# Nobody runs this by hand. During start-up Linux asks for the sound driver
+# `snd_acp_config` (or `snd_soc_acpi_amd_match`). The file
+# /usr/lib/modprobe.d/10-aquarius-x20-audio.conf says "when somebody asks for
+# either of those two, run this program instead". This program then decides:
+#
+#   * EVERYTHING CHECKS OUT -> load the two patched drivers this image compiled
+#     for its own kernel, with the speaker firmware this machine needs;
+#   * ANYTHING AT ALL IS OFF -> load Fedora's normal drivers, exactly as if this
+#     program did not exist. The machine then behaves like stock Fedora: no
+#     speaker sound, but headphones, the screen and everything else as normal.
+#
+# Falling back is ALWAYS safe. Guessing is never allowed: no "probably the
+# right firmware", no "probably this board".
+#
+# WHAT IT CHECKS, IN ORDER
+#
+#   1. Only one copy of this program runs at a time (a lock file).
+#   2. The switch-off file /etc/aquarius/x20-audio-off is NOT there.
+#   3. The motherboard is exactly RC74XA by ASUSTeK COMPUTER INC. (the X20).
+#   4. Neither sound driver is already running. We NEVER swap a running driver:
+#      on 2026-10-16 doing that froze the handheld.
+#   5. Secure Boot / kernel lockdown is not refusing unsigned drivers. These two
+#      are not signed, so with Secure Boot on they cannot load; we go straight
+#      to Fedora's.
+#   6. The two patched drivers exist for the kernel that is running right now.
+#   7. The speaker ID stored in the machine's firmware (the EFI variable
+#      SPEAKER_ID) is a number, and this image has the TI speaker firmware for
+#      THAT number (the list is /usr/share/aquarius/x20-audio/firmware.sha256,
+#      written when the image was built). The bench unit's ID is 1.
+#   8. Nobody else has already set the extra firmware folder.
+#   9. The firmware unpacks, and is byte-for-byte what the image recorded.
+#
+# Only then: it points the kernel at the unpacked firmware, loads the drivers
+# the patched ones need, and loads the two patched drivers by their full path.
+#
+# WHAT IT LEAVES BEHIND, FOR `aq handheld status`
+#
+#   /run/aquarius-x20-audio-status   one line per decision this boot
+#   the kernel log (`journalctl -k | grep aquarius-x20-audio`)
+#
+# ⚠️ No `set -e` on purpose. If an unexpected command fails, the answer must be
+# "use Fedora's drivers", never "load nothing at all". Every step that can fail
+# says so explicitly with `|| stock "..."`.
+# ==============================================================================
+set -u
+
+requested="${1:-}"
+case "${requested}" in
+    snd_acp_config | snd_soc_acpi_amd_match) ;;
+    *)
+        echo "aquarius-x20-audio: only for snd_acp_config or snd_soc_acpi_amd_match" >&2
+        exit 1
+        ;;
+esac
+
+note() {
+    printf '%s\n' "$*" >> /run/aquarius-x20-audio-status 2> /dev/null || true
+    printf 'aquarius-x20-audio: %s\n' "$*" > /dev/kmsg 2> /dev/null || true
+}
+
+# Fedora's own driver, with this hook switched off for this one request.
+stock() {
+    note "Fedora's stock ${requested}: $*"
+    exec /usr/sbin/modprobe --ignore-install "${requested}"
+}
+
+# 1. One at a time. Both driver names can be asked for at almost the same moment.
+exec 9> /run/aquarius-x20-audio.lock || stock "could not open the lock file"
+flock 9 || stock "could not take the lock"
+
+# Already loaded (by an earlier call, for this name or the other one): done.
+[[ ! -d /sys/module/${requested} ]] || exit 0
+
+# 2. The off switch.
+[[ ! -e /etc/aquarius/x20-audio-off ]] || stock "switched off (/etc/aquarius/x20-audio-off exists)"
+
+# 3. This exact machine, and no other.
+board="$(cat /sys/class/dmi/id/board_name 2> /dev/null)" || board=""
+vendor="$(cat /sys/class/dmi/id/board_vendor 2> /dev/null)" || vendor=""
+[[ ${board} == RC74XA && ${vendor} == 'ASUSTeK COMPUTER INC.' ]] \
+    || stock "this is not an RC74XA by ASUSTeK (board '${board}', vendor '${vendor}')"
+
+# 4. Never replace or remove a running driver.
+[[ ! -d /sys/module/snd_acp_config && ! -d /sys/module/snd_soc_acpi_amd_match ]] \
+    || stock "a stock sound driver is already running; a running driver is never swapped"
+
+# 5. Secure Boot / lockdown would refuse these unsigned drivers.
+if [[ -r /sys/kernel/security/lockdown ]]; then
+    lockdown="$(cat /sys/kernel/security/lockdown 2> /dev/null)" || lockdown=""
+    [[ ${lockdown} == *'[none]'* ]] \
+        || stock "kernel lockdown is on (${lockdown:-unreadable}) — Secure Boot refuses unsigned drivers"
+fi
+if [[ -r /sys/module/module/parameters/sig_enforce ]]; then
+    enforce="$(cat /sys/module/module/parameters/sig_enforce 2> /dev/null)" || enforce=""
+    [[ ${enforce} != Y ]] || stock "the kernel only accepts signed drivers (sig_enforce=Y)"
+fi
+
+# 6. The patched drivers, compiled for THIS kernel by the image build.
+kver="$(uname -r)"
+moddir="/usr/lib/modules/${kver}/aquarius-x20-audio"
+for ko in snd-acp-config snd-soc-acpi-amd-match; do
+    [[ -f ${moddir}/${ko}.ko ]] || stock "no patched ${ko} for kernel ${kver}"
+done
+
+# 7. The speaker ID, and firmware this image has for it. The EFI variable file
+# is 4 bytes of attributes, then the value (little-endian).
+efivar=/sys/firmware/efi/efivars/SPEAKER_ID-aa61eaaf-6e83-7523-b0d0-7df74bb24a81
+speaker_id="$(od -An -tu4 -j4 -N4 "${efivar}" 2> /dev/null | tr -d ' \n')" || speaker_id=""
+[[ ${speaker_id} =~ ^[0-9]+$ ]] || stock "could not read the speaker ID from ${efivar##*/}"
+manifest=/usr/share/aquarius/x20-audio/firmware.sha256
+declare -A want=()
+for amp in 8 B; do
+    want[${amp}]="$(awk -v f="1954-${speaker_id}-0-0x${amp}.bin" '$2 == f { print $1; exit }' "${manifest}" 2> /dev/null)"
+    [[ ${want[${amp}]} =~ ^[0-9a-f]{64}$ ]] \
+        || stock "this image has no speaker firmware for speaker ID ${speaker_id} (amp 0x${amp})"
+done
+
+# 8. The extra firmware folder must not already be in use by something else.
+firmware_path="$(cat /sys/module/firmware_class/parameters/path 2> /dev/null)" \
+    || stock "cannot read the kernel's firmware folder setting"
+[[ -z ${firmware_path} ]] || stock "the kernel's extra firmware folder is already set to '${firmware_path}'"
+
+# 9. Unpack the pair under the names the TAS2783 driver asks for
+# (1954-0-0x8.bin and 1954-0-0xB.bin), and check every byte.
+fwdir=/run/aquarius-x20-firmware
+mkdir -p "${fwdir}" || stock "cannot make ${fwdir}"
+for amp in 8 B; do
+    base="/usr/lib/firmware/1954-${speaker_id}-0-0x${amp}.bin"
+    out="${fwdir}/1954-0-0x${amp}.bin"
+    if [[ -e ${base}.xz ]]; then
+        xz -dc "${base}.xz" > "${out}" || stock "could not unpack ${base}.xz"
+        src="${base}.xz"
+    elif [[ -e ${base}.zst ]]; then
+        zstd -dcq "${base}.zst" > "${out}" || stock "could not unpack ${base}.zst"
+        src="${base}.zst"
+    elif [[ -e ${base} ]]; then
+        cp "${base}" "${out}" || stock "could not copy ${base}"
+        src="${base}"
+    else
+        stock "the speaker firmware ${base##*/} is missing"
+    fi
+    # The kernel reads this file itself; give it the same security label as
+    # the firmware it was unpacked from, or SELinux stops the kernel reading it.
+    chcon --reference="$(readlink -f "${src}")" "${out}" 2> /dev/null \
+        || stock "could not label ${out}"
+    got="$(sha256sum "${out}" | cut -d' ' -f1)" || got=""
+    [[ ${got} == "${want[${amp}]}" ]] || stock "the unpacked ${out##*/} is not the firmware the image recorded"
+done
+printf '%s' "${fwdir}" > /sys/module/firmware_class/parameters/path \
+    || stock "could not set the kernel's extra firmware folder"
+
+# The drivers the patched ones need, loaded the normal way first (insmod,
+# below, does not load anything else for you). Asked of the files themselves.
+for ko in snd-acp-config snd-soc-acpi-amd-match; do
+    deps="$(/usr/sbin/modinfo -F depends "${moddir}/${ko}.ko" 2> /dev/null)" \
+        || stock "could not read what ${ko} needs"
+    for dep in ${deps//,/ }; do
+        case "${dep//-/_}" in snd_acp_config | snd_soc_acpi_amd_match) continue ;; esac
+        /usr/sbin/modprobe "${dep}" || stock "could not load ${dep}, which ${ko} needs"
+    done
+done
+
+# The two patched drivers, by full path, in this order.
+/usr/sbin/insmod "${moddir}/snd-acp-config.ko" \
+    || stock "the patched snd-acp-config was refused by the kernel"
+/usr/sbin/insmod "${moddir}/snd-soc-acpi-amd-match.ko" \
+    || stock "the patched snd-soc-acpi-amd-match was refused by the kernel"
+
+note "patched RC74XA speaker drivers loaded (kernel ${kver}, speaker ID ${speaker_id})"
+exit 0

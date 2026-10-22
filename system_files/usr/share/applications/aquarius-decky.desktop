@@ -8,8 +8,8 @@ Comment=Add a plugins menu inside Game Mode — battery readouts, power profiles
 # one runs with no terminal because its program draws its own window. This one
 # has no window of its own: it downloads 26 MB, prints what it is doing, and
 # asks for a password with `sudo`. All three of those need somewhere to be seen
-# and typed, so the desktop opens its terminal (Ptyxis on GNOME, Konsole on
-# Plasma — both are in this image) and runs the command inside it. Wrapping it
+# and typed, so the desktop opens its terminal (Ptyxis, GNOME's) and runs the
+# command inside it. Wrapping it
 # in a graphical window instead would be a second program to write and a second
 # place for the same messages to go out of date.
 Exec=/usr/bin/aq decky install

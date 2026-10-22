@@ -4,10 +4,12 @@
 WHAT THIS CHECKS, IN PLAIN ENGLISH
 ----------------------------------
 tests/aquarius_headless.py tries several desktops in turn until one comes up.
-Build 35043434847 showed the hole: the FIRST one on the list, KDE's
+Build 35043434847 showed the hole: the FIRST one on the list at the time, KDE's
 kwin_wayland, could not be executed at all inside the build container (Fedora
 gives that program a file capability the container did not have), and the
-helper crashed on the spot instead of trying GNOME next.
+helper crashed on the spot instead of trying GNOME next. (Since 2026-10-19
+KWin is not in the image at all and is last on the list; the lesson stands for
+every candidate.)
 
 So this test hands the helper a made-up list of desktops:
 
@@ -141,12 +143,15 @@ def check_the_real_list_still_reads_right():
     """The shipped order, and what each one promises about run_after."""
     names = [c[0] for c in headless._real_candidates(
         Path("/run"), Path("/config"), None, None)]
-    assert names[0] == "kwin_wayland", names
-    assert "gnome-shell" in names, names
+    # labwc first (CI installs it into the throwaway test container), GNOME
+    # Shell second (in every image), KWin last (only on a machine that has it —
+    # KDE Plasma left the image on 2026-10-19).
+    assert names == ["labwc", "gnome-shell", "kwin_wayland"], names
     # With an XWayland wrapper asked for, GNOME cannot honour it and is skipped.
     with_wrapper = [c[0] for c in headless._real_candidates(
         Path("/run"), Path("/config"), Path("/wrap"), Path("/after"))]
     assert "gnome-shell" not in with_wrapper, with_wrapper
+    assert with_wrapper[0] == "labwc", with_wrapper
     print("PASS: shipped order is %s" % ", ".join(names))
 
 

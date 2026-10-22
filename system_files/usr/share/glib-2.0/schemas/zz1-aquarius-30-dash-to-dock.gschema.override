@@ -26,8 +26,7 @@
 # ------------------------------------------------------------------------------
 # Where it lives: along the bottom, in the middle, always there
 # ------------------------------------------------------------------------------
-# This is the macOS-shaped dock Royce asked for, and the same shape the KDE line
-# already has.
+# This is the macOS-shaped dock Royce asked for.
 #
 # It takes FOUR settings together to get "always visible", and leaving any one
 # of them out gives a dock that hides at the wrong moment:
@@ -83,13 +82,47 @@ icon-size-fixed=false
 # opens the full list of applications. Keep it: it is how a beginner finds
 # anything that is not pinned.
 #
-# show-trash and show-mounts are LEFT AT THEIR DEFAULTS (both on) on purpose.
-# Drives appearing somewhere obvious matters a lot on a machine you plug camera
-# cards into all day, and GNOME has no desktop icons at all, so the dock is the
-# only place a mounted card shows up without opening Files. Not set here, so
-# not mentioned here.
 show-show-apps-button=true
 show-apps-at-top=false
+
+# ------------------------------------------------------------------------------
+# Drives in the dock — every one that is open
+# ------------------------------------------------------------------------------
+# ⚠️ WRITTEN OUT ON 2026-10-19. Royce: "Remove verification for all internal and
+# external drives. Just mount them from login and show in dock." Since that day
+# /usr/libexec/aquarius-automount opens every drive inside the computer at
+# login, as well as every drive you plug in, and each one gets a tile here.
+# Until then these keys were left at the extension's defaults; they are written
+# down now so that a future upstream default cannot quietly take the drives out
+# of the dock. Every name was checked against the extension's own settings file
+# (dash-to-dock 105).
+#
+#   show-mounts=true               a tile for every open drive: a camera card,
+#                                  an external SSD, the second SSD inside the
+#                                  computer. Click it to open it in Files;
+#                                  right-click it to eject it. GNOME has no
+#                                  desktop icons at all, so the dock is the
+#                                  only place a drive shows up without opening
+#                                  Files.
+#   show-mounts-only-mounted=true  ONLY drives that are open. Turned off, the
+#                                  dock would also show a tile for every
+#                                  partition that is NOT open — including the
+#                                  ones the automount agent deliberately leaves
+#                                  alone (an encrypted drive, a recovery
+#                                  partition) — which is noise at best.
+#   show-mounts-network=true       a network share you opened in Files (a NAS,
+#                                  a shared folder on another computer) gets a
+#                                  tile too. The extension leaves these out by
+#                                  default; on a machine that pulls footage off
+#                                  a NAS, the share is a drive like any other.
+#   show-trash=true                the bin, at the end of the dock — where you
+#                                  drag a file to delete it, like on a Mac.
+#                                  Its default, written down for the same
+#                                  reason as the rest.
+show-mounts=true
+show-mounts-only-mounted=true
+show-mounts-network=true
+show-trash=true
 
 # ------------------------------------------------------------------------------
 # The dock's own colour

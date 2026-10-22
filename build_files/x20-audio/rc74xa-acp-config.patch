@@ -1,0 +1,16 @@
+--- a/sound/soc/amd/acp-config.c
++++ b/sound/soc/amd/acp-config.c
+@@ -24,6 +24,13 @@
+ static int acp_quirk_data;
+ 
+ static const struct dmi_system_id acp70_acpi_flag_override_table[] = {
++	{
++		/* ROG Xbox Ally X20: BIOS 301 advertises DMIC-only with SDW codecs. */
++		.matches = {
++			DMI_EXACT_MATCH(DMI_BOARD_VENDOR, "ASUSTeK COMPUTER INC."),
++			DMI_EXACT_MATCH(DMI_BOARD_NAME, "RC74XA"),
++		},
++	},
+ 	{
+ 		.matches = {
+ 			DMI_MATCH(DMI_BOARD_VENDOR, "ASUSTeK COMPUTER INC."),

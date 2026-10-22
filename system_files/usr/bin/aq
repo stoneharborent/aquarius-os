@@ -35,8 +35,8 @@
 #     aq decky status         is it installed, and is it running
 #
 #     aq drives               what is plugged in right now
-#     aq drives remembered    which inside drives open at every login
-#     aq drives forget NAME   stop opening one of them by itself
+#     aq drives remembered    inside drives an older AquariusOS put in /etc/fstab
+#     aq drives forget NAME   hand one of those back to the automatic mounting
 #
 #     aq welcome              see the AquariusOS welcome again
 #
@@ -75,8 +75,7 @@ USAGE
                         next to the space bar (the one labelled Alt).
                         This changes THE KEYBOARD ONLY. Nothing on the screen
                         moves: the close, minimise and maximise buttons stay
-                        on the RIGHT of every title bar, on both desktops, for
-                        everybody.
+                        on the RIGHT of every title bar, for everybody.
 
     aq keys windows     Use the normal Linux and Windows shortcuts.
                         Copy is Control-C. Nothing about your keyboard is
@@ -88,11 +87,8 @@ USAGE
                         to look if something is wrong.
 
                         You do not have to use a terminal for this. The same
-                        choice has a switch on each desktop:
-                          GNOME  the menu at the TOP-RIGHT of the screen (the
-                                 one with Wi-Fi in it) — "Mac-style keys".
-                          KDE    System Settings > Appearance & Style >
-                                 "Mac or Windows".
+                        choice is a switch in the menu at the TOP-RIGHT of the
+                        screen (the one with Wi-Fi in it) — "Mac-style keys".
 
     aq display scale N  Make EVERYTHING on the screen N times its normal size.
                         This is the setting GNOME calls "Scale". On a 4K
@@ -189,11 +185,10 @@ USAGE
                         Your files are untouched and the old version stays on
                         the disk, so you can always roll back.
 
-    aq login status     Which login screen this computer starts with, and which
-                        desktops it can offer you. AquariusOS ships two — GNOME
-                        and KDE Plasma — and you pick one AT the login screen,
-                        not with a command: click your name, then the small
-                        button at the bottom-right of the password box.
+    aq login status     Which login screen this computer starts with, and what
+                        it offers you. Since 19 October 2026 that is one
+                        desktop, GNOME, with nothing to choose: type your
+                        password and you are in.
 
     aq login scale status
                         Is GNOME's login screen given your display settings,
@@ -222,10 +217,12 @@ USAGE
                         is shown as you type and nothing is saved.
 
     aq drives remembered
-                        A drive that lives INSIDE this computer asks once
-                        whether it should open at every login. This lists the
-                        ones that said yes. 'aq drives forget NAME' stops one,
-                        and 'aq drives ask-again' undoes every "Never ask".
+                        Every drive — inside the computer or plugged in — now
+                        opens by itself, with no question. Before 2026-10-19 an
+                        inside drive asked once and a "yes" was written into
+                        /etc/fstab; this lists any such lines, which keep
+                        working. 'aq drives forget NAME' removes one, so that
+                        drive is opened the new way instead.
 
     aq usb4 status      The chip that runs this computer's fast USB-C sockets
                         (USB4 / Thunderbolt): is its driver attached, and what
@@ -260,14 +257,12 @@ aq keys — choose how keyboard shortcuts work
     aq keys status      What is switched on, and is it running?
 
     This is THE KEYBOARD ONLY. It does not move anything on the screen. The
-    close, minimise and maximise buttons live on the RIGHT of every title bar
-    on both desktops, whichever style you pick.
+    close, minimise and maximise buttons live on the RIGHT of every title bar,
+    whichever style you pick.
 
 WITHOUT A TERMINAL
-    GNOME   the menu at the top-right of the screen, beside Wi-Fi and Dark
-            Style: a switch called "Mac-style keys".
-    KDE     System Settings > Appearance & Style > "Mac or Windows".
-    Either one does exactly what the commands above do.
+    The menu at the top-right of the screen, beside Wi-Fi and Dark Style: a
+    switch called "Mac-style keys". It does exactly what the commands above do.
 EOF
 }
 
@@ -375,32 +370,21 @@ status() {
     # "why are my close buttons on the wrong side" was the same question as
     # "which keyboard style am I on". It is not any more, and somebody who
     # remembers the old behaviour deserves to be told rather than left guessing.
-    echo "  Buttons   : minimise, maximise, close on the RIGHT — always, on both"
-    echo "              desktops, whichever style is on. (Until 2026-09-17 this"
-    echo "              setting moved them; apps that draw their own title bar"
-    echo "              never followed, so now there is one fixed side.)"
+    echo "  Buttons   : minimise, maximise, close on the RIGHT — always, whichever"
+    echo "              style is on. (Until 2026-09-17 this setting moved them;"
+    echo "              apps that draw their own title bar never followed, so now"
+    echo "              there is one fixed side.)"
 
     local desktop="${XDG_CURRENT_DESKTOP:-not set}"
     echo "  Desktop   : ${desktop}"
 
     # Where the switch is WITHOUT a terminal. Added 2026-09-16, when the choice
-    # got a graphical switch on each desktop — before that, this command and the
-    # Welcome window were the only ways to change it, and the Welcome window
-    # only appears once. Both desktops are named whichever one you are sitting
-    # in, because a person who has just switched desktops is exactly the person
-    # asking this question.
-    case "${desktop}" in
-        *KDE* | *Plasma* | *plasma*)
-            echo "  Change it : System Settings > Appearance & Style > 'Mac or Windows'"
-            echo "              (on GNOME it is the menu at the top-right of the screen)"
-            ;;
-        *)
-            echo "  Change it : the menu at the top-right of the screen — the switch"
-            echo "              called 'Mac-style keys', beside Wi-Fi and Dark Style"
-            echo "              (on KDE Plasma it is System Settings > Appearance &"
-            echo "              Style > 'Mac or Windows')"
-            ;;
-    esac
+    # got a graphical switch — before that, this command and the Welcome window
+    # were the only ways to change it, and the Welcome window only appears once.
+    # (From 2026-09-16 to 2026-10-19 KDE Plasma had a second switch, in its
+    # System Settings; it left with Plasma.)
+    echo "  Change it : the menu at the top-right of the screen — the switch"
+    echo "              called 'Mac-style keys', beside Wi-Fi and Dark Style"
 
     if ! command -v systemctl > /dev/null 2>&1; then
         echo "  Running   : cannot tell — there is no systemctl here."
@@ -1890,12 +1874,14 @@ apps_remove() {
 # drawn by the Aquarius Shell — and `aq login use greetd` / `aq login use gdm`
 # swapped between them. That greeter was EXPERIMENTAL, it was the one command
 # that ever black-screened this computer (2026-09-05), and it went when Royce
-# retired the Aquarius Session in favour of GNOME and KDE Plasma. greetd is not
-# in the image at all any more, so the command could only ever have failed.
+# retired the Aquarius Session. greetd is not in the image at all any more, so
+# the command could only ever have failed.
 #
-# WHAT REPLACED IT: GDM lists BOTH desktops. Choosing between GNOME and KDE
-# Plasma happens at the login screen, per person, and GDM remembers — see
-# docs/restart/desktops.md. That is the choice that used to need a command.
+# ⚠️ AND THE DESKTOP CHOICE WENT ON 19 OCTOBER 2026. From 2026-09-15 GDM listed
+# two desktops, GNOME and KDE Plasma, and a person picked one at the login
+# screen. Royce made AquariusOS GNOME only: GDM offers exactly one desktop,
+# shows no session button, and logs you into GNOME. See
+# docs/restart/desktops.md.
 #
 # `aq login status` and `aq login scale` both stay, and both are about GDM.
 #
@@ -1914,16 +1900,17 @@ login_usage() {
 aq login — the login screen
 
 USAGE
-    aq login status        Which login screen is switched on, and which
-                           desktops it can offer you.
+    aq login status        Which login screen is switched on, and what it
+                           offers you (GNOME).
     aq login scale ...     Is GNOME's login screen given your display settings?
                            Off by default. See 'aq login scale --help'.
 
-CHOOSING GNOME OR KDE PLASMA
-    That is not a command. AquariusOS ships both desktops and the login screen
-    lists both: click your name, then the small button at the bottom-right of
-    the password box, and pick one. The login screen remembers your choice for
-    next time. See docs/restart/desktops.md.
+CHOOSING A DESKTOP
+    There is nothing to choose. Since 19 October 2026 AquariusOS has one
+    desktop, GNOME, and the login screen takes you straight into it. (KDE
+    Plasma was on the menu from 15 September to 19 October 2026.) Game Mode is
+    reached from the "Game Mode" icon in your apps, or 'aq game' — not from the
+    login screen. See docs/restart/desktops.md.
 
 IF SOMETHING GOES WRONG
     Press Ctrl+Alt+F3 for a plain text login. Log in there and run:
@@ -2203,12 +2190,16 @@ login_status() {
             ;;
     esac
 
-    # The thing a person actually wants to know now: which desktops can I pick?
+    # The thing a person actually wants to know: what will the login screen
+    # start? Sessions marked NoDisplay=true (Game Mode's) are on the computer
+    # but NOT on the login screen's menu — they are started by name, by the
+    # Game Mode switch — so they are listed separately.
     echo
-    echo "Desktops this login screen can offer you:"
+    echo "What this login screen offers you:"
     local found=0 session name
     for session in /usr/share/wayland-sessions/*.desktop; do
         [ -r "${session}" ] || continue
+        grep -q '^NoDisplay=true' "${session}" && continue
         name="$(sed -n 's/^Name=//p' "${session}" | head -n 1)"
         echo "  ${name:-$(basename "${session}" .desktop)}   ($(basename "${session}"))"
         found=$((found + 1))
@@ -2216,10 +2207,24 @@ login_status() {
     if [ "${found}" -eq 0 ]; then
         echo "  NONE. That is a fault in this image — the login screen would"
         echo "  appear with nothing to log in to."
-    else
+    elif [ "${found}" -gt 1 ]; then
         echo
-        echo "To pick one: click your name at the login screen, then the small"
-        echo "button at the bottom-right of the password box. It remembers."
+        echo "  ⚠️ More than one. AquariusOS is meant to offer GNOME only, with no"
+        echo "  session button; one of these has crept in. That is a fault in this"
+        echo "  image, not a setting — it belongs in a bench note."
+    fi
+    local hidden=""
+    for session in /usr/share/wayland-sessions/*.desktop; do
+        [ -r "${session}" ] || continue
+        grep -q '^NoDisplay=true' "${session}" || continue
+        hidden="${hidden}  $(sed -n 's/^Name=//p' "${session}" | head -n 1)   ($(basename "${session}"))
+"
+    done
+    if [ -n "${hidden}" ]; then
+        echo
+        echo "On this computer but not on the login screen's menu (reached by the"
+        echo "Game Mode icon or 'aq game', never by choosing at the login screen):"
+        printf '%s' "${hidden}"
     fi
 }
 
@@ -2240,7 +2245,7 @@ login_status() {
 # The command is REMOVED rather than kept-and-refusing, on purpose. There is
 # nothing to refuse — a person typing it wanted a login screen that no longer
 # exists, and `aq login --help` now tells them the thing they actually wanted
-# (both desktops are at the login screen already).
+# (and since 2026-10-19 there is only one desktop to log into anyway).
 #
 # ⚠️ ONE MACHINE MIGHT STILL BE SET TO greetd: one that ran the old command
 # before this image. `aq login status` detects exactly that and prints the three
@@ -2424,8 +2429,7 @@ USAGE
 
 COMING BACK FROM GAME MODE
     Steam's power button, bottom-left of the screen, then "Switch to Desktop".
-    No password there either. It puts you back in whichever desktop you came
-    from — GNOME if you were in GNOME, Plasma if you were in Plasma.
+    No password there either. It puts you back on the desktop, GNOME.
 
 IF THE SCREEN IS BLACK OR SCRAMBLED IN GAME MODE
     Ctrl+Alt+F3 gives you a text login on this machine, and from there:
@@ -2465,7 +2469,6 @@ game_status() {
     case "${XDG_CURRENT_DESKTOP:-}" in
         *[Gg]amescope*) echo "Game Mode." ;;
         *[Gg][Nn][Oo][Mm][Ee]*) echo "the GNOME desktop." ;;
-        *[Kk][Dd][Ee]*) echo "the KDE Plasma desktop." ;;
         "") echo "a terminal (nothing is telling me which desktop)." ;;
         *) echo "${XDG_CURRENT_DESKTOP}." ;;
     esac
@@ -2560,8 +2563,11 @@ game_status() {
         echo "   (a switch sets both; a boot into Game Mode sets the automatic ones)"
     fi
     local note="${XDG_STATE_HOME:-${HOME}/.local/state}/aquarius/desktop-session"
-    if [ -r "${note}" ]; then
-        echo "   desktop to come back to:   $(tr -d '[:space:]' < "${note}")"
+    # Since 2026-10-19 the way back is always GNOME, the only desktop; an old
+    # note that still says "plasma" is shown so nobody is surprised by it.
+    echo "   desktop to come back to:   gnome (the only desktop since 2026-10-19)"
+    if [ -r "${note}" ] && [ "$(tr -d '[:space:]' < "${note}")" != "gnome" ]; then
+        echo "   (an older note says '$(tr -d '[:space:]' < "${note}")'; it is ignored)"
     fi
     echo "   what the last switch said: journalctl -t os-session-select -t aquarius-session-root"
 }
@@ -3778,12 +3784,16 @@ usb4() {
 # -----------------------------------------------------------------------------
 AQ_DRIVE_UNLOCK="/usr/libexec/aquarius-drive-unlock"
 
-# The privileged helper behind "remember this inside drive". See its own header,
-# and docs/restart/hardware.md, "Why an inside drive asks once, and an outside
-# drive never asks".
-AQ_REMEMBER_DRIVE="/usr/libexec/aquarius-remember-drive"
+# ⚠️ THE RETIRED "ASK ONCE" FEATURE (2026-09-14 to 2026-10-19). An inside drive
+# used to ask "Mount every login?" and a yes wrote one line into /etc/fstab,
+# ending with this tag. Since 2026-10-19 every inside drive simply mounts at
+# login (/usr/libexec/aquarius-automount) and nothing writes these lines any
+# more — but a machine that said yes before then still HAS them, and they still
+# work. These two names let `aq drives` find and, if asked, remove them.
+# docs/restart/hardware.md, "Every drive opens by itself — inside or plugged in".
+AQ_REMEMBER_TAG="# aquarius-remember-drive"
 
-# Where a person's "never ask me about that drive again" answers are kept.
+# The old "Never ask" answers. Nothing reads this file any more.
 AQ_NEVER_ASK="${AQ_CONF_DIR}/remembered-drives.conf"
 
 drive_usage() {
@@ -3799,15 +3809,21 @@ aq drive — the drives plugged into this computer
 
 DRIVES THAT LIVE INSIDE THIS COMPUTER
 
-A drive you plug in never asks for a password. A drive inside the computer asks
-once, the first time AquariusOS sees it, and then never again.
+Every drive opens by itself with no password — the ones inside the computer
+when you log in, and the ones you plug in the moment you plug them in. The only
+drive that still asks for anything is an ENCRYPTED one, and it asks for its own
+passphrase, because without it there is nothing to read.
 
-    aq drives remembered  Which inside drives open by themselves at every login.
-    aq drives forget NAME Stop opening one by itself. NAME is the folder name
-                          shown by 'aq drives remembered' (or its UUID). It will
-                          be offered again next time.
-    aq drives ask-again   Forget every "Never ask" answer, so the questions come
-                          back at your next login.
+Before 19 October 2026 an inside drive asked once, and a "yes" was written into
+/etc/fstab. Those lines still work. These two commands are for them:
+
+    aq drives remembered  List any inside drives written into /etc/fstab that
+                          way.
+    aq drives forget NAME Remove one of those lines (asks for your password,
+                          because /etc/fstab belongs to the system). NAME is
+                          the folder name 'aq drives remembered' shows, or the
+                          UUID. From your next login that drive is opened the
+                          new way, at /run/media/<you>/<label>, like the rest.
 
 A Mac (APFS) drive is always read-only on AquariusOS. You can copy files OFF it;
 you cannot write TO it. See docs/restart/mac-drives.md.
@@ -3957,59 +3973,89 @@ drive_eject() {
 }
 
 # ------------------------------------------------------------------------------
-# aq drives remembered / forget / ask-again
+# aq drives remembered / forget
 # ------------------------------------------------------------------------------
-# The undo half of "an inside drive asks once". Everything privileged is done by
-# /usr/libexec/aquarius-remember-drive through pkexec — this is only the friendly
-# way in. Settings has no page for this yet; see docs/restart/hardware.md.
-drive_remembered() {
-    if [ ! -x "${AQ_REMEMBER_DRIVE}" ]; then
-        echo "aq: ${AQ_REMEMBER_DRIVE} is missing from this copy of AquariusOS." >&2
-        return 1
-    fi
-    "${AQ_REMEMBER_DRIVE}" list
-    if [ -r "${AQ_NEVER_ASK}" ] && grep -q '^never ' "${AQ_NEVER_ASK}" 2> /dev/null; then
-        echo "You also said \"Never ask\" about:"
-        sed -n 's/^never \([^ ]*\)  *# \(.*\)$/    \2 (UUID \1)/p' "${AQ_NEVER_ASK}"
-        echo
-        echo "Run 'aq drives ask-again' to be asked about those again."
-        echo
-    fi
+# The leftovers of the retired "ask once" feature. Read the note beside
+# AQ_REMEMBER_TAG above first. Nothing here is needed on a machine that never
+# said yes to the old question; on one that did, those drives keep opening the
+# old way (at /media/aquarius/<name>, mounted by the machine itself) until
+# somebody runs `aq drives forget`.
+
+# One line per remembered drive: UUID, folder, filesystem.
+drive_remembered_lines() {
+    awk -v tag="${AQ_REMEMBER_TAG}" '
+        index($0, tag) && $1 ~ /^UUID=/ {
+            folder = $2; gsub(/\\040/, " ", folder)
+            printf "%s\t%s\t%s\n", substr($1, 6), folder, $3
+        }
+    ' /etc/fstab 2> /dev/null
 }
 
-# NAME may be the folder name ('aq drives remembered' prints it) or the UUID
-# itself. Looking the folder up here means nobody has to type a UUID by hand.
+drive_remembered() {
+    local uuid folder fstype any=0
+    while IFS=$'\t' read -r uuid folder fstype; do
+        [ -n "${uuid}" ] || continue
+        any=1
+        printf '%s\n' "$(basename "${folder}")"
+        printf '    at %s (%s)\n' "${folder}" "${fstype}"
+        printf '    UUID %s\n\n' "${uuid}"
+    done < <(drive_remembered_lines)
+    if [ "${any}" -eq 0 ]; then
+        echo "No drives were remembered the old way. Nothing to do."
+        echo
+        echo "Every drive inside this computer opens by itself at login, and"
+        echo "'aq drive list' shows where."
+        return 0
+    fi
+    echo "These were written into /etc/fstab by the old \"Mount every login?\""
+    echo "question, before 19 October 2026. They still work exactly as before."
+    echo "To hand one back to the automatic mounting:  aq drives forget NAME"
+}
+
+# NAME may be the folder name ('aq drives remembered' prints it) or the UUID.
+#
+# ⚠️ IT ONLY EVER REMOVES A LINE THAT CARRIES OUR TAG. A line somebody wrote
+# into /etc/fstab by hand is nobody's business but its author's, even if it
+# names the same drive.
 drive_forget() {
-    local name="$1" uuid="" line
+    local name="$1" uuid="" folder="" u f t
     if [ -z "${name}" ]; then
         echo "aq: which drive? 'aq drives remembered' lists them." >&2
         return 1
     fi
-    if [ ! -x "${AQ_REMEMBER_DRIVE}" ]; then
-        echo "aq: ${AQ_REMEMBER_DRIVE} is missing from this copy of AquariusOS." >&2
+    while IFS=$'\t' read -r u f t; do
+        if [ "$(basename "${f}")" = "${name}" ] || [ "${u}" = "${name}" ]; then
+            uuid="${u}"
+            folder="${f}"
+        fi
+    done < <(drive_remembered_lines)
+    if [ -z "${uuid}" ]; then
+        echo "aq: \"${name}\" is not one of the drives remembered the old way." >&2
+        echo "    'aq drives remembered' lists the ones that are." >&2
         return 1
     fi
-    while IFS= read -r line; do
-        case "${line}" in
-            *"# aquarius-remember-drive")
-                set -- ${line}
-                if [ "$(basename "${2//\\040/ }")" = "${name}" ]; then
-                    uuid="${1#UUID=}"
-                fi
-                ;;
-        esac
-    done < <(cat /etc/fstab 2> /dev/null)
-    [ -n "${uuid}" ] || uuid="${name}"
-    pkexec "${AQ_REMEMBER_DRIVE}" forget --uuid "${uuid}"
-}
+    # The UUID is used inside a sed pattern, so it is held to what a UUID can
+    # be: letters, digits and dashes. Anything else is refused, not escaped.
+    case "${uuid}" in
+        *[!A-Za-z0-9-]*)
+            echo "aq: '${uuid}' does not look like a drive UUID. Nothing changed." >&2
+            return 1
+            ;;
+    esac
 
-drive_ask_again() {
-    if [ ! -e "${AQ_NEVER_ASK}" ]; then
-        echo "You have not told AquariusOS to stop asking about any drive."
-        return 0
+    echo "Removing \"$(basename "${folder}")\" from /etc/fstab. This needs your password,"
+    echo "because /etc/fstab belongs to the system."
+    if ! sudo umount "${folder}" 2> /dev/null; then
+        : # not mounted right now — fine
     fi
-    rm -f "${AQ_NEVER_ASK}"
-    echo "Done. AquariusOS will ask about those drives again at your next login."
+    if ! sudo sed -i "\\|^UUID=${uuid}[[:space:]].*${AQ_REMEMBER_TAG}\$|d" /etc/fstab; then
+        echo "aq: /etc/fstab could not be changed. Nothing was removed." >&2
+        return 1
+    fi
+    sudo rmdir "${folder}" 2> /dev/null || true
+    sudo systemctl daemon-reload
+    echo "Done. From your next login \"$(basename "${folder}")\" opens the new way,"
+    echo "at /run/media/${USER:-you}/<its label>, like every other drive."
 }
 
 drive() {
@@ -4017,7 +4063,13 @@ drive() {
         list | status | "") drive_list ;;
         remembered | remember) drive_remembered ;;
         forget) drive_forget "${2:-}" ;;
-        ask-again | askagain) drive_ask_again ;;
+        ask-again | askagain)
+            # The "Never ask" answers belonged to the retired question. Tidy the
+            # file away and say plainly that there is nothing left to ask.
+            rm -f "${AQ_NEVER_ASK}"
+            echo "Nothing to do: AquariusOS no longer asks about drives. Every drive"
+            echo "inside this computer opens by itself at login."
+            ;;
         eject | unmount) drive_eject "${2:-}" ;;
         unlock)
             if [ ! -x "${AQ_DRIVE_UNLOCK}" ]; then

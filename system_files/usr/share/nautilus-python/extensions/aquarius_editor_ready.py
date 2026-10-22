@@ -6,19 +6,12 @@
 # Clicking it runs the aq-ingest tool on whatever you selected, in the
 # background, and the tool tells you what it did with desktop notifications.
 #
-# It is the GNOME twin of the KDE version, which is a completely different kind
-# of file:
-#
-#   KDE    /usr/share/kio/servicemenus/aquarius-make-editor-ready.desktop
-#          — a settings file. KDE reads it and builds the menu item itself.
-#   GNOME  this file
-#          — a small program. GNOME has no settings-file way to add a menu item;
-#            the supported way is a Python extension, which is what this is.
-#
-# ⚠️ BOTH FILES SHIP ON BOTH IMAGES and that is deliberate — neither desktop
-# reads the other's, so each one is simply ignored where it does not belong.
-# The KDE one is the older of the two and it is the reference for WHAT the menu
-# item does; if you change the command, change it in both.
+# It is a small program, not a settings file: GNOME has no settings-file way to
+# add a menu item; the supported way is a Python extension, which is what this
+# is. (There was once a KDE twin of it, a Dolphin "service menu" settings file,
+# from the Bazzite-era KDE line. It is not in this image, and since 2026-10-19
+# AquariusOS is GNOME only, so this file is the one and only definition of what
+# the menu item does.)
 #
 # THE ONE THING THAT MAKES THIS WORK AT ALL
 # GNOME cannot read this file on its own. It needs the `nautilus-python`

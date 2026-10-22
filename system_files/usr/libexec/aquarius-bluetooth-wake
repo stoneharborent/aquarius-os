@@ -76,7 +76,7 @@ fi
 # -----------------------------------------------------------------------------
 # Has somebody deliberately switched Bluetooth off?
 # -----------------------------------------------------------------------------
-# Switching Bluetooth off in GNOME's or Plasma's settings BLOCKS the radio —
+# Switching Bluetooth off in GNOME's Settings BLOCKS the radio —
 # that is what the "soft block" in rfkill is. If the radio is blocked, the
 # person meant it, and this program must keep its hands off. Turning somebody's
 # Bluetooth back on behind their back would be much worse than the bug.

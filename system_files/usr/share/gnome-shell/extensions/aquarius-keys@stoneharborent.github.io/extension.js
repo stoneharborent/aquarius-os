@@ -19,8 +19,8 @@
 // Before this existed, the only two ways to change that were the Welcome
 // window (which you see once, on your first login) and typing a command in a
 // terminal. Royce asked for a graphical switch on 2026-09-16, and this is the
-// GNOME half of the answer. The KDE Plasma half is a page in System Settings —
-// see kcm/aquarius-keys/ in this repo.
+// answer. (Until 2026-10-19 KDE Plasma had a second one, a page in its System
+// Settings; Plasma has left the image and that page with it.)
 //
 // ------------------------------------------------------------------------------
 // ⚠️ THIS FILE DOES NOT DECIDE ANYTHING. IT ASKS AND IT TELLS.
@@ -75,8 +75,8 @@ const MODES = [
 ];
 
 // The AquariusOS default, used whenever the file is missing or unreadable.
-// ⚠️ THIS RULE IS WRITTEN IN THREE OTHER PLACES — /usr/bin/aq,
-// /usr/libexec/aquarius-keys-run and the KDE page — and all four must agree.
+// ⚠️ THIS RULE IS WRITTEN IN TWO OTHER PLACES — /usr/bin/aq and
+// /usr/libexec/aquarius-keys-run — and all three must agree.
 const DEFAULT_MODE = 'mac';
 
 /**
@@ -198,7 +198,7 @@ class AquariusKeysToggle extends QuickSettings.QuickMenuToggle {
         // Watch the file, so the switch is never out of date
         // ----------------------------------------------------------------------
         // The mode can also be changed from a terminal (`aq keys windows`), from
-        // the Welcome window, or from the KDE page on the other desktop. Rather
+        // or from the Welcome window. Rather
         // than re-reading the file every few seconds, we ask the system to tell
         // us when it changes. The watch works even though the file may not exist
         // yet: being created counts as a change.

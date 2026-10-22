@@ -102,10 +102,10 @@ def main():
         # How thick the title bar and border the desktop draws around this
         # window are: left, right, top, bottom, in pixels.
         #
-        # ⚠️ 2026-09-15, when the OS gained GNOME and KDE Plasma: a move
+        # ⚠️ 2026-09-15, when the OS moved to stock desktops: a move
         # request in X11 says where the FRAME goes, not where the window
         # inside it goes. The Aquarius Session drew no frame, so the two were
-        # the same thing and nobody noticed. GNOME and KDE both draw a real
+        # the same thing and nobody noticed. GNOME draws a real
         # title bar, so asking for y=40 put the title bar at 40 and the window
         # itself 32 pixels lower — and a full-height window then hung off the
         # bottom of the screen, a little further every time it was restored.

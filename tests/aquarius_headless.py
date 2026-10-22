@@ -20,25 +20,41 @@ what actually changed.
 
 So the choice of compositor is asked here, once, and both tests ask this file.
 
-WHAT IT TRIES, IN ORDER, AND WHY
---------------------------------
-  1. kwin_wayland --virtual   KDE Plasma's compositor, in the headless mode KDE
-                              themselves test with. It is in every AquariusOS
-                              image (build_files/41-kde-desktop.sh) and it is
-                              the only one of the three that can be pointed at
-                              a different Xwayland, which the Resolve test needs.
-  2. gnome-shell --headless   GNOME's, in its own headless mode. Also in every
-                              image. Heavier to start, which is why it is
-                              second, but it is a real second answer rather than
-                              a hope. It has no "start this program for me"
-                              switch, so when one is asked for we start that
-                              program ourselves once the desktop is up.
-  3. labwc                    only if somebody running these tests by hand on
-                              their own machine happens to have it. Never in an
+WHAT IT TRIES, IN ORDER, AND WHY — CHANGED 2026-10-19
+------------------------------------------------------
+⚠️ Until 2026-10-19 the first answer was KDE Plasma's kwin_wayland, because
+every AquariusOS image had it. On that day AquariusOS became GNOME only
+(../docs/decision-2026-10-19-gnome-only-and-open-drives.md) and KWin left the
+image. So now:
+
+  1. labwc                    a small compositor that CAN be pointed at a
+                              different Xwayland, which the Resolve test needs,
+                              and the one these tests were first written
+                              against. It is NOT in the AquariusOS image: the
+                              CI steps that run these tests install it into a
+                              throwaway copy of the finished image first (see
+                              .github/workflows/build.yml, "Prepare an invisible
+                              desktop for the window tests"), and a person
+                              running them by hand can `dnf install labwc`.
+                              First, so that CI always uses the same, proven
+                              desktop rather than whichever happens to start.
+  2. gnome-shell --headless   GNOME's own compositor, in its headless mode. It
+                              is in every AquariusOS image, so it is the answer
+                              when labwc is not there. It has no "start this
+                              program for me" switch, so when one is asked for
+                              we start that program ourselves once the desktop
+                              is up. It CANNOT be pointed at a different
+                              Xwayland (see below), so it is skipped when a
+                              test asks for one.
+  3. kwin_wayland --virtual   KDE's compositor — only if a machine running these
+                              tests by hand happens to have it. Never in an
                               AquariusOS image any more.
 
 ⚠️ HOW EACH ONE FINDS Xwayland — MEASURED, NOT GUESSED — 2026-09-15
 -------------------------------------------------------------------
+(Measured 2026-09-15, while KWin was the first answer. Kept because KWin can
+still be the answer on a developer's own machine.)
+
 The Resolve test needs the X half of the desktop, and it needs its OWN Xwayland
 — a little wrapper script that turns GPU rendering off, because a build machine
 has no graphics card (and on the NVIDIA image it has NVIDIA's libraries and no
@@ -94,8 +110,10 @@ refuses the program before a single line of KWin runs, and Python sees:
 
 That is exactly what failed build 35043434847. Two things came of it:
 
-  * the CI steps that run these tests now pass `--cap-add=SYS_NICE` to podman
-    (.github/workflows/build.yml), so KWin can be executed at all; and
+  * the CI steps that run these tests pass `--cap-add=SYS_NICE` to podman
+    (.github/workflows/build.yml), so KWin could be executed at all — harmless
+    now that KWin is not in the image, and kept for anybody whose machine has
+    it; and
   * this file now treats ANY OSError from starting a candidate — cannot be
     executed, is not there, is not a program — as "this desktop cannot run
     here", writes the reason into the attempt list, and moves to the next
@@ -159,6 +177,28 @@ def _candidates(runtime_dir, config_dir, xwayland_wrapper, run_after):
     """
     socket = "aq-test-%d" % os.getpid()
 
+    # 1. labwc — installed into the throwaway test container by CI.
+    labwc = ["labwc", "-C", str(config_dir)]
+    if run_after is not None:
+        labwc += ["-s", str(run_after)]
+    labwc_env = {"WLR_BACKENDS": "headless", "WLR_HEADLESS_OUTPUTS": "1",
+                 "WLR_RENDERER": "pixman"}
+    if xwayland_wrapper is not None:
+        # wlroots reads this one by name. The PATH folder start() makes would
+        # be enough on its own; this is simply the direct way to say it.
+        labwc_env["WLR_XWAYLAND"] = str(xwayland_wrapper)
+    yield ("labwc", labwc, labwc_env, None, True)
+
+    # 2. GNOME Shell — in every AquariusOS image. Skipped when a wrapper is
+    #    asked for: mutter has /usr/bin/Xwayland compiled in.
+    if xwayland_wrapper is None:
+        shell = ["gnome-shell", "--headless", "--wayland",
+                 "--wayland-display", socket,
+                 "--virtual-monitor", "1920x1080"]
+        yield ("gnome-shell", shell, {"MUTTER_DEBUG_DUMMY_MODE_SPECS": "1920x1080"},
+               socket, False)
+
+    # 3. KWin — only on a machine that happens to have it.
     kwin = ["kwin_wayland", "--virtual", "--width", "1920", "--height", "1080",
             "--socket", socket, "--no-global-shortcuts"]
     if xwayland_wrapper is not None:
@@ -174,24 +214,6 @@ def _candidates(runtime_dir, config_dir, xwayland_wrapper, run_after):
     kwin_env = {"KWIN_COMPOSE": "Q", "QT_QPA_PLATFORM": "offscreen",
                 "KWIN_WAYLAND_NO_PERMISSION_CHECKS": "1"}
     yield ("kwin_wayland", kwin, kwin_env, socket, True)
-
-    if xwayland_wrapper is None:
-        shell = ["gnome-shell", "--headless", "--wayland",
-                 "--wayland-display", socket,
-                 "--virtual-monitor", "1920x1080"]
-        yield ("gnome-shell", shell, {"MUTTER_DEBUG_DUMMY_MODE_SPECS": "1920x1080"},
-               socket, False)
-
-    labwc = ["labwc", "-C", str(config_dir)]
-    if run_after is not None:
-        labwc += ["-s", str(run_after)]
-    labwc_env = {"WLR_BACKENDS": "headless", "WLR_HEADLESS_OUTPUTS": "1",
-                 "WLR_RENDERER": "pixman"}
-    if xwayland_wrapper is not None:
-        # wlroots reads this one by name. The PATH folder start() makes would
-        # be enough on its own; this is simply the direct way to say it.
-        labwc_env["WLR_XWAYLAND"] = str(xwayland_wrapper)
-    yield ("labwc", labwc, labwc_env, None, True)
 
 
 def _make_x11_socket_dir(log):

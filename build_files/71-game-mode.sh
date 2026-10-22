@@ -332,15 +332,28 @@ fi
 echo "Every session the login screen can now offer:"
 ls -1 /usr/share/wayland-sessions/ 2> /dev/null | sed 's/^/       /'
 
-# All three have to be there: two desktops and Game Mode. A missing desktop
-# would mean a switch with nowhere to come back to.
-for aq_s in gnome plasma gamescope-session-steam; do
+# Both have to be there: the desktop (GNOME — the only one since 2026-10-19,
+# when KDE Plasma left the image) and Game Mode. A missing desktop would mean a
+# switch with nowhere to come back to.
+for aq_s in gnome gamescope-session-steam; do
     if [ -r "/usr/share/wayland-sessions/${aq_s}.desktop" ]; then
         ok "the login screen can start '${aq_s}'"
     else
         bad "/usr/share/wayland-sessions/${aq_s}.desktop is missing"
     fi
 done
+
+# ⚠️ AND IT IS NOT A CHOICE AT THE LOGIN SCREEN (2026-10-19). Royce asked for
+# no desktop choice at all: "just go full GNOME". So the Game Mode session stays
+# on disk — the switch logs straight into it by name, and the handheld boots
+# into it — but it is taken off the login screen's menu with NoDisplay=true,
+# which leaves GDM with exactly one thing to list (GNOME) and so no session
+# button at all. The full reason it is safe, from GDM's own source, is beside
+# aq_hide_extra_login_sessions in aq-lib.sh. The way into Game Mode is the
+# "Game Mode" icon in the app grid, or `aq game`.
+say "Game Mode is startable, but the login screen offers only GNOME"
+aq_hide_extra_login_sessions
+aq_check_login_offers_only_gnome
 
 # ⚠️ AND GDM IS STILL THE LOGIN SCREEN. This step must never change that. It is
 # asked here because installing Valve's session packages is exactly the kind of
@@ -462,7 +475,7 @@ done
 # a build, and the script's header says why.
 #
 # The result goes into hicolor, which both Aquarius icon themes inherit, so it
-# shows on GNOME and on KDE Plasma without either theme listing it.
+# shows on the desktop without either theme listing it.
 say "The Game Mode icon: Steam's, with a controller badge"
 if python3 /ctx/build_files/aq-game-mode-icon.py /ctx/system_files/usr/share/aquarius/branding/game-mode-badge.png /usr/share/icons \
     > /tmp/aq-game-mode-icon.txt 2>&1; then
@@ -694,11 +707,13 @@ fi
 # ------------------------------------------------------------------------------
 # Steam's power menu has one button out of Game Mode, and the SteamOS script
 # behind it always passes the hard-coded word `plasma` (or `desktop`, or one of
-# the two `*-persistent` spellings). On AquariusOS both desktops ship, so an
-# os-session-select that honoured the name whenever the session file existed
-# sent EVERY "Switch to Desktop" into Plasma — including Royce's, from GNOME,
-# on 2026-09-20. The fix is that there is no literal-name branch anywhere
-# in that file: the remembered desktop decides, full stop. This check is here
+# the two `*-persistent` spellings). When both desktops shipped (2026-09-15 to
+# 2026-10-19), an os-session-select that honoured the name whenever the session
+# file existed sent EVERY "Switch to Desktop" into Plasma — including Royce's,
+# from GNOME, on 2026-09-20. The fix is that there is no literal-name branch
+# anywhere in that file. Since 2026-10-19 there is no Plasma at all and every
+# word resolves to GNOME; the check stays, because a literal-name branch would
+# now send people to a session that does not exist. This check is here
 # because the deleted line is exactly the sort of thing a future reader would
 # put back thinking it was an improvement.
 say "Switch to Desktop obeys the remembered desktop, not Steam's word"
@@ -710,7 +725,7 @@ else
     ok "os-session-select has no literal-desktop override left"
 fi
 aq_file_has /usr/libexec/os-session-select 'aq_session="\$\(aq_remembered_desktop\)"' \
-    "and every word Steam can pass resolves to the desktop you came from"
+    "and every word Steam can pass resolves to the desktop (GNOME)"
 aq_file_has /usr/libexec/os-session-select "asked for 'plasma' from 'Game Mode'" \
     "with the 2026-09-20 journal line written down beside it, so the next reader recognises it"
 
@@ -984,7 +999,7 @@ You are not asked for a password. You cannot type one on a controller.
 ## Coming back
 
 Steam's power button, bottom-left, then **Switch to Desktop**. It puts you back
-in the desktop you came from, GNOME or Plasma.
+on the desktop (GNOME).
 
 ## Starting the computer in Game Mode
 

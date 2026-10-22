@@ -10,14 +10,19 @@
 # not log into.
 #
 # There is no "ours" any more. Royce retired the Aquarius Session and asked for
-# GNOME and KDE Plasma side by side, so he can use each one for real and pick
-# (../docs/decision-2026-09-15-two-desktops.md). GNOME is now one of the two
-# desktops AquariusOS ships, not a safety net for a third — and it is the one a
-# brand-new account lands in, because it is the look Royce approved on the bench
-# on 2026-08-31 and because every AquariusOS window is a GTK 4 window.
+# GNOME and KDE Plasma side by side, so he could use each one for real and pick
+# (../docs/decision-2026-09-15-two-desktops.md).
 #
-# The other desktop is step 4b, build_files/41-kde-desktop.sh, which is written
-# to match this file line for line.
+# ⚠️ AND ON 19 OCTOBER 2026 HE PICKED. GNOME is THE desktop — the only one:
+#
+#     "Remove the first login screen where you can choose the desktop version
+#      and just go full GNOME. That way on startup we go straight into GNOME
+#      login."
+#
+# KDE Plasma (step 4b, build_files/41-kde-desktop.sh) left the image that day.
+# The login screen offers GNOME and nothing else, with no session button; the
+# end of this file checks that. Decision record:
+# ../docs/decision-2026-10-19-gnome-only-and-open-drives.md.
 #
 # WHY THIS IS A LIST AND NOT `dnf group install "GNOME Desktop"`
 #
@@ -86,7 +91,7 @@ aq_dnf install \
 # ------------------------------------------------------------------------------
 # gnome-control-center is the Settings app — including the About page that the
 # next step brands. gnome-tweaks is where a person finds the settings GNOME
-# hides, and a machine set up for someone coming from KDE needs it on day one.
+# hides, and a person who likes to adjust things needs it on day one.
 say "Settings and system tools"
 aq_dnf install \
     gnome-control-center \
@@ -190,64 +195,14 @@ aq_dnf install \
     langpacks-en \
     langpacks-core-en
 
-# gnome-software is the app store. On this machine it is a Flatpak store and
-# nothing else — there is no such thing as installing an RPM onto a running
-# AquariusOS, because the system is an image that gets replaced wholesale.
-say "The app store (Flatpak only)"
-aq_dnf install gnome-software
-
-# ------------------------------------------------------------------------------
-# ...and taking the rpm-ostree plug-in straight back out again
-# ------------------------------------------------------------------------------
-# ⚠️ IF YOU LEAVE THIS OUT, THE MACHINE ASKS FOR A PASSWORD ROUGHLY ONCE AN HOUR,
-#    FOR NOTHING. That is not a theory — it is what the bench PC did, and the
-#    logs named the culprit: `gnome-software --gapplication-service` asking
-#    polkit for `org.projectatomic.rpmostree1.upgrade`, ten times in five days
-#    (bench finding, 2026-09-24).
-#
-# WHAT IS ACTUALLY GOING ON
-#
-# GNOME Software is built out of plug-ins, one per kind of thing it can install:
-# one for Flatpaks, one for firmware, one for RPMs, and one for rpm-ostree — the
-# "the whole operating system is one image" kind, which is what AquariusOS is.
-# That last plug-in ships as its own little package, `gnome-software-rpm-ostree`.
-#
-# Nothing REQUIRES that package. It arrives because `gnome-software` merely
-# *recommends* it, and dnf installs recommendations unless it is told not to.
-# So it lands on the image without anybody choosing it.
-#
-# And then it does the wrong thing. Left switched on it periodically asks
-# rpm-ostree to refresh its repositories and work out an upgrade — and both of
-# those are privileged jobs, so polkit puts a password box on Royce's screen.
-# He types his password, and NOTHING HAPPENS, because AquariusOS does not
-# update that way. Updates here come from `bootc upgrade` through our own
-# updater (/usr/libexec/aquarius-updater, build_files/77-updater.sh). The
-# password box is pure cost: an interruption in exchange for no outcome.
-#
-# WHY REMOVING IT IS THE RIGHT FIX AND NOT A HACK
-#
-# The comment three lines above this block already says what this app is meant
-# to be: "a Flatpak store and nothing else — there is no such thing as
-# installing an RPM onto a running AquariusOS". The plug-in contradicts that
-# sentence. Taking it out is not a workaround for the prompt; it is making the
-# image match the decision that was already written down.
-#
-# The package contains exactly ONE file — the plug-in itself — so there is no
-# collateral damage, and nothing on the system depends on it. GNOME Software
-# keeps every other plug-in and carries on being the Flatpak store.
-#
-# ⚠️ DO NOT "FIX" THIS INSTEAD BY GIVING rpm-ostree A PASSWORD-FREE POLKIT RULE.
-#    That would trade one prompt for a machine where anything can start an
-#    operating-system upgrade with no one looking. The prompt is not the
-#    problem; the useless request behind it is.
-#
-# `--no-autoremove` is deliberate. Without it dnf also sweeps up anything that
-# was pulled in for this package and now looks unused — and the libraries under
-# it are shared with rpm-ostree and bootc, which this operating system very much
-# still needs. We are taking out one plug-in, not opening a question about what
-# else might go with it.
-say "Removing GNOME Software's rpm-ostree plug-in (it asks for a password and does nothing)"
-aq_dnf remove --no-autoremove gnome-software-rpm-ostree
+# GNOME Software owns OS-image, Flatpak and firmware updates (2026-10-18).
+# Ship the image backend in the base so this does not require a local layer.
+# The DNF5 backend otherwise advertises individual RPM updates and tries to
+# write /usr/lib/sysimage/libdnf5/offline on the read-only host. Step 90 removes
+# the incompatible RPM backends after all package installation has finished.
+# Keep the existing polkit policy: this does not grant password-free upgrades.
+say "The app store and OS-image update backend"
+aq_dnf install gnome-software gnome-software-rpm-ostree
 
 # Firefox from Fedora's own package for now. A Flatpak Firefox is arguably the
 # better long-term answer (faster updates, better sandbox) but it cannot be
@@ -386,44 +341,21 @@ done
 echo "This image has: $(gnome-shell --version)"
 
 # ------------------------------------------------------------------------------
-# The app store is a Flatpak store — proved, not assumed
+# GNOME Software's image, application and firmware backends must all exist.
 # ------------------------------------------------------------------------------
-# Reads the finished image back for the plug-in we removed above. Two checks,
-# because "the package is gone" and "the file is gone" can come apart if a
-# future Fedora moves the plug-in into a different package: the file is the
-# thing that actually does the asking, so the file is the thing we look for.
-#
-# If either of these goes red, the bench PC is back to a password box about
-# once an hour that achieves nothing. The long comment beside the removal, up
-# near "The app store (Flatpak only)", explains the whole story.
 if rpm -q gnome-software-rpm-ostree > /dev/null 2>&1; then
-    bad "gnome-software-rpm-ostree is installed — GNOME Software will ask for a password to upgrade an OS it cannot upgrade"
+    ok "GNOME Software's image-update package is installed"
 else
-    ok "gnome-software-rpm-ostree is not installed"
+    bad "GNOME Software's image-update package is missing"
 fi
-
-# ⚠️ `-print -quit` AND NOT `| head -1`. Piping find into head is the trap
-# documented above aq_output_has() in aq-lib.sh: head stops after one line, find
-# is killed by a broken pipe, and `set -o pipefail` then fails the whole
-# assignment — which under `set -e` ends the build. find's own -quit stops it
-# after the first match with no pipe and no signal. The `|| true` covers the
-# ordinary case of finding nothing, which is the result we are hoping for here.
-AQ_GS_OSTREE_PLUGIN="$(find /usr/lib64/gnome-software -name 'libgs_plugin_rpm-ostree.so' -print -quit 2>/dev/null || true)"
-if [ -n "${AQ_GS_OSTREE_PLUGIN}" ]; then
-    bad "the rpm-ostree plug-in is still in the image at ${AQ_GS_OSTREE_PLUGIN} — it is what puts the pointless password box on screen"
-else
-    ok "no rpm-ostree plug-in in GNOME Software — the app store cannot ask to upgrade the OS"
-fi
-
-# And the other half of the same sentence: removing the plug-in must not have
-# taken the Flatpak store down with it. Without this line the two checks above
-# would also pass on an image with no app store at all.
-AQ_GS_FLATPAK_PLUGIN="$(find /usr/lib64/gnome-software -name 'libgs_plugin_flatpak.so' -print -quit 2>/dev/null || true)"
-if [ -n "${AQ_GS_FLATPAK_PLUGIN}" ]; then
-    ok "GNOME Software still has its Flatpak plug-in — the store still works"
-else
-    bad "GNOME Software has no Flatpak plug-in — the app store can no longer install anything"
-fi
+for aq_backend in rpm-ostree flatpak fwupd; do
+    aq_plugin="$(find /usr/lib64/gnome-software -name "libgs_plugin_${aq_backend}.so" -print -quit 2>/dev/null || true)"
+    if [ -n "${aq_plugin}" ]; then
+        ok "GNOME Software has its ${aq_backend} backend"
+    else
+        bad "GNOME Software is missing its ${aq_backend} backend"
+    fi
+done
 
 # The session file GDM reads. If this is missing the login screen appears and
 # offers nothing to log in to — a symptom that looks like a broken graphics
@@ -545,5 +477,82 @@ for aq_theme_dir in \
         bad "${aq_theme_dir} is missing — a desktop-identity default would silently fall back"
     fi
 done
+
+# ------------------------------------------------------------------------------
+# Which desktop a brand-new person lands in: GNOME, the only one
+# ------------------------------------------------------------------------------
+# GDM remembers, per person, which session they last logged into. It keeps that
+# in AccountsService, one small file per account under /var/lib/AccountsService.
+# A brand-new account has no such file yet, and what fills it in the first time
+# is a TEMPLATE at /usr/share/accountsservice/user-templates/standard.
+#
+# Since 2026-10-19 GNOME is the only desktop, so this is less a choice than a
+# statement of fact — but it is written down so that a brand-new account never
+# depends on GDM's own guess. (This block lived in the KDE step, 41, from
+# 2026-09-15 to 2026-10-19, when GNOME was the default of two.)
+#
+# Accounts that already exist and last used KDE Plasma are pointed at GNOME at
+# every boot by /usr/libexec/aquarius-login-mode, before the login screen
+# starts — see that file's step 0.
+say "GNOME is the desktop a brand-new account lands in"
+AQ_TEMPLATE_DIR="/usr/share/accountsservice/user-templates"
+AQ_TEMPLATE="${AQ_TEMPLATE_DIR}/standard"
+if [ -r "${AQ_TEMPLATE}" ] && grep -Eq '^[[:space:]]*Session[[:space:]]*=[[:space:]]*gnome[[:space:]]*$' "${AQ_TEMPLATE}"; then
+    echo "  ${AQ_TEMPLATE} already names GNOME — leaving it alone:"
+    sed 's/^/       /' "${AQ_TEMPLATE}"
+else
+    mkdir -p "${AQ_TEMPLATE_DIR}"
+    cat > "${AQ_TEMPLATE}" << 'AQ_TEMPLATE_EOF'
+# AquariusOS — what a brand-new account starts in.
+#
+# AccountsService copies this into /var/lib/AccountsService/users/<name> the
+# first time somebody logs in, and GDM reads it to decide which session to
+# start. Since 2026-10-19 AquariusOS has one desktop, GNOME, and this says so.
+#
+# Session=gnome  means the GNOME Wayland session (/usr/share/wayland-sessions/
+# gnome.desktop).
+[User]
+Session=gnome
+XSession=
+SystemAccount=false
+AQ_TEMPLATE_EOF
+fi
+aq_file_has "${AQ_TEMPLATE}" '^Session=gnome$' \
+    "a brand-new account is given GNOME to start in"
+if [ -r /usr/share/wayland-sessions/gnome.desktop ]; then
+    ok "and /usr/share/wayland-sessions/gnome.desktop really exists"
+else
+    bad "the template names gnome, but /usr/share/wayland-sessions/gnome.desktop is not in this image"
+fi
+
+# ------------------------------------------------------------------------------
+# One desktop, one login screen — and nothing that would bring a choice back
+# ------------------------------------------------------------------------------
+# GDM shows a session button under the password box only when it has more than
+# one session to list. This step is where the desktop is installed, so this is
+# where we prove nothing else crept in as somebody's dependency. (Game Mode's
+# session arrives later, in step 71, which takes it off the menu and checks the
+# whole list again.)
+say "GNOME is the only desktop, and GDM the only login screen"
+for aq_forbidden in plasma-workspace plasma-desktop kwin sddm lightdm greetd; do
+    if rpm -q "${aq_forbidden}" > /dev/null 2>&1; then
+        bad "${aq_forbidden} is installed — AquariusOS is GNOME only since 2026-10-19, with GDM as its one login screen. Pulled in by: $(rpm -q --whatrequires "${aq_forbidden}" 2> /dev/null | tr '\n' ' ')"
+    else
+        ok "${aq_forbidden} is not in the image"
+    fi
+done
+for aq_gone in /usr/share/wayland-sessions/plasma.desktop \
+    /usr/share/xsessions/plasmax11.desktop \
+    /usr/share/wayland-sessions/aquarius.desktop; do
+    if [ -e "${aq_gone}" ]; then
+        bad "${aq_gone} is in the image — the login screen would offer a desktop that is not supposed to be here"
+    else
+        ok "no $(basename "${aq_gone}") at the login screen"
+    fi
+done
+# Anything else a GNOME package brought along (a "GNOME Classic", say) is kept
+# but taken off the menu, for the same reason as Game Mode's session.
+aq_hide_extra_login_sessions
+aq_check_login_offers_only_gnome
 
 aq_finish "The GNOME desktop"

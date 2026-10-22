@@ -147,17 +147,15 @@ DEFAULT_KEYBOARD = KEYBOARD_CHOICES[0][0]
 # ⚠️ IT USED TO NAME ONLY THE COMMAND, because until 2026-09-16 the command was
 # genuinely the only way to change this afterwards, and promising a settings
 # panel that does not exist is how a welcome screen becomes a liar. Since then
-# both desktops really do have a switch — the GNOME add-on in the quick settings
-# menu and the KDE page in System Settings — so the panel is named first and the
-# command second. If either switch is ever removed, this sentence comes back
-# with it.
+# the desktop really does have a switch — the GNOME add-on in the quick settings
+# menu — so the panel is named first and the command second. If the switch is
+# ever removed, this sentence comes back with it. (Until 2026-10-19 it also
+# named KDE Plasma's System Settings page; Plasma has left the image.)
 KEYBOARD_NOTE = (
-    "You can change this any time. On GNOME it is in the menu at the top-right "
-    "of the screen, beside Wi-Fi; on KDE Plasma it is System Settings > "
-    "Appearance & Style > Mac or Windows. In a terminal it is "
-    "aq keys mac or aq keys windows. Every one of them takes effect straight "
-    "away, with no need to log out. It is the keyboard only — nothing on the "
-    "screen moves."
+    "You can change this any time. It is in the menu at the top-right of the "
+    "screen, beside Wi-Fi. In a terminal it is aq keys mac or aq keys windows. "
+    "Either one takes effect straight away, with no need to log out. It is the "
+    "keyboard only — nothing on the screen moves."
 )
 
 # The three things worth knowing on day one. Not a manual: three sentences that
@@ -176,11 +174,15 @@ TIPS = [
         "Everything you skipped is still there, and nothing you installed is "
         "stuck. Open it from your apps, or type aq apps list.",
     ),
+    # ⚠️ UNTIL 2026-10-19 THIS TIP SAID "GNOME is one arrow key away at login"
+    # and explained the two desktops. AquariusOS is GNOME only since then, so
+    # the third tip is the other thing that changed that day: drives.
     (
-        "computer-symbolic",
-        "GNOME is one arrow key away at login",
-        "AquariusOS ships two desktops, GNOME and KDE Plasma. The login screen can "
-        "start a plain GNOME desktop instead. Nothing is lost either way.",
+        "drive-harddisk-symbolic",
+        "Every drive opens by itself",
+        "Drives inside this computer open when you log in, and anything you plug "
+        "in opens straight away — no password. Each one has its own icon in the "
+        "dock.",
     ),
 ]
 

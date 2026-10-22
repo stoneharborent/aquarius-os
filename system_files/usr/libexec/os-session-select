@@ -6,8 +6,7 @@
 #
 # AquariusOS can show you two completely different faces:
 #
-#   * THE DESKTOP — GNOME or KDE Plasma, windows, Files, Resolve. What you work
-#     in.
+#   * THE DESKTOP — GNOME: windows, Files, Resolve. What you work in.
 #   * GAME MODE — Steam owning the whole screen, driven with a controller from
 #     the sofa. The same thing a Steam Deck shows.
 #
@@ -40,10 +39,14 @@
 #      Since GDM 50 that means TWO settings written together, the timed login
 #      and the automatic one; the long reason is in the `switch-login` job of
 #      /usr/libexec/aquarius-session-root.
-#   3. Which DESKTOP you came from, so that "Switch to Desktop" puts you back in
-#      GNOME if you were in GNOME and in Plasma if you were in Plasma. That one
-#      is remembered in your own home folder, because it is yours:
+#   3. Which desktop you came from, in your own home folder:
 #          ~/.local/state/aquarius/desktop-session
+#      ⚠️ Since 2026-10-19 that is always "gnome" — AquariusOS has ONE desktop
+#      (decision ../docs/decision-2026-10-19-gnome-only-and-open-drives.md).
+#      From 2026-09-15 to then it could also say "plasma", and the way back
+#      out of Game Mode followed it. The note is still written, so that a
+#      second desktop could come back one day without rewriting this; but
+#      the way back now ALWAYS lands in GNOME, whatever an old note says.
 #
 # Steps 1 and 2 need an administrator, so they are handed to
 # /usr/libexec/aquarius-session-root through pkexec. On this computer, for the
@@ -82,39 +85,27 @@ die() {
 # -----------------------------------------------------------------------------
 # Which desktop am I in right now?
 # -----------------------------------------------------------------------------
-# Answers with the name of a session file this image ships — `gnome` or
-# `plasma` — or nothing at all if we are not in a desktop (which is the case
-# when Steam calls this from inside Game Mode).
+# Answers `gnome`, or nothing at all if we are not in a desktop (which is the
+# case when Steam calls this from inside Game Mode).
 #
-# The desktop announces itself in XDG_CURRENT_DESKTOP ("GNOME" or "KDE"). When
-# that is empty — a systemd user service only sees what the desktop pushed into
-# it — we ask what is actually running, the same way aquarius-keys-run does.
+# The desktop announces itself in XDG_CURRENT_DESKTOP ("GNOME"). When that is
+# empty — a systemd user service only sees what the desktop pushed into it — we
+# ask whether GNOME Shell is actually running.
+#
+# ⚠️ ONE DESKTOP SINCE 2026-10-19. Until then this could also answer `plasma`.
+# KDE Plasma is no longer in the image, so anything that is not Game Mode and
+# not obviously "no desktop at all" is GNOME.
 aq_current_desktop() {
     local d="${XDG_CURRENT_DESKTOP:-}"
     if [ -z "${d}" ] && command -v systemctl > /dev/null 2>&1; then
         d="$(systemctl --user show-environment 2> /dev/null | sed -n 's/^XDG_CURRENT_DESKTOP=//p' | tail -n 1)"
     fi
     case "${d}" in
-        *[Gg][Nn][Oo][Mm][Ee]*)
-            # The same trap as in aquarius-keys-run: the user's systemd manager
-            # remembers the LAST desktop it was told about within a boot, so a
-            # person who used GNOME this morning and Plasma now can still have
-            # the word GNOME sitting there. Ask what is running.
-            if pgrep -x gnome-shell > /dev/null 2>&1; then
-                echo gnome
-            elif pgrep -x kwin_wayland > /dev/null 2>&1; then
-                echo plasma
-            else
-                echo gnome
-            fi
-            ;;
-        *[Kk][Dd][Ee]* | *[Pp][Ll][Aa][Ss][Mm][Aa]*) echo plasma ;;
         *[Gg][Aa][Mm][Ee][Ss][Cc][Oo][Pp][Ee]*) echo "" ;;
+        *[Gg][Nn][Oo][Mm][Ee]*) echo gnome ;;
         *)
             if pgrep -x gnome-shell > /dev/null 2>&1; then
                 echo gnome
-            elif pgrep -x kwin_wayland > /dev/null 2>&1; then
-                echo plasma
             else
                 echo ""
             fi
@@ -125,16 +116,18 @@ aq_current_desktop() {
 # -----------------------------------------------------------------------------
 # Which desktop should "Switch to Desktop" take me back to?
 # -----------------------------------------------------------------------------
-# The one we wrote down on the way into Game Mode. If there is nothing written
-# down — a machine that booted straight into Game Mode and has never been to a
-# desktop — the answer is GNOME, which every AquariusOS image has.
+# GNOME. Always, since 2026-10-19 — it is the only desktop on the machine. A
+# note left behind from before then that says "plasma" is read, reported in the
+# journal, and overruled: following it would send the person to a desktop that
+# is no longer installed, which is a login screen that comes straight back.
 aq_remembered_desktop() {
     local d=""
     [ -r "${AQ_REMEMBERED}" ] && d="$(tr -d '[:space:]' < "${AQ_REMEMBERED}")"
     case "${d}" in
-        gnome | plasma) echo "${d}" ;;
-        *) echo gnome ;;
+        "" | gnome) ;;
+        *) say "an old note says you came from '${d}'; that desktop is no longer on this computer, so you are going to GNOME." >&2 ;;
     esac
+    echo gnome
 }
 
 aq_remember_desktop() {
@@ -437,8 +430,6 @@ aq_from="$(aq_current_desktop)"
 # -----------------------------------------------------------------------------
 # ⚠️ THE WORD `plasma` FROM STEAM IS NOT A CHOICE. (Bench 3, 2026-09-20.)
 # -----------------------------------------------------------------------------
-# This is the trap that cost us a bench run, and it looks like a feature.
-#
 # Steam's power menu has ONE button out of Game Mode: "Switch to Desktop". It
 # does not ask you which desktop. But the SteamOS script it runs was written
 # for a computer where the desktop is always KDE Plasma, so the word it passes
@@ -447,27 +438,19 @@ aq_from="$(aq_current_desktop)"
 #     desktop   plasma   plasma-wayland-persistent   plasma-x11-persistent
 #
 # In SteamOS's vocabulary `plasma` IS the word for "the desktop". It is not the
-# user picking Plasma over GNOME; the user was never asked.
-#
-# This program used to take the word literally whenever the named session file
-# existed — and on AquariusOS BOTH desktops ship, so `plasma.desktop` always
-# exists. The result: Switch to Desktop always landed in Plasma, no matter
-# which desktop you had left. Royce hit it on 2026-09-20 with GNOME remembered:
+# user picking Plasma; the user was never asked. On 2026-09-20, when both
+# desktops shipped, this program took the word literally and Switch to Desktop
+# always landed in Plasma — which then failed to light any screen on Royce's
+# NVIDIA + AMD-iGPU machine. The journal said:
 #
 #     steam[12934]: os-session-select: asked for 'plasma' from 'Game Mode'; next session: plasma
 #
-# and Plasma then failed to light any screen on his NVIDIA + AMD-iGPU machine,
-# so the bug arrived as a black monitor rather than as "wrong desktop".
-#
-# SO: EVERY WORD STEAM CAN PASS MEANS "THE DESKTOP I CAME FROM". There is no
-# literal-name branch here any more, deliberately, and there must not be one
-# added back — the memory in ~/.local/state/aquarius/desktop-session is the
-# only thing that decides, with GNOME as the fallback when there is nothing
-# written down. Nothing in AquariusOS asks this program for a desktop by name:
-# `aq game` and the app-grid launcher only ever go the other way, into Game
-# Mode (`/usr/libexec/aquarius-game-mode` calls us with `gamescope`). If a
-# by-name switch is ever wanted for a person, give it a spelling Steam cannot
-# produce — a `--to gnome` / `--to plasma` flag — never a bare word.
+# Since 2026-10-19 there is no Plasma on AquariusOS at all, so the rule is even
+# simpler and must stay this way: EVERY WORD STEAM CAN PASS MEANS "THE
+# DESKTOP", AND THE DESKTOP IS GNOME. There is no literal-name branch here, and
+# there must not be one added back. `aq game` and the app-grid launcher only
+# ever go the other way, into Game Mode (`/usr/libexec/aquarius-game-mode`
+# calls us with `gamescope`).
 # -----------------------------------------------------------------------------
 case "${aq_target}" in
     gamescope | game)
@@ -475,7 +458,8 @@ case "${aq_target}" in
         aq_remember_desktop "${aq_from}"
         ;;
     desktop | plasma | plasma-wayland-persistent | plasma-x11-persistent | gnome)
-        # All five words mean the same thing: take me back to my desktop.
+        # All five words mean the same thing: take me back to the desktop,
+        # which is GNOME.
         aq_session="$(aq_remembered_desktop)"
         ;;
     *)

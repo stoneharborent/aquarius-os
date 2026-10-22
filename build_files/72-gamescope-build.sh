@@ -32,7 +32,7 @@
 # check, and hands it to the display hardware anyway. The display hardware reads
 # straight on past the end of the first piece — into whatever happens to be
 # next, which is why you see part of another program's window. AMD and Intel are
-# unaffected. GNOME and KDE are unaffected, because they ask for that memory a
+# unaffected. GNOME (and KDE) are unaffected, because they ask for that memory a
 # different way (through GBM), which the driver always makes contiguous.
 #
 # THE FIX is to make gamescope ask the same way GNOME does. Somebody has already
