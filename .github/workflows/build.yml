@@ -537,6 +537,12 @@ jobs:
         run: ./tests/test-gdm-guard.sh
       - name: Rehearse first handheld boot and desktop boot settings
         run: python3 tests/test-game-login.py
+      - name: Check handheld hardware matching, display defaults, and Steam bootstrap recovery
+        run: |
+          python3 tests/test-handheld-board.py
+          python3 tests/test-ally-armoury.py
+          python3 tests/test-handheld-display.py
+          python3 tests/test-steam-session.py
       - name: Check the login screen waits the right amount for the boot animation
         run: ./tests/test-boot-hold.sh
       # external drive, a Mac's internal disk with its five volumes, and a
@@ -7026,8 +7032,11 @@ jobs:
           if [ -r "$Y" ]; then
             ok "the Xbox Ally device profile is in the image"
             grep -q 'RC73XA' "$Y" \
-              && ok "it matches board RC73XA — the Xbox Ally X, which is the machine on the bench" \
+              && ok "it retains the RC73XA board match" \
               || bad "the profile does not mention RC73XA"
+            grep -q 'board_name: RC74XA' "$Y" \
+              && ok "it matches the RC74XA board measured on the handheld" \
+              || bad "the profile does not match the physical RC74XA handheld"
             grep -q 'product_id: 0x1b4c' "$Y" \
               && ok "it matches the built-in controller's USB id" \
               || bad "the profile does not match the built-in controller"

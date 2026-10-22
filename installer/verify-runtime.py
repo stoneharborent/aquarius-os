@@ -87,3 +87,18 @@ for driver in ('hid_asus', 'xpad', 'uinput', 'uhid'):
                     '--show-depends', driver], check=True)
 subprocess.run(['chroot', str(root), 'setfacl', '--version'], check=True)
 print('Controller kernel modules and ACL helper verified')
+
+
+# The simplified summary must still expose storage and account validation.
+import configparser
+import xml.etree.ElementTree as ET
+setup = configparser.ConfigParser()
+setup.read(root / 'etc/anaconda/conf.d/99-aquarius.conf')
+assert setup['User Interface']['hidden_spokes'].split() == ['PasswordSpoke']
+summaries = [p for p in root.rglob('summary.glade')
+             if ET.parse(p).find(".//object[@id='summaryWindow']") is not None]
+assert len(summaries) == 1
+summary = ET.parse(summaries[0])
+assert summary.find(".//object[@id='continueButton']/property[@name='label']").text == '_Install AquariusOS'
+assert 'erase data' in summary.find(".//object[@id='label1']/property[@name='label']").text
+print('Simplified installer retains drive/account pages and explicit erase warning')

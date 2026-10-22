@@ -123,6 +123,13 @@ AQ_ALLY_MAP="usr/share/inputplumber/capability_maps/aquarius_ally_x_dinput.yaml"
 # desktop is on screen, and the brightness slider dimming the stick rings. See
 # section 4c below.
 AQ_DESKTOP_FILES=(
+    usr/share/aquarius/audio/tas2783.conf
+    usr/libexec/aquarius-ally-armoury
+    usr/lib/systemd/system/aquarius-ally-armoury.service
+    usr/libexec/aquarius-handheld-display
+    etc/xdg/autostart/aquarius-handheld-display.desktop
+    usr/libexec/aquarius-steam-session
+    usr/lib/systemd/user/gamescope-session-plus@.service.d/70-aquarius-steam-bootstrap.conf
     usr/libexec/aquarius-handheld-input
     usr/share/aquarius/inputplumber/desktop.yaml
     etc/xdg/autostart/aquarius-handheld-input.desktop
@@ -381,7 +388,7 @@ echo "  What that means: ${AQ_IP_NOTE}"
 # InputPlumber will happily run and do nothing useful.
 AQ_IP_YAML="/usr/share/inputplumber/devices/50-rog_xbox_ally.yaml"
 aq_file_has "${AQ_IP_YAML}" 'RC73XA' \
-    "InputPlumber's profile matches this exact board (RC73XA — the Xbox Ally X)"
+    "InputPlumber retains the RC73XA Xbox Ally match"
 aq_file_has "${AQ_IP_YAML}" 'product_id: 0x1b4c' \
     "and it matches the built-in controller's USB id"
 aq_file_has "${AQ_IP_YAML}" 'name: bmi323-imu' \
@@ -427,6 +434,17 @@ python3 - "${AQ_IP_YAML}" << 'AQ_PY'
 import sys
 path = sys.argv[1]
 text = open(path).read()
+# The physical RC74XA bench unit reports a different board ID from the
+# RC73XA/RC73YA entries shipped by InputPlumber 0.82. Keep those supported
+# boards and add the observed revision to the SAME composite configuration.
+if "board_name: RC74XA" not in text:
+    anchor = "matches:\n"
+    if text.count(anchor) != 1:
+        sys.exit(f"expected one matches list in {path}")
+    text = text.replace(anchor, anchor +
+        "  - dmi_data:\n"
+        "      board_name: RC74XA\n"
+        "      sys_vendor: ASUS\n")
 old = (
     "  - group: gamepad\n"
     "    unique: false\n"
@@ -442,12 +460,47 @@ if text.count(old) != 1:
     sys.exit(f"the evdev source entry in {path} is not where it was on 2026-10-04 "
              f"(found {text.count(old)} copies) — InputPlumber changed its config; "
              "look at it before deciding where the map belongs now")
+# The programmed rear paddles emit F17/F18, measured separately on RC74XA.
+# The package's allowlist otherwise discards them before aqx1 can map them.
+key_anchor = "        - Keyboard:KeyF16\n"
+if text.count(key_anchor) != 1:
+    sys.exit(f"expected one F16 allowlist entry in {path}; review package changes")
+# InputPlumber 0.82 filters AFTER its per-source translation. Allow the
+# translated paddle events as well as keys for the composite-map fallback.
+for capability in ("Keyboard:KeyF17", "Keyboard:KeyF18",
+                   "Gamepad:Button:LeftPaddle1", "Gamepad:Button:RightPaddle1"):
+    entry = f"        - {capability}\n"
+    if entry not in text:
+        text = text.replace(key_anchor, key_anchor + entry)
 open(path, "w").write(text.replace(old, new))
 AQ_PY
+aq_file_has "${AQ_IP_YAML}" 'board_name: RC74XA' \
+    "the profile matches the RC74XA board measured on the handheld"
 aq_file_has "${AQ_IP_YAML}" '^    capability_map_id: aqx1$' \
     "the controller's evdev source now uses the AquariusOS map"
 aq_file_has "${AQ_IP_YAML}" '^capability_map_id: aly2$' \
     "and the whole device still uses the stock map for the extra keys"
+
+
+# Keyboard interfaces emit logical keys; their paddle translation belongs in
+# the composite map, in addition to the raw gamepad evdev map above.
+python3 - /usr/share/inputplumber/capability_maps/ally_type2.yaml << 'AQ_PADDLES'
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+text = path.read_text()
+anchor = "filtered_events:"
+if text.count(anchor) != 1 or "id: aly2" not in text:
+    sys.exit("Ally composite map changed; review before adding paddle keys")
+for key, button in (("KeyF17", "LeftPaddle1"), ("KeyF18", "RightPaddle1")):
+    if f"keyboard: {key}" in text:
+        sys.exit(f"{key} is already mapped; review upstream mapping")
+    entry = (f"  - name: Aquarius {key} paddle\n"
+             f"    source_events:\n      - keyboard: {key}\n"
+             f"    target_event:\n      gamepad:\n        button: {button}\n\n")
+    text = text.replace(anchor, entry + anchor)
+path.write_text(text)
+AQ_PADDLES
 
 # ==============================================================================
 # 3. The sliders and the power button
@@ -809,6 +862,14 @@ for aq_f in "${AQ_DESKTOP_FILES[@]}"; do
     fi
 done
 
+
+# The bench-proven TAS2783 speaker profile is absent in the current ALSA
+# package. Prefer the package's version when an update supplies it.
+if [ ! -f /usr/share/alsa/ucm2/sof-soundwire/tas2783.conf ]; then
+    install -Dm644 /usr/share/aquarius/audio/tas2783.conf \
+        /usr/share/alsa/ucm2/sof-soundwire/tas2783.conf
+fi
+
 if bash -n /usr/libexec/aquarius-handheld-input 2> /tmp/aq-sh.txt; then
     ok "aquarius-handheld-input is valid bash"
 else
@@ -1027,6 +1088,7 @@ AQ_USR=/usr/lib/systemd/user
 AQ_GAME_WANTS="${AQ_USR}/gamescope-session-plus@steam.service.wants"
 
 aq_link_on "${AQ_SYS}/multi-user.target.wants" "${AQ_SYS}" inputplumber.service
+aq_link_on "${AQ_SYS}/multi-user.target.wants" "${AQ_SYS}" aquarius-ally-armoury.service
 aq_link_on "${AQ_SYS}/sleep.target.wants" "${AQ_SYS}" inputplumber-suspend.service
 aq_link_on "${AQ_SYS}/multi-user.target.wants" "${AQ_SYS}" steamos-manager.service
 aq_link_on "${AQ_SYS}/multi-user.target.wants" "${AQ_SYS}" powerstation.service
@@ -1295,7 +1357,8 @@ cat > "${AQ_HANDHELD_NOTE}" << EOF
 AquariusOS — the handheld image (aquarius-os-handheld)
 
 This image is the AMD/Intel AquariusOS, built for ONE computer: the
-ROG Xbox Ally X (board RC73XA). It starts straight into Game Mode.
+ROG Xbox Ally X (bench board RC74XA; RC73XA also supported).
+It starts straight into Game Mode.
 
 InputPlumber (the program that makes the built-in controller work as one
 controller, with its paddles and its gyro):

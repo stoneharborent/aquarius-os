@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Handheld display defaults
+Exec=/usr/libexec/aquarius-handheld-display
+TryExec=/usr/libexec/aquarius-handheld-display
+OnlyShowIn=GNOME;
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

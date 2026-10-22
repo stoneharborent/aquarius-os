@@ -33,6 +33,7 @@ chroot "$root" gdk-pixbuf-query-loaders-64 --update-cache
 python3 /installer/extract-controller.py "$work/payload" "$root" > "$work/payload-digest"
 cp -a /installer/runtime/. "$root/"
 python3 /installer/apply-branding.py "$root" /assets
+python3 /installer/simplify-setup.py "$root"
 mkdir -p "$root/usr/share/aquarius"
 cp "$work/payload-digest" "$root/usr/share/aquarius/installer-handheld"
 

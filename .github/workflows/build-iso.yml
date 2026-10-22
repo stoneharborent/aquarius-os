@@ -266,6 +266,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 tests/test-handheld-installer.py
+          python3 tests/test-installer-setup.py
           mapfile -t images < <(find "${OUT}" -name install.iso -type f)
           test "${#images[@]}" -eq 1
           iso_dir="$(dirname "$(realpath "${images[0]}")")"

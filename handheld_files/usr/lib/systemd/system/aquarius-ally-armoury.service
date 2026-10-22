@@ -1,0 +1,20 @@
+[Unit]
+Description=ROG Xbox Ally RC74XA Armoury Quick Access fallback
+After=inputplumber.service aquarius-ally-controller.service
+Wants=inputplumber.service
+ConditionPathExists=/sys/class/dmi/id/board_name
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecCondition=/usr/bin/grep -qx RC74XA /sys/class/dmi/id/board_name
+ExecStart=/usr/libexec/aquarius-ally-armoury
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,90 @@
+#!/usr/bin/python3
+"""Bridge the RC74XA Armoury button to Steam Quick Access.
+
+Captured 5a a6 report and Guide+A action physically verified 2026-10-16.
+Read-only HID access; only the generic asus driver needs this fallback.
+Systemd restarts on disconnect or InputPlumber restart to rediscover devices.
+"""
+import os
+from pathlib import Path
+import select
+import subprocess
+import sys
+
+BUS = 'org.shadowblip.InputPlumber'
+IFACE = 'org.shadowblip.Input.CompositeDevice'
+PRESS = bytes.fromhex('5aa600000000')
+RELEASE = bytes.fromhex('5a0000000000')
+
+class Button:
+    def __init__(self):
+        self.down = False
+
+    def update(self, report):
+        if report == RELEASE:
+            self.down = False
+        elif report == PRESS and not self.down:
+            self.down = True
+            return True
+        return False
+
+
+def composite():
+    tree = subprocess.check_output(['busctl', '--system', '--list', 'tree', BUS], text=True, timeout=5)
+    found = []
+    for path in tree.splitlines():
+        path = path.strip()
+        if '/CompositeDevice' not in path:
+            continue
+        name = subprocess.run(['busctl', '--system', 'get-property', BUS, path,
+                               IFACE, 'Name'], capture_output=True, text=True, check=True, timeout=5)
+        if name.stdout.strip() == 's "ASUS ROG Xbox Ally"':
+            found.append(path)
+    if len(found) != 1:
+        raise RuntimeError('Expected exactly one ASUS ROG Xbox Ally composite')
+    return found[0]
+
+
+def vendor():
+    nodes = []
+    for node in Path('/sys/class/hidraw').glob('hidraw*'):
+        device = node / 'device'
+        if 'HID_ID=0003:00000B05:00001B4C' not in (device / 'uevent').read_text().upper():
+            continue
+        if (device / 'driver').resolve().name != 'asus':
+            continue  # Native Ally driver must handle its own vendor reports.
+        if any(p.name.endswith(':1.2') for p in device.resolve().parents):
+            nodes.append('/dev/' + node.name)
+    if len(nodes) != 1:
+        raise RuntimeError('Expected one captured ASUS vendor interface 2')
+    return nodes[0]
+
+
+def main():
+    if Path('/sys/class/dmi/id/board_name').read_text().strip() != 'RC74XA':
+        return
+    path = composite()
+    fd = os.open(vendor(), os.O_RDONLY | os.O_NONBLOCK)
+    button = Button()
+    print('Armoury button bridge connected', flush=True)
+    try:
+        while True:
+            if not select.select([fd], [], [], 1)[0]:
+                continue
+            report = os.read(fd, 64)
+            if not report:
+                break
+            if button.update(report):
+                subprocess.run(['busctl', '--system', '--timeout=3', 'call', BUS, path,
+                                IFACE, 'SendButtonChord', 'as', '2',
+                                'Gamepad:Button:Guide', 'Gamepad:Button:South'], check=True, timeout=5)
+                print('Armoury press: sent Quick Access shortcut', flush=True)
+    finally:
+        os.close(fd)
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        print(f"Armoury bridge waiting for controller: {error}", file=sys.stderr)
+        sys.exit(1)

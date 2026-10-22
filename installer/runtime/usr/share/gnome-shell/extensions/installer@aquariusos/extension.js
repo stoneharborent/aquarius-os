@@ -4,7 +4,7 @@ import Clutter from 'gi://Clutter';
 import Meta from 'gi://Meta';
 import Shell from 'gi://Shell';
 import St from 'gi://St';
-import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+import {Extension, InjectionManager} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 
@@ -13,6 +13,27 @@ export default class InstallerExtension extends Extension {
         // Scale for the actual panel, not just the 1280px VM used initially.
         // Keep the installer at roughly the same readable logical width.
         this._interfaceSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
+        this._keyboardOverrides = new InjectionManager();
+        const keyboard = Main.keyboard.keyboardActor;
+        if (keyboard?._aspectContainer) {
+            // GNOME 50 constrains the key grid independently of the outer
+            // keyboard actor. Override both, including layout/language changes.
+            const resize = () => this._sizeKeyboard();
+            this._keyboardOverrides.overrideMethod(keyboard, '_relayout', original =>
+                function (...args) {
+                    original.apply(this, args);
+                    resize();
+                });
+            this._keyboardOverrides.overrideMethod(keyboard._aspectContainer, 'setRatio', original =>
+                function (width, height) {
+                    const monitor = Main.layoutManager.keyboardMonitor ?? Main.layoutManager.primaryMonitor;
+                    if (monitor) {
+                        width = monitor.width;
+                        height = Math.floor(monitor.height * 0.55);
+                    }
+                    original.call(this, width, height);
+                });
+        }
         this._sizeInstaller();
         this._monitorSignal = Main.layoutManager.connect('monitors-changed',
             () => this._sizeInstaller());
@@ -101,7 +122,7 @@ export default class InstallerExtension extends Extension {
     _sizeInstaller() {
         const monitor = Main.layoutManager.primaryMonitor;
         if (!monitor) return;
-        const scale = Math.max(1.5, Math.min(3, monitor.width / 1280 * 1.5));
+        const scale = Math.max(1.8, Math.min(3, monitor.width / 1280 * 1.8));
         this._interfaceSettings.set_double('text-scaling-factor', scale);
         this._interfaceSettings.set_int('cursor-size', Math.round(40 * scale / 1.5));
         this._sizeKeyboard();
@@ -109,12 +130,14 @@ export default class InstallerExtension extends Extension {
 
     _sizeKeyboard() {
         const monitor = Main.layoutManager.keyboardMonitor ?? Main.layoutManager.primaryMonitor;
-        if (!monitor) return;
         const keyboard = Main.keyboard.keyboardActor;
-        // Four full rows use half the display on both 720p and 1080p panels.
-        // Reapply when GNOME's native relayout requests its smaller default.
-        const height = Math.floor(monitor.height / 2);
+        if (!monitor || !keyboard) return;
+        // A full-width key grid uses 55% of a handheld screen. The input method
+        // continues to move the focused entry above the keyboard.
+        const height = Math.floor(monitor.height * 0.55);
+        keyboard.width = monitor.width;
         if (keyboard.height !== height) keyboard.height = height;
+        keyboard._aspectContainer?.setRatio(monitor.width, height);
     }
 
     _controllerKeys() {
@@ -229,6 +252,7 @@ export default class InstallerExtension extends Extension {
     }
 
     disable() {
+        this._keyboardOverrides?.clear();
         if (this._monitorSignal) Main.layoutManager.disconnect(this._monitorSignal);
         if (this._keyboardSizeSignal)
             Main.keyboard.keyboardActor.disconnect(this._keyboardSizeSignal);
