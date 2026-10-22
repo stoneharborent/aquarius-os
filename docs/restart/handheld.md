@@ -1,3 +1,135 @@
+## Physical-device audit, 2026-10-15
+
+On 2026-10-16 the owner confirmed the test device is the newly released
+**ROG Xbox Ally X20 edition**. Its measured identifiers are board `RC74XA`,
+system vendor `ASUS`, board vendor `ASUSTeK COMPUTER INC.`, product
+`ROG XBOX Ally X RC74XA RC74XA`, and BIOS `RC74XA.301`. Use these identifiers
+for compatibility checks; older RC73XA Ally X assumptions are not evidence
+of X20 support.
+
+The installed image `latest.20261015-4ed631a` contained the earlier Game Mode
+boot changes. It was not a stale installation. The real handheld reports
+`board_name=RC74XA` and `sys_vendor=ASUS`. Earlier RC73XA-only checks in this
+document and the build were assumptions, not validation of this unit.
+InputPlumber 0.82.0's shipped RC73XA/RC73YA matches do not cover that pair;
+the build now adds RC74XA/ASUS to the same composite configuration.
+
+Failed first-boot logs showed Steam's update manifest download failing, then
+`Failed to load steamui.so`. The client was incomplete, and its exit returned
+to GDM autologin. The handheld session wrapper now keeps that incomplete-client
+recovery in the same session with Wi-Fi setup and an explicit Retry notice.
+A completed Steam client still launches normally, including offline use.
+
+GNOME's installed desktop had no monitor-scale default. The handheld-only
+startup helper proposes 150% for an unconfigured 1080p internal display;
+GNOME's Keep Changes confirmation saves it. Existing monitor settings and
+docked/mirrored layouts are preserved. This is separate from installer scaling.
+
+These changes require a rebuilt OS image, not just a customized installer.
+The RC74XA/ASUS correction was tested on the physical handheld: InputPlumber
+created CompositeDevice0, loaded AquariusOS Desktop, and the user confirmed
+right-stick pointer movement and A/RT clicking. Gyro and an extra keyboard
+source still reported errors (missing iio_trig_hrtimer and a busy device);
+those are not validated by the pointer test. A subsequent physical reboot
+confirmed direct Game Mode autologin, the controller compatibility service,
+and the Default Game Mode controller profile. The user reached Steam sign-in
+and then the library. Fresh offline-install recovery remains untested.
+
+On 2026-10-16 the owner reported that most Game Mode controller inputs work,
+but some do not. Complete Game Mode input coverage is an outstanding fix;
+the earlier desktop pointer/click test does not validate it. Awaiting the
+exact settings-button identities and whether failures occur in Steam, games,
+or both. The owner narrowed the failures to extra settings buttons and rear
+paddles. A timed read-only capture of ASUS 0b05:1b4c HID interfaces is staged
+to establish actual reports before changing filters or hardware modes.
+Current inspection shows CompositeDevice0 using the Default profile with an
+Xbox Elite target and four evdev sources. Raw HID interfaces are rejected
+because `asus_rog_ally` is absent, and the bmi323 IMU source fails because
+`iio_trig_hrtimer` support is unavailable. These are investigation leads, not
+proof of the cause of the owner's missing button inputs. No xremap process
+was present in this Game Mode inspection.
+
+The intro still stopped partway through and had no sound. The selected stock
+`steam_os_startup.webm` is five seconds long and contains VP9 video and Opus
+audio. PipeWire and WirePlumber ran, but ALSA exposed only HDMI and PipeWire
+provided Dummy Output. The ACP audio driver logged `No matching ASoC machine
+driver found` on `acp_asoc_acp70.0`. Firmware tables were collected and decoded
+on 2026-10-16. SSDT8 sets `acp-audio-config-flag=0x10` (legacy DMIC-only),
+despite describing SoundWire RT721 and two TAS2783 amplifier addresses.
+The upstream ACP configuration code honors this flag unless a board-specific
+exception applies; RC74XA is absent from its exception table. A scoped
+driver-selection repair is under investigation. A normal post-sign-in startup
+retest is also pending. No audio fix is claimed.
+
+The first temporary RC74XA DMI-override module test loaded successfully, but
+the live handover did not create a speaker card: `snd_pci_ps` failed to reserve
+BAR 0 with error `-16` after the legacy driver was removed. The ACP PCI function
+was left unbound and PipeWire still reported Dummy Output. The subsequent
+audio PCI re-enumeration retry froze the device. The previous boot journal
+shows a page fault in `string` / `r_show` while reading resource information
+after the initial module swap, followed by a soft lockup in
+`release_resource` / `pci_remove_bus_device` during the retry. This suggests
+broken resource lifetime after the live unload; it does not establish that
+the proposed boot-time DMI exception fixes audio. Do not repeat either live
+driver swap or PCI removal test on this device.
+
+Recovery verified on 2026-10-16 after the owner power-cycled the X20: SSH,
+Game Mode, and InputPlumber are running; stock `snd_acp_pci` is bound again
+and `snd_acp_config` has no module taint. The temporary test scripts are no
+longer present after reboot. ALSA still exposes HDMI only and PipeWire still
+uses `auto_null`. Audio remains unresolved. Any further driver test needs a
+boot-time approach with a known-good rollback, not another live unload.
+
+The single-boot DMI override subsequently booted successfully (boot ID
+`50af8dee-bdee-45fd-a1fa-d6d96c8e39e8`). Its arm marker was consumed before
+loading, `snd_pci_ps` bound the ACP function, and ALSA registered
+`amd-soundwire`. RT721 enumerated on link 1; both TAS2783 amps enumerated on
+link 0 at unique IDs 8 and B. No kernel fault was reported during the initial
+inspection. This validates enumeration, not speaker playback or suspend.
+
+Two additional gaps remain: the installed machine table has RT721 plus both
+amps on link 1, whereas this unit has amps on link 0. The selected card exposes
+only the RT721 headphone playback PCM (`cfg-amp:0`). Also, the TAS2783 driver
+requests `1954-0-0x8.bin` / `1954-0-0xB.bin` (then fallback names without `0x`),
+but the installed TI firmware contains four variant pairs named
+`1954-{0,1}-{0,1}-0x{8,B}.bin.xz`. The correct variant selection must be
+established; do not guess aliases or load another speaker's tuning. PipeWire
+still uses Dummy Output with headphones unplugged. The experiment is consumed;
+the next reboot returns to the stock configuration module.
+
+The owner then plugged in 3.5 mm headphones. Jack detection selected the HiFi
+profile automatically and replaced `auto_null` with the headphone sink.
+Both low-volume spoken test samples played successfully and the owner
+confirmed hearing them. Headphone playback is physically verified for this
+boot; speaker playback and suspend/resume remain unverified.
+
+The experimental split-link machine-table patch now compiles against the
+exact Fedora kernel headers, but has not been deployed. ASUS's public RC74XA
+support API lists TI Smart Amplifier V7.6.4.37 (2026-09-22) with hardware IDs
+matching SUBSYS_19541043, link 0, UID 08/0B. Its downloaded installer SHA256
+matches ASUS metadata: `d658a6b6ec15dbc504c69ea00b7a11d603f06e5c33165794872e678f3ab59733`.
+Package inspection established speaker-ID selection as documented in
+`tools/experimental/x20-audio/README.md`.
+
+**Stereo speaker playback physically verified, 2026-10-16.** The combined
+one-boot test booted successfully (`a5bbee28-61b9-4804-a81d-6849b4cbcbb9`),
+loaded the speaker-ID 1 firmware pair, and exposed the SmartAmp playback PCM
+at `hw:amdsoundwire,2`. A runtime-only copy of ALSA UCM with upstream
+`sof-soundwire/tas2783.conf`, selected through a WirePlumber runtime service
+drop-in, exposed separate Speaker and Headphones outputs. With headphones
+unplugged, the owner confirmed hearing both spoken samples and then confirmed
+that left and right played from separate corresponding speakers. The initial
+heavily attenuated PipeWire test was inaudible; the repeat at moderate volume
+was audible. Do not treat the initial silence as a driver failure.
+
+This remains a temporary test: the next reboot restores stock modules and
+removes the runtime UCM overlay. Firmware selection, boot driver selection,
+split-link machine matching, and the missing UCM profile all require durable
+integration. Headphone switching on the combined configuration, suspend/wake,
+Steam intro playback with sound, and fresh-install behavior remain unverified.
+Boot-time capture-probing errors on `SDW0-PIN4-CAPTURE-SmartAmp` also remain
+to investigate; successful stereo playback does not validate that capture path.
+
 # The handheld image — AquariusOS on the ROG Xbox Ally X
 
 *Written 2026-09-19 for Phase G2. Assumes you have never used Linux. Read
@@ -272,8 +404,9 @@ that version, so you can confirm it took.
 
 - A **USB-C dock or hub** with at least one ordinary USB socket.
 - A **USB stick** with the installer on it.
-- A **keyboard**, and ideally a **mouse**. The installer's touch support works
-  but its text is very small on a 7-inch screen.
+- For older USB images, a **keyboard**, and ideally a **mouse**. New handheld
+  ISO builds add larger text, controller navigation and an on-screen keyboard;
+  see [the installer guide](handheld-installer.md), including pending bench checks.
 
 ⚠️ **The SD card slot cannot boot.** It is not an option and it is not a
 setting. The installer has to arrive over USB-C.
@@ -733,3 +866,80 @@ machine on the bench and try it. Royce owns one handheld. That is the list.
 If another one ever joins it, the work is: add its board name to the device
 profile checks in `78-handheld.sh`, find out which `steamos-manager` device
 table it is in, and run the bench list above from the top.
+
+### RC74XA extra buttons — 2026-10-16 physical confirmation
+
+The user identified the two captured presses as View, then Armoury Crate.
+View emits the expected DInput BTN_TL report. Armoury emits exactly
+`5a a6 00 00 00 00`, followed by `5a 00 00 00 00 00`. The user confirmed
+that translating that press to InputPlumber's Guide+South chord opens Steam
+Quick Access. The fallback `aquarius-ally-armoury.service` reads interface 2
+without grabbing it or writing HID reports. It only handles RC74XA with the
+generic `asus` driver and rediscovers the device after disconnect through
+systemd restart. Native Ally driver devices are excluded to avoid duplicate
+handling. Only captured reports activate it; repeats until release are ignored.
+The helper and service are included in the handheld build. Physical reboot and
+sleep/wake validation of the persistent service remains pending.
+
+Paddle capture separately measured F17 (left) and F18 (right). The aqx1 map now
+maps these to distinct Elite paddle buttons and the build adds both keys to
+the package's evdev allowlist. Legacy F15 support is retained. The bench paddle
+configuration has been installed; Steam paddle assignment still needs testing.
+
+Paddle follow-up: the user reported the first patch did not appear to expose
+paddles in Steam. Active InputPlumber capabilities still listed Keyboard:KeyF17
+and Keyboard:KeyF18: the raw evdev mapping alone did not translate the keyboard
+interface. The build now also extends the composite aly2 logical-key map with
+F17→LeftPaddle1 and F18→RightPaddle1, retaining existing mappings. A second
+bench update is staged; actual Steam detection remains unconfirmed.
+
+Further paddle diagnosis: a timed virtual-device capture recorded A/B but no
+paddles. Inspection of InputPlumber v0.82.0 commit
+`d951ef9df713a3ad3a88645a8c07b79ea5592274` shows keyboard source translation in
+`src/input/source/evdev/keyboard.rs` precedes `SourceDriver` filtering in
+`src/input/source/mod.rs`. The earlier assertion that keyboard source mapping
+was absent was incorrect. The source allowlist omitted the translated
+Gamepad:Button:LeftPaddle1 and RightPaddle1 capabilities, dropping these events
+before the composite map could see them. Build filtering now permits both
+translated paddles; regression validation checks raw F17/F18 target capabilities
+are in the source allowlist. Physical output after this correction is pending.
+
+Status clarification: the user reported the paddles are assigned to A/B in a
+per-game Steam layout. The virtual output capture cannot identify which
+physical button produced those A/B events. Game testing is pending; the v3
+filter update has been staged but the user was asked to hold installation.
+No further device input changes were made while they test.
+
+Other fixes prepared on 2026-10-16: an exact-kernel persistent audio workaround
+is staged at `/tmp/aquarius-persistent-audio` on the bench device, not installed.
+It preserves the verified two-module/firmware selection and reconstructs the
+UCM tree before user sessions. No live driver replacement or Steam restart is
+performed. Production kernel packaging remains outstanding. The handheld image
+now fills the missing TAS2783 UCM profile only when ALSA does not provide it.
+
+Installer keyboard layout now overrides both GNOME 50's `_relayout` and inner
+AspectContainer ratio, restoring the methods on extension disable. This keeps
+the key grid full width at 55% panel height, including layout/language changes.
+Labels and GTK entry/button targets are enlarged. Controller regression tests
+and JavaScript syntax pass; real ISO rendering and touch/controller validation
+are still required. Installer flow simplification and the Steam intro cutoff
+remain open. Read-only Steam logs did not expose an intro-specific error; the
+current default sink is the verified Speaker sink. Do not restart Steam during
+the user's paddle game test.
+
+### Simplified handheld setup implementation
+
+The USB runtime now hides only PasswordSpoke (the separate root account).
+Drive selection, regular account creation, network and regional settings remain
+available. `installer/simplify-setup.py` relabels the summary and its navigation
+choices, adds short setup guidance and an explicit disk-erasure warning, and
+preserves all signal handlers and backend validation. It refuses unknown GTK
+source/UI layouts before writing changes. This runs only in the handheld ISO
+customization container; desktop ISO kickstarts are unchanged.
+
+Validation: transformation exercised on upstream Fedora 43 GTK files (the
+upstream repository had no Fedora 44 branch available), two fixture tests cover
+handler/confirmation preservation and refusal of changed layouts, and nine
+controller/extraction tests pass. ISO assembly additionally verifies the actual
+Fedora 44 runtime controls and configuration. The latter build and physical
+handheld review have not yet run; source compatibility is not a visual signoff.

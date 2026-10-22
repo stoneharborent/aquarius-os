@@ -1,0 +1,9 @@
+# Tools for editing the USB installer's separate runtime. Not an OS image.
+FROM quay.io/fedora/fedora:44
+RUN dnf -y install squashfs-tools xorriso isomd5sum python3 dnf5 cpio kmod \
+    && dnf clean all
+COPY installer /installer
+COPY branding/logo-ice.svg /assets/logo-ice.svg
+COPY system_files/usr/share/aquarius/branding /assets/branding
+COPY system_files/usr/share/fonts/sora-fonts /assets/fonts/sora-fonts
+ENTRYPOINT ["/usr/bin/bash", "/installer/customize.sh"]

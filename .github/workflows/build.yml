@@ -469,6 +469,10 @@ on:
       # mounted a second NVMe and hidden it from the real user. Same arrangement
       # as every side branch: builds and checks, never publishes.
       - fix/gdm-no-automount
+      # Handheld bench fixes for the RC74XA Ally (paddles, Armoury button, Steam
+      # first launch) and the simpler installer, 2026-10-22. Same arrangement:
+      # builds and checks, never publishes.
+      - fix/handheld-installer-input
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -547,6 +551,12 @@ jobs:
         run: ./tests/test-gdm-guard.sh
       - name: Rehearse first handheld boot and desktop boot settings
         run: python3 tests/test-game-login.py
+      - name: Check handheld hardware matching, display defaults, and Steam bootstrap recovery
+        run: |
+          python3 tests/test-handheld-board.py
+          python3 tests/test-ally-armoury.py
+          python3 tests/test-handheld-display.py
+          python3 tests/test-steam-session.py
       # The X20 (board RC74XA) speaker loader decides, at every boot, between
       # the two patched sound drivers the handheld image compiles and Fedora's
       # own. This runs it against a fake machine for every reason it must fall
@@ -7063,8 +7073,11 @@ jobs:
           if [ -r "$Y" ]; then
             ok "the Xbox Ally device profile is in the image"
             grep -q 'RC73XA' "$Y" \
-              && ok "it matches board RC73XA — the Xbox Ally X, which is the machine on the bench" \
+              && ok "it retains the RC73XA board match" \
               || bad "the profile does not mention RC73XA"
+            grep -q 'board_name: RC74XA' "$Y" \
+              && ok "it matches the RC74XA board measured on the handheld" \
+              || bad "the profile does not match the physical RC74XA handheld"
             grep -q 'product_id: 0x1b4c' "$Y" \
               && ok "it matches the built-in controller's USB id" \
               || bad "the profile does not match the built-in controller"

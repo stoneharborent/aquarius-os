@@ -1,0 +1,7 @@
+{
+  "uuid": "installer@aquariusos",
+  "name": "Aquarius Handheld Installer",
+  "description": "Touch keyboard and controller keyboard shortcut for the installer only.",
+  "shell-version": ["50"],
+  "session-modes": ["aquarius-installer"]
+}

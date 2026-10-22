@@ -1,0 +1,13 @@
+#panel { background-color: #0B1220; color: #DCE9F4; }
+#keyboard { background-color: #0B1220; color: #DCE9F4; }
+.keyboard-key { background-color: #121C2E; color: #DCE9F4; }
+.keyboard-key.default-key { background-color: #1B2940; color: #DCE9F4; }
+.keyboard-key:focus, .keyboard-key:focus:hover {
+    background-color: #00BFFF;
+    color: #08121E;
+    box-shadow: inset 0 0 0 3px #DCE9F4;
+}
+
+/* Large labels and generous targets on the handheld's full-width key grid. */
+#keyboard .keyboard-key { font-size: 24px; border-radius: 10px; }
+#keyboard .key-container { padding: 4px; }

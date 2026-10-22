@@ -24,8 +24,8 @@
 #   View      TL
 #   Menu      TR
 #   Xbox      SELECT         Guide (opens the Steam menu)
-#   paddles   KEY_F15        both of them: the chip sends the same code for
-#                            left and right, so they are one button for now
+#   paddles   KEY_F17/F18    left/right, captured on RC74XA 2026-10-16
+#   legacy    KEY_F15        shared paddle code on older controller layouts
 #
 # ⚠️ X IS `North` AND Y IS `West`. That looks backwards and is not.
 #   InputPlumber names buttons after the Linux codes, and its virtual Xbox pad
@@ -162,7 +162,7 @@ mapping:
       gamepad:
         button: Guide
 
-  - name: Back paddles (both send F15)
+  - name: Legacy shared back paddle (F15)
     source_events:
       - evdev:
           event_type: KEY
@@ -171,6 +171,26 @@ mapping:
     target_event:
       gamepad:
         button: LeftPaddle1
+
+  - name: Left back paddle
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: KEY_F17
+          value_type: button
+    target_event:
+      gamepad:
+        button: LeftPaddle1
+
+  - name: Right back paddle
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: KEY_F18
+          value_type: button
+    target_event:
+      gamepad:
+        button: RightPaddle1
 
   - name: ... button, when the chip sends it as F16
     source_events:

@@ -1,0 +1,9 @@
+{
+  "hasWindows": true,
+  "hasOverview": false,
+  "hasWorkspaces": false,
+  "hasNotifications": false,
+  "showWelcomeDialog": false,
+  "enabledExtensions": ["installer@aquariusos"],
+  "panel": {"left": [], "center": [], "right": ["keyboard"]}
+}

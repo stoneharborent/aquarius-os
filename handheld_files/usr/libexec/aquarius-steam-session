@@ -1,0 +1,39 @@
+#!/usr/bin/bash
+# Keep an incomplete first Steam install inside Game Mode rather than exiting
+# into GDM's automatic-login loop. A completed client still supports offline use.
+set -uo pipefail
+steam_root="${XDG_DATA_HOME:-${HOME}/.local/share}/Steam"
+network_pid=""
+cleanup() {
+    if [ -n "$network_pid" ]; then
+        kill "$network_pid" 2>/dev/null || true
+        wait "$network_pid" 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT
+trap 'exit 0' TERM INT
+
+while true; do
+    # Only a fresh/incomplete installation needs connectivity. Do not delay an
+    # already installed Steam client or prevent its normal offline mode.
+    if [ ! -s "$steam_root/ubuntu12_32/steamui.so" ]; then
+        nm-online -q --timeout=30 || true
+    fi
+    steam -gamepadui -steamos3 -steampal -steamdeck
+    result=$?
+    [ -s "$steam_root/ubuntu12_32/steamui.so" ] && exit "$result"
+
+    logger -t aquarius-steam-session 'Steam initial install is incomplete; keeping Game Mode open for network setup and retry.'
+    # GNOME's Wi-Fi panel can configure the network before Steam has downloaded
+    # the client that normally supplies the Game Mode network settings.
+    if [ -z "$network_pid" ] || ! kill -0 "$network_pid" 2>/dev/null; then
+        env GTK_IM_MODULE=wayland gnome-control-center wifi &
+        network_pid=$!
+    fi
+    # No Cancel/logout path: closing this notice retries within this session,
+    # not by repeatedly sending the user through the login screen.
+    env GTK_IM_MODULE=wayland zenity --info --title='AquariusOS Game Mode setup' \
+        --width=600 --text='Steam needs an internet connection to finish its first installation. Connect to Wi-Fi in the network window, then select Retry. Game Mode will stay open while you finish setup.' \
+        --ok-label=Retry || true
+    sleep 2
+ done

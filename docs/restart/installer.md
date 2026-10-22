@@ -12,19 +12,17 @@ program that runs off the USB stick and writes AquariusOS onto a computer's disk
 
 ## The one-paragraph version
 
-When you boot the AquariusOS USB stick, the installer's **words** already say
-AquariusOS — its title, its headings, its boot menu, and the name the stick shows
-on a Mac or Windows machine. Its **pictures** — the small logo in the corner of
-the installer's own pages — are still Fedora's. That is not a setting we forgot
-to flip. It is a boundary in how the installer is built, and closing it is a
-separate, larger job. This page explains exactly what is branded, what is not,
-and what each of the two real fixes would cost, so the decision can be made on
-purpose rather than by accident.
+**Handheld update, 2026-10-15:** New handheld ISO builds now put our artwork
+and Ice colors into the USB installer's own runtime. The sidebar, headers,
+controls and keyboard belong to AquariusOS; the disk setup remains Fedora's
+Anaconda. They also add larger text and controller input. See
+[the handheld installer guide](handheld-installer.md) for controls, validation
+and the remaining physical-device checks.
 
-> **The rest of this page is about the installer's LOGO** — a cosmetic gap that
-> is still open. There was also, briefly, a much bigger problem: no ISO could be
-> built at all. That is fixed, and the fix is recorded in the next section so it
-> cannot quietly come back.
+The base and NVIDIA ISO workflows still use Fedora's stock installer artwork.
+The older investigation below records why branding the installed OS alone did
+not brand its USB installer. The handheld workflow now crosses that boundary
+explicitly with `installer/customize.sh`, without replacing Anaconda.
 
 ---
 
@@ -121,7 +119,7 @@ timestamps):
 
 ---
 
-## What a person actually sees, screen by screen
+## Original behavior before the handheld customization
 
 | When | What they see | Says AquariusOS? |
 | --- | --- | --- |
@@ -199,9 +197,10 @@ wrong.
 
 ---
 
-## The two real ways to brand the stick's Anaconda — scoped, not built
+## Earlier alternatives considered for installer branding
 
-Neither of these is done. Both are written down so the choice is deliberate.
+These alternatives remain historical research. The handheld ISO now customizes
+the existing Anaconda runtime after image-builder finishes; see the guide above.
 
 ### Route A — ship a small `aquarius-logos` package
 

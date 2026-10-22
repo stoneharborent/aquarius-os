@@ -1,0 +1,13 @@
+#!/usr/bin/bash
+# Anaconda calls this through its existing gnome-kiosk entry point. Keep its
+# Wayland socket and logind session; use GNOME's native touch keyboard.
+set -euo pipefail
+args=()
+for arg in "$@"; do
+    case "$arg" in
+        # Kiosk 50's explicit flag is not understood by GNOME Shell.
+        --enable-vt-switch) ;;
+        *) args+=("$arg") ;;
+    esac
+done
+exec /usr/bin/gnome-shell --mode=aquarius-installer "${args[@]}"

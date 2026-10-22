@@ -1,0 +1,13 @@
+[Unit]
+Description=Controller navigation for the AquariusOS handheld installer
+Wants=inputplumber.service aquarius-ally-controller.service
+After=inputplumber.service aquarius-ally-controller.service
+ConditionPathExists=/usr/share/aquarius/installer-handheld
+
+[Service]
+ExecStart=/usr/libexec/aquarius-installer-input
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=anaconda.target

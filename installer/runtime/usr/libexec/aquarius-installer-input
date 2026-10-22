@@ -1,0 +1,37 @@
+#!/usr/bin/python3
+"""Keep installer navigation on each controller, including reconnects.
+
+Only runs in the USB installer. The normal installed OS keeps its own desktop
+and Game Mode profiles. Touch devices stay under the compositor's control.
+"""
+import re
+import subprocess
+import time
+
+PROFILE = '/usr/share/aquarius/inputplumber/installer.yaml'
+NAME = 'AquariusOS Installer'
+
+
+def run(*args):
+    return subprocess.run(args, check=True, capture_output=True, text=True, timeout=5).stdout
+
+
+def configure():
+    tree = run('busctl', '--system', '--list', 'tree', 'org.shadowblip.InputPlumber')
+    for number in re.findall(r'^/org/shadowblip/InputPlumber/CompositeDevice(\d+)$', tree, re.M):
+        try:
+            name = run('inputplumber', 'device', number, 'profile', 'name')
+            if NAME not in name:
+                run('inputplumber', 'device', number, 'profile', 'load', PROFILE)
+                print(f'Installer controls ready on controller {number}', flush=True)
+        except (subprocess.SubprocessError, OSError) as error:
+            print(f'Waiting for controller {number}: {error}', flush=True)
+
+
+if __name__ == '__main__':
+    while True:
+        try:
+            configure()
+        except (subprocess.SubprocessError, OSError) as error:
+            print(f'Waiting for InputPlumber: {error}', flush=True)
+        time.sleep(2)

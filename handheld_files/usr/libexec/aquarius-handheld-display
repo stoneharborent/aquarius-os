@@ -1,0 +1,61 @@
+#!/usr/bin/python3
+"""Set a readable initial scale on the handheld's built-in GNOME display.
+
+Run once per account, only with the internal screen alone. Respect existing
+monitor preferences. Mutter persists the result, including the actual panel ID.
+"""
+import os
+from pathlib import Path
+import time
+
+
+def configuration(monitors, logical):
+    if len(logical) != 1 or len(logical[0][5]) != 1:
+        return None
+    x, y, scale, transform, primary, specs, _ = logical[0]
+    for spec, modes, props in monitors:
+        if spec != specs[0] or not props.get('is-builtin'):
+            continue
+        for mode, width, height, rate, preferred, scales, info in modes:
+            if not info.get('is-current'):
+                continue
+            if scale != 1.0 or width < 1920 or 1.5 not in scales:
+                return None
+            return [(x, y, 1.5, transform, primary, [(spec[0], mode, {})])]
+    return None
+
+
+def main():
+    if 'GNOME' not in os.environ.get('XDG_CURRENT_DESKTOP', ''):
+        return
+    config = Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config')))
+    if (config / 'monitors.xml').exists():
+        return
+    from gi.repository import Gio, GLib
+    proxy = Gio.DBusProxy.new_for_bus_sync(
+        Gio.BusType.SESSION, Gio.DBusProxyFlags.NONE, None,
+        'org.gnome.Mutter.DisplayConfig', '/org/gnome/Mutter/DisplayConfig',
+        'org.gnome.Mutter.DisplayConfig', None)
+    for attempt in range(10):
+        try:
+            serial, monitors, logical, props = proxy.call_sync(
+                'GetCurrentState', None, Gio.DBusCallFlags.NONE, 3000, None).unpack()
+            layout = configuration(monitors, logical)
+            if layout is None:
+                return
+            options = {'layout-mode': GLib.Variant('u', props['layout-mode'])}
+            # Method 2 persists the configuration in the account's monitors.xml.
+            proxy.call_sync('ApplyMonitorsConfig', GLib.Variant(
+                '(uua(iiduba(ssa{sv}))a{sv})', (serial, 2, layout, options)),
+                Gio.DBusCallFlags.NONE, 5000, None)
+            print('aquarius-handheld-display: requested 150%; confirm Keep Changes to save')
+            return
+        except GLib.Error as error:
+            if attempt == 9:
+                print(f'aquarius-handheld-display: {error}')
+            else:
+                time.sleep(1)
+
+
+if __name__ == '__main__':
+    main()
