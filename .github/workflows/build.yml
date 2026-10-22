@@ -7244,11 +7244,11 @@ jobs:
             && ok "the board name RC74XA is inside the compiled snd-acp-config" \
             || bad "RC74XA is not inside the compiled snd-acp-config"
           for n in snd_acp_config snd_soc_acpi_amd_match; do
-            how="$(modprobe --show-depends "${n}" 2>&1 || true)"
+            how="$(modprobe -S "${K}" --show-depends "${n}" 2>&1 || true)"
             grep -qx "install /bin/bash /usr/libexec/aquarius-x20-audio ${n} *" <<< "${how}" \
               && ok "asking for ${n} runs the X20 loader" \
               || bad "asking for ${n} does not run the X20 loader: ${how}"
-            stock="$(modprobe --show-depends --ignore-install "${n}" 2>&1 | tail -n 1 || true)"
+            stock="$(modprobe -S "${K}" --show-depends --ignore-install "${n}" 2>&1 | tail -n 1 || true)"
             case "${stock}" in
               "insmod /lib/modules/${K}/kernel/"*|"insmod /usr/lib/modules/${K}/kernel/"*)
                 ok "the fallback for ${n} is Fedora's own driver" ;;
