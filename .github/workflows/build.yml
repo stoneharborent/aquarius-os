@@ -459,6 +459,9 @@ on:
       # controller badge, put together during the build. Same arrangement as
       # every side branch: builds and checks, never publishes.
       - claude/nice-fermi-w6lk1k
+      # Updates come through GNOME Software; Fedora's update-and-reboot timer is
+      # masked. Builds and checks only; never publishes.
+      - feat/updates-via-gnome-software
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
