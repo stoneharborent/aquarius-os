@@ -1,0 +1,54 @@
+--- a/sound/soc/amd/acp/amd-acp70-acpi-match.c
++++ b/sound/soc/amd/acp/amd-acp70-acpi-match.c
+@@ -698,7 +698,51 @@
+ 	{}
+ };
+ 
++/* RC74XA: RT721 on SDW1, TAS2783 pair on SDW0 (UID 8/B). */
++static const struct snd_soc_acpi_adr_device rc74xa_rt721_adr[] = {
++	{
++		.adr = 0x000130025D072101ull,
++		.num_endpoints = ARRAY_SIZE(jack_dmic_endpoints),
++		.endpoints = jack_dmic_endpoints,
++		.name_prefix = "rt721",
++	},
++};
++
++static const struct snd_soc_acpi_adr_device rc74xa_tas2783_adr[] = {
++	{
++		.adr = 0x0000380102000001ull,
++		.num_endpoints = 1,
++		.endpoints = &spk_l_endpoint,
++		.name_prefix = "tas2783-1",
++	},
++	{
++		.adr = 0x00003B0102000001ull,
++		.num_endpoints = 1,
++		.endpoints = &spk_r_endpoint,
++		.name_prefix = "tas2783-2",
++	},
++};
++
++static const struct snd_soc_acpi_link_adr acp70_rc74xa_links[] = {
++	{
++		.mask = BIT(0),
++		.num_adr = ARRAY_SIZE(rc74xa_tas2783_adr),
++		.adr_d = rc74xa_tas2783_adr,
++	},
++	{
++		.mask = BIT(1),
++		.num_adr = ARRAY_SIZE(rc74xa_rt721_adr),
++		.adr_d = rc74xa_rt721_adr,
++	},
++	{}
++};
++
+ struct snd_soc_acpi_mach snd_soc_acpi_amd_acp70_sdw_machines[] = {
++	{
++		.link_mask = BIT(0) | BIT(1),
++		.links = acp70_rc74xa_links,
++		.drv_name = "amd_sdw",
++	},
+ 	{
+ 		.link_mask = BIT(0),
+ 		.links = acp70_tas2783_2,

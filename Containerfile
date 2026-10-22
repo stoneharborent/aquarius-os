@@ -239,6 +239,37 @@ FROM gamescope-src-${NVIDIA} AS gamescope-src
 FROM ${AKMODS_IMAGE}${AKMODS_REF} AS akmods-src
 
 # ------------------------------------------------------------------------------
+# The X20's two speaker drivers — compiled here, HANDHELD IMAGE ONLY
+# ------------------------------------------------------------------------------
+# The ROG Xbox Ally X20 (board RC74XA) has silent speakers with Fedora's stock
+# sound drivers. Two small patches to two of Fedora's own sound drivers fix it
+# (proven on the handheld, 2026-10-16). A kernel driver only loads on the exact
+# kernel it was compiled for, so this workshop compiles both, EVERY build, for
+# the kernel this build will ship — read from the same Universal Blue box as
+# step 5.8, so the two cannot disagree. The source is Fedora's own signed
+# source package for that exact kernel. The whole story:
+# build_files/78-handheld-audio-build.sh and docs/restart/handheld.md.
+#
+# THE SAME "TWO STAGES AND A NUMBER" TRICK AS gamescope ABOVE, keyed on
+# HANDHELD instead of NVIDIA:
+#
+#   x20-audio-src-0   empty. The two desktop images take this one, so they never
+#                     compile anything and nothing from here can reach them.
+#   x20-audio-src-1   a throwaway Fedora container that compiles the two drivers
+#                     and leaves them (and a note of what it did) in /out.
+#   x20-audio-src     whichever of the two ${HANDHELD} names.
+#
+# Step 7g (78-handheld.sh) copies the two finished driver files in. Nothing
+# else from this workshop reaches the operating system.
+FROM scratch AS x20-audio-src-0
+FROM quay.io/fedora/fedora:${FEDORA_VERSION} AS x20-audio-src-1
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=bind,from=akmods-src,source=/,target=/ctx-akmods \
+    --mount=type=cache,dst=/var/cache/libdnf5 \
+    /ctx/build_files/78-handheld-audio-build.sh
+FROM x20-audio-src-${HANDHELD} AS x20-audio-src
+
+# ------------------------------------------------------------------------------
 # The keyboard remapper — compiled here, so the finished OS never sees a compiler
 # ------------------------------------------------------------------------------
 # AquariusOS ships Mac-style keyboard shortcuts turned on. The program that
@@ -832,8 +863,17 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 #     flipped to `game` — because a handheld with no keyboard cannot get past a
 #     password box.
 #
-#     ⚠️ NO KERNEL CHANGE. Fedora's kernel already drives this machine. What it
-#     cannot do yet (rumble, dead zones, remapping) is a separate decision.
+#     ⚠️ FEDORA'S KERNEL IS UNCHANGED — BUT TWO SOUND DRIVERS ARE ADDED, FOR ONE
+#     BOARD. Until 2026-10-21 this said "no kernel change", and the kernel itself
+#     still is never replaced or recompiled here. What changed: the ROG Xbox
+#     Ally X20 (board RC74XA) has silent speakers with Fedora's stock sound
+#     drivers, so the handheld image also carries two patched copies of
+#     Fedora's own sound drivers, compiled for this image's exact kernel in the
+#     x20-audio-src workshop above, and a loader that uses them only on an
+#     RC74XA (falling back to Fedora's drivers on anything else). They are
+#     unsigned, so they need Secure Boot OFF. The desktop images get none of it
+#     and this step proves so. What the kernel cannot do for the controller yet
+#     (rumble, dead zones, remapping) is still a separate decision.
 #
 #     ⚠️ AFTER STEP 7f, ALWAYS, for two reasons. Step 7f adds Terra and removes
 #     it again — running this one first would mean 7f re-adding Terra after this
@@ -845,6 +885,7 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 #     The step is numbered 78 because 72 to 77 were already taken. It belongs
 #     here, immediately after Game Mode.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=bind,from=x20-audio-src,source=/,target=/ctx-x20audio \
     --mount=type=cache,dst=/var/cache/libdnf5 \
     HANDHELD="${HANDHELD}" /ctx/build_files/78-handheld.sh
 
