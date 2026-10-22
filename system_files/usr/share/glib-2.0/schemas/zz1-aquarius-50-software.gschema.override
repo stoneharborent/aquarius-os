@@ -1,0 +1,20 @@
+# AquariusOS — GNOME Software is the one place updates come from (2026-10-21).
+#
+# These are GNOME's own defaults today. They are written down here so a future
+# GNOME cannot quietly change how AquariusOS updates:
+#
+#   allow-updates            Software's Updates page exists and works.
+#   download-updates         Software downloads system, app and firmware
+#                            updates in the background (never on a metered
+#                            connection — see refresh-when-metered).
+#   download-updates-notify  ...then says so: "Restart to update". Nothing
+#                            restarts the computer by itself; you choose when.
+#   refresh-when-metered     Never download over a phone hotspot or other
+#                            connection marked as metered.
+#
+# Checked by build_files/77-updater.sh. Guide: docs/restart/updater.md
+[org.gnome.software]
+allow-updates=true
+download-updates=true
+download-updates-notify=true
+refresh-when-metered=false
