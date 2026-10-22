@@ -1,48 +1,98 @@
 # Check for Update — how AquariusOS updates itself
 
-*Updated 2026-10-18.*
+*Updated 2026-10-21.*
 
-## GNOME Software is the combined update interface
+## GNOME Software is the one place updates come from
 
-Open **Software → Updates** for AquariusOS image updates, Flatpak applications,
-and supported device firmware. Install the updates and restart when requested.
-The system still updates as a complete published AquariusOS image; newer Fedora
-RPMs do not become independent host updates. Homebrew, manually installed apps,
-and application-specific updaters remain separate.
+*Decided 2026-10-21 (Royce: system updates should come through the Software
+app).*
 
-The image now includes `gnome-software-rpm-ostree`. The final build step removes
-GNOME Software's DNF5 and PackageKit plugins, which attempt unsupported writes to
-the read-only host. This replaces the September decision to remove the image
-backend. Authentication uses the existing system policy; no password-free
-polkit rule has been added. The previous reports of background authentication
-prompts remain a regression to check on a built image.
+Open **Software → Updates**. That one page updates AquariusOS itself, your
+Flatpak apps, and supported device firmware. **Check for Update** and typing
+`aq update` both open that page now.
 
-On the bench, the plugin was first installed as a local layer. After the
-2026-10-18 reboot, the layer was active and `rpm-ostree upgrade --check` reported
-no updates. GNOME Software was running with `dnf5,packagekit` blocked through
-user service and launcher overrides. An actual new-image upgrade through the
-GUI has not yet been verified. These user overrides are redundant once the
-image-level backend removal ships, but are safe to retain.
+What happens, in order:
 
-For that locally layered installation, use GNOME Software or
-`rpm-ostree upgrade`; direct `bootc upgrade` rejects local package layers.
-Shipping the plugin in the base image avoids requiring this layer on new
-installations. Do not remove the bench layer until an image containing the
-plugin is deployed and its presence is verified.
+1. Software checks in the background and **downloads** a new AquariusOS on its
+   own — but never over a connection marked as metered (a phone hotspot).
+2. When it is downloaded, Software shows a notification and a
+   **Restart to update** button.
+3. **You choose when to restart.** Nothing on AquariusOS restarts the computer
+   by itself. Your work, files and home folder are untouched; the old version
+   stays on the disk and is in the boot menu if you ever need it.
 
-The existing **Check for Update** tool described below remains a bootc-based
-alternative for deployments without local layers. Its password-free checking
-behavior is specific to that tool, not a promise about GNOME Software.
+### What we switched off, and why
 
-## Existing AquariusOS Check for Update tool
+Fedora's base image switches on a timer called
+`bootc-fetch-apply-updates.timer`. It downloads a new system **and reboots the
+machine without asking** — in the middle of an export, if that is when it
+fires. On the bench (2026-10-21) it also sat for 46 hours waiting behind a
+stuck Software job, holding the update lock the whole time.
+
+AquariusOS switches it off two ways, both checked by
+`build_files/77-updater.sh` on every build:
+
+* `/usr/lib/systemd/system-preset/10-aquarius-updates.preset` says *disable* —
+  what a fresh install reads;
+* the timer and its service are **masked** in the image's `/etc` — that is
+  what reaches a machine installed before 2026-10-21, because a mask beats the
+  "switched on" link Fedora already left there.
+
+Software's own settings are written down in
+`system_files/usr/share/glib-2.0/schemas/zz1-aquarius-50-software.gschema.override`
+(`allow-updates`, `download-updates`, `download-updates-notify` on;
+`refresh-when-metered` off). They match GNOME's defaults today; writing them
+down means a future GNOME cannot quietly change how AquariusOS updates.
+
+### The terminal uses the same engine — the choice, written down
+
+There were two ways to make Software and our own updater agree: make our
+window open Software, or make both use the same engine. **We did both**, because
+each closes a different hole:
+
+| | What it runs now | What it ran before |
+| --- | --- | --- |
+| **Check for Update** / `aq update` | Opens Software's Updates page (`gnome-software --mode=updates`) | Our own window, running `bootc upgrade` |
+| `aq update check` | Reads only, no password (unchanged) | Same |
+| `aq update apply` | `pkexec rpm-ostree upgrade` | `pkexec bootc upgrade` |
+
+Why `rpm-ostree upgrade` and not `bootc upgrade`:
+
+* **It is Software's own engine.** Software's image plug-in and
+  `rpm-ostree upgrade` both hand the job to the same system service
+  (`rpm-ostreed`), which does one job at a time. A terminal update started
+  while Software is busy waits its turn instead of fighting it for the lock.
+  `bootc upgrade` is a second engine beside it — the one that sat for 46 hours.
+* **It works on a machine with layered packages.** `bootc upgrade` refuses
+  outright ("Deployment contains local rpm-ostree modifications").
+  `rpm-ostree upgrade` carries the layers along.
+
+`aq update apply` also looks first: if the update service is already busy
+(usually Software refreshing), it says so in plain words and stops, rather than
+sitting silently in a queue. `aq update check` and `aq update apply` both name
+any layered packages and point at the guide for removing them
+(`bench-rebase.md`, *"Extra packages layered on top of the image"*).
+
+The old AquariusOS window still exists as `aquarius-updater --window`, for the
+bench and as a fallback if Software were ever missing. Its Update button uses
+the same `rpm-ostree upgrade`.
+
+### History
+
+*2026-10-18:* the image gained `gnome-software-rpm-ostree` (step 40), and step
+90 removes GNOME Software's DNF5 and PackageKit plug-ins, which try to write to
+the read-only system. Authentication uses the existing system policy; no
+password-free rule was added. On the bench the plug-in was first installed as a
+local layer; once an image containing it is running, that layer is redundant —
+see `bench-rebase.md` for how to drop it.
 
 ---
 
 ## The one-paragraph version
 
 AquariusOS updates as **one whole sealed thing**, not as hundreds of little
-pieces. Pick **Check for Update** from the Aquarius logo menu (or type
-`aq update check` in a terminal) and a small window tells you which version you
+pieces. Open **Software → Updates** (or pick **Check for Update**, or type
+`aq update`). In a terminal, `aq update check` tells you which version you
 have and whether there is a newer one. **Checking never asks for a password.**
 If there is an update, one button installs it, and *that* asks for your password
 once. Then you restart when you feel like it. The old version stays on the disk,
@@ -114,6 +164,10 @@ check without ever needing to be the administrator, and never turn a
 
 ## Doing the update
 
+*This section describes the terminal (`aq update apply`) and the fallback
+window (`aquarius-updater --window`). In Software, press **Download** /
+**Restart to update** instead.*
+
 Press **Update**. One password prompt appears — the standard system one — and
 then the download and install run with their full text visible under
 **Details** if you want to watch. Nothing about your running computer changes
@@ -143,7 +197,8 @@ updates replace the system, not your work.
 ## For whoever maintains this
 
 * The window and the terminal are **one program**:
-  `system_files/usr/libexec/aquarius-updater`. It draws a window, and it also
+  `system_files/usr/libexec/aquarius-updater`. With no arguments it opens
+  GNOME Software's Updates page; `--window` draws our own window; it also
   runs headless for `aq update check` / `aq update apply` and for the build's
   `--dry-run` rehearsal.
 * The decision lives in three pure functions — `parse_local`,
@@ -151,7 +206,13 @@ updates replace the system, not your work.
   of five states (`up-to-date`, `available`, `restart-required`, `offline`,
   `unknown`). They touch nothing, so `tests/test-updater.py` can prove the
   wording rule above with canned answers and no system underneath.
-* Applying is unchanged and stays unchanged: `pkexec bootc upgrade`, one prompt.
+* Applying is `pkexec rpm-ostree upgrade` (since 2026-10-21; it was
+  `pkexec bootc upgrade`), one prompt — the same engine as GNOME Software.
+  `apply_command()` is the one place it is spelled, and the test proves it
+  never goes back to bootc.
+* `parse_local` also reads two more facts: `layered` (anything added on top of
+  the image) and `busy` (the update service is mid-job). Both are covered by
+  `tests/test-updater.py`.
 * Step `build_files/77-updater.sh` checks all of it in the image and runs the
   test there.
 * Nothing a person reads may name another Linux or the tools underneath. Those

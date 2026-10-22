@@ -457,7 +457,12 @@ See "Before you start" above — it is a one-time click on GitHub.
 
 **The update refuses to run: "Deployment contains local rpm-ostree
 modifications".** Something added a package on top of the operating system
-image, and this machine only updates when nothing has. This is not a fault you
+image, and `bootc upgrade` only updates when nothing has. *Since 2026-10-21
+AquariusOS updates through GNOME Software and `aq update apply`, which both use
+`rpm-ostree upgrade` and carry layers along — so you only see this message if
+you typed `sudo bootc upgrade` yourself. The section "Extra packages layered on
+top of the image", just below, is the gentler fix: remove only what is no
+longer needed.* This is not a fault you
 caused — on 2026-09-04 it was GNOME itself, which noticed the English language
 pack was missing, offered in a notification to install it, and then layered it.
 (That specific cause is fixed: `langpacks-en` is now baked into the image, so
@@ -484,6 +489,81 @@ operating system image. After the reboot, `sudo bootc upgrade` works again.
 If you genuinely wanted the thing that was layered, say so rather than layering
 it again: on this operating system the right answer is to add it to the image,
 where it survives every update.
+
+**Extra packages layered on top of the image** *(2026-10-21)*. `aq update
+check` names them, for example:
+
+```
+Note: this computer has extra packages added on top of AquariusOS:
+  gnome-software-rpm-ostree, rclone
+```
+
+Layered packages still update — through Software, or `aq update apply` — but
+every update takes longer (the packages are fetched and re-added each time)
+and can stop if one of them is not available for the new version. Remove the
+ones you no longer need. One at a time, so you know what each step did:
+
+1. **See what is layered.**
+
+   ```
+   rpm-ostree status
+   ```
+
+   Look at the line `LayeredPackages:` under the entry marked with `●` (the
+   one you are running).
+
+2. **`gnome-software-rpm-ostree` — now part of the image, so drop the copy.**
+   It was layered on the bench on 2026-10-18 so Software could update the
+   system. Every image built since then has it built in. **First make sure
+   you are running one of those images** — this must print a version number,
+   not "not installed":
+
+   ```
+   rpm -q gnome-software-rpm-ostree
+   ```
+
+   and `rpm-ostree status` must show a date of 2026-10-18 or later on the `●`
+   entry. Then:
+
+   ```
+   sudo rpm-ostree uninstall gnome-software-rpm-ostree
+   ```
+
+   (If it says the package is "in the base", that means the image already has
+   it and only the request is removed — which is exactly what we want.)
+
+3. **`rclone` — move it to Homebrew.** rclone is a command-line tool, and on
+   AquariusOS command-line tools come from Homebrew (`brew`, see
+   [`homebrew.md`](homebrew.md)), which lives in your home folder and never
+   gets in the way of a system update. Install the Homebrew copy first, then
+   remove the layer:
+
+   ```
+   brew install rclone
+   sudo rpm-ostree uninstall rclone
+   ```
+
+   Your rclone settings (`~/.config/rclone/rclone.conf`) are in your home
+   folder, so both copies use the same remotes — nothing to set up again.
+
+4. **Restart** to finish:
+
+   ```
+   sudo systemctl reboot
+   ```
+
+5. **Check it worked.** `rpm-ostree status` shows no `LayeredPackages:` line on
+   the `●` entry, `aq update check` no longer prints the note, and
+   `rclone version` still works (now from Homebrew — `command -v rclone`
+   prints a path under `/home/linuxbrew`).
+
+You can do steps 2 and 3 together and restart once — `rpm-ostree uninstall`
+takes several names: `sudo rpm-ostree uninstall gnome-software-rpm-ostree
+rclone`.
+
+If an uninstall says *"Transaction in progress"*, GNOME Software is busy
+checking for updates. Close Software, wait a minute and try again; if it never
+clears, restart and try again.
 
 **Everything works but it looks wrong.** Screenshots are genuinely the fastest
 way to sort that out — the look is the one thing CI cannot check.
