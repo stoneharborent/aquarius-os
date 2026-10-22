@@ -465,6 +465,10 @@ on:
       # proven untouched. Same arrangement as every side branch: builds and
       # checks, never publishes.
       - fix/x20-speakers-in-image
+      # The login screen must not automount drives, 2026-10-21: gdm-greeter had
+      # mounted a second NVMe and hidden it from the real user. Same arrangement
+      # as every side branch: builds and checks, never publishes.
+      - fix/gdm-no-automount
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:

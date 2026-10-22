@@ -384,6 +384,25 @@ icon-theme='Aquarius-Ice'
 EOF
 
 # ------------------------------------------------------------------------------
+# THE LOGIN SCREEN MUST NOT MOUNT DRIVES — 04-aquarius-no-automount
+# ------------------------------------------------------------------------------
+# The login screen runs as its own user, gdm-greeter, with GNOME's normal
+# automount on. On 2026-10-21 it mounted Royce's second NVMe ("Internal Drive")
+# at /run/media/gdm-greeter/Internal Drive before anyone logged in. udisks then
+# refused to mount it again for the real user, so the drive vanished from Files
+# and every project path under /run/media/<user>/ was dead until it was unmounted
+# with sudo and remounted. Nothing at the login screen needs a drive, so it gets
+# none; the user's own session still automounts as before.
+#
+# (Named 04, not 03: 03-aquarius-scale is the removed file described below, and
+# reusing its number would make that history harder to read.)
+cat > /etc/dconf/db/gdm.d/04-aquarius-no-automount << 'EOF'
+[org/gnome/desktop/media-handling]
+automount=false
+automount-open=false
+EOF
+
+# ------------------------------------------------------------------------------
 # ⛔ THE FILE THAT USED TO BE HERE — 03-aquarius-scale — AND WHY IT IS GONE
 # ------------------------------------------------------------------------------
 # There used to be a third file here. It set ONE login-screen key:
@@ -569,7 +588,10 @@ fi
 #
 # 'Adwaita' here is the CURSOR theme; 'Aquarius-Ice' is the icon theme. Both are
 # in the file above, and both have to survive into the database.
-for aq_want in prefer-light 'Inter 11' 'JetBrains Mono 10' Adwaita Aquarius-Ice; do
+#
+# 'automount-open' is the no-automount file's key NAME: its value is a boolean,
+# stored as a byte, so the name surviving is the only thing grep can see.
+for aq_want in prefer-light 'Inter 11' 'JetBrains Mono 10' Adwaita Aquarius-Ice automount-open; do
     if grep -a -q "${aq_want}" /etc/dconf/db/gdm 2> /dev/null; then
         ok "the login screen database carries '${aq_want}'"
     else
