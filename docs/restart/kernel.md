@@ -175,6 +175,42 @@ The pin lives in `aquarius-os.env` (the `NVIDIA_PIN_*` lines).
 
 ---
 
+## ⚠️ Exception, since 2026-10-21: two sound drivers we DO compile (handheld image only)
+
+Everything above is still true for all three images: the kernel is Fedora's,
+pinned to Universal Blue's box, and never recompiled. But the **handheld
+image** now also carries two drivers we compile ourselves, because nobody else
+ships them:
+
+| Driver | What it fixes |
+| --- | --- |
+| `snd-acp-config` (patched) | Teaches Linux that the ROG Xbox Ally X20 (board `RC74XA`) really has SoundWire speakers, although its firmware says "microphones only". |
+| `snd-soc-acpi-amd-match` (patched) | Describes this machine's speaker wiring: two TAS2783 amplifiers on SoundWire link 0, the RT721 headphone chip on link 1. |
+
+How they stay matched to the kernel, in plain words:
+
+- A throwaway workshop in the `Containerfile` (`x20-audio-src`, script
+  `build_files/78-handheld-audio-build.sh`) reads the kernel version out of
+  **the same Universal Blue box step 5.8 uses**, downloads **Fedora's own
+  signed source package for that exact kernel**, applies two small patches, and
+  compiles both drivers. Every build. So when the kernel moves, the drivers
+  move with it — no pinned version anywhere.
+- If a patch stops applying exactly, the build **fails** rather than shipping a
+  silent handheld.
+- The drivers are filed in `/usr/lib/modules/<kernel>/aquarius-x20-audio/`, a
+  folder Linux's driver index is told to skip, so Fedora's own copies stay the
+  default. `/usr/libexec/aquarius-x20-audio` loads ours only on an RC74XA, and
+  falls back to Fedora's on anything else.
+
+⚠️ **These two are not signed.** That is exactly the Secure Boot problem
+described above, and it is why this is limited to the one handheld that runs
+with Secure Boot off. With Secure Boot on, the loader sees it, uses Fedora's
+drivers, and the X20's speakers stay silent; nothing else is affected. The
+desktop images do not have any of this. The full story is in
+[`handheld.md`](handheld.md#the-built-in-speakers-rog-xbox-ally-x20).
+
+---
+
 ## How to bump the kernel
 
 You mostly do not. The kernel follows Universal Blue automatically: they rebuild
@@ -208,6 +244,7 @@ are different sentences:
 | --- | --- |
 | `build_files/58-kernel-pin.sh` | Does the pin itself, then reads the result back off disk. |
 | `build_files/62-virtual-camera.sh`, `build_files/68-gaming.sh`, `build_files/60-nvidia.sh` | Each module step re-asks whether the module it is about to install matches the kernel, and stops the build if it does not. |
+| `build_files/78-handheld.sh` (handheld image only) | The two X20 sound drivers compiled in the `x20-audio-src` workshop must say they were built for exactly the image's kernel, or the build stops. |
 | `build_files/90-cleanup.sh` | At the very end: is the kernel still the one that was pinned, and is there exactly one of it? |
 | `.github/workflows/build.yml` | Starts the **finished** image and asks it directly — the pin note, the package database and the folder on disk must all say the same version, and all three (four on NVIDIA) modules must be installed and filed under it. |
 

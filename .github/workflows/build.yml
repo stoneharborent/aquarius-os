@@ -459,6 +459,12 @@ on:
       # controller badge, put together during the build. Same arrangement as
       # every side branch: builds and checks, never publishes.
       - claude/nice-fermi-w6lk1k
+      # The X20's speakers, 2026-10-21: the handheld image compiles two patched
+      # sound drivers for its own kernel every build (78-handheld-audio-build.sh)
+      # and a loader uses them only on board RC74XA. The desktop images are
+      # proven untouched. Same arrangement as every side branch: builds and
+      # checks, never publishes.
+      - fix/x20-speakers-in-image
       # The login screen must not automount drives, 2026-10-21: gdm-greeter had
       # mounted a second NVMe and hidden it from the real user. Same arrangement
       # as every side branch: builds and checks, never publishes.
@@ -541,6 +547,13 @@ jobs:
         run: ./tests/test-gdm-guard.sh
       - name: Rehearse first handheld boot and desktop boot settings
         run: python3 tests/test-game-login.py
+      # The X20 (board RC74XA) speaker loader decides, at every boot, between
+      # the two patched sound drivers the handheld image compiles and Fedora's
+      # own. This runs it against a fake machine for every reason it must fall
+      # back to Fedora's (wrong board, Secure Boot, missing or wrong firmware,
+      # a driver already running ...). Logic only — no driver is loaded.
+      - name: Rehearse the X20 speaker loader's decisions
+        run: python3 tests/test-x20-audio-loader.py
       - name: Check the login screen waits the right amount for the boot animation
         run: ./tests/test-boot-hold.sh
       # external drive, a Mac's internal disk with its five volumes, and a
@@ -2671,6 +2684,18 @@ jobs:
               set -e
               bash /tmp/t/tests/test-gdm-guard.sh /usr/libexec/aquarius-gdm-guard
             '
+      # The X20 speaker loader, rehearsed again on the copy INSIDE the finished
+      # handheld image (with the image's own bash, xz and coreutils). The test
+      # runs a rewritten copy against a fake machine; nothing is loaded.
+      - name: Rehearse the X20 speaker loader in the finished image
+        if: matrix.handheld == 1
+        run: |
+          set -euo pipefail
+          podman run --rm --pull=never \
+            -v "${GITHUB_WORKSPACE}/tests/test-x20-audio-loader.py:/tmp/t/tests/test-x20-audio-loader.py:ro" \
+            --entrypoint /usr/bin/python3 \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" \
+            /tmp/t/tests/test-x20-audio-loader.py /usr/libexec/aquarius-x20-audio
       - name: Check the USB4 rescue in the finished image
         run: |
           set -euo pipefail
@@ -6960,9 +6985,21 @@ jobs:
                      /usr/lib/udev/rules.d/72-aquarius-ally-rings.rules \
                      /usr/share/gnome-shell/extensions/aquarius-handheld@stoneharborent.github.io \
                      /usr/lib/systemd/user/steamos-manager.service.d/60-aquarius-session.conf \
-                     /usr/lib/systemd/logind.conf.d/60-aquarius-handheld.conf; do
+                     /usr/lib/systemd/logind.conf.d/60-aquarius-handheld.conf \
+                     /usr/libexec/aquarius-x20-audio \
+                     /usr/lib/modprobe.d/10-aquarius-x20-audio.conf \
+                     /usr/lib/depmod.d/aquarius-x20-audio.conf \
+                     /usr/lib/dracut/dracut.conf.d/90-aquarius-x20-audio.conf \
+                     /usr/share/aquarius/audio/tas2783.conf \
+                     /usr/share/aquarius/x20-audio; do
               [ -e "$f" ] && bad "$f is on a desktop image" || ok "$f is not on this image"
             done
+            # The X20's patched sound drivers belong to the handheld image only.
+            if [ -n "$(find /usr/lib/modules -maxdepth 2 -name aquarius-x20-audio 2>/dev/null)" ]; then
+              bad "patched X20 sound drivers (aquarius-x20-audio) are on a desktop image"
+            else
+              ok "no patched X20 sound drivers on this image"
+            fi
             # `aq` is ONE program on all three images, so `aq handheld` exists
             # here. It must refuse politely rather than look broken.
             if /usr/bin/aq handheld status > /tmp/hh.txt 2>&1; then
@@ -7179,6 +7216,85 @@ jobs:
           mod mt7921e             "Wi-Fi and Bluetooth (MT7922)"
           mod snd-soc-tas2781-i2c "the speakers"
           mod asus-armoury        "the power-limit knobs Steam's TDP slider moves"
+
+          echo "== the X20's built-in speakers (board RC74XA): two patched drivers =="
+          # Fedora's kernel is unchanged; the handheld image adds two patched
+          # copies of Fedora's own sound drivers, compiled for this image's
+          # kernel, and a loader that uses them only on an RC74XA. Everything
+          # here is read out of the finished image. None of it proves the
+          # speakers make sound — that needs the handheld (handheld.md).
+          K="$(rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core)"
+          XD="/usr/lib/modules/${K}/aquarius-x20-audio"
+          echo "     this image's kernel: ${K}"
+          for m in snd-acp-config snd-soc-acpi-amd-match; do
+            if [ -f "${XD}/${m}.ko" ]; then
+              ok "patched ${m} is filed for this kernel"
+              vm="$(modinfo -F vermagic "${XD}/${m}.ko" 2>/dev/null)"
+              [ "${vm%% *}" = "${K}" ] \
+                && ok "${m} vermagic is exactly ${K}" \
+                || bad "${m} vermagic is '${vm%% *}', not ${K} — the kernel would refuse it"
+            else
+              bad "no patched ${m} for kernel ${K} — the X20's speakers would stay silent"
+            fi
+          done
+          [ "$(modinfo -F aquarius_x20 "${XD}/snd-acp-config.ko" 2>/dev/null)" = rc74xa-acp-config ] \
+            && ok "snd-acp-config carries the RC74XA board exception" \
+            || bad "snd-acp-config has no RC74XA label"
+          [ "$(modinfo -F aquarius_x20 "${XD}/snd-soc-acpi-amd-match.ko" 2>/dev/null)" = rc74xa-soundwire-links ] \
+            && ok "snd-soc-acpi-amd-match carries the RC74XA speaker wiring" \
+            || bad "snd-soc-acpi-amd-match has no RC74XA label"
+          strings "${XD}/snd-acp-config.ko" > /tmp/x20-strings.txt 2>/dev/null || true
+          grep -qx RC74XA /tmp/x20-strings.txt \
+            && ok "the board name RC74XA is inside the compiled snd-acp-config" \
+            || bad "RC74XA is not inside the compiled snd-acp-config"
+          for n in snd_acp_config snd_soc_acpi_amd_match; do
+            how="$(modprobe -S "${K}" --show-depends "${n}" 2>&1 || true)"
+            grep -qx "install /bin/bash /usr/libexec/aquarius-x20-audio ${n} *" <<< "${how}" \
+              && ok "asking for ${n} runs the X20 loader" \
+              || bad "asking for ${n} does not run the X20 loader: ${how}"
+            stock="$(modprobe -S "${K}" --show-depends --ignore-install "${n}" 2>&1 | tail -n 1 || true)"
+            case "${stock}" in
+              "insmod /lib/modules/${K}/kernel/"*|"insmod /usr/lib/modules/${K}/kernel/"*)
+                ok "the fallback for ${n} is Fedora's own driver" ;;
+              *) bad "the fallback for ${n} is not Fedora's driver: ${stock}" ;;
+            esac
+          done
+          grep -q aquarius-x20-audio "/usr/lib/modules/${K}/modules.dep" \
+            && bad "the patched drivers are in modules.dep — 'stock' could load ours" \
+            || ok "the patched drivers are kept out of the normal driver index"
+          bash -n /usr/libexec/aquarius-x20-audio \
+            && ok "the loader is valid bash" \
+            || bad "the loader has a syntax error"
+          grep -Eq '^[0-9a-f]{64}  1954-1-0-0x8\.bin$' /usr/share/aquarius/x20-audio/firmware.sha256 2>/dev/null \
+            && grep -Eq '^[0-9a-f]{64}  1954-1-0-0xB\.bin$' /usr/share/aquarius/x20-audio/firmware.sha256 \
+            && ok "the image lists the bench unit's speaker firmware (speaker ID 1)" \
+            || bad "the image's firmware list has no speaker ID 1 pair"
+          # The list must match the firmware actually on disk, byte for byte.
+          while read -r sum name; do
+            id="${name#1954-}"; id="${id%%-*}"; amp="${name##*-}"; amp="${amp%.bin}"
+            base="/usr/lib/firmware/1954-${id}-0-${amp}.bin"
+            if [ -e "${base}.xz" ]; then got="$(xz -dc "${base}.xz" | sha256sum | cut -d' ' -f1)"
+            elif [ -e "${base}.zst" ]; then got="$(zstd -dcq "${base}.zst" | sha256sum | cut -d' ' -f1)"
+            else got="$(sha256sum "${base}" 2>/dev/null | cut -d' ' -f1)"; fi
+            [ "${got}" = "${sum}" ] \
+              && ok "${name}: the firmware on disk matches the image's list" \
+              || bad "${name}: the firmware on disk does not match the image's list"
+          done < /usr/share/aquarius/x20-audio/firmware.sha256
+          [ -f /usr/share/alsa/ucm2/sof-soundwire/tas2783.conf ] \
+            && ok "ALSA has the TAS2783 speaker profile (sof-soundwire/tas2783.conf)" \
+            || bad "ALSA has no sof-soundwire/tas2783.conf — no 'Speaker' output would appear"
+          # Neither driver may be in the boot ramdisk, where the loader cannot run.
+          IR="/usr/lib/modules/${K}/initramfs.img"
+          if [ -r "${IR}" ] && command -v lsinitrd > /dev/null 2>&1; then
+            lsinitrd "${IR}" > /tmp/x20-initrd.txt 2>/dev/null || true
+            if grep -Eq 'snd[-_](acp[-_]config|soc[-_]acpi[-_]amd[-_]match)\.ko' /tmp/x20-initrd.txt; then
+              bad "a sound driver the X20 loader decides about is inside the boot ramdisk"
+            else
+              ok "neither X20 sound driver is in the boot ramdisk"
+            fi
+          else
+            bad "could not inspect ${IR}"
+          fi
 
           echo "== the one command a bench session runs =="
           # It has to survive a machine with none of the hardware — which is

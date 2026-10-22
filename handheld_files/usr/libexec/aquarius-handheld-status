@@ -267,6 +267,27 @@ else
         printf '%s' "${AQ_LOG}" | grep -iE 'firmware.*(failed|not found)' | tail -6 | sed 's/^/     /'
     fi
 fi
+# The X20 (board RC74XA) speaker drivers: which way did this boot go? Written
+# by /usr/libexec/aquarius-x20-audio, one line per decision. "patched RC74XA
+# speaker drivers loaded" is the good answer on the X20; any "Fedora's stock"
+# line says exactly why it fell back. See docs/restart/handheld.md.
+echo "  X20 speaker drivers this boot:"
+if [ -r /run/aquarius-x20-audio-status ]; then
+    sed 's/^/    /' /run/aquarius-x20-audio-status
+else
+    echo "    (no decision recorded — the sound drivers were never asked for, or this is not the X20)"
+fi
+if [ -e /etc/aquarius/x20-audio-off ]; then
+    echo "    ⚠️ switched off on purpose: /etc/aquarius/x20-audio-off exists"
+fi
+for aq_old in /etc/modprobe.d/99-aquarius-x20-audio-test.conf \
+    /etc/systemd/user/wireplumber.service.d/81-aquarius-x20-ucm.conf \
+    /etc/systemd/system/aquarius-x20-ucm.service \
+    /etc/aquarius/x20-audio-persistent; do
+    if [ -e "${aq_old}" ]; then
+        echo "    ⚠️ the old bench workaround is still here: ${aq_old} (see 'After you update' in handheld.md)"
+    fi
+done
 echo "  Sound cards this machine has:"
 if [ -r /proc/asound/cards ]; then
     sed 's/^/    /' /proc/asound/cards

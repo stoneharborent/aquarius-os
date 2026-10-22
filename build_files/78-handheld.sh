@@ -53,13 +53,22 @@
 # ------------------------------------------------------------------------------
 # ⚠️ WHAT IS DELIBERATELY NOT HERE
 # ------------------------------------------------------------------------------
-#   * NO KERNEL CHANGE OF ANY KIND. Fedora's own kernel already drives this
-#     machine's controller, gyro, speakers, power limits and radios. The things
-#     it cannot do yet — rumble strength, stick dead zones, button remapping,
-#     and the tidiest controller re-initialisation after a sleep — live in a
-#     patch series that is still being reviewed upstream (`hid-asus` v6). If
-#     the bench says we need them, that is a separate decision with its own
-#     spec. Nothing in this file touches a kernel.
+#   * FEDORA'S KERNEL IS UNCHANGED — BUT TWO SOUND DRIVERS ARE ADDED, FOR ONE
+#     BOARD (since 2026-10-21). Fedora's own kernel drives this machine's
+#     controller, gyro, power limits and radios as it is, and the kernel itself
+#     is never replaced or recompiled. The one exception is sound on the
+#     ROG Xbox Ally X20 (board RC74XA): Fedora's stock drivers pick the wrong
+#     sound path on it and the speakers stay silent ("Dummy Output"). So the
+#     handheld image ALSO carries two small patched copies of Fedora's own
+#     sound drivers, compiled fresh every build for this image's exact kernel
+#     (build_files/78-handheld-audio-build.sh), plus a loader that uses them
+#     only on an RC74XA and falls back to Fedora's drivers on anything else.
+#     Section 7b below installs and checks them. They are unsigned, so they
+#     only load with Secure Boot OFF.
+#     The controller things Fedora cannot do yet — rumble strength, stick dead
+#     zones, button remapping, and the tidiest controller re-initialisation
+#     after a sleep — live in a patch series still being reviewed upstream
+#     (`hid-asus` v6). That remains a separate decision with its own spec.
 #   * NO SECOND DEVICE. This targets the ROG Xbox Ally X (board `RC73XA`) and
 #     only that, because that is the only one on the bench. Widening the list
 #     without hardware in front of us is how a "supported device" becomes a
@@ -136,6 +145,18 @@ AQ_DESKTOP_FILES=(
     usr/lib/systemd/logind.conf.d/60-aquarius-handheld.conf
     usr/lib/systemd/user/steamos-powerbuttond.service.d/60-aquarius-session.conf
 )
+# The X20's built-in speakers (board RC74XA, 2026-10-21). The loader, the three
+# small settings files that route Linux through it, and the ALSA speaker
+# profile. The two compiled drivers come from the x20-audio-src builder stage,
+# not from this list. See section 7b below.
+AQ_X20_FILES=(
+    usr/libexec/aquarius-x20-audio
+    usr/lib/modprobe.d/10-aquarius-x20-audio.conf
+    usr/lib/depmod.d/aquarius-x20-audio.conf
+    usr/lib/dracut/dracut.conf.d/90-aquarius-x20-audio.conf
+    usr/share/aquarius/audio/tas2783.conf
+)
+AQ_X20_BUILT="/ctx-x20audio/out"   # what the builder stage compiled (empty on desktops)
 
 # ==============================================================================
 # 0. The two desktop images: install nothing, and prove nothing arrived
@@ -176,13 +197,27 @@ if [ "${HANDHELD}" != "1" ]; then
     for aq_f in /usr/libexec/aquarius-handheld-status "${AQ_HANDHELD_NOTE}" \
         "/${AQ_ALLY_HELPER}" "/${AQ_ALLY_UNIT}" "/${AQ_ALLY_MAP}" \
         /usr/share/glib-2.0/schemas/zz1-aquarius-90-handheld.gschema.override \
-        "${AQ_DESKTOP_FILES[@]/#//}"; do
+        "${AQ_DESKTOP_FILES[@]/#//}" "${AQ_X20_FILES[@]/#//}" \
+        /usr/share/aquarius/x20-audio; do
         if [ -e "${aq_f}" ]; then
             bad "${aq_f} is on a desktop image — it is part of the handheld layer"
         else
             ok "${aq_f} is not on this image, as intended"
         fi
     done
+
+    # The X20 speaker drivers: no patched driver anywhere under the kernel's
+    # folder, and the builder stage handed this image nothing at all.
+    if [ -n "$(find /usr/lib/modules -maxdepth 2 -name aquarius-x20-audio 2> /dev/null)" ]; then
+        bad "an aquarius-x20-audio driver folder is on a desktop image — those are the handheld's patched sound drivers"
+    else
+        ok "no patched X20 sound drivers on this image, as intended"
+    fi
+    if [ -n "$(ls -A /ctx-x20audio 2> /dev/null)" ]; then
+        bad "the X20 speaker-driver builder produced files for a DESKTOP image — the Containerfile's x20-audio-src stage is not choosing by HANDHELD"
+    else
+        ok "the X20 speaker-driver builder did not run for this image"
+    fi
 
     # `aq handheld` itself IS on every image, because `aq` is one program and
     # one program is easier to keep honest than three. It must refuse politely
@@ -1262,6 +1297,225 @@ aq_have_module asus-armoury "the power-limit knobs Steam's TDP slider moves"
 aq_have_module amdgpu "graphics"
 
 # ==============================================================================
+# 7b. The X20's built-in speakers (board RC74XA) — 2026-10-21
+# ==============================================================================
+# THE PROBLEM, IN ONE PARAGRAPH. On the ROG Xbox Ally X20 (board RC74XA),
+# Fedora's stock sound drivers pick the wrong sound path — the machine's own
+# firmware table says "digital microphones only" — and the speakers stay
+# silent ("Dummy Output"). A bench test on 2026-10-16 proved the fix: two
+# patched drivers, the right TI speaker firmware for this unit's speaker ID,
+# and one missing ALSA speaker profile. That test was compiled for ONE kernel
+# (7.2.10) and went quiet when the image moved to 7.2.11.
+#
+# WHAT THIS SECTION DOES, so it can never go quiet that way again:
+#
+#   1. Takes the two drivers the x20-audio-src builder stage compiled FOR THIS
+#      BUILD'S KERNEL (build_files/78-handheld-audio-build.sh) and files them in
+#      /usr/lib/modules/<kernel>/aquarius-x20-audio/. They are checked: built
+#      for exactly this kernel, carrying the RC74XA change.
+#   2. Installs the loader (/usr/libexec/aquarius-x20-audio) and the settings
+#      that route Linux through it: a modprobe "install" hook, a depmod rule
+#      that keeps the patched copies out of the normal driver index (so
+#      "Fedora's driver" always really means Fedora's), and a dracut rule that
+#      keeps both drivers out of the boot ramdisk (where the loader cannot run).
+#   3. Writes down the SHA-256 of every TI speaker-firmware pair this image has
+#      (1954-<speaker ID>-0-0x8 and 0xB). The loader only ever uses a pair from
+#      that list, after checking every byte. It never guesses a variant.
+#   4. Puts the upstream ALSA speaker profile (sof-soundwire/tas2783.conf) where
+#      ALSA looks — only if Fedora's alsa-ucm package does not already have one.
+#
+# ⚠️ What this cannot prove: that the speakers make sound. Only the handheld
+# can. docs/restart/handheld.md has the bench checklist.
+say "The X20's built-in speakers: two patched sound drivers for this image's kernel"
+AQ_KVER="$(rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core)"
+AQ_X20_MODDIR="/usr/lib/modules/${AQ_KVER}/aquarius-x20-audio"
+AQ_X20_RECORD="${AQ_X20_BUILT}/usr/share/aquarius/x20-audio/build.txt"
+echo "  this image's kernel: ${AQ_KVER}"
+
+if [ ! -r "${AQ_X20_RECORD}" ]; then
+    bad "the x20-audio-src builder stage left nothing — the Containerfile's 78-handheld.sh RUN line must mount it at /ctx-x20audio"
+    aq_finish "Handheld layer (phase G2 — ROG Xbox Ally X)"
+fi
+echo "  what the builder stage says it made:"
+sed 's/^/       /' "${AQ_X20_RECORD}"
+AQ_X20_BUILT_FOR="$(sed -n 's/^kernel=//p' "${AQ_X20_RECORD}")"
+if [ "${AQ_X20_BUILT_FOR}" = "${AQ_KVER}" ]; then
+    ok "the drivers were compiled for this image's kernel, ${AQ_KVER}"
+else
+    bad "the drivers were compiled for '${AQ_X20_BUILT_FOR}' but this image ships ${AQ_KVER} — step 5.8 and the builder stage read different module boxes"
+fi
+
+install -d -m 0755 "${AQ_X20_MODDIR}" /usr/share/aquarius/x20-audio
+for aq_m in snd-acp-config snd-soc-acpi-amd-match; do
+    aq_src="${AQ_X20_BUILT}/usr/lib/modules/${AQ_KVER}/aquarius-x20-audio/${aq_m}.ko"
+    if [ ! -f "${aq_src}" ]; then
+        bad "the builder stage made no ${aq_m}.ko for ${AQ_KVER}"
+        continue
+    fi
+    install -m 0644 "${aq_src}" "${AQ_X20_MODDIR}/${aq_m}.ko"
+    if cmp -s "${aq_src}" "${AQ_X20_MODDIR}/${aq_m}.ko"; then
+        ok "${AQ_X20_MODDIR}/${aq_m}.ko is the builder's file, byte for byte"
+    else
+        bad "${AQ_X20_MODDIR}/${aq_m}.ko is not the file the builder made"
+    fi
+done
+install -m 0644 "${AQ_X20_RECORD}" /usr/share/aquarius/x20-audio/build.txt
+
+for aq_f in "${AQ_X20_FILES[@]}"; do
+    case "${aq_f}" in
+        usr/libexec/*) install -Dm755 "${AQ_SRC}/${aq_f}" "/${aq_f}" ;;
+        *) install -Dm644 "${AQ_SRC}/${aq_f}" "/${aq_f}" ;;
+    esac
+    if cmp -s "${AQ_SRC}/${aq_f}" "/${aq_f}"; then
+        ok "/${aq_f} is ours, byte for byte"
+    else
+        bad "/${aq_f} is not the file this repository ships"
+    fi
+done
+
+# Rebuild the driver index for this kernel. With the depmod rule above in
+# place, this must leave our folder OUT of it — read back just below.
+depmod -a "${AQ_KVER}"
+
+say "Reading the X20 speaker drivers back"
+for aq_m in snd-acp-config snd-soc-acpi-amd-match; do
+    aq_ko="${AQ_X20_MODDIR}/${aq_m}.ko"
+    [ -f "${aq_ko}" ] || continue
+    aq_vm="$(modinfo -F vermagic "${aq_ko}" 2> /dev/null || true)"
+    if [ "${aq_vm%% *}" = "${AQ_KVER}" ]; then
+        ok "${aq_m}: vermagic says ${AQ_KVER} — the running kernel will accept it"
+    else
+        bad "${aq_m}: vermagic says '${aq_vm%% *}', not ${AQ_KVER} — the kernel would refuse it"
+    fi
+    # Everything the patched driver needs must exist in THIS kernel, or insmod
+    # fails on the handheld and the loader falls back to stock every boot.
+    aq_deps="$(modinfo -F depends "${aq_ko}" 2> /dev/null || true)"
+    for aq_d in ${aq_deps//,/ }; do
+        if modprobe -S "${AQ_KVER}" --show-depends --ignore-install "${aq_d}" > /dev/null 2>&1; then
+            ok "${aq_m} needs ${aq_d}, and this kernel has it"
+        else
+            bad "${aq_m} needs ${aq_d}, which this kernel does not have"
+        fi
+    done
+done
+[ "$(modinfo -F aquarius_x20 "${AQ_X20_MODDIR}/snd-acp-config.ko" 2> /dev/null)" = "rc74xa-acp-config" ] \
+    && ok "snd-acp-config carries the RC74XA board exception" \
+    || bad "snd-acp-config does not carry the RC74XA label"
+[ "$(modinfo -F aquarius_x20 "${AQ_X20_MODDIR}/snd-soc-acpi-amd-match.ko" 2> /dev/null)" = "rc74xa-soundwire-links" ] \
+    && ok "snd-soc-acpi-amd-match carries the RC74XA speaker wiring" \
+    || bad "snd-soc-acpi-amd-match does not carry the RC74XA label"
+strings "${AQ_X20_MODDIR}/snd-acp-config.ko" > /tmp/aq-x20-strings.txt 2> /dev/null || true
+if grep -qx 'RC74XA' /tmp/aq-x20-strings.txt; then
+    ok "the board name RC74XA is inside the compiled snd-acp-config"
+else
+    bad "RC74XA is not inside the compiled snd-acp-config"
+fi
+rm -f /tmp/aq-x20-strings.txt
+
+# How Linux will now resolve the two names. Asked of modprobe itself.
+#   * a plain request goes through OUR hook;
+#   * with the hook bypassed (the loader's fallback), it is FEDORA'S file under
+#     kernel/ — never our copy. That is what makes "fall back" mean something.
+for aq_n in snd_acp_config snd_soc_acpi_amd_match; do
+    aq_how="$(modprobe -S "${AQ_KVER}" --show-depends "${aq_n}" 2>&1 || true)"
+    # (A here-string, not a pipe into grep -q: see the broken-pipe note in aq-lib.sh.)
+    if grep -qx "install /bin/bash /usr/libexec/aquarius-x20-audio ${aq_n} *" <<< "${aq_how}"; then
+        ok "asking for ${aq_n} runs the X20 loader"
+    else
+        printf '%s\n' "${aq_how}" | sed 's/^/       /'
+        bad "asking for ${aq_n} does NOT run /usr/libexec/aquarius-x20-audio"
+    fi
+    aq_stock="$(modprobe -S "${AQ_KVER}" --show-depends --ignore-install "${aq_n}" 2>&1 | tail -n 1 || true)"
+    case "${aq_stock}" in
+        "insmod /lib/modules/${AQ_KVER}/kernel/"* | "insmod /usr/lib/modules/${AQ_KVER}/kernel/"*)
+            ok "the fallback for ${aq_n} is Fedora's own driver: ${aq_stock#insmod }" ;;
+        *)
+            bad "the fallback for ${aq_n} is not Fedora's driver under kernel/: '${aq_stock}'" ;;
+    esac
+done
+if grep -q 'aquarius-x20-audio' "/usr/lib/modules/${AQ_KVER}/modules.dep"; then
+    bad "the patched drivers are in modules.dep — the depmod rule did not work, so 'stock' could load ours"
+else
+    ok "the patched drivers are not in the normal driver index (modules.dep)"
+fi
+
+if bash -n /usr/libexec/aquarius-x20-audio 2> /tmp/aq-sh.txt; then
+    ok "aquarius-x20-audio is valid bash"
+else
+    sed 's/^/       /' /tmp/aq-sh.txt
+    bad "aquarius-x20-audio has a syntax error — Linux would fail to load ANY driver for the X20's sound"
+fi
+rm -f /tmp/aq-sh.txt
+
+# ------------------------------------------------------------------------------
+# The TI speaker firmware: which speaker IDs this image can serve, and the
+# exact bytes of each. The loader compares against this list on every boot.
+# ------------------------------------------------------------------------------
+say "The X20 speaker firmware this image carries, by speaker ID"
+AQ_X20_FW_LIST=/usr/share/aquarius/x20-audio/firmware.sha256
+: > "${AQ_X20_FW_LIST}.new"
+for aq_fw in /usr/lib/firmware/1954-*-0-0x8.bin*; do
+    [ -e "${aq_fw}" ] || continue
+    aq_name="${aq_fw##*/}"
+    aq_id="${aq_name#1954-}"
+    aq_id="${aq_id%%-*}"
+    case "${aq_id}" in '' | *[!0-9]*) continue ;; esac
+    aq_pair_ok=1
+    for aq_amp in 8 B; do
+        aq_base="/usr/lib/firmware/1954-${aq_id}-0-0x${aq_amp}.bin"
+        if [ -e "${aq_base}.xz" ]; then
+            aq_sum="$(xz -dc "${aq_base}.xz" | sha256sum | cut -d' ' -f1)"
+        elif [ -e "${aq_base}.zst" ]; then
+            aq_sum="$(zstd -dcq "${aq_base}.zst" | sha256sum | cut -d' ' -f1)"
+        elif [ -e "${aq_base}" ]; then
+            aq_sum="$(sha256sum "${aq_base}" | cut -d' ' -f1)"
+        else
+            aq_pair_ok=0
+            continue
+        fi
+        echo "${aq_sum}  1954-${aq_id}-0-0x${aq_amp}.bin" >> "${AQ_X20_FW_LIST}.new"
+    done
+    if [ "${aq_pair_ok}" = 1 ]; then
+        echo "  speaker ID ${aq_id}: both amplifiers' firmware present"
+    else
+        echo "  speaker ID ${aq_id}: incomplete pair — the loader will refuse it"
+    fi
+done
+sort -u -k2 "${AQ_X20_FW_LIST}.new" > "${AQ_X20_FW_LIST}"
+rm -f "${AQ_X20_FW_LIST}.new"
+chmod 0644 "${AQ_X20_FW_LIST}"
+sed 's/^/       /' "${AQ_X20_FW_LIST}"
+# Speaker ID 1 is the one measured on the bench unit (EFI variable SPEAKER_ID).
+for aq_amp in 8 B; do
+    aq_file_has "${AQ_X20_FW_LIST}" "^[0-9a-f]{64}  1954-1-0-0x${aq_amp}\.bin$" \
+        "the bench unit's speaker firmware (speaker ID 1, amplifier 0x${aq_amp}) is in the image"
+done
+
+# ------------------------------------------------------------------------------
+# The ALSA speaker profile (UCM). Without it the speakers have a driver but no
+# "Speaker" output in the sound menu.
+# ------------------------------------------------------------------------------
+say "The ALSA speaker profile for the TAS2783 amplifiers"
+AQ_UCM_DIR=/usr/share/alsa/ucm2/sof-soundwire
+AQ_UCM="${AQ_UCM_DIR}/tas2783.conf"
+if [ ! -d "${AQ_UCM_DIR}" ]; then
+    bad "${AQ_UCM_DIR} does not exist — Fedora's alsa-ucm package is missing or moved"
+elif [ -f "${AQ_UCM}" ] && ! cmp -s "${AQ_UCM}" /usr/share/aquarius/audio/tas2783.conf; then
+    # Fedora's package has its own now. Theirs wins; ours is never forced over it.
+    ok "Fedora's alsa-ucm already has ${AQ_UCM} — using Fedora's, not ours"
+    echo "  owned by: $(rpm -qf "${AQ_UCM}" 2> /dev/null || echo 'no package')"
+else
+    install -Dm644 /usr/share/aquarius/audio/tas2783.conf "${AQ_UCM}"
+    if cmp -s /usr/share/aquarius/audio/tas2783.conf "${AQ_UCM}"; then
+        ok "${AQ_UCM} is in place (Fedora's alsa-ucm does not ship it yet; this is the upstream file)"
+    else
+        bad "${AQ_UCM} could not be put in place"
+    fi
+fi
+aq_file_has "${AQ_UCM}" 'PlaybackPCM "hw:\$\{CardId\},2"' \
+    "the speaker profile points at the speaker playback device (number 2, measured on the bench)"
+
+# ==============================================================================
 # 8. `aq handheld status` — one command for the whole bench report
 # ==============================================================================
 say "The 'aq handheld' command"
@@ -1316,6 +1570,15 @@ controller, with its paddles and its gyro):
     Terra publishes one version at a time, so this is what there was on
     the day this image was built.
 
+Built-in speakers on the ROG Xbox Ally X20 (board RC74XA):
+
+    Fedora's kernel is unchanged, but this image adds two patched copies of
+    Fedora's own sound drivers, compiled for kernel ${AQ_KVER} when this
+    image was built. /usr/libexec/aquarius-x20-audio uses them only on an
+    RC74XA, with Secure Boot OFF, and falls back to Fedora's drivers
+    otherwise. 'aq handheld status' says which way this boot went.
+    Switch them off:  sudo touch /etc/aquarius/x20-audio-off
+
 What is NOT here yet, and needs a kernel that does not exist in Fedora:
     rumble strength, stick dead zones, response curves, button remapping,
     and the tidiest controller re-initialisation after waking from sleep.
@@ -1339,5 +1602,7 @@ aq_file_has "${AQ_HANDHELD_NOTE}" "version: ${AQ_IP_EVR}" \
     "the exact InputPlumber version is written into the image"
 aq_file_has "${AQ_HANDHELD_NOTE}" 'Ctrl\+Alt\+F3' \
     "the note tells a person how to get out of a black screen"
+aq_file_has "${AQ_HANDHELD_NOTE}" "compiled for kernel ${AQ_KVER}" \
+    "the note says which kernel the X20 speaker drivers were built for"
 
 aq_finish "Handheld layer (phase G2 — ROG Xbox Ally X)"
