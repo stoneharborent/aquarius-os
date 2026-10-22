@@ -1,0 +1,15 @@
+# AquariusOS — nothing updates AND restarts the computer by itself (2026-10-21).
+#
+# Fedora's bootc base switches on bootc-fetch-apply-updates.timer
+# (86-bootc-standard.preset). That timer runs `bootc upgrade --apply`, which
+# downloads a new system AND REBOOTS THE MACHINE WITHOUT ASKING — in the middle
+# of an export, if that is when it fires. On AquariusOS updates come from GNOME
+# Software instead: it downloads in the background and then shows "Restart to
+# update", and you choose when.
+#
+# Presets are read lowest number first and the first match wins, so this "10-"
+# beats Fedora's "86-". Step 77 also MASKS the timer, which is what reaches
+# machines that were installed before this file existed.
+# Guide: docs/restart/updater.md
+disable bootc-fetch-apply-updates.timer
+disable bootc-fetch-apply-updates.service

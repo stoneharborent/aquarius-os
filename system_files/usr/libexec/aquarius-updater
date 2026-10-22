@@ -4,33 +4,58 @@
 # =============================================================================
 # PLAIN ENGLISH
 #
-# This is the little window that opens when you pick "Check for Update" from the
-# Aquarius logo menu. It tells you which version of AquariusOS you are running,
-# asks the internet whether there is a newer one, and — if there is — updates
-# with one button and offers to restart to finish.
+# This is what runs when you pick "Check for Update" (or type `aq update`). It
+# tells you which version of AquariusOS you are running, asks the internet
+# whether there is a newer one, and — if there is — installs it and offers to
+# restart to finish.
+#
+# ⚠️ SINCE 2026-10-21, GNOME SOFTWARE IS THE ONE PLACE UPDATES COME FROM.
+# Royce asked for system updates to arrive through the Software app, the same
+# place Flatpak apps and device firmware update. So:
+#
+#   * "Check for Update" with no words after it OPENS SOFTWARE'S UPDATES PAGE.
+#     It does not draw a window of its own any more (unless Software is
+#     missing, when it falls back to the old window so the button still works).
+#   * `aq update check` still answers in the terminal, still with no password.
+#     It only reads, so it never competes with Software for anything.
+#   * `aq update apply` uses the SAME ENGINE Software uses — `rpm-ostree
+#     upgrade`, which hands the job to the system's one update service
+#     (rpm-ostreed). That service does one job at a time, so the terminal and
+#     Software queue politely instead of fighting over the update lock.
+#     It used to run `bootc upgrade`, which is a second engine: on the bench it
+#     sat for 46 hours waiting behind a stuck Software job, and it flatly
+#     refuses any machine with extra packages "layered" on top of the image.
+#
+# Nothing on this operating system restarts the computer by itself. Fedora's
+# own auto-update timer (which downloads AND reboots without asking) is
+# switched off in the image by step 77. Software downloads in the background
+# and then shows "Restart to update"; you choose when.
 #
 # WHY UPDATING LOOKS LIKE THIS AND NOT LIKE A TERMINAL
 # AquariusOS updates the whole operating system as one sealed image (that is
 # what "bootc" underneath is doing). It is safe — the old version stays on the
 # disk and the machine can always roll back — but the command that does it,
-# `bootc upgrade`, is a wall of scrolling text. On the operating system whose
+# `rpm-ostree upgrade`, is a wall of scrolling text. On the operating system whose
 # whole point is that creative work should not feel like system administration,
 # checking for an update should feel like checking for an update. So the text is
-# all still here, one click away behind "Details", and this window is what you
-# actually look at.
+# all still here, one click away behind "Details" in Software, and Software is
+# what you actually look at.
 #
-# ⚠️ THIS WINDOW MAKES NO UPDATE DECISIONS OF ITS OWN. Every real answer — the
+# ⚠️ THIS PROGRAM MAKES NO UPDATE DECISIONS OF ITS OWN. Every real answer — the
 # current version, whether a newer one exists, doing the upgrade — comes from
-# `bootc`, the same tool `aq update` runs in a terminal. This window starts it,
-# reads what it says, and draws it. There is one updater on this operating
-# system and two ways to watch it.
+# the system's update service, the same one GNOME Software talks to. This
+# program asks it, reads what it says, and prints or draws it. There is one
+# update engine on this operating system and several ways to watch it.
 #
 # =============================================================================
 # HOW IT IS RUN
 # =============================================================================
-#   aquarius-updater              open the window (this is what the logo menu
-#                                 runs, and what aquarius-updater.desktop does).
+#   aquarius-updater              open GNOME Software's Updates page (this is
+#                                 what "Check for Update" runs, and what
+#                                 aquarius-updater.desktop does).
 #   aquarius-updater --gui        the same thing, said explicitly.
+#   aquarius-updater --window     the old AquariusOS window instead. Only for
+#                                 the bench, or a machine without Software.
 #   aquarius-updater check        no window: check and print the answer. This is
 #                                 what `aq update check` runs.
 #   aquarius-updater apply        no window: do the upgrade in the terminal,
@@ -46,8 +71,9 @@
 # HOW IT BECOMES ADMINISTRATOR
 # =============================================================================
 # Checking for an update needs no special powers and asks for nothing. DOING the
-# update does — it writes a new system image — so the Update button runs
-# `pkexec bootc upgrade`. pkexec is the standard "may I?" command: it puts up
+# update does — it writes a new system image — so `aq update apply` (and the
+# fallback window's Update button) runs `pkexec rpm-ostree upgrade`. pkexec is
+# the standard "may I?" command: it puts up
 # ONE password prompt (through the session's polkit agent), and if you say yes,
 # runs the upgrade as the administrator. Restarting afterwards goes through
 # systemd's logind, which already lets the person at the screen restart their
@@ -62,7 +88,7 @@
 #     which cannot carry the mark. This is the 2026-09-04 rule the three other
 #     windows were fixed to follow; CI greps this file for it too.
 #   * To look at the window without a real system to update:
-#         aquarius-updater --gui   (on a machine with no deployment to read, the
+#         aquarius-updater --window   (on a machine with no deployment to read, the
 #                                   check lands on "Couldn't confirm the update
 #                                   status", which is the correct behaviour — it
 #                                   must never guess "up to date")
@@ -77,7 +103,7 @@ import sys
 
 # Where the OS writes down what it is. Step 70 (70-image-info.sh) creates this.
 IMAGE_INFO = "/usr/share/aquarius/image-info.json"
-BOOTC = "/usr/bin/bootc"
+GNOME_SOFTWARE = "/usr/bin/gnome-software"
 
 APP_ID = "org.aquariusos.Updater"
 
@@ -156,6 +182,32 @@ UNKNOWN = "unknown"
 RPM_OSTREE = "/usr/bin/rpm-ostree"
 SKOPEO = "/usr/bin/skopeo"
 
+
+def apply_command(euid):
+    """The one command that installs an update. Same engine as GNOME Software.
+
+    `rpm-ostree upgrade` asks the system's update service to do the work, so it
+    waits its turn behind Software instead of fighting it, and it accepts a
+    machine with layered packages (which `bootc upgrade` refuses outright).
+    Not the administrator? pkexec asks for the password once.
+    """
+    if euid == 0:
+        return [RPM_OSTREE, "upgrade"]
+    return ["pkexec", RPM_OSTREE, "upgrade"]
+
+
+# What `rpm-ostree status --json` calls the extras added on top of the image.
+# Any of them makes `bootc upgrade` refuse ("Deployment contains local
+# rpm-ostree modifications"); `rpm-ostree upgrade` carries them along.
+LAYER_KEYS = (
+    "requested-packages",
+    "requested-local-packages",
+    "requested-base-removals",
+    "requested-base-local-replacements",
+    "requested-local-fileoverride-packages",
+    "requested-modules",
+)
+
 # Only these phrases mean "the network could not be reached". A permission
 # problem or an unreadable answer must never be dressed up as an internet fault.
 OFFLINE_MARKERS = (
@@ -189,7 +241,10 @@ def parse_local(code, out):
      "digest": the fingerprint of the image you booted,
      "version": its version label,
      "staged": True if a newer image is already downloaded and waiting,
-     "staged_version": that waiting version's label}
+     "staged_version": that waiting version's label,
+     "layered": the names of anything added on top of the image (a list),
+     "busy": True if the update service is in the middle of a job right now —
+             usually GNOME Software refreshing or downloading}
     """
     if code != 0 or not out:
         return None
@@ -225,7 +280,44 @@ def parse_local(code, out):
         "version": booted.get("version") or "",
         "staged": staged is not None,
         "staged_version": (staged or {}).get("version") or "",
+        "layered": _layered(booted),
+        "busy": bool(data.get("transaction")),
     }
+
+
+def _layered(entry):
+    """Every package added, removed or replaced on top of the image, by name."""
+    names = []
+    for key in LAYER_KEYS:
+        value = entry.get(key)
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, str) and item.strip() and item.strip() not in names:
+                    names.append(item.strip())
+    return names
+
+
+def layered_advice(layered):
+    """Plain words about layered packages, or [] when there are none."""
+    if not layered:
+        return []
+    return [
+        "",
+        "Note: this computer has extra packages added on top of AquariusOS:",
+        "  %s" % ", ".join(layered),
+        "Updates still work — through Software, or 'aq update apply' — but each",
+        "one takes longer, and can stop if one of these is not available for the",
+        "new version. If you no longer need one, take it off and restart:",
+        "  sudo rpm-ostree uninstall NAME",
+        "(The guide 'bench-rebase.md' has the full steps.)",
+    ]
+
+
+BUSY_ADVICE = [
+    "The update service is busy with another job right now — usually GNOME",
+    "Software checking for or downloading updates. Wait for it to finish, then",
+    "try again. If it never finishes, restarting the computer clears it.",
+]
 
 
 def _plain_ref(reference):
@@ -297,13 +389,16 @@ def parse_published(code, out, err):
 def decide(local, published_code=None, published_out="", published_err=""):
     """Turn the two answers into one state. Pure: give it the two answers and it
     gives the same result every time, which is how the tests can check it."""
-    result = {"state": UNKNOWN, "version": "", "current": "", "log": ""}
+    result = {"state": UNKNOWN, "version": "", "current": "", "log": "",
+              "layered": [], "busy": False}
 
     if local is None:
         # We could not even read what this machine is running. Say so.
         return result
 
     result["current"] = local.get("version") or ""
+    result["layered"] = list(local.get("layered") or [])
+    result["busy"] = bool(local.get("busy"))
 
     # Already downloaded and waiting: restarting is all that is left to do, and
     # that answer needs no network at all.
@@ -379,6 +474,17 @@ def headless_check():
     # Checking asks for no password. Only 'aq update apply' does.
     print("Current version: %s" % current_version())
     result = check_update()
+    code = _print_check(result)
+    for line in layered_advice(result.get("layered")):
+        print(line)
+    if result.get("busy"):
+        print("")
+        for line in BUSY_ADVICE:
+            print(line)
+    return code
+
+
+def _print_check(result):
     state = result["state"]
     if state == UP_TO_DATE:
         print("You're up to date.")
@@ -390,7 +496,8 @@ def headless_check():
             print("  On offer:      %s" % result["version"])
         else:
             print("An update is available.")
-        print("Install it with:  aq update apply")
+        print("Install it from Software's Updates page (aq update), or here")
+        print("in the terminal with:  aq update apply")
         return 0
     if state == RESTART_REQUIRED:
         if result["version"]:
@@ -416,13 +523,21 @@ def headless_check():
 # HEADLESS: apply  (what `aq update apply` runs)
 # -----------------------------------------------------------------------------
 def headless_apply():
-    if os.geteuid() == 0:
-        cmd = [BOOTC, "upgrade"]
-    else:
-        # pkexec asks for the password once, then runs the upgrade as root. In a
-        # terminal it prompts on the terminal; under a desktop, the polkit agent
-        # puts up a dialog.
-        cmd = ["pkexec", BOOTC, "upgrade"]
+    # Look first (no password): if Software is already mid-job, say so plainly
+    # rather than queue up behind it with no explanation.
+    code, out, _err = _run([RPM_OSTREE, "status", "--json"], timeout=30)
+    local = parse_local(code, out)
+    if local is not None and local.get("busy"):
+        for line in BUSY_ADVICE:
+            print(line, file=sys.stderr)
+        return 1
+    if local is not None:
+        for line in layered_advice(local.get("layered")):
+            print(line)
+    # pkexec asks for the password once, then runs the upgrade as root. In a
+    # terminal it prompts on the terminal; under a desktop, the polkit agent
+    # puts up a dialog.
+    cmd = apply_command(os.geteuid())
     print("Updating AquariusOS. This can take a few minutes.")
     try:
         code = subprocess.call(cmd)
@@ -450,7 +565,11 @@ def dry_run():
     if ref:
         print("Updates come from: %s" % ref)
     print("")
-    print("What the window does when it runs for real:")
+    print("What 'Check for Update' does when it runs for real:")
+    print("  * opens GNOME Software's Updates page (%s --mode=updates)," % GNOME_SOFTWARE)
+    print("    the one place system, app and firmware updates come from")
+    print("")
+    print("What 'aq update check' / 'aq update apply' do in a terminal:")
     print("  * shows the current version above")
     print("  * checks without asking for a password: it reads which image this")
     print("    machine booted, then asks the image store for the newest one, and")
@@ -460,11 +579,12 @@ def dry_run():
     print("      An update is downloaded and ready — restart to finish")
     print("      Could not reach the update server (offline, said plainly)")
     print("      Couldn't confirm the update status (honest, never 'up to date')")
-    print("  * if an update is available, the Update button runs")
-    print("    'pkexec bootc upgrade' with live output in the window — that is")
+    print("  * 'apply' runs 'pkexec rpm-ostree upgrade' — the same engine Software")
+    print("    uses, so the two wait their turn instead of fighting — and that is")
     print("    the one and only password prompt")
-    print("  * when it finishes: 'Update ready — restart to finish', with")
-    print("    Restart now (systemctl reboot) or Later")
+    print("  * it works on a machine with layered packages, and says which ones")
+    print("  * when it finishes: 'Update ready — restart to finish'. Nothing ever")
+    print("    restarts the computer by itself")
     return 0
 
 
@@ -762,7 +882,7 @@ def gui():
         def _update_worker(self):
             # pkexec puts up one password prompt, then runs the upgrade as root.
             # Its output (both streams) goes straight into the Details log.
-            cmd = ["pkexec", BOOTC, "upgrade"]
+            cmd = apply_command(os.geteuid())
             try:
                 self.proc = subprocess.Popen(
                     cmd,
@@ -865,6 +985,19 @@ def gui():
     return UpdaterApp().run([])
 
 
+def open_software():
+    """Open GNOME Software on its Updates page. Falls back to our own window
+    only if Software is somehow not installed, so the button never does nothing."""
+    if os.access(GNOME_SOFTWARE, os.X_OK):
+        try:
+            subprocess.Popen([GNOME_SOFTWARE, "--mode=updates"], start_new_session=True)
+            return 0
+        except OSError as exc:
+            print("Could not open Software (%s); opening the update window instead." % exc,
+                  file=sys.stderr)
+    return gui()
+
+
 # -----------------------------------------------------------------------------
 # The front door
 # -----------------------------------------------------------------------------
@@ -879,18 +1012,20 @@ def main(argv):
         if first in ("apply", "--apply", "upgrade"):
             return headless_apply()
         if first in ("--gui",):
+            return open_software()
+        if first in ("--window",):
             return gui()
         if first in ("-h", "--help", "help"):
             here = os.path.abspath(__file__)
             with open(here, "r") as handle:
-                for line in handle.readlines()[1:110]:
+                for line in handle.readlines()[1:97]:
                     if line.startswith("#"):
                         print(line[2:].rstrip() if line.startswith("# ") else line[1:].rstrip())
             return 0
         print("aquarius-updater: I do not understand '%s'." % first, file=sys.stderr)
         return 1
-    # No arguments: open the window.
-    return gui()
+    # No arguments: open Software's Updates page.
+    return open_software()
 
 
 if __name__ == "__main__":

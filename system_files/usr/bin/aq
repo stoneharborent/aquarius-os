@@ -176,14 +176,16 @@ USAGE
                         a page of tips. Safe to run any time; it changes
                         nothing until you press something.
 
-    aq update           Open the "Check for Update" window: which version of
-                        AquariusOS you have, whether there is a newer one, and
-                        a button to install it. The same window the Aquarius
-                        logo menu opens.
+    aq update           Open the Software app on its Updates page — the one
+                        place AquariusOS, your apps and device firmware update.
+                        It downloads in the background and asks you to restart
+                        when it suits you; nothing restarts by itself.
     aq update check     No window — just say whether an update is available.
+                        Never asks for a password.
     aq update apply     Install the update now, asking for your password once.
-                        Your files are untouched and the old version stays on
-                        the disk, so you can always roll back.
+                        Uses the same engine as Software, so the two never
+                        fight. Your files are untouched and the old version
+                        stays on the disk, so you can always roll back.
 
     aq login status     Which login screen this computer starts with, and what
                         it offers you. Since 19 October 2026 that is one
@@ -3648,7 +3650,7 @@ handheld() {
 # for Update" window the Aquarius logo menu opens. There is one updater and two
 # ways to reach it, exactly like `aq resolve` and the Resolve window.
 #
-#   aq update            open the window
+#   aq update            open GNOME Software's Updates page
 #   aq update check      no window: is there an update? (aquarius-updater check)
 #   aq update apply      install it now, asking for a password once
 #
@@ -3671,7 +3673,7 @@ update() {
         -h | --help | help) "${AQ_UPDATER}" --help ;;
         *)
             echo "aq: '${1}' is not something 'aq update' knows how to do." >&2
-            echo "    It understands: (nothing — opens the window), check, apply." >&2
+            echo "    It understands: (nothing — opens Software's Updates page), check, apply." >&2
             return 1
             ;;
     esac

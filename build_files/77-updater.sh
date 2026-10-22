@@ -10,6 +10,14 @@
 # an offer to restart. It is what the Aquarius logo menu's "Check for Update"
 # launches, and it is also `aq update` on the command line.
 #
+# ⚠️ SINCE 2026-10-21 GNOME SOFTWARE IS THE ONE PLACE UPDATES COME FROM.
+# "Check for Update" now opens Software's Updates page; `aq update apply` uses
+# the same engine Software uses (`rpm-ostree upgrade`, through the system's one
+# update service), so the two queue instead of fighting over the update lock.
+# And Fedora's own auto-update timer — which downloads AND REBOOTS without
+# asking — is switched off here (section 0). Nothing restarts the computer by
+# itself.
+#
 # It is three plain files, all copied in at step 50:
 #
 #   /usr/libexec/aquarius-updater                 the window AND the headless
@@ -22,7 +30,7 @@
 #
 # WHY THERE IS NO SEPARATE "aquarius-update" SCRIPT LIKE RESOLVE HAS
 # The Resolve installer is a Python window driving a big bash installer, so it
-# is two files. Updating is one short command (`bootc upgrade`), so the window
+# is two files. Updating is one short command (`rpm-ostree upgrade`), so the window
 # and the terminal logic live in the one Python file, and `aq update` just calls
 # it. That keeps the "one updater, two faces" rule with less machinery.
 #
@@ -38,12 +46,78 @@ AQ_CLI="/usr/bin/aq"
 IMAGE_INFO="/usr/share/aquarius/image-info.json"
 
 # ------------------------------------------------------------------------------
-# 1. bootc — the thing that actually updates the OS — is here
+# 0. Nothing updates AND restarts the computer by itself
 # ------------------------------------------------------------------------------
-# The window is a face on bootc. Without bootc there is nothing to put a face on.
-# It comes from the Fedora bootc base image, so this is a confirmation, not an
-# install.
-say "The update engine underneath the window"
+# ⚠️ 2026-10-21 (bench). Fedora's bootc base switches on
+# bootc-fetch-apply-updates.timer, which runs `bootc upgrade --apply --quiet`:
+# download a new system, then REBOOT, with no question asked. On the bench it
+# also sat for 46 hours waiting behind a stuck GNOME Software job, holding the
+# update lock the whole time. Updates on AquariusOS come from Software, which
+# downloads quietly and then asks you to restart when it suits you.
+#
+# Two layers, because each one reaches machines the other cannot:
+#   * the preset file /usr/lib/systemd/system-preset/10-aquarius-updates.preset
+#     says "disable" — that is what a fresh install reads;
+#   * a MASK, written here into the image's /etc. A mask is a link to /dev/null
+#     that beats every "switched on" link anywhere. A machine installed before
+#     today already has Fedora's "switched on" link in its own /etc; the update
+#     adds the mask beside it, and the mask wins. (`sudo systemctl unmask` is
+#     the off switch for this off switch, if anyone ever wants Fedora's
+#     behaviour back.)
+say "Fedora's update-and-reboot timer is switched off"
+AQ_AUTO_UNITS="bootc-fetch-apply-updates.timer bootc-fetch-apply-updates.service"
+for aq_unit in ${AQ_AUTO_UNITS}; do
+    rm -f "/etc/systemd/system/timers.target.wants/${aq_unit}"
+    ln -sfn /dev/null "/etc/systemd/system/${aq_unit}"
+done
+for aq_unit in ${AQ_AUTO_UNITS}; do
+    if [ "$(readlink "/etc/systemd/system/${aq_unit}")" = "/dev/null" ]; then
+        ok "${aq_unit} is masked — it can never run, so it can never reboot the machine"
+    else
+        bad "${aq_unit} is not masked — Fedora's timer could update and reboot without asking"
+    fi
+    for aq_wants in /etc/systemd/system/timers.target.wants /usr/lib/systemd/system/timers.target.wants; do
+        if [ -e "${aq_wants}/${aq_unit}" ] || [ -L "${aq_wants}/${aq_unit}" ]; then
+            bad "${aq_wants}/${aq_unit} still switches it on"
+        fi
+    done
+    if aq_have systemctl; then
+        echo "  (for information) systemctl is-enabled ${aq_unit}: $(systemctl is-enabled "${aq_unit}" 2> /dev/null || echo "no answer")"
+    fi
+done
+aq_file_has /usr/lib/systemd/system-preset/10-aquarius-updates.preset \
+    '^disable bootc-fetch-apply-updates.timer$' \
+    "the preset a fresh install reads says the timer is off"
+
+# ------------------------------------------------------------------------------
+# 0b. GNOME Software downloads quietly, then says "Restart to update"
+# ------------------------------------------------------------------------------
+# The settings live in zz1-aquarius-50-software.gschema.override (compiled at
+# step 50). Asked back the way a brand-new account would ask: GSETTINGS_BACKEND
+# =memory reads the compiled defaults with no desktop running.
+say "GNOME Software's update settings"
+if [ -x /usr/bin/gnome-software ]; then
+    ok "/usr/bin/gnome-software is present — 'Check for Update' has a page to open"
+else
+    bad "/usr/bin/gnome-software is missing — 'Check for Update' would fall back to the old window"
+fi
+for aq_pair in allow-updates=true download-updates=true download-updates-notify=true refresh-when-metered=false; do
+    aq_key="${aq_pair%%=*}"
+    aq_want="${aq_pair#*=}"
+    aq_got="$(GSETTINGS_BACKEND=memory gsettings get org.gnome.software "${aq_key}" 2> /dev/null || echo "unreadable")"
+    if [ "${aq_got}" = "${aq_want}" ]; then
+        ok "org.gnome.software ${aq_key} is ${aq_got}"
+    else
+        bad "org.gnome.software ${aq_key} is '${aq_got}', not ${aq_want} — check zz1-aquarius-50-software.gschema.override"
+    fi
+done
+
+# ------------------------------------------------------------------------------
+# 1. bootc — the base the system is built on — is here
+# ------------------------------------------------------------------------------
+# bootc is no longer what `aq update apply` runs (rpm-ostree is, section 1b),
+# but it is still the base the whole system stands on.
+say "The system's own update tooling"
 if [ -x /usr/bin/bootc ]; then
     ok "/usr/bin/bootc is present ($(/usr/bin/bootc --version 2>/dev/null || echo 'version unavailable in build'))"
 else
@@ -66,9 +140,9 @@ say "The two tools the check reads its answers from"
 aq_dnf install skopeo
 aq_installed skopeo
 if [ -x /usr/bin/rpm-ostree ]; then
-    ok "/usr/bin/rpm-ostree is present — the check can read what this machine booted"
+    ok "/usr/bin/rpm-ostree is present — the check can read what this machine booted, and 'apply' can update it"
 else
-    bad "/usr/bin/rpm-ostree is missing — the check could not read the current image"
+    bad "/usr/bin/rpm-ostree is missing — the check could not read the current image, and nothing could update"
 fi
 if [ -x /usr/bin/skopeo ]; then
     ok "/usr/bin/skopeo is present — the check can read the published version"
@@ -161,8 +235,15 @@ aq_file_has /tmp/aq-updater-dry.txt 'Current version:' \
     "the rehearsal prints the current version"
 aq_file_has /tmp/aq-updater-dry.txt 'without asking for a password' \
     "the rehearsal states that checking needs no password"
-aq_file_has /tmp/aq-updater-dry.txt 'pkexec bootc upgrade' \
-    "the rehearsal states how it elevates to do the update"
+aq_file_has /tmp/aq-updater-dry.txt 'pkexec rpm-ostree upgrade' \
+    "the rehearsal states how it elevates — through the same engine as Software"
+aq_file_has /tmp/aq-updater-dry.txt 'gnome-software --mode=updates' \
+    "the rehearsal states that 'Check for Update' opens Software's Updates page"
+if grep -q 'bootc upgrade' /tmp/aq-updater-dry.txt; then
+    bad "the rehearsal still mentions 'bootc upgrade' — a second engine that fights Software"
+else
+    ok "the rehearsal never runs 'bootc upgrade'"
+fi
 rm -f /tmp/aq-updater-dry.txt
 
 # ------------------------------------------------------------------------------

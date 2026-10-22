@@ -37,7 +37,8 @@ DIGEST_B = "sha256:" + "b" * 64
 
 
 def status_json(digest=DIGEST_A, version="20260913", staged=None,
-                reference="ostree-unverified-registry:" + REF):
+                reference="ostree-unverified-registry:" + REF,
+                layered=None, transaction=None):
     """A canned `rpm-ostree status --json`, shaped like the real one."""
     booted = {
         "booted": True,
@@ -45,6 +46,12 @@ def status_json(digest=DIGEST_A, version="20260913", staged=None,
         "version": version,
         "container-image-reference": reference,
         "container-image-reference-digest": digest,
+        # The real answer always carries these lists, usually empty.
+        "requested-packages": list(layered or []),
+        "requested-local-packages": [],
+        "requested-base-removals": [],
+        "requested-base-local-replacements": [],
+        "requested-local-fileoverride-packages": [],
     }
     deployments = []
     if staged is not None:
@@ -56,7 +63,7 @@ def status_json(digest=DIGEST_A, version="20260913", staged=None,
             "container-image-reference-digest": DIGEST_B,
         })
     deployments.append(booted)
-    return json.dumps({"deployments": deployments})
+    return json.dumps({"deployments": deployments, "transaction": transaction})
 
 
 def skopeo_json(digest=DIGEST_A, version="20260914"):
@@ -158,6 +165,64 @@ class WhenTheLookupFails(unittest.TestCase):
         self.assertEqual(result["version"], "")
 
 
+class LayeredAndBusyMachines(unittest.TestCase):
+    """2026-10-21 bench: a machine with packages layered on top of the image, and
+    an update service stuck behind a GNOME Software job."""
+
+    def test_a_plain_machine_has_no_layers_and_is_not_busy(self):
+        local = U["parse_local"](0, status_json())
+        self.assertEqual(local["layered"], [])
+        self.assertFalse(local["busy"])
+        self.assertEqual(U["layered_advice"](local["layered"]), [])
+
+    def test_layered_packages_are_named_and_explained(self):
+        local = U["parse_local"](0, status_json(layered=["gnome-software-rpm-ostree", "rclone"]))
+        self.assertEqual(local["layered"], ["gnome-software-rpm-ostree", "rclone"])
+        advice = "\n".join(U["layered_advice"](local["layered"]))
+        self.assertIn("gnome-software-rpm-ostree, rclone", advice)
+        self.assertIn("rpm-ostree uninstall", advice)
+
+    def test_layers_do_not_change_the_answer(self):
+        # A layered machine can still be updated, so the state is unchanged.
+        result = state_of(status_json(DIGEST_A, layered=["rclone"]), skopeo_json(DIGEST_B))
+        self.assertEqual(result["state"], U["AVAILABLE"])
+        self.assertEqual(result["layered"], ["rclone"])
+
+    def test_a_running_job_is_busy(self):
+        local = U["parse_local"](0, status_json(transaction=["upgrade", ":1.42", "/org/x"]))
+        self.assertTrue(local["busy"])
+        result = U["decide"](local, 0, skopeo_json(DIGEST_A), "")
+        self.assertTrue(result["busy"])
+
+
+class OneEngineOnePlace(unittest.TestCase):
+    """GNOME Software is the one place updates come from; the terminal uses the
+    same engine so the two never fight over the update lock."""
+
+    def test_apply_uses_rpm_ostree_never_bootc(self):
+        self.assertEqual(U["apply_command"](1000), ["pkexec", U["RPM_OSTREE"], "upgrade"])
+        self.assertEqual(U["apply_command"](0), [U["RPM_OSTREE"], "upgrade"])
+        self.assertNotIn("BOOTC", TARGET.read_text())
+
+    def test_no_arguments_opens_software_not_our_window(self):
+        calls = []
+        g = U["main"].__globals__
+        saved = (g["open_software"], g["gui"])
+        g["open_software"] = lambda: calls.append("software") or 0
+        g["gui"] = lambda: calls.append("window") or 0
+        try:
+            U["main"](["aquarius-updater"])
+            U["main"](["aquarius-updater", "--gui"])
+            U["main"](["aquarius-updater", "--window"])
+        finally:
+            g["open_software"], g["gui"] = saved
+        self.assertEqual(calls, ["software", "software", "window"])
+
+    def test_software_is_opened_on_its_updates_page(self):
+        source = TARGET.read_text()
+        self.assertIn('[GNOME_SOFTWARE, "--mode=updates"]', source)
+
+
 class TheWordsPeopleRead(unittest.TestCase):
     def test_no_state_is_spelled_differently_in_two_places(self):
         self.assertEqual(
@@ -167,10 +232,10 @@ class TheWordsPeopleRead(unittest.TestCase):
 
     def test_the_update_itself_still_asks_for_the_password_once(self):
         source = TARGET.read_text()
-        self.assertIn('["pkexec", BOOTC, "upgrade"]', source)
-        # ...and the check does not run bootc at all any more.
+        self.assertIn('return ["pkexec", RPM_OSTREE, "upgrade"]', source)
+        # ...and the check only reads: it never runs an upgrade.
         check = source.split("def check_update():", 1)[1].split("\ndef ", 1)[0]
-        self.assertNotIn("BOOTC", check)
+        self.assertNotIn("apply_command", check)
 
 
 if __name__ == "__main__":

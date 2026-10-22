@@ -7397,7 +7397,15 @@ jobs:
           # Since bug U1 (2026-09-13) the check compares digests as an ordinary user;
           # the rehearsal says so in words. Same pattern as build_files/77-updater.sh.
           grep -q 'without asking for a password' /tmp/udry.txt && ok "the rehearsal states that checking needs no password" || bad "the rehearsal does not state that checking needs no password"
-          grep -q 'pkexec bootc upgrade' /tmp/udry.txt && ok "the rehearsal states how it elevates" || bad "the rehearsal does not state how it elevates"
+          # Since 2026-10-21 updates come from GNOME Software, and the terminal uses the
+          # same engine (rpm-ostree), never a second one (bootc upgrade) that fights it.
+          grep -q 'pkexec rpm-ostree upgrade' /tmp/udry.txt && ok "the rehearsal states how it elevates (same engine as Software)" || bad "the rehearsal does not state how it elevates"
+          grep -q 'gnome-software --mode=updates' /tmp/udry.txt && ok "'Check for Update' opens Software's Updates page" || bad "the rehearsal does not say it opens Software"
+          # Fedora's update-and-reboot timer is masked (docs/restart/updater.md).
+          for U in bootc-fetch-apply-updates.timer bootc-fetch-apply-updates.service; do
+            [ "$(readlink /etc/systemd/system/$U)" = /dev/null ] && ok "$U is masked — nothing reboots the machine by itself" || bad "$U is not masked"
+          done
+          grep -q '^disable bootc-fetch-apply-updates.timer$' /usr/lib/systemd/system-preset/10-aquarius-updates.preset && ok "the preset switches the timer off on a fresh install" || bad "the AquariusOS update preset is missing"
           # The launcher entry.
           DESK=/usr/share/applications/aquarius-updater.desktop
           grep -q '^Exec=/usr/libexec/aquarius-updater$' "${DESK}" && ok "the launcher runs the updater" || bad "the launcher does not run the updater"
