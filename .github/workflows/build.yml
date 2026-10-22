@@ -459,6 +459,10 @@ on:
       # controller badge, put together during the build. Same arrangement as
       # every side branch: builds and checks, never publishes.
       - claude/nice-fermi-w6lk1k
+      # The login screen must not automount drives, 2026-10-21: gdm-greeter had
+      # mounted a second NVMe and hidden it from the real user. Same arrangement
+      # as every side branch: builds and checks, never publishes.
+      - fix/gdm-no-automount
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
