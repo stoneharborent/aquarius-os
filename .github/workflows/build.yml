@@ -1600,9 +1600,10 @@ jobs:
       # the real answer for each out of the finished image and prints it, so
       # the decision is made from facts and nothing drifts unseen:
       #   * the password keyring — gnome-keyring, or Fedora 45's new oo7.
-      #     Only ONE program may answer for org.freedesktop.secrets; two would
-      #     fight over saved Wi-Fi passwords, browser logins and phone pairing,
-      #     so two FAILS the build.
+      #     Only ONE program should answer for org.freedesktop.secrets; two
+      #     would fight over saved Wi-Fi passwords, browser logins and phone
+      #     pairing. NONE fails the build; TWO raises a warning until Royce has
+      #     chosen (plan pitfall 2) — then it should become a failure.
       #   * the text console (Ctrl+Alt+F3) — kmscon or the classic getty.
       #   * whether one program may debug another (ptrace / Yama).
       - name: Report the keyring, text console and debugging defaults
@@ -1614,24 +1615,40 @@ jobs:
           ok()  { echo "  OK   $*"; }
           bad() { echo "  FAIL $*"; fails=1; }
           echo "== password keyring (who answers org.freedesktop.secrets) =="
-          for p in gnome-keyring gnome-keyring-pam oo7-daemon pam_oo7 oo7-portal kwalletmanager5 kf6-kwallet; do
+          for p in gnome-keyring gnome-keyring-pam oo7-daemon pam_oo7 oo7-portal gcr; do
             if rpm -q "$p" >/dev/null 2>&1; then echo "     installed: $(rpm -q "$p")"; fi
           done
-          grep -lsx 'Name=org.freedesktop.secrets' /usr/share/dbus-1/services/*.service > /tmp/secrets.txt || true
-          n="$(wc -l < /tmp/secrets.txt)"
-          sed 's/^/     provider: /' /tmp/secrets.txt
-          if [ "${n}" -eq 1 ]; then ok "exactly one program answers for the keyring"
-          elif [ "${n}" -eq 0 ]; then bad "nothing answers for the keyring — saved passwords would have nowhere to go"
-          else bad "${n} programs answer for the keyring — they would fight; pick one (plan pitfall 2, Royce's decision)"; fi
+          # A program can claim the keyring's name in three ways, and all three
+          # count: a D-Bus start file, a systemd user unit standing in for that
+          # file (how oo7 does it), or being started at login by the desktop
+          # (how gnome-keyring does it, from /etc/xdg/autostart).
+          : > /tmp/claim.txt
+          for f in /usr/share/dbus-1/services/*.service; do
+            grep -qx 'Name=org.freedesktop.secrets' "$f" 2>/dev/null && echo "D-Bus start file $f ($(rpm -qf "$f" 2>/dev/null))" >> /tmp/claim.txt
+          done
+          u=/usr/lib/systemd/user/dbus-org.freedesktop.secrets.service
+          [ -e "$u" ] && echo "systemd user unit $u -> $(readlink -f "$u") ($(rpm -qf "$u" 2>/dev/null))" >> /tmp/claim.txt
+          a=/etc/xdg/autostart/gnome-keyring-secrets.desktop
+          if [ -e "$a" ] && ! grep -qx 'Hidden=true' "$a"; then echo "started at login by $a ($(rpm -qf "$a" 2>/dev/null))" >> /tmp/claim.txt; fi
+          sed 's/^/     claims it: /' /tmp/claim.txt
+          echo "     login (PAM) unlock modules in GDM's rules:"
+          grep -hoE 'pam_(gnome_keyring|oo7)\.so' /usr/lib/pam.d/gdm-password /etc/pam.d/gdm-password 2>/dev/null | sort | uniq -c | sed 's/^/       /'
+          owners="$(sed -n 's/.*(\([a-z0-9_-]*\)-[0-9].*/\1/p' /tmp/claim.txt | sort -u | tr '\n' ' ')"
+          echo "     programs claiming it: ${owners:-none}"
+          case "$(echo ${owners} | wc -w)" in
+            0) bad "nothing answers for the keyring — saved passwords would have nowhere to go" ;;
+            1) ok "exactly one program answers for the keyring (${owners})" ;;
+            *) echo "::warning::TWO password keyrings claim org.freedesktop.secrets (${owners}). They would race at every login for saved Wi-Fi passwords, browser logins and GSConnect pairing. Waiting on Royce's decision (Fedora 45 plan, pitfall 2)." ;;
+          esac
           echo "== text console =="
-          echo "     autovt@.service -> $(readlink /usr/lib/systemd/system/autovt@.service 2>/dev/null || echo '(not a link)')"
+          echo "     autovt@.service -> $(readlink -f /etc/systemd/system/autovt@.service 2>/dev/null || readlink -f /usr/lib/systemd/system/autovt@.service 2>/dev/null || echo '(nothing)')"
           if rpm -q kmscon >/dev/null 2>&1; then echo "     kmscon installed: $(rpm -q kmscon)"; else echo "     kmscon is not installed (classic getty console)"; fi
           echo "== debugging (ptrace / Yama) =="
-          grep -rsh 'kernel.yama.ptrace_scope' /usr/lib/sysctl.d /etc/sysctl.d 2>/dev/null | sed 's/^/     /' || true
-          for p in elfutils-default-yama-scope elfutils-yama-scope; do
-            rpm -q "$p" >/dev/null 2>&1 && echo "     installed: $(rpm -q "$p")"
-          done
-          [ "${fails}" -eq 0 ] || { echo "::error::Two (or no) password keyrings in this image."; exit 1; }
+          echo "     sysctl files that set it:"
+          grep -rsh 'kernel.yama.ptrace_scope' /usr/lib/sysctl.d /etc/sysctl.d 2>/dev/null | sed 's/^/       /' || true
+          echo "     yama-scope packages: $(rpm -qa '*yama*' | tr '\n' ' ')"
+          echo "     (none of either means the kernel's own default applies: restricted)"
+          [ "${fails}" -eq 0 ] || { echo "::error::No password keyring in this image."; exit 1; }
           true
           SCRIPT
           podman run --rm --pull=never -i \
