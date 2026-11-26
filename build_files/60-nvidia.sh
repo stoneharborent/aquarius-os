@@ -267,6 +267,21 @@ if [ -n "${AQ_NVIDIA_EXPECTED_DRIVER:-}" ]; then
     fi
 fi
 
+# Pin or no pin, some drivers are known to be broken on hardware we own. This
+# list is checked every build, so taking the pin off (aquarius-os.env) can never
+# quietly bring one of them back. Add a version here only with a bench log that
+# proves it is broken; remove one only when it can no longer be picked up.
+#   615.71.09  Xid 13 "Illegal Instruction Encoding" on the RTX 5080 under any
+#              sustained CUDA work (bench, 2026-10-06; docs/restart/nvidia-notes.md)
+AQ_KNOWN_BAD_DRIVERS="615.71.09"
+for aq_bad_driver in ${AQ_KNOWN_BAD_DRIVERS}; do
+    if [ "${AQ_DRIVER_VERSION}" = "${aq_bad_driver}" ] || [ "${AQ_KMOD_VERSION}" = "${aq_bad_driver}" ]; then
+        bad "this image got NVIDIA driver ${aq_bad_driver}, which is on the known-broken list — see aquarius-os.env, NVIDIA driver pin"
+    else
+        ok "the driver is not ${aq_bad_driver} (known broken)"
+    fi
+done
+
 # Write it down, so anybody can ask a finished machine which driver it has and
 # whether it was pinned:  cat /usr/share/aquarius/nvidia.txt
 install -d -m 0755 /usr/share/aquarius
