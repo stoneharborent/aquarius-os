@@ -1548,6 +1548,50 @@ jobs:
             exit 1
           fi
           echo "  OK   the finished image is Fedora ${FEDORA_VERSION}"
+      # Package signature checking must not have been weakened (Fedora 45 plan,
+      # pitfall 1). Fedora 45's RPM 6 checks every package's signature by
+      # default (%_pkgverify_level all). Lowering that inside the image to make
+      # a build pass would weaken every machine that installs AquariusOS, so
+      # this reads the real answer out of the finished image — rpm's own value,
+      # every rpm settings file that mentions it, and dnf's gpgcheck switches.
+      - name: Check package signature checking is not weakened
+        run: |
+          set -euo pipefail
+          cat > /tmp/verify-sigs.sh <<'SCRIPT'
+          set -u
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+          fedora="$(rpm -E %fedora)"
+          level="$(rpm -E '%{?_pkgverify_level}')"
+          echo "  Fedora ${fedora}; rpm's %_pkgverify_level = '${level}'"
+          if [ "${fedora}" -ge 45 ]; then
+            if [ "${level}" = "all" ]; then ok "rpm checks every package's signature (all)"
+            else bad "rpm's %_pkgverify_level is '${level}', not 'all' — something in the image lowered it"; fi
+          fi
+          echo "== rpm settings files that mention _pkgverify_level (only rpm's own may) =="
+          grep -rln '_pkgverify_level' /usr/lib/rpm/macros.d /etc/rpm 2>/dev/null > /tmp/pv.txt || true
+          if [ -s /tmp/pv.txt ]; then
+            sed 's/^/     /' /tmp/pv.txt
+            bad "an rpm settings file in /usr/lib/rpm/macros.d or /etc/rpm sets _pkgverify_level"
+            grep -rn '_pkgverify_level' $(cat /tmp/pv.txt) | sed 's/^/     /'
+          else
+            ok "no settings file overrides rpm's signature level"
+          fi
+          echo "== dnf's signature switches =="
+          if grep -rEn '^[[:space:]]*(gpgcheck|pkg_gpgcheck)[[:space:]]*=[[:space:]]*(0|false|no)' \
+               /etc/dnf/dnf.conf /usr/share/dnf5/libdnf.conf.d /etc/dnf/libdnf5.conf.d 2>/dev/null; then
+            bad "dnf's main settings switch package signature checks off"
+          else
+            ok "dnf's main settings leave package signature checks on"
+          fi
+          [ "${fails}" -eq 0 ] || { echo "::error::Package signature checking is weakened in this image."; exit 1; }
+          echo "All signature-level checks passed."
+          SCRIPT
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-sigs.sh
+
       - name: Check the software is really in there
         run: |
           set -euo pipefail

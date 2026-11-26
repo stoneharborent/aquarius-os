@@ -104,10 +104,74 @@ for aq_flavour in free nonfree; do
         exit 1
     fi
 done
-aq_dnf install \
+
+# ------------------------------------------------------------------------------
+# Check those two files really are RPM Fusion's, BEFORE installing them
+# ------------------------------------------------------------------------------
+# Every package is signed by whoever made it, like a wax seal. When dnf
+# downloads from a repository it checks the seal automatically. But a package
+# handed to dnf AS A FILE, like these two, is not checked by default — dnf just
+# prints "skipped OpenPGP checks" and installs it. And these two files are the
+# ones that tell this machine which servers to trust for everything else, so
+# they are exactly the ones whose seal matters most.
+#
+# Fedora 45 (RPM 6) made signature checking the default everywhere (plan:
+# docs/fedora-45-gnome-51-plan.md, pitfall 1), so since 2026-11-25 we check
+# these properly instead of relying on the exception:
+#
+#   1. Fedora's own `distribution-gpg-keys` package carries RPM Fusion's public
+#      keys. It comes from Fedora's repository, so dnf HAS checked its seal
+#      with Fedora's key — that is the chain of trust.
+#   2. We give rpm RPM Fusion's keys from it,
+#   3. ask rpm to check both downloaded files ("signatures OK"),
+#   4. and install them with dnf's check switched ON for files too
+#      (localpkg_gpgcheck=1), so dnf refuses them if anything is wrong.
+#
+# We never turn signature checking OFF to get past a problem here.
+say "Checking the RPM Fusion files are really signed by RPM Fusion"
+aq_had_dgk=0
+rpm -q distribution-gpg-keys > /dev/null 2>&1 && aq_had_dgk=1
+aq_dnf install distribution-gpg-keys
+for aq_flavour in free nonfree; do
+    aq_key="/usr/share/distribution-gpg-keys/rpmfusion/RPM-GPG-KEY-rpmfusion-${aq_flavour}-fedora-${FEDORA}"
+    if [ ! -r "${aq_key}" ]; then
+        echo "FAIL: ${aq_key} is missing — Fedora's key package does not know RPM Fusion's Fedora ${FEDORA} key yet"
+        exit 1
+    fi
+    rpmkeys --import "${aq_key}"
+    aq_rpm="/tmp/aq-rpmfusion/rpmfusion-${aq_flavour}-release-${FEDORA}.noarch.rpm"
+    rpmkeys --checksig "${aq_rpm}" > /tmp/aq-sigcheck.txt 2>&1 || true
+    cat /tmp/aq-sigcheck.txt
+    if grep -q 'signatures OK' /tmp/aq-sigcheck.txt; then
+        ok "rpmfusion-${aq_flavour}-release carries a valid RPM Fusion signature"
+    else
+        echo "FAIL: rpmfusion-${aq_flavour}-release is NOT validly signed by RPM Fusion — refusing to install it"
+        exit 1
+    fi
+done
+rm -f /tmp/aq-sigcheck.txt
+aq_dnf install --setopt=localpkg_gpgcheck=1 \
     "/tmp/aq-rpmfusion/rpmfusion-free-release-${FEDORA}.noarch.rpm" \
     "/tmp/aq-rpmfusion/rpmfusion-nonfree-release-${FEDORA}.noarch.rpm"
 rm -rf /tmp/aq-rpmfusion
+# The key package was only needed for those two checks. RPM Fusion's keys stay
+# known to rpm (they were imported above, and the release packages ship them).
+if [ "${aq_had_dgk}" -eq 0 ]; then
+    aq_dnf remove distribution-gpg-keys
+fi
+
+# Read the keys back out of rpm's own key list.
+say "The signing keys rpm now trusts"
+rpm -q gpg-pubkey --queryformat '  %{VERSION}-%{RELEASE}  %{SUMMARY}\n' > /tmp/aq-keys.txt || true
+cat /tmp/aq-keys.txt
+for aq_flavour in free nonfree; do
+    if grep -q "RPM Fusion ${aq_flavour} repository" /tmp/aq-keys.txt; then
+        ok "rpm trusts RPM Fusion's ${aq_flavour} key"
+    else
+        bad "rpm does not have RPM Fusion's ${aq_flavour} key"
+    fi
+done
+rm -f /tmp/aq-keys.txt
 
 # ------------------------------------------------------------------------------
 # Check they are actually there and switched on
