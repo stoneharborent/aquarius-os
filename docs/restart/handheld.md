@@ -228,12 +228,40 @@ Still unexplained from 2026-10-16, worth a line in the log if seen: boot-time
 errors about `SDW0-PIN4-CAPTURE-SmartAmp`. Speaker playback working does not
 prove that capture path.
 
+### Kernel 7.3 — the patch rewritten, not retired (2026-11-25)
+
+Universal Blue's module boxes moved to Linux **7.3.4**, and the build stopped
+with "`rc74xa-soundwire-links.patch` no longer applies". That was the check
+doing its job: Linux 7.3 added new machines to the same list, so the lines
+around our change were different. It was **not** Linux fixing the X20.
+
+Linux 7.3 does add one entry that looks like ours —
+`acp70_rt721_l1u0_tas2783x2_l1u8b`, for the **ASUS ProArt PX13**. Same three
+sound chips (RT721 + two TAS2783 at ids 8 and B), but the PX13 has all three on
+**wire 1**. On the X20 the speakers are on **wire 0** (proven on the bench on
+2026-10-16), so that entry does not describe this machine. Linux 7.3 also still
+has no `RC74XA` line in `acp-config.c` (patch 1 still applies unchanged).
+
+So patch 2 was rewritten by hand against 7.3.4: **the RC74XA wiring is
+byte-for-byte the same as before**, only its position in the file moved (it is
+still the first entry in the machine list, so it is tried before the PX13 one).
+Because the driver was recompiled for a new kernel, run the speaker checklist
+below again on the first 7.3.4 image, plus these two lines:
+
+- [ ] `uname -r` starts with **7.3.4**, and `grep ^kernel= /usr/share/aquarius/x20-audio/build.txt`
+      shows the same version
+- [ ] `journalctl -k -b | grep -i 'tas2783'` names **two** amps (`tas2783-1`
+      and `tas2783-2`); if they are missing, paste the whole output into the
+      bench log — the speakers are not set up
+
 ### When this can be retired
 
 When Fedora's kernel itself contains both changes (an `RC74XA` entry in
 `sound/soc/amd/acp-config.c` and the RC74XA wiring in
 `sound/soc/amd/acp/amd-acp70-acpi-match.c`) the patches will stop applying and
-the build will say so. Then: delete `build_files/78-handheld-audio-build.sh`,
+the build will say so. ⚠️ A patch that stops applying is **not** proof of that —
+it can just mean Linux changed nearby lines (that is what happened with 7.3,
+see above). Look for the RC74XA wiring itself before deleting anything. Then: delete `build_files/78-handheld-audio-build.sh`,
 `build_files/x20-audio/`, the `x20-audio-src` stages in the `Containerfile`,
 section 7b of `78-handheld.sh` and the X20 files under `handheld_files/` — and
 bench-test again on Fedora's own drivers. The same goes for `tas2783.conf` once

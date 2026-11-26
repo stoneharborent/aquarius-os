@@ -469,6 +469,9 @@ on:
       # mounted a second NVMe and hidden it from the real user. Same arrangement
       # as every side branch: builds and checks, never publishes.
       - fix/gdm-no-automount
+      # The X20 speaker patch rewritten for kernel 7.3.4, 2026-11-25. Same
+      # arrangement as every side branch: builds and checks, never publishes.
+      - fix/x20-patch-kernel-7.3
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:

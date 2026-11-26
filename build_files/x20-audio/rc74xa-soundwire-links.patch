@@ -1,10 +1,15 @@
 --- a/sound/soc/amd/acp/amd-acp70-acpi-match.c
 +++ b/sound/soc/amd/acp/amd-acp70-acpi-match.c
-@@ -698,7 +698,51 @@
+@@ -792,9 +792,58 @@
  	{}
  };
  
-+/* RC74XA: RT721 on SDW1, TAS2783 pair on SDW0 (UID 8/B). */
++/*
++ * ROG Xbox Ally X20 (board RC74XA): the two TAS2783 speaker amps (unique ids 8
++ * and B) are on SoundWire wire 0 and the RT721 headphone/mic chip is on wire 1.
++ * Linux 7.3's acp70_rt721_l1u0_tas2783x2_l1u8b (ASUS ProArt PX13) has the same
++ * parts but puts all three on wire 1, so it does not match this board.
++ */
 +static const struct snd_soc_acpi_adr_device rc74xa_rt721_adr[] = {
 +	{
 +		.adr = 0x000130025D072101ull,
@@ -44,11 +49,13 @@
 +};
 +
  struct snd_soc_acpi_mach snd_soc_acpi_amd_acp70_sdw_machines[] = {
-+	{
-+		.link_mask = BIT(0) | BIT(1),
+ 	{
+ 		.link_mask = BIT(0) | BIT(1),
 +		.links = acp70_rc74xa_links,
 +		.drv_name = "amd_sdw",
 +	},
- 	{
- 		.link_mask = BIT(0),
- 		.links = acp70_tas2783_2,
++	{
++		.link_mask = BIT(0) | BIT(1),
+ 		.links = acp70_tas2783a_l0_rt712_vb_l1,
+ 		.machine_check = snd_soc_acpi_amd_sdca_is_device_rt712_vb,
+ 		.drv_name = "amd_sdw",
