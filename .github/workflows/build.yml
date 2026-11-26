@@ -7781,6 +7781,25 @@ jobs:
           fi
           echo "  OK   every mention is in a file that exists to record the history"
 
+      # Compiled Python (__pycache__ folders, .pyc files) belongs to whichever
+      # computer ran a test, never to the repository: it is machine-specific,
+      # it is for one exact Python version, and anything under system_files/
+      # would be copied into the image. .gitignore and .containerignore both
+      # keep it out; this proves nothing slipped past them into git.
+      - name: No compiled Python is committed
+        run: |
+          set -euo pipefail
+          hits="$(git ls-files | grep -E '(^|/)__pycache__/|\.pyc$' || true)"
+          if [ -n "${hits}" ]; then
+            echo "${hits}" | sed 's/^/  FAIL /'
+            echo "::error::Compiled Python files are committed. Delete them with 'git rm -r --cached' — they are build leftovers, see .containerignore."
+            exit 1
+          fi
+          echo "  OK   no __pycache__ folder or .pyc file is committed"
+          grep -qx '\*\*/__pycache__' .containerignore && grep -qx '\*\*/\*\.pyc' .containerignore \
+            || { echo "::error::.containerignore no longer keeps compiled Python out of the image build."; exit 1; }
+          echo "  OK   .containerignore keeps compiled Python out of the image build"
+
       - name: The names the build will actually publish
         run: |
           set -euo pipefail

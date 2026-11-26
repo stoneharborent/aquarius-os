@@ -1,0 +1,20 @@
+# ==============================================================================
+# Files the image build must never see
+# ==============================================================================
+# When `just build` runs, podman copies this folder into the build ("the build
+# context"), and the Containerfile then copies build_files/, system_files/ and
+# others into the image's scratch area. Anything listed here is left out of that
+# copy, so it can never reach a finished image — even when somebody builds on
+# their own computer from a folder full of leftovers.
+#
+# COMPILED PYTHON (__pycache__ folders and .pyc files). Python writes these next
+# to a script whenever a test imports it. They belong to whichever computer ran
+# the test and whichever Python version it had (a "cpython-312" file is for
+# Python 3.12; Fedora 45 has Python 3.15 and would never read it). They are
+# already kept out of git by .gitignore; this keeps them out of a LOCAL build
+# too. The plan for Fedora 45 (docs/fedora-45-gnome-51-plan.md, small sweeps)
+# found one once under system_files/usr/share/nautilus-python/extensions/,
+# where a local build would have shipped it. The image compiles its own Python
+# files during the build, so nothing is lost by leaving these out.
+**/__pycache__
+**/*.pyc
