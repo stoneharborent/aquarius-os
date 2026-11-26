@@ -79,12 +79,87 @@ aq_dnf install \
     mutter \
     gnome-session-wayland-session \
     gnome-settings-daemon \
-    gnome-keyring \
     gnome-menus \
     gsettings-desktop-schemas \
     adwaita-icon-theme \
     adwaita-cursor-theme \
     sound-theme-freedesktop
+
+# ------------------------------------------------------------------------------
+# The password keyring: oo7, and ONLY oo7  (Fedora 45, decided 2026-11-25)
+# ------------------------------------------------------------------------------
+# WHAT A "KEYRING" IS. A locked box in your home folder where programs keep the
+# passwords you told them to remember: Wi-Fi passwords, Firefox and Chrome
+# logins, GSConnect's pairing with your phone, the secrets Flatpak apps keep.
+# Programs reach it by one shared name, org.freedesktop.secrets. Your login
+# password is also the box's key, so logging in unlocks it and you are never
+# asked a second time.
+#
+# ⚠️ WHAT CHANGED. Up to Fedora 44 the program behind that name was
+# gnome-keyring, and this list installed it by name. Fedora 45 replaced it with
+# a new program, oo7 (pronounced "double-oh-seven"), for every desktop. Royce
+# chose to follow Fedora (2026-11-25): one keyring, the same one every other
+# Fedora 45 machine runs, so its bugs are found by other people first.
+#
+# We do NOT keep gnome-keyring "just in case". With both installed, BOTH start
+# at login and both try to own org.freedesktop.secrets. Whichever wins the race
+# gets your passwords that day; the next day the other one might win and your
+# Wi-Fi password looks forgotten. CI fails the build if gnome-keyring is in the
+# image at all.
+#
+# The four pieces, named on purpose even though GDM and the file-picker portal
+# would drag most of them in anyway — so that nobody can remove them by
+# accident and so the list says what the machine relies on:
+#   oo7-daemon   the keyring itself.
+#   pam_oo7      the small login piece. When you type your password at the login
+#                screen, it hands that password to oo7 so the box opens. (GDM 51
+#                requires it; the rules that call it are GDM's own, in
+#                /usr/lib/pam.d/gdm-password — we do not edit them.)
+#   oo7-portal   how Flatpak apps (which cannot see the keyring directly) get
+#                their own small secret. GNOME's settings already prefer it.
+#   gcr          provides gcr-ssh-agent, which remembers your SSH key passphrase
+#                for the `ssh` and `git` commands. gnome-keyring used to do this
+#                job too; oo7 does not, so gcr-ssh-agent takes it over.
+#
+# PEOPLE COMING FROM FEDORA 44 keep their passwords. oo7 finds gnome-keyring's
+# old files in ~/.local/share/keyrings/ at the first login, opens them with the
+# password you just typed, and copies their contents into its own folder,
+# ~/.local/share/keyrings/v1/. It never deletes the old files; it only drops a
+# small "<name>.keyring.migrated" marker beside each one so it does not copy it
+# twice. (A keyring whose password is NOT your login password is copied the
+# first time you unlock it, when a program asks.) Full story, and how to check:
+# docs/restart/login.md, "The password keyring".
+say "The password keyring (oo7) and the SSH agent"
+aq_dnf install \
+    oo7-daemon \
+    pam_oo7 \
+    oo7-portal \
+    gcr
+
+# WHO STARTS THEM. Neither oo7 nor the SSH agent is switched on by itself. On
+# Fedora 45 it is GNOME's own login sequence that starts both: the file
+# /usr/lib/systemd/user/gnome-session-services.target (part of gnome-session)
+# says "Wants=oo7-daemon.service" and "Wants=gcr-ssh-agent.socket", so both
+# come up every time you log in to GNOME. We follow Fedora and add nothing; the
+# checks at the end of this file read those two lines back, so if a future
+# GNOME stops starting them the build says so instead of a person finding out
+# when Wi-Fi forgets its password.
+#
+# ⚠️ GAME MODE IS NOT A GNOME SESSION, so nothing there starts oo7. That is
+# Fedora's behaviour too, and on purpose (oo7's authors want the session, not
+# the first program that asks, to start it: github.com/linux-credentials/oo7
+# issue 603). In practice: on an account that "lingers" (`aq game status`
+# says), oo7 started by the desktop keeps running, unlocked, across the switch
+# into Game Mode, and Game Mode uses it. Straight after a cold boot into Game
+# Mode (the handheld), or on an account that does not linger, there is no
+# keyring until you visit the desktop. Gnome-keyring's Game Mode was not much
+# better: it started, but locked, because the password-free login has no
+# password to open it with.
+#
+# The SSH agent costs nothing until it is used: systemd only listens on a
+# socket (a named "door", /run/user/<you>/gcr/ssh) and starts the agent the
+# first time `ssh` knocks. The socket also tells the desktop where the door is
+# (it sets SSH_AUTH_SOCK), which is how `ssh` finds it.
 
 # ------------------------------------------------------------------------------
 # Settings and system tools
@@ -368,6 +443,52 @@ for aq_backend in rpm-ostree flatpak fwupd; do
         ok "GNOME Software has its ${aq_backend} backend"
     else
         bad "GNOME Software is missing its ${aq_backend} backend"
+    fi
+done
+
+# ------------------------------------------------------------------------------
+# The password keyring is oo7, alone, and GNOME starts it (and the SSH agent).
+# ------------------------------------------------------------------------------
+# Read back out of the image, not assumed from the install list above: a
+# package installed by a LATER step could still drag gnome-keyring back in, so
+# CI repeats the "is gnome-keyring here?" part on the finished image.
+say "Checking the password keyring is oo7, and only oo7"
+aq_installed oo7-daemon pam_oo7 oo7-portal gcr
+for aq_gk in gnome-keyring gnome-keyring-pam; do
+    if rpm -q "${aq_gk}" > /dev/null 2>&1; then
+        bad "${aq_gk} is installed — it would fight oo7 for every saved password at login. Pulled in by: $(rpm -q --whatrequires "${aq_gk}" 2> /dev/null | tr '\n' ' ')"
+    else
+        ok "${aq_gk} is not in the image"
+    fi
+done
+for aq_f in /usr/bin/gnome-keyring-daemon /usr/lib64/security/pam_gnome_keyring.so; do
+    if [ -e "${aq_f}" ]; then bad "${aq_f} is in the image"; else ok "no ${aq_f}"; fi
+done
+# The login piece: GDM's own rules must call pam_oo7 when you type your
+# password (auth), when the session opens (session — this is what hands the
+# password over) and when you change your password (password — this keeps the
+# keyring's lock in step with your login password).
+for aq_stack in auth session password; do
+    aq_file_has /usr/lib/pam.d/gdm-password "^-?${aq_stack}[[:space:]]+optional[[:space:]]+pam_oo7\.so" \
+        "the login screen's ${aq_stack} rules call pam_oo7"
+done
+if [ -e /usr/lib64/security/pam_oo7.so ]; then
+    ok "/usr/lib64/security/pam_oo7.so is on disk, so those rules have something to load"
+else
+    bad "/usr/lib64/security/pam_oo7.so is missing — the keyring would never unlock at login"
+fi
+# Who starts them: GNOME's login sequence. Each Wants= line is checked on its
+# own, and each one must point at a unit file that really exists.
+AQ_GS_SERVICES=/usr/lib/systemd/user/gnome-session-services.target
+aq_file_has "${AQ_GS_SERVICES}" '^Wants=oo7-daemon\.service$' \
+    "logging in to GNOME starts oo7"
+aq_file_has "${AQ_GS_SERVICES}" '^Wants=gcr-ssh-agent\.socket$' \
+    "logging in to GNOME starts the SSH agent's socket"
+for aq_unit in oo7-daemon.service gcr-ssh-agent.socket gcr-ssh-agent.service; do
+    if [ -r "/usr/lib/systemd/user/${aq_unit}" ]; then
+        ok "${aq_unit} exists"
+    else
+        bad "/usr/lib/systemd/user/${aq_unit} is missing"
     fi
 done
 
