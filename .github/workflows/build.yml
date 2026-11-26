@@ -469,6 +469,13 @@ on:
       # mounted a second NVMe and hidden it from the real user. Same arrangement
       # as every side branch: builds and checks, never publishes.
       - fix/gdm-no-automount
+      # Fedora 45 / GNOME 51, 2026-11-25 (docs/fedora-45-gnome-51-plan.md,
+      # phase F45-1). Builds and checks like every side branch — and, unlike
+      # them, publishes to ONE extra tag, `:45-testing`, so the bench can try
+      # it with `bootc switch`. Never `latest`, never the dated tags: the
+      # "PUBLISHING A FEDORA 45 TEST BUILD" steps at the end of the job are the
+      # only steps that run for this branch, and they push that one tag only.
+      - fedora-45
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -7692,6 +7699,112 @@ jobs:
           echo '```' >> "${GITHUB_STEP_SUMMARY}"
           echo "sudo bootc switch ${IMAGE_REGISTRY}/${IMAGE_NAME}:latest" >> "${GITHUB_STEP_SUMMARY}"
           echo '```' >> "${GITHUB_STEP_SUMMARY}"
+      # ------------------------------------------------------------------------
+      # PUBLISHING A FEDORA 45 TEST BUILD (branch `fedora-45` only)
+      # ------------------------------------------------------------------------
+      # The steps above publish from `main` only. The Fedora 45 move needs the
+      # bench to try a real image before `main` changes, so the `fedora-45`
+      # branch publishes too — but to exactly ONE tag, `45-testing`, on each
+      # image. A machine only ever gets this image if somebody types
+      #   sudo bootc switch ghcr.io/stoneharborent/aquarius-os-nvidia:45-testing
+      # on purpose. Machines following `latest` never see it.
+      #
+      # Every step below is limited to that one branch by its `if:` line, it
+      # pushes that one tag and no other, and it signs the result with the same
+      # key as `main` (SIGNING_SECRET, public half cosign.pub), so a machine can
+      # prove the test image came from us too. The last step reads the
+      # published tag back from the registry and checks the signature.
+      - name: Fedora 45 test build — refuse anything that is not Fedora 45
+        if: github.ref_name == 'fedora-45'
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          . ./aquarius-os.env
+          if [ "${FEDORA_VERSION}" != "45" ]; then
+            echo "::error::This branch publishes to :45-testing, but aquarius-os.env says FEDORA_VERSION=${FEDORA_VERSION}. Refusing to publish a non-45 image under a 45 tag."
+            exit 1
+          fi
+          got="$(podman run --rm --pull=never --entrypoint /usr/bin/rpm \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" -E '%fedora')"
+          if [ "${got}" != "45" ]; then
+            echo "::error::The finished image says it is Fedora ${got}, not 45. Refusing to publish it as :45-testing."
+            exit 1
+          fi
+          echo "  OK   the finished image is Fedora 45 — it may be published as :45-testing"
+
+      - name: Fedora 45 test build — sign in to GitHub's container registry
+        if: github.ref_name == 'fedora-45'
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fedora 45 test build — publish to :45-testing only
+        if: github.ref_name == 'fedora-45'
+        id: push-testing
+        env:
+          TESTING_TAG: "45-testing"
+        run: |
+          set -euo pipefail
+          podman tag "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" "${IMAGE_NAME}:${TESTING_TAG}"
+          podman push --digestfile=/tmp/digestfile-testing \
+            "${IMAGE_NAME}:${TESTING_TAG}" "${IMAGE_REGISTRY}/${IMAGE_NAME}:${TESTING_TAG}"
+          digest="$(< /tmp/digestfile-testing)"
+          echo "Published ${IMAGE_REGISTRY}/${IMAGE_NAME}:${TESTING_TAG} at ${digest}"
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+
+      - name: Fedora 45 test build — install cosign
+        if: github.ref_name == 'fedora-45'
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: 'v3.1.2'
+
+      - name: Fedora 45 test build — sign it
+        if: github.ref_name == 'fedora-45'
+        env:
+          COSIGN_EXPERIMENTAL: false
+          COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
+          DIGEST: ${{ steps.push-testing.outputs.digest }}
+        run: |
+          cosign sign -y \
+            --new-bundle-format=false \
+            --use-signing-config=false \
+            --key env://COSIGN_PRIVATE_KEY \
+            "${IMAGE_REGISTRY}/${IMAGE_NAME}@${DIGEST}"
+
+      - name: Fedora 45 test build — read it back from the registry
+        if: github.ref_name == 'fedora-45'
+        env:
+          TESTING_TAG: "45-testing"
+          DIGEST: ${{ steps.push-testing.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if ! command -v skopeo >/dev/null; then
+            sudo apt-get update -qq && sudo apt-get install -y skopeo
+          fi
+          # 1. The tag in the registry really points at what this run pushed.
+          remote="$(skopeo inspect --no-tags --format '{{.Digest}}' \
+            "docker://${IMAGE_REGISTRY}/${IMAGE_NAME}:${TESTING_TAG}")"
+          echo "registry says ${IMAGE_NAME}:${TESTING_TAG} = ${remote}"
+          echo "this run pushed                  = ${DIGEST}"
+          [ "${remote}" = "${DIGEST}" ] \
+            || { echo "::error::The :${TESTING_TAG} tag in the registry is not the image this run pushed."; exit 1; }
+          echo "  OK   the registry tag is this run's image"
+          # 2. The signature checks out against the public key in this repo —
+          #    the same check a machine makes before it accepts an update.
+          cosign verify --key cosign.pub --insecure-ignore-tlog=true \
+            "${IMAGE_REGISTRY}/${IMAGE_NAME}@${DIGEST}" > /tmp/cosign-verify.txt
+          echo "  OK   the signature verifies against cosign.pub"
+          {
+            echo "### ${IMAGE_NAME} — Fedora 45 TEST build"
+            echo ""
+            echo "Published **only** to \`${IMAGE_REGISTRY}/${IMAGE_NAME}:${TESTING_TAG}\` (${DIGEST}), signed."
+            echo "Not \`latest\`. To try it on the bench (rollback is \`sudo bootc rollback\`):"
+            echo '```'
+            echo "sudo bootc switch ${IMAGE_REGISTRY}/${IMAGE_NAME}:${TESTING_TAG}"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
   # ⚠️ A WHOLE JOB USED TO LIVE HERE AND IT IS GONE — 15 September 2026.
   #
   # `shell_tests` ("The Aquarius Shell's own checks") cloned the aquarius-shell
