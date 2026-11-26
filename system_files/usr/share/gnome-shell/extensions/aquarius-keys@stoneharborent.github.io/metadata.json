@@ -3,7 +3,8 @@
     "name": "Mac or Windows",
     "description": "Adds a switch to the quick settings menu (top-right of the screen) for the one Mac-or-Windows choice: Mac-style keyboard shortcuts, where copy is Command-C, or the normal Linux and Windows ones, where copy is Ctrl+C. It is the keyboard only - nothing on the screen moves. It runs the same command the terminal does - aq keys mac, aq keys windows - so every way of changing this agrees. Part of AquariusOS.",
     "shell-version": [
-        "50"
+        "50",
+        "51"
     ],
     "url": "https://github.com/stoneharborent/aquarius-os",
     "version-name": "1.0"

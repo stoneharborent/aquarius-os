@@ -3,7 +3,8 @@
     "name": "AquariusOS Handheld",
     "description": "Sizes GNOME for a 7-inch screen: the app grid becomes one row of five large icons you page through with the D-pad, and the on-screen keyboard fills the full width and closes with a swipe down. Part of AquariusOS, on the handheld image only.",
     "shell-version": [
-        "50"
+        "50",
+        "51"
     ],
     "url": "https://github.com/stoneharborent/aquarius-os",
     "version-name": "1.1"

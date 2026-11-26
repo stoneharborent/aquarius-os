@@ -110,12 +110,17 @@ XREMAP_COMMIT="${XREMAP_COMMIT:-7e6649e442ca445b781e4cf0e90c165f86e717db}"
 # right pin for it.
 #
 #   uuid            xremap@k0kubun.com
-#   version         15 (supports GNOME 45 through 50)
+#   version         16 (supports GNOME 45 through 51). Moved from version 15
+#                   on 2026-11-25 for Fedora 45 / GNOME 51: GNOME refuses to
+#                   load an add-on that does not list its version, and 15
+#                   stopped at 50. The only difference between the two
+#                   downloads is that line of metadata.json (checked by
+#                   unzipping both and comparing every file).
 #   from            https://extensions.gnome.org/extension/5060/xremap/
 #   licence         GPL-2.0-or-later — shipped unmodified, as a separate file
 XREMAP_EXT_UUID="xremap@k0kubun.com"
-XREMAP_EXT_TAG="69781"
-XREMAP_EXT_SHA256="9f81d40ecc23810c704f0e6e6d9cc69c25e7c5528c24576a4972056b5b7d6d5a"
+XREMAP_EXT_TAG="76494"
+XREMAP_EXT_SHA256="ec9544258550a4e84b1fb0e86eb6eea9174ba15f3c0b2acb41576eca6ebb620f"
 XREMAP_EXT_URL="https://extensions.gnome.org/download-extension/${XREMAP_EXT_UUID}.shell-extension.zip?version_tag=${XREMAP_EXT_TAG}"
 
 OUT="/out"
