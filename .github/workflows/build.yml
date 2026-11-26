@@ -1514,6 +1514,33 @@ jobs:
             -e EXPECTED_HANDHELD="${HANDHELD}" \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-identity.sh
 
+      # ONE source of truth for which Fedora this is (2026-11-25). The number
+      # lives only in aquarius-os.env; the Containerfile has no number of its
+      # own. This reads both back: the Containerfile must still have no number
+      # (so nobody re-adds a second copy that could disagree), and the FINISHED
+      # IMAGE must really be that Fedora — `rpm -E %fedora` and os-release are
+      # answers from inside the image, not from the recipe.
+      - name: Check the image is the Fedora that aquarius-os.env asks for
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          . ./aquarius-os.env
+          echo "aquarius-os.env says FEDORA_VERSION=${FEDORA_VERSION}"
+          if grep -nE '^ARG FEDORA_VERSION=' Containerfile; then
+            echo "::error::The Containerfile gives FEDORA_VERSION a number of its own again. The number belongs only in aquarius-os.env — delete the '=...' part from the Containerfile line above."
+            exit 1
+          fi
+          echo "  OK   the Containerfile has no Fedora number of its own"
+          got_rpm="$(podman run --rm --pull=never --entrypoint /usr/bin/rpm \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" -E '%fedora')"
+          got_osr="$(podman run --rm --pull=never --entrypoint /usr/bin/sed \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" -n 's/^VERSION_ID=//p' /usr/lib/os-release)"
+          echo "  inside the image: rpm -E %fedora = ${got_rpm}, os-release VERSION_ID = ${got_osr}"
+          if [ "${got_rpm}" != "${FEDORA_VERSION}" ] || [ "${got_osr//\"/}" != "${FEDORA_VERSION}" ]; then
+            echo "::error::The finished image is not Fedora ${FEDORA_VERSION}, which is what aquarius-os.env asks for."
+            exit 1
+          fi
+          echo "  OK   the finished image is Fedora ${FEDORA_VERSION}"
       - name: Check the software is really in there
         run: |
           set -euo pipefail

@@ -198,7 +198,7 @@ build $target_image=image_name $tag=default_tag $nvidia="0" $handheld="0":
     BUILD_ARGS+=("--build-arg" "AKMODS_NVIDIA_IMAGE={{ akmods_nvidia_image }}")
     BUILD_ARGS+=("--build-arg" "AKMODS_IMAGE={{ akmods_image }}")
     # Which BUILD of Universal Blue's two module boxes to use. Normally today's
-    # (the `main-44` tag). The NVIDIA image can instead be held on one exact
+    # (the `main-<FEDORA_VERSION>` tag). The NVIDIA image can instead be held on one exact
     # older build by the NVIDIA_PIN_* lines in aquarius-os.env — see the big
     # warning there for why (driver 615.71.09 crashes the RTX 5080) and how to
     # remove it. The AMD/Intel and handheld images never read those lines.

@@ -58,9 +58,19 @@
 # ==============================================================================
 
 # Which Fedora. Pinned on purpose: a floating tag would mean the OS could change
-# release under us without anybody deciding to. Bumping this number is how we
-# move to Fedora 45, and it is meant to be a deliberate, tested step.
-ARG FEDORA_VERSION=44
+# release under us without anybody deciding to.
+#
+# ⚠️ THE NUMBER IS NOT WRITTEN HERE. It lives in ONE place, FEDORA_VERSION in
+# aquarius-os.env, and the Justfile hands it to this file on every build
+# (`just build` → `--build-arg FEDORA_VERSION=...`). Until 2026-11-25 the number
+# was written in both places, which meant moving to a new Fedora was two edits
+# that could disagree — and if they did, the one here was silently ignored.
+#
+# Leaving it blank here is deliberate: a build that skips the Justfile gets no
+# Fedora version at all and stops at the first FROM line below with an
+# "invalid reference" error, instead of quietly building some other Fedora.
+# Build with `just build`, which is what GitHub Actions does.
+ARG FEDORA_VERSION
 
 # 0 = AMD/Intel image, 1 = NVIDIA image. Nothing else is a valid answer;
 # build_files/60-nvidia.sh stops the build on anything else.
