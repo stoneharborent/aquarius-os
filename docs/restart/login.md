@@ -1232,6 +1232,62 @@ should end in `/gcr/ssh` — that is the SSH agent.
   `pam_oo7` is missing from GDM's rules, or if nothing would start oo7 or the
   SSH agent at login.
 
+# The text console — kmscon since Fedora 45
+
+*Written 25 November 2026, on the `fedora-45` branch. Assumes you have never
+used Linux.*
+
+## The short version
+
+A **text console** is the plain black screen with a `login:` prompt that you
+get by pressing **Ctrl+Alt+F3** (F3 to F6 all work). It is the emergency door:
+when the login screen is black or broken, you can still log in there and type
+the fix. Every repair on this page starts there. **Ctrl+Alt+F1** or
+**Ctrl+Alt+F2** takes you back to the graphical login screen.
+
+On Fedora 44 that screen was drawn by the **classic getty**, the same one Linux
+has used for decades. On Fedora 45 it is drawn by **kmscon**, and Royce decided
+on 2026-11-25 to **keep it** (follow Fedora). Nothing about how you use it
+changes: same keys, same `login:` prompt, same commands.
+
+## What you will notice
+
+* **Sharper, nicer text.** kmscon draws real fonts, so the console is easier to
+  read on a big or high-resolution screen. The old one could be tiny on a 4K
+  monitor.
+* **Better keyboard and character support**, including accented letters and
+  symbols the old console showed as boxes.
+
+## If kmscon itself ever breaks
+
+The classic getty is still on the machine as a fallback. If Ctrl+Alt+F3 shows
+nothing at all, try **Ctrl+Alt+F4**, then **F5**. If none of them work,
+restart, and on the boot menu pick the **previous** AquariusOS entry (the
+rollback), which always has a working console. Then tell us, so the fix lands
+in the next build.
+
+## How to check
+
+On the text console, or in a terminal on the desktop:
+
+```
+rpm -q kmscon
+readlink -f /usr/lib/systemd/system/autovt@.service
+```
+
+The first line should print `kmscon-` followed by a version number. The second
+should end in `kmsconvt@.service`. That second file is the switch that says
+"text consoles are kmscon".
+
+## How it is kept this way
+
+CI checks the finished image ("Check the keyring is oo7 alone and the text
+console is kmscon" in `.github/workflows/build.yml`) and **fails the build** if
+kmscon is missing, if the text consoles stop pointing at it, or if the classic
+getty fallback has disappeared. We did not add kmscon ourselves; Fedora 45
+switches it on, and the check makes sure a later Fedora change cannot quietly
+swap it out without us knowing.
+
 # The faulty PAM module at every login
 
 *Written 5 September 2026, from the same bench journal as the black-screen work

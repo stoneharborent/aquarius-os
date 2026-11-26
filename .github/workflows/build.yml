@@ -1607,10 +1607,12 @@ jobs:
       #     GDM's login rules hand it your password (pam_oo7), and GNOME's
       #     login sequence starts it, and the SSH agent (gcr-ssh-agent) too.
       #     Plain-language story: docs/restart/login.md, "The password keyring".
-      #   * the text console (Ctrl+Alt+F3) — kmscon or the classic getty.
-      #     Printed only.
+      #   * the text console (Ctrl+Alt+F3). DECIDED 2026-11-25 (Royce: keep
+      #     kmscon): Fedora 45's kmscon draws the text consoles, so the build
+      #     FAILS if kmscon is missing or autovt@ no longer points at it.
+      #     Plain-language story: docs/restart/login.md, "The text console".
       #   * whether one program may debug another (ptrace / Yama). Printed only.
-      - name: Check the keyring is oo7 alone; report the text console and debugging defaults
+      - name: Check the keyring is oo7 alone and the text console is kmscon; report the debugging default
         run: |
           set -euo pipefail
           cat > /tmp/verify-f45-defaults.sh <<'SCRIPT'
@@ -1714,16 +1716,21 @@ jobs:
             bad "gcr-ssh-agent.socket no longer sets SSH_AUTH_SOCK — ssh would not find the agent"
           fi
           echo "     (for information) systemctl --global is-enabled: oo7-daemon.service $(systemctl --global is-enabled oo7-daemon.service 2>/dev/null || true), gcr-ssh-agent.socket $(systemctl --global is-enabled gcr-ssh-agent.socket 2>/dev/null || true)"
-          echo "== text console =="
-          echo "     autovt@.service -> $(readlink -f /etc/systemd/system/autovt@.service 2>/dev/null || readlink -f /usr/lib/systemd/system/autovt@.service 2>/dev/null || echo '(nothing)')"
-          if rpm -q kmscon >/dev/null 2>&1; then echo "     kmscon installed: $(rpm -q kmscon)"; else echo "     kmscon is not installed (classic getty console)"; fi
+          echo "== text console (kmscon, decided 2026-11-25) =="
+          if rpm -q kmscon >/dev/null 2>&1; then ok "kmscon is installed: $(rpm -q kmscon)"; else bad "kmscon is not installed — the text consoles would fall back to the classic getty"; fi
+          autovt="$(readlink -f /etc/systemd/system/autovt@.service 2>/dev/null || readlink -f /usr/lib/systemd/system/autovt@.service 2>/dev/null || echo '(nothing)')"
+          case "${autovt}" in
+            */kmsconvt@.service) ok "autovt@.service -> ${autovt} (Ctrl+Alt+F3 opens kmscon)" ;;
+            *) bad "autovt@.service -> ${autovt}, not kmsconvt@.service" ;;
+          esac
+          if [ -f /usr/lib/systemd/system/getty@.service ]; then ok "getty@.service is still there as the fallback"; else bad "getty@.service is missing — no fallback text console"; fi
           echo "== debugging (ptrace / Yama) =="
           echo "     sysctl files that set it:"
           grep -rsh 'kernel.yama.ptrace_scope' /usr/lib/sysctl.d /etc/sysctl.d 2>/dev/null | sed 's/^/       /' || true
           echo "     yama-scope packages: $(rpm -qa '*yama*' | tr '\n' ' ')"
           echo "     (none of either means the kernel's own default applies: restricted)"
-          [ "${fails}" -eq 0 ] || { echo "::error::The password keyring is not oo7 alone, or it would not open or start at login. Scroll up for the FAIL lines."; exit 1; }
-          echo "All keyring checks passed."
+          [ "${fails}" -eq 0 ] || { echo "::error::The password keyring is not oo7 alone, or the text console is not kmscon. Scroll up for the FAIL lines."; exit 1; }
+          echo "All keyring and text-console checks passed."
           SCRIPT
           podman run --rm --pull=never -i \
             --entrypoint /usr/bin/bash \
