@@ -1530,8 +1530,11 @@ jobs:
       - name: Check the image is the Fedora that aquarius-os.env asks for
         run: |
           set -euo pipefail
+          # Read ONLY the Fedora number, in a subshell. Sourcing the whole file
+          # here would overwrite IMAGE_NAME (the env file says aquarius-os) and
+          # this step would then inspect the wrong image on the NVIDIA build.
           # shellcheck disable=SC1091
-          . ./aquarius-os.env
+          FEDORA_VERSION="$(. ./aquarius-os.env && echo "${FEDORA_VERSION}")"
           echo "aquarius-os.env says FEDORA_VERSION=${FEDORA_VERSION}"
           if grep -nE '^ARG FEDORA_VERSION=' Containerfile; then
             echo "::error::The Containerfile gives FEDORA_VERSION a number of its own again. The number belongs only in aquarius-os.env — delete the '=...' part from the Containerfile line above."
@@ -7819,8 +7822,10 @@ jobs:
         if: github.ref_name == 'fedora-45'
         run: |
           set -euo pipefail
+          # Only the Fedora number, in a subshell — see the same note in
+          # "Check the image is the Fedora that aquarius-os.env asks for".
           # shellcheck disable=SC1091
-          . ./aquarius-os.env
+          FEDORA_VERSION="$(. ./aquarius-os.env && echo "${FEDORA_VERSION}")"
           if [ "${FEDORA_VERSION}" != "45" ]; then
             echo "::error::This branch publishes to :45-testing, but aquarius-os.env says FEDORA_VERSION=${FEDORA_VERSION}. Refusing to publish a non-45 image under a 45 tag."
             exit 1
