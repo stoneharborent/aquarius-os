@@ -117,6 +117,13 @@ aq_dnf install \
 #   -gphoto2    cameras plugged in over USB
 #   -smb        Windows / NAS shares
 #   -afc        iPhones and iPads
+#
+# (gvfs-archive — "open a .zip as if it were a folder" — used to be in this
+# list. GNOME removed that part from gvfs in version 1.61, and on Fedora 45 the
+# package no longer exists: plain gvfs now "obsoletes" it, which is packaging
+# language for "replaces it with nothing". ZIP and other archives are still
+# opened and extracted by File Roller, below, which is what AquariusOS's own
+# ZIP flow uses — see docs/restart/zip-extraction.md. Removed 2026-11-25.)
 say "Files, drives and phones"
 aq_dnf install \
     nautilus \
@@ -127,7 +134,6 @@ aq_dnf install \
     gvfs-smb \
     gvfs-afc \
     gvfs-nfs \
-    gvfs-archive \
     file-roller \
     file-roller-nautilus
 
@@ -311,6 +317,14 @@ aq_installed \
     gnome-tweaks \
     nautilus \
     nautilus-python \
+    gvfs \
+    gvfs-mtp \
+    gvfs-gphoto2 \
+    gvfs-smb \
+    gvfs-afc \
+    gvfs-nfs \
+    file-roller \
+    file-roller-nautilus \
     ptyxis \
     loupe \
     papers \
