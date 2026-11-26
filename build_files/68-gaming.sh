@@ -391,23 +391,28 @@ done
 
 # Belt and braces: whatever the package removal did, make sure not one Terra
 # repository file or key is left behind to trip the ISO builder.
-rm -f /etc/yum.repos.d/terra*.repo /etc/pki/rpm-gpg/RPM-GPG-KEY-terra* 2> /dev/null || true
+# (Every folder a repository file or key can live in — Fedora 45 moved them;
+# see AQ_REPO_DIRS in aq-lib.sh.)
+for aq_dir in ${AQ_REPO_DIRS}; do rm -f "${aq_dir}"/terra*.repo 2> /dev/null || true; done
+for aq_dir in ${AQ_KEY_DIRS}; do rm -f "${aq_dir}"/RPM-GPG-KEY-terra* 2> /dev/null || true; done
 
 # And prove it, because a Terra file that survives silently re-breaks the ISO.
 # Fail the build here rather than discover it four ISO attempts later.
 say "Proving Terra is gone and no repository can break the installer ISO"
 
-find /etc/yum.repos.d -maxdepth 1 -name 'terra*.repo' > /tmp/aq-terra-left.txt 2> /dev/null || true
+# shellcheck disable=SC2086 # the folder list is meant to split into words
+find ${AQ_REPO_DIRS} -maxdepth 1 -name 'terra*.repo' > /tmp/aq-terra-left.txt 2> /dev/null || true
 if [ -s /tmp/aq-terra-left.txt ]; then
     echo "  still present:"
     sed 's/^/       /' /tmp/aq-terra-left.txt
     bad "a Terra repository file is still in the image — the installer ISO would fail to build (osbuild#1188)"
 else
-    ok "no Terra repository file remains in /etc/yum.repos.d"
+    ok "no Terra repository file remains in any repository folder (${AQ_REPO_DIRS})"
 fi
 rm -f /tmp/aq-terra-left.txt
 
-find /etc/pki/rpm-gpg -maxdepth 1 -name 'RPM-GPG-KEY-terra*' > /tmp/aq-terra-key.txt 2> /dev/null || true
+# shellcheck disable=SC2086 # the folder list is meant to split into words
+find ${AQ_KEY_DIRS} -maxdepth 1 -name 'RPM-GPG-KEY-terra*' > /tmp/aq-terra-key.txt 2> /dev/null || true
 if [ -s /tmp/aq-terra-key.txt ]; then
     echo "  still present:"
     sed 's/^/       /' /tmp/aq-terra-key.txt
@@ -422,8 +427,12 @@ rm -f /tmp/aq-terra-key.txt
 # catalogue-plus-local-key pair is the ISO trap.
 say "No repository file pairs a signed catalogue with a local-path key"
 AQ_ISO_TRAP=0
-for repo in /etc/yum.repos.d/*.repo; do
+# Every folder a repository file can live in (Fedora 45 moved packaged ones to
+# /usr/share/dnf5/repos.d — see AQ_REPO_DIRS in aq-lib.sh).
+AQ_ISO_SCANNED=0
+for repo in $(for aq_dir in ${AQ_REPO_DIRS}; do ls -1 "${aq_dir}"/*.repo 2> /dev/null || true; done); do
     [ -e "${repo}" ] || continue
+    AQ_ISO_SCANNED=$((AQ_ISO_SCANNED + 1))
     awk -v F="${repo}" '
         function flush() {
             if (sec != "" && rgc == 1 && filekey == 1)
@@ -440,6 +449,10 @@ for repo in /etc/yum.repos.d/*.repo; do
     fi
     rm -f /tmp/aq-iso-trap.txt
 done
+echo "  repository files scanned: ${AQ_ISO_SCANNED}"
+if [ "${AQ_ISO_SCANNED}" -eq 0 ]; then
+    bad "no repository files found in ${AQ_REPO_DIRS} — the scan looked in the wrong place, so it proved nothing"
+fi
 if [ "${AQ_ISO_TRAP}" -eq 0 ]; then
     ok "no repository file would break the installer ISO's depsolve"
 else

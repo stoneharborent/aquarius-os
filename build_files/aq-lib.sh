@@ -401,3 +401,23 @@ PY
         echo "  add-ons checked: ${count}"
     fi
 }
+
+# ------------------------------------------------------------------------------
+# Where repository files and their signing keys live
+# ------------------------------------------------------------------------------
+# A "repository file" (a .repo file) tells dnf where to download software from.
+# Until Fedora 44 they all lived in /etc/yum.repos.d, and the signing keys that
+# go with them in /etc/pki/rpm-gpg.
+#
+# Fedora 45 moved the ones that come inside packages to /usr/share/dnf5/repos.d
+# and their keys to /usr/share/pki/rpm-gpg (seen 2026-11-25: Fedora's own repos,
+# RPM Fusion's and Terra's all land there now). A person's own changes go in
+# /etc/dnf/repos.override.d. The old folders still work, and some packages still
+# use them.
+#
+# So every check that looks for a repository file has to look in ALL of these,
+# or it can report "nothing here" while the file sits in the folder next door.
+# Folders that do not exist are simply skipped by the checks.
+AQ_REPO_DIRS="/etc/yum.repos.d /usr/share/dnf5/repos.d /etc/dnf/repos.override.d"
+AQ_KEY_DIRS="/etc/pki/rpm-gpg /usr/share/pki/rpm-gpg"
+export AQ_REPO_DIRS AQ_KEY_DIRS

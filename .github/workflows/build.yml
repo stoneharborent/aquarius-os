@@ -3927,8 +3927,9 @@ jobs:
           sed 's/^/     /' /etc/system-release-cpe 2>/dev/null || echo "     (not present)"
 
           # 3. The software sources. These really are Fedora's servers.
-          echo "3. /etc/yum.repos.d/ — the real Fedora and RPM Fusion servers:"
-          ls -1 /etc/yum.repos.d/ 2>/dev/null | sed 's/^/     /' || echo "     (none)"
+          echo "3. The repository files — the real Fedora and RPM Fusion servers"
+          echo "   (/etc/yum.repos.d, and since Fedora 45 /usr/share/dnf5/repos.d):"
+          ls -1 /etc/yum.repos.d/ /usr/share/dnf5/repos.d/ 2>/dev/null | sed 's/^/     /' || echo "     (none)"
 
           # 4. Package names, and the record of what this image was built on.
           echo "4. Package names and the build record:"
@@ -6408,9 +6409,11 @@ jobs:
           # no runtime purpose here anyway (a bootc machine updates from whole
           # images, not from repositories). See build_files/68-gaming.sh step 3b
           # and docs/restart/installer.md.
-          if ls /etc/yum.repos.d/terra*.repo >/dev/null 2>&1; then
+          # (In every folder a repository file can live in — Fedora 45 moved them.)
+          terra_left="$(ls -1 /etc/yum.repos.d/terra*.repo /usr/share/dnf5/repos.d/terra*.repo /etc/dnf/repos.override.d/terra*.repo 2>/dev/null || true)"
+          if [ -n "${terra_left}" ]; then
             bad "a Terra repository file is still in the image — the installer ISO would fail to build (osbuild#1188)"
-            ls /etc/yum.repos.d/terra*.repo | sed 's/^/     /'
+            echo "${terra_left}" | sed 's/^/     /'
           else
             ok "no Terra repository file is in the image"
           fi
@@ -7391,12 +7394,21 @@ jobs:
           ok()  { echo "  OK   $*"; }
           bad() { echo "  FAIL $*"; fails=1; }
 
-          echo "== the repository files this image ships =="
-          ls -1 /etc/yum.repos.d/*.repo 2>/dev/null | sed 's/^/     /' || echo "     (none)"
+          # Fedora 45 moved packaged repository files from /etc/yum.repos.d to
+          # /usr/share/dnf5/repos.d (overrides: /etc/dnf/repos.override.d), and
+          # the installer-ISO builder reads them wherever they are. Scan all
+          # three, and count them, so "found no trap" can never secretly mean
+          # "looked in an empty folder".
+          REPO_DIRS="/etc/yum.repos.d /usr/share/dnf5/repos.d /etc/dnf/repos.override.d"
+          repo_files() { for d in ${REPO_DIRS}; do ls -1 "${d}"/*.repo 2>/dev/null || true; done; }
+          echo "== the repository files this image ships (${REPO_DIRS}) =="
+          repo_files | sed 's/^/     /'
 
           traps=0
-          for repo in /etc/yum.repos.d/*.repo; do
+          scanned=0
+          for repo in $(repo_files); do
             [ -e "${repo}" ] || continue
+            scanned=$((scanned + 1))
             # Per-section INI scan: a file may hold several [sections], and the
             # two keys can appear in either order, so decide at each section
             # boundary and at end-of-file. repo_gpgcheck=1 + gpgkey=file:// in the
@@ -7418,6 +7430,8 @@ jobs:
             rm -f /tmp/aq-iso-trap.txt
           done
 
+          echo "  repository files scanned: ${scanned}"
+          [ "${scanned}" -gt 0 ] || bad "no repository files found in ${REPO_DIRS} — the scan proved nothing"
           if [ "${traps}" -eq 0 ]; then
             ok "no repository pairs a signed catalogue with a local-path key — the installer ISO can depsolve"
           else
@@ -7426,7 +7440,7 @@ jobs:
 
           # And Terra specifically must be gone: it is the one this image adds and
           # then must remove (build_files/68-gaming.sh step 3b).
-          if ls /etc/yum.repos.d/terra*.repo >/dev/null 2>&1; then
+          if [ -n "$(repo_files | grep '/terra[^/]*\.repo$' || true)" ]; then
             bad "a Terra repository file is still in the image — it must be removed after Steam and umu are installed"
           else
             ok "no Terra repository file is in the image"
