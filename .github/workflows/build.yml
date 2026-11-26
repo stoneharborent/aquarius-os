@@ -1592,6 +1592,49 @@ jobs:
             --entrypoint /usr/bin/bash \
             "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-sigs.sh
 
+      # Fedora 45 changes three things that are DECISIONS, not bugs (plan:
+      # docs/fedora-45-gnome-51-plan.md, pitfalls 2, 6 and 7). This step reads
+      # the real answer for each out of the finished image and prints it, so
+      # the decision is made from facts and nothing drifts unseen:
+      #   * the password keyring — gnome-keyring, or Fedora 45's new oo7.
+      #     Only ONE program may answer for org.freedesktop.secrets; two would
+      #     fight over saved Wi-Fi passwords, browser logins and phone pairing,
+      #     so two FAILS the build.
+      #   * the text console (Ctrl+Alt+F3) — kmscon or the classic getty.
+      #   * whether one program may debug another (ptrace / Yama).
+      - name: Report the keyring, text console and debugging defaults
+        run: |
+          set -euo pipefail
+          cat > /tmp/verify-f45-defaults.sh <<'SCRIPT'
+          set -u
+          fails=0
+          ok()  { echo "  OK   $*"; }
+          bad() { echo "  FAIL $*"; fails=1; }
+          echo "== password keyring (who answers org.freedesktop.secrets) =="
+          for p in gnome-keyring gnome-keyring-pam oo7-daemon pam_oo7 oo7-portal kwalletmanager5 kf6-kwallet; do
+            if rpm -q "$p" >/dev/null 2>&1; then echo "     installed: $(rpm -q "$p")"; fi
+          done
+          grep -lsx 'Name=org.freedesktop.secrets' /usr/share/dbus-1/services/*.service > /tmp/secrets.txt || true
+          n="$(wc -l < /tmp/secrets.txt)"
+          sed 's/^/     provider: /' /tmp/secrets.txt
+          if [ "${n}" -eq 1 ]; then ok "exactly one program answers for the keyring"
+          elif [ "${n}" -eq 0 ]; then bad "nothing answers for the keyring — saved passwords would have nowhere to go"
+          else bad "${n} programs answer for the keyring — they would fight; pick one (plan pitfall 2, Royce's decision)"; fi
+          echo "== text console =="
+          echo "     autovt@.service -> $(readlink /usr/lib/systemd/system/autovt@.service 2>/dev/null || echo '(not a link)')"
+          if rpm -q kmscon >/dev/null 2>&1; then echo "     kmscon installed: $(rpm -q kmscon)"; else echo "     kmscon is not installed (classic getty console)"; fi
+          echo "== debugging (ptrace / Yama) =="
+          grep -rsh 'kernel.yama.ptrace_scope' /usr/lib/sysctl.d /etc/sysctl.d 2>/dev/null | sed 's/^/     /' || true
+          for p in elfutils-default-yama-scope elfutils-yama-scope; do
+            rpm -q "$p" >/dev/null 2>&1 && echo "     installed: $(rpm -q "$p")"
+          done
+          [ "${fails}" -eq 0 ] || { echo "::error::Two (or no) password keyrings in this image."; exit 1; }
+          true
+          SCRIPT
+          podman run --rm --pull=never -i \
+            --entrypoint /usr/bin/bash \
+            "localhost/${IMAGE_NAME}:${DEFAULT_TAG}" < /tmp/verify-f45-defaults.sh
+
       - name: Check the software is really in there
         run: |
           set -euo pipefail
