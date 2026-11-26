@@ -328,3 +328,76 @@ aq_check_login_offers_only_gnome() {
     fi
     echo "  session files GDM will list: ${visible}, all of them GNOME"
 }
+
+# ------------------------------------------------------------------------------
+# aq_check_extensions_fit_this_gnome
+# ------------------------------------------------------------------------------
+# "Does every GNOME add-on in the image say it works with THIS GNOME?"
+#
+# A GNOME Shell extension (an add-on: the dock, the tray icons, Caffeine,
+# GSConnect, xremap's window-watcher, our own Aquarius Keys toggle, the
+# handheld's dock) carries a small identity card called metadata.json. One line
+# on that card, "shell-version", lists the GNOME versions the add-on promises to
+# work with — for example ["49", "50"].
+#
+# GNOME refuses to start any add-on whose card does not list the GNOME that is
+# running. It does this SILENTLY: no error box, no log line most people would
+# ever find. The add-on is just not there. On a GNOME upgrade (Fedora 44 →
+# Fedora 45 moves GNOME 50 → 51) that is exactly how a dock, or Mac-style
+# shortcuts, quietly disappear.
+#
+# So this reads EVERY add-on folder under /usr/share/gnome-shell/extensions,
+# whichever build step put it there, and fails the build for any card that does
+# not list this image's GNOME. It reads the cards themselves, not a list we
+# keep by hand, so an add-on added next year is checked without anyone
+# remembering to add it here.
+#
+# Called twice: by step 40 right after GNOME's own add-ons are installed (so a
+# problem shows up early), and by step 90 at the very end, once every step has
+# added its own (xremap's in step 75, ours in steps 50, 75 and 78).
+#
+# ⚠️ The fix for a failure here is NEVER to switch GNOME's version check off
+# (the "disable-extension-version-validation" setting). That would hide every
+# future break of this kind too. Get a version of the add-on that lists this
+# GNOME, or — for an add-on we have checked line by line — add the number to
+# its card with a comment saying why.
+aq_check_extensions_fit_this_gnome() {
+    local shell_major meta uuid count=0
+    if ! aq_have gnome-shell; then
+        bad "gnome-shell is not in this image, so the add-ons could not be checked against it"
+        return
+    fi
+    # Written to a file first and read back, rather than piped, for the reason
+    # explained at aq_output_has above.
+    gnome-shell --version > /tmp/aq-ext-shell-version.txt
+    # The output looks like "GNOME Shell 50.3"; the add-on cards list only the
+    # first number ("50").
+    shell_major="$(awk '{print $3}' /tmp/aq-ext-shell-version.txt | cut -d. -f1)"
+    rm -f /tmp/aq-ext-shell-version.txt
+    if [ -z "${shell_major}" ]; then
+        bad "could not read GNOME Shell's version number"
+        return
+    fi
+    echo "  this image runs GNOME Shell ${shell_major}"
+    for meta in /usr/share/gnome-shell/extensions/*/metadata.json; do
+        [ -e "${meta}" ] || continue
+        uuid="$(basename "$(dirname "${meta}")")"
+        count=$((count + 1))
+        if python3 - "${meta}" "${shell_major}" << 'PY'; then
+import json, sys
+meta = json.load(open(sys.argv[1]))
+versions = [str(v) for v in meta.get("shell-version", [])]
+print(f"       {meta.get('name', '?')} (version {meta.get('version', '?')}) lists GNOME Shell {', '.join(versions) or 'nothing'}")
+sys.exit(0 if sys.argv[2] in versions else 1)
+PY
+            ok "${uuid} works with GNOME Shell ${shell_major}"
+        else
+            bad "${uuid} does not list GNOME Shell ${shell_major} in ${meta} — GNOME would silently refuse to start it"
+        fi
+    done
+    if [ "${count}" -eq 0 ]; then
+        bad "no GNOME add-ons found under /usr/share/gnome-shell/extensions at all"
+    else
+        echo "  add-ons checked: ${count}"
+    fi
+}

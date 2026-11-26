@@ -425,24 +425,14 @@ for uuid in \
     fi
 done
 
-# Dash to Dock has to declare support for THIS GNOME Shell or the shell refuses
-# to load it — silently, with no dock and no error message anywhere.
-gnome-shell --version > /tmp/aq-shell-version.txt
-AQ_SHELL_MAJOR="$(awk '{print $3}' /tmp/aq-shell-version.txt | cut -d. -f1)"
-AQ_D2D_META="/usr/share/gnome-shell/extensions/dash-to-dock@micxgx.gmail.com/metadata.json"
-if [ -r "${AQ_D2D_META}" ]; then
-    if python3 - "${AQ_D2D_META}" "${AQ_SHELL_MAJOR}" <<'PY'; then
-import json, sys
-meta = json.load(open(sys.argv[1]))
-versions = [str(v) for v in meta["shell-version"]]
-print(f"       Dash to Dock {meta['version']} supports GNOME Shell {', '.join(versions)}")
-sys.exit(0 if sys.argv[2] in versions else 1)
-PY
-        ok "Dash to Dock supports GNOME Shell ${AQ_SHELL_MAJOR}"
-    else
-        bad "Dash to Dock does not list GNOME Shell ${AQ_SHELL_MAJOR} — the dock would not appear"
-    fi
-fi
+# Every add-on has to declare support for THIS GNOME Shell or the shell refuses
+# to load it — silently, with no dock and no error message anywhere. This used
+# to check Dash to Dock alone; since 2026-11-25 (the Fedora 45 / GNOME 51
+# preparation) it checks every add-on in the image. The helper, and why it
+# matters, is in aq-lib.sh. Step 90 runs it again at the very end, after the
+# later steps have added xremap's add-on and our own.
+say "Checking every add-on works with this GNOME Shell"
+aq_check_extensions_fit_this_gnome
 
 # Our dock defaults need the dock's settings description installed system-wide.
 # If the extension keeps a private copy instead, the private copy wins and every

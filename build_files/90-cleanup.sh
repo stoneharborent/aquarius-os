@@ -155,6 +155,16 @@ else
 fi
 
 # ------------------------------------------------------------------------------
+# Every GNOME add-on works with this image's GNOME
+# ------------------------------------------------------------------------------
+# Step 40 ran this same check when only GNOME's own add-ons were in. By now
+# steps 50, 75 and 78 have added xremap's add-on and our own, so this is the
+# check that sees all of them. See aq_check_extensions_fit_this_gnome in
+# aq-lib.sh for why a missing version number is a silent, total failure.
+say "Checking every GNOME add-on in the finished image works with its GNOME"
+aq_check_extensions_fit_this_gnome
+
+# ------------------------------------------------------------------------------
 # How big did it get?
 # ------------------------------------------------------------------------------
 # Printed for the log so that a jump in size is visible in the build history
