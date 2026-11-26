@@ -85,7 +85,7 @@ equivalents were always installed and are what you use now:
 | Okular | **Papers** |
 | Ark | **Files** opens and makes `.zip` files itself |
 | System Settings | **Settings** |
-| KWallet | GNOME's keyring (Passwords and Keys). Anything saved only in KWallet is not carried across. |
+| KWallet | GNOME's keyring (gnome-keyring on Fedora 44, oo7 from Fedora 45 — see [`login.md`](login.md), "The password keyring"). Anything saved only in KWallet is not carried across. |
 
 Settings you made inside Plasma (its panels, its widgets, its colours) stay in
 your home folder untouched; nothing reads them any more.

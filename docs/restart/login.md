@@ -11,6 +11,14 @@
 > at boot. The whole story: [`desktops.md`](desktops.md). Everything below that
 > talks about choosing between GNOME and KDE Plasma is history.
 
+> ## Fedora 45 (branch `fedora-45`, November 2026): a new password keyring
+>
+> From Fedora 45 the passwords your programs remember are kept by **oo7**, not
+> gnome-keyring, which is no longer in the image. Your saved passwords are
+> copied over by oo7 at your first login and the old files are left in place.
+> What changed, why, and how to check: **"The password keyring — oo7 since
+> Fedora 45"**, further down this page.
+
 > ## ⚠️ READ THIS FIRST — 15 September 2026
 >
 > **There is now exactly ONE login screen, GDM, and it lists BOTH desktops.**
@@ -1073,6 +1081,156 @@ because each of these looks obviously right and is not.
 with evidence from the commands above, and not before.
 
 ---
+
+# The password keyring — oo7 since Fedora 45
+
+*Written 25 November 2026, on the `fedora-45` branch. Assumes you have never
+used Linux.*
+
+## The short version
+
+The **keyring** is the locked box where your computer keeps the passwords you
+asked programs to remember: Wi-Fi passwords, Firefox and Chrome logins,
+GSConnect's pairing with your phone, secrets that Flatpak apps keep. Your login
+password is its key, so logging in opens it and you are never asked twice.
+
+On Fedora 44 the program that looks after that box was **gnome-keyring**. On
+Fedora 45 it is a new program called **oo7** ("double-oh-seven"), and
+gnome-keyring is **gone from AquariusOS**. Royce decided this on 2026-11-25:
+*follow Fedora*. **You should not notice anything.** Your saved passwords come
+with you.
+
+## Why we changed it
+
+Fedora 45 switched every desktop to oo7. GDM, the login screen, now *requires*
+oo7's login piece, and GNOME's "portal" (the go-between that Flatpak apps use
+to reach the rest of the system) requires oo7's Flatpak piece, so oo7 cannot
+be left out. The only real choice was
+whether to keep gnome-keyring **as well**.
+
+We did not, because two keyrings fight. Both start when you log in and both
+try to answer to the same name (`org.freedesktop.secrets` — the "phone number"
+every program dials to reach the keyring). Whichever answers first gets the
+passwords that day. The next day the other one might win, and your Wi-Fi
+password looks forgotten. One keyring, the same one every other Fedora 45
+machine runs, is simpler, and its bugs get found by other people first.
+
+## What happens to the passwords you already saved
+
+**oo7 copies them over by itself, the first time you log in on Fedora 45, and
+leaves the originals where they were.** We checked this in oo7's own
+documentation and its source code (version 0.7.3, the one Fedora 45 ships),
+not just in Fedora's announcement:
+
+1. gnome-keyring kept its files in your home folder, in
+   `~/.local/share/keyrings/` — usually one file called `login.keyring`.
+2. When you type your password at the login screen, oo7's login piece
+   (`pam_oo7`) hands that password to oo7.
+3. oo7 finds the old file, opens it with that password, and writes everything
+   into its own folder, `~/.local/share/keyrings/v1/`.
+4. It then puts a small, empty marker file beside the old one —
+   `login.keyring.migrated` — so it never copies it twice. **It does not delete
+   or change the old file.**
+
+Two cases are slightly different:
+
+* **A keyring with a different password from your login password** (rare —
+  only if you once set one on purpose). oo7 cannot open it at login, so it
+  waits: the first time a program needs a password from it, you are asked for
+  that keyring's password once, and it is copied then.
+* **Timed login** (the login screen logging you in by itself — see "The login
+  screen can log you straight in" above). No password was typed, so the box
+  stays shut until a program needs it, and then you are asked for your login
+  password once. This was true with gnome-keyring too.
+
+There is nothing for you to run. AquariusOS adds no migration step of its own,
+on purpose: oo7's built-in one is the supported way, and it is what every other
+Fedora 44 → 45 upgrade uses.
+
+### Going back to Fedora 44
+
+If you roll back (choose the previous version at boot, or `sudo bootc
+rollback`), gnome-keyring comes back and reads its old file, which oo7 left
+untouched — so everything you had **before** the upgrade is there. Passwords
+you saved **while on Fedora 45** live only in oo7's folder, and Fedora 44 will
+not see them; you would type those once more.
+
+## The SSH agent
+
+gnome-keyring had a second job: remembering the passphrase of your SSH key, so
+`ssh` and `git` did not ask every time. oo7 does not do that. A separate small
+program from GNOME, **gcr-ssh-agent**, does, and it was already in the image.
+It starts when you log in to GNOME and sets `SSH_AUTH_SOCK` (the address `ssh`
+uses to find it) to `/run/user/<your number>/gcr/ssh`. If you do not use SSH
+keys, you will never meet it.
+
+## Game Mode
+
+Game Mode is not a GNOME session, and on Fedora 45 nothing outside GNOME starts
+oo7 (oo7's authors made that choice on purpose). In practice:
+
+* If you have been in the desktop since switching the computer on, and your
+  account "lingers" (`aq game status` tells you), oo7 is still running and
+  unlocked in Game Mode. Steam itself does not use the keyring.
+* Straight after a cold boot into Game Mode (the handheld), there is no keyring
+  until you visit the desktop. With gnome-keyring it was not much better: it
+  started, but locked, because the password-free login has no password to open
+  it with.
+
+## What you will notice
+
+Most likely nothing. Things worth knowing:
+
+* AquariusOS does not install a "Passwords and Keys" app (Seahorse), on
+  Fedora 44 or 45. Saved passwords are managed inside each program that saved
+  them (Firefox's own password list, Wi-Fi in Settings).
+* After the first Fedora 45 login, `~/.local/share/keyrings/` has a new `v1`
+  folder and a `.migrated` marker. Leave both alone. Do not delete the old
+  `login.keyring` either — it is your way back to Fedora 44.
+* If anything ever asks for "the login keyring" password, it is your login
+  password.
+
+## How to check
+
+Open **Terminal** (Ptyxis) and run these one at a time:
+
+```
+busctl --user status org.freedesktop.secrets | grep -E '^(Comm|Exe)='
+```
+should name **oo7-daemon**. Anything else is a bug — tell Claude.
+
+```
+systemctl --user status oo7-daemon
+```
+should say **active (running)**.
+
+```
+ls -a ~/.local/share/keyrings/ ~/.local/share/keyrings/v1/
+```
+after the first Fedora 45 login: the old `login.keyring`, the
+`login.keyring.migrated` marker, and a new `v1/login.keyring`.
+
+```
+journalctl --user -b -u oo7-daemon | grep -i migrat
+```
+shows what oo7 copied, or why it could not (for example, a keyring whose
+password is not your login password — it says it will migrate "on unlock").
+
+```
+echo "$SSH_AUTH_SOCK"
+```
+should end in `/gcr/ssh` — that is the SSH agent.
+
+## How it is kept this way
+
+* `build_files/40-gnome-desktop.sh` installs oo7 by name, never installs
+  gnome-keyring, and checks both, plus that GDM's login rules call `pam_oo7`
+  and that GNOME's login sequence starts oo7 and the SSH agent.
+* CI checks the finished image again ("Check the keyring is oo7 alone" in
+  `.github/workflows/build.yml`) and **fails the build** if gnome-keyring is
+  back, if anything other than oo7 can claim `org.freedesktop.secrets`, if
+  `pam_oo7` is missing from GDM's rules, or if nothing would start oo7 or the
+  SSH agent at login.
 
 # The faulty PAM module at every login
 

@@ -315,6 +315,7 @@ thing locally. `just` with no arguments lists everything available.
 - **⚠️ The wallpaper that stayed pale when the desktop went dark (8 September 2026), and the program that now swaps it:** [`desktop-identity.md`](desktop-identity.md#the-wallpaper)
 - **⭐ One desktop, GNOME — why there is no choice at the login screen any more, what happens to an account that used KDE Plasma, and how Game Mode is reached:** [`desktops.md`](desktops.md)
 - **The login screen — why it looked like stock Fedora, and the two answers:** [`login.md`](login.md)
+- **The password keyring — oo7 since Fedora 45, what happened to your saved passwords, and the SSH agent:** [`login.md`](login.md#the-password-keyring--oo7-since-fedora-45)
 - **⚠️ The BLACK login screen — twice, 4 and 5 September — and why AquariusOS now gives the login screen no display file at all:** [`login.md`](login.md#the-black-login-screen--twice-4-and-5-september-2026)
 - **DaVinci Resolve — installing it, and why it lives in a container:** [`resolve.md`](resolve.md)
 - **Gaming: what ships, the launch options worth knowing, and what is deliberately not here:** [`gaming.md`](gaming.md)
