@@ -1597,16 +1597,20 @@ jobs:
 
       # Fedora 45 changes three things that are DECISIONS, not bugs (plan:
       # docs/fedora-45-gnome-51-plan.md, pitfalls 2, 6 and 7). This step reads
-      # the real answer for each out of the finished image and prints it, so
-      # the decision is made from facts and nothing drifts unseen:
-      #   * the password keyring — gnome-keyring, or Fedora 45's new oo7.
-      #     Only ONE program should answer for org.freedesktop.secrets; two
-      #     would fight over saved Wi-Fi passwords, browser logins and phone
-      #     pairing. NONE fails the build; TWO raises a warning until Royce has
-      #     chosen (plan pitfall 2) — then it should become a failure.
+      # the real answer for each out of the finished image:
+      #   * the password keyring. DECIDED 2026-11-25 (Royce: follow Fedora):
+      #     oo7 is the ONE program that answers for org.freedesktop.secrets,
+      #     and gnome-keyring is not in the image at all. Two keyrings would
+      #     race at every login for saved Wi-Fi passwords, browser logins and
+      #     phone pairing, so this is now a hard FAILURE, not a warning. The
+      #     step also proves the two things that make oo7 work for a person:
+      #     GDM's login rules hand it your password (pam_oo7), and GNOME's
+      #     login sequence starts it, and the SSH agent (gcr-ssh-agent) too.
+      #     Plain-language story: docs/restart/login.md, "The password keyring".
       #   * the text console (Ctrl+Alt+F3) — kmscon or the classic getty.
-      #   * whether one program may debug another (ptrace / Yama).
-      - name: Report the keyring, text console and debugging defaults
+      #     Printed only.
+      #   * whether one program may debug another (ptrace / Yama). Printed only.
+      - name: Check the keyring is oo7 alone; report the text console and debugging defaults
         run: |
           set -euo pipefail
           cat > /tmp/verify-f45-defaults.sh <<'SCRIPT'
@@ -1615,31 +1619,101 @@ jobs:
           ok()  { echo "  OK   $*"; }
           bad() { echo "  FAIL $*"; fails=1; }
           echo "== password keyring (who answers org.freedesktop.secrets) =="
-          for p in gnome-keyring gnome-keyring-pam oo7-daemon pam_oo7 oo7-portal gcr; do
-            if rpm -q "$p" >/dev/null 2>&1; then echo "     installed: $(rpm -q "$p")"; fi
+          for p in oo7-daemon pam_oo7 oo7-portal gcr; do
+            if rpm -q "$p" >/dev/null 2>&1; then ok "installed: $(rpm -q "$p")"; else bad "$p is not installed"; fi
           done
-          # A program can claim the keyring's name in three ways, and all three
-          # count: a D-Bus start file, a systemd user unit standing in for that
-          # file (how oo7 does it), or being started at login by the desktop
-          # (how gnome-keyring does it, from /etc/xdg/autostart).
+          # gnome-keyring must be GONE — not merely switched off. Ask for the
+          # packages, and also for the files, in case something else ships them.
+          for p in gnome-keyring gnome-keyring-pam; do
+            if rpm -q "$p" >/dev/null 2>&1; then
+              bad "$(rpm -q "$p") is installed. Pulled in by: $(rpm -q --whatrequires "$p" 2>/dev/null | tr '\n' ' ')"
+            else
+              ok "$p is not installed"
+            fi
+          done
+          for f in /usr/bin/gnome-keyring-daemon /usr/lib64/security/pam_gnome_keyring.so; do
+            if [ -e "$f" ]; then bad "$f is in the image ($(rpm -qf "$f" 2>/dev/null))"; else ok "no $f"; fi
+          done
+          # A program can claim the keyring's name in four ways, and all four
+          # count: a D-Bus start file, a systemd user unit that owns the name
+          # (how oo7 does it), the systemd alias for that name, or being started
+          # at login by the desktop (how gnome-keyring and KWallet do it, from
+          # an autostart file). Every claim must belong to the oo7-daemon package.
           : > /tmp/claim.txt
-          for f in /usr/share/dbus-1/services/*.service; do
-            grep -qx 'Name=org.freedesktop.secrets' "$f" 2>/dev/null && echo "D-Bus start file $f ($(rpm -qf "$f" 2>/dev/null))" >> /tmp/claim.txt
+          claim() {  # claim <how> <file>: note who claims the name, and which package that file came from
+            local pkg
+            pkg="$(rpm -qf --qf '%{NAME}' "$2" 2>/dev/null)" || pkg="no package"
+            echo "$1|${pkg}|$2" >> /tmp/claim.txt
+          }
+          for f in /usr/share/dbus-1/services/*.service /etc/dbus-1/services/*.service; do
+            [ -e "$f" ] || continue
+            grep -qx 'Name=org.freedesktop.secrets' "$f" && claim "D-Bus start file" "$f"
           done
-          u=/usr/lib/systemd/user/dbus-org.freedesktop.secrets.service
-          [ -e "$u" ] && echo "systemd user unit $u -> $(readlink -f "$u") ($(rpm -qf "$u" 2>/dev/null))" >> /tmp/claim.txt
-          a=/etc/xdg/autostart/gnome-keyring-secrets.desktop
-          if [ -e "$a" ] && ! grep -qx 'Hidden=true' "$a"; then echo "started at login by $a ($(rpm -qf "$a" 2>/dev/null))" >> /tmp/claim.txt; fi
-          sed 's/^/     claims it: /' /tmp/claim.txt
-          echo "     login (PAM) unlock modules in GDM's rules:"
-          grep -hoE 'pam_(gnome_keyring|oo7)\.so' /usr/lib/pam.d/gdm-password /etc/pam.d/gdm-password 2>/dev/null | sort | uniq -c | sed 's/^/       /'
-          owners="$(sed -n 's/.*(\([a-z0-9_-]*\)-[0-9].*/\1/p' /tmp/claim.txt | sort -u | tr '\n' ' ')"
+          for f in /usr/lib/systemd/user/*.service /etc/systemd/user/*.service; do
+            [ -f "$f" ] && [ ! -L "$f" ] || continue
+            grep -qx 'BusName=org.freedesktop.secrets' "$f" && claim "systemd user unit" "$f"
+          done
+          for u in /usr/lib/systemd/user/dbus-org.freedesktop.secrets.service /etc/systemd/user/dbus-org.freedesktop.secrets.service; do
+            [ -e "$u" ] && claim "systemd alias (-> $(readlink -f "$u"))" "$u"
+          done
+          for f in /etc/xdg/autostart/*.desktop /usr/share/gnome/autostart/*.desktop; do
+            [ -e "$f" ] || continue
+            grep -qx 'Hidden=true' "$f" && continue
+            grep -Eq '^Exec=.*(gnome-keyring-daemon|kwalletd|ksecretd)' "$f" && claim "started at login" "$f"
+          done
+          if [ -s /tmp/claim.txt ]; then
+            sed 's/^\([^|]*\)|\([^|]*\)|\(.*\)$/     claims it: \1 \3 (package \2)/' /tmp/claim.txt
+          fi
+          owners="$(cut -d'|' -f2 /tmp/claim.txt | sort -u | tr '\n' ' ' | sed 's/ $//')"
           echo "     programs claiming it: ${owners:-none}"
-          case "$(echo ${owners} | wc -w)" in
-            0) bad "nothing answers for the keyring — saved passwords would have nowhere to go" ;;
-            1) ok "exactly one program answers for the keyring (${owners})" ;;
-            *) echo "::warning::TWO password keyrings claim org.freedesktop.secrets (${owners}). They would race at every login for saved Wi-Fi passwords, browser logins and GSConnect pairing. Waiting on Royce's decision (Fedora 45 plan, pitfall 2)." ;;
+          case "${owners}" in
+            oo7-daemon) ok "exactly one program answers for the keyring: oo7" ;;
+            "") bad "nothing answers for the keyring — saved passwords would have nowhere to go" ;;
+            *) bad "something other than oo7 claims org.freedesktop.secrets (${owners}). Two keyrings race at every login for saved Wi-Fi passwords, browser logins and GSConnect pairing; Royce chose oo7 alone (2026-11-25)." ;;
           esac
+          # The login piece. GDM's own rules must call pam_oo7 in all three
+          # places: auth (catch the password you type), session (hand it to
+          # oo7, which opens the keyring) and password (keep the keyring's lock
+          # in step when you change your login password).
+          echo "     login (PAM) keyring modules in GDM's rules:"
+          grep -hoE 'pam_(gnome_keyring|oo7)\.so' /usr/lib/pam.d/gdm-password /etc/pam.d/gdm-password 2>/dev/null | sort | uniq -c | sed 's/^/       /'
+          echo "     (GDM's own file still names pam_gnome_keyring.so, behind a '-' that means"
+          echo "      'skip quietly if it is not installed'. It is not installed, so PAM skips it.)"
+          gdm_pam=/etc/pam.d/gdm-password
+          [ -e "${gdm_pam}" ] || gdm_pam=/usr/lib/pam.d/gdm-password
+          for stack in auth session password; do
+            if grep -Eq "^-?${stack}[[:space:]]+optional[[:space:]]+pam_oo7\.so" "${gdm_pam}" 2>/dev/null; then
+              ok "${gdm_pam}: the ${stack} rules call pam_oo7"
+            else
+              bad "${gdm_pam}: no '${stack} optional pam_oo7.so' line — the keyring would not open with your login password"
+            fi
+          done
+          if [ -e /usr/lib64/security/pam_oo7.so ]; then ok "pam_oo7.so is on disk"; else bad "/usr/lib64/security/pam_oo7.so is missing"; fi
+          # Who starts oo7 and the SSH agent: GNOME's login sequence (that is how
+          # Fedora 45 does it — oo7 has no D-Bus start file on purpose). A link
+          # in a .wants folder would also count as switched on, so both are
+          # accepted; the build ships neither on its own and relies on GNOME's.
+          gs=/usr/lib/systemd/user/gnome-session-services.target
+          wanted() {  # wanted <unit> <the .wants folder it would sit in>
+            if grep -qx "Wants=$1" "${gs}" 2>/dev/null; then
+              ok "$1 is started at every GNOME login (Wants= in $(basename "${gs}"))"
+            elif [ -e "/usr/lib/systemd/user/$2/$1" ] || [ -e "/etc/systemd/user/$2/$1" ]; then
+              ok "$1 is switched on through $2"
+            else
+              bad "nothing starts $1 at login"
+            fi
+          }
+          for u in oo7-daemon.service gcr-ssh-agent.socket gcr-ssh-agent.service; do
+            if [ -f "/usr/lib/systemd/user/$u" ]; then ok "/usr/lib/systemd/user/$u is present"; else bad "/usr/lib/systemd/user/$u is missing"; fi
+          done
+          wanted oo7-daemon.service default.target.wants
+          wanted gcr-ssh-agent.socket sockets.target.wants
+          if grep -q 'SSH_AUTH_SOCK=%t/gcr/ssh' /usr/lib/systemd/user/gcr-ssh-agent.socket 2>/dev/null; then
+            ok "the SSH agent's socket tells the desktop where it is (SSH_AUTH_SOCK)"
+          else
+            bad "gcr-ssh-agent.socket no longer sets SSH_AUTH_SOCK — ssh would not find the agent"
+          fi
+          echo "     (for information) systemctl --global is-enabled: oo7-daemon.service $(systemctl --global is-enabled oo7-daemon.service 2>/dev/null || true), gcr-ssh-agent.socket $(systemctl --global is-enabled gcr-ssh-agent.socket 2>/dev/null || true)"
           echo "== text console =="
           echo "     autovt@.service -> $(readlink -f /etc/systemd/system/autovt@.service 2>/dev/null || readlink -f /usr/lib/systemd/system/autovt@.service 2>/dev/null || echo '(nothing)')"
           if rpm -q kmscon >/dev/null 2>&1; then echo "     kmscon installed: $(rpm -q kmscon)"; else echo "     kmscon is not installed (classic getty console)"; fi
@@ -1648,8 +1722,8 @@ jobs:
           grep -rsh 'kernel.yama.ptrace_scope' /usr/lib/sysctl.d /etc/sysctl.d 2>/dev/null | sed 's/^/       /' || true
           echo "     yama-scope packages: $(rpm -qa '*yama*' | tr '\n' ' ')"
           echo "     (none of either means the kernel's own default applies: restricted)"
-          [ "${fails}" -eq 0 ] || { echo "::error::No password keyring in this image."; exit 1; }
-          true
+          [ "${fails}" -eq 0 ] || { echo "::error::The password keyring is not oo7 alone, or it would not open or start at login. Scroll up for the FAIL lines."; exit 1; }
+          echo "All keyring checks passed."
           SCRIPT
           podman run --rm --pull=never -i \
             --entrypoint /usr/bin/bash \
