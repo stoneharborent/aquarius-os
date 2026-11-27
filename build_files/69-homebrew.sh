@@ -174,6 +174,26 @@ aq_installed \
     gcc \
     zstd
 
+# 2026-11-26: Fedora 45 moved the zstd library (libzstd) to 1.6.0 while the
+# base image still had the 1.5.7 `zstd` program. `install` above sees zstd
+# "already installed" and does nothing, and the old program then refuses to
+# run against the new library ("incorrect library version"), so packing the
+# box failed on every image. Bring the program up to the library, then prove
+# it actually runs rather than trusting the package list.
+aq_dnf upgrade zstd libzstd
+zstd_v="$(rpm -q --qf '%{VERSION}-%{RELEASE}' zstd)"
+libzstd_v="$(rpm -q --qf '%{VERSION}-%{RELEASE}' libzstd.x86_64)"
+if [ "${zstd_v}" = "${libzstd_v}" ]; then
+    ok "zstd and libzstd match (${zstd_v})"
+else
+    bad "zstd is ${zstd_v} but libzstd is ${libzstd_v} — the zstd program will refuse to run"
+fi
+if echo aquarius | zstd -q | zstd -dq >/dev/null 2>&1; then
+    ok "zstd squeezes and unsqueezes"
+else
+    bad "zstd does not run: $(echo x | zstd -q 2>&1 >/dev/null | head -1)"
+fi
+
 # `tar` and `curl` are checked by asking for the command rather than the package
 # name, because the base image provides them under names that vary
 # (curl-minimal, and tar from the base).
