@@ -205,6 +205,31 @@ That is the limit described above, not a fault.
 the first build of a project and caches the result. The second `swift run` is
 much faster.
 
+**The debugger says `Operation not permitted` when you attach it to a program
+that is already running** — that is on purpose. Since Fedora 45 one program
+may only look inside another if it started that program itself (the setting is
+called *ptrace*, and its guard is called *Yama*). Royce decided on 2026-11-26
+to keep Fedora's choice: it stops a bad program from reading the memory of your
+browser or your password keyring.
+
+Normal debugging is not affected. Start your program **under** the debugger and
+everything works:
+
+```
+swift build
+lldb .build/debug/YourProgram      then type:  run
+```
+
+If you truly need to attach to something already running, do it once, as an
+administrator, and it lasts only for that one attempt:
+
+```
+sudo lldb -p <the program's number>
+```
+
+Do not change the setting itself for the whole machine. To see it:
+`sysctl kernel.yama.ptrace_scope` should print `= 1`.
+
 ---
 
 ## Where this is built

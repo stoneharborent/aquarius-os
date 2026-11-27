@@ -1281,8 +1281,9 @@ should end in `kmsconvt@.service`. That second file is the switch that says
 
 ## How it is kept this way
 
-CI checks the finished image ("Check the keyring is oo7 alone and the text
-console is kmscon" in `.github/workflows/build.yml`) and **fails the build** if
+CI checks the finished image ("Check the keyring is oo7 alone, the text
+console is kmscon, and debugging stays restricted" in
+`.github/workflows/build.yml`) and **fails the build** if
 kmscon is missing, if the text consoles stop pointing at it, or if the classic
 getty fallback has disappeared. We did not add kmscon ourselves; Fedora 45
 switches it on, and the check makes sure a later Fedora change cannot quietly

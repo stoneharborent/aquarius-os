@@ -1611,8 +1611,11 @@ jobs:
       #     kmscon): Fedora 45's kmscon draws the text consoles, so the build
       #     FAILS if kmscon is missing or autovt@ no longer points at it.
       #     Plain-language story: docs/restart/login.md, "The text console".
-      #   * whether one program may debug another (ptrace / Yama). Printed only.
-      - name: Check the keyring is oo7 alone and the text console is kmscon; report the debugging default
+      #   * whether one program may debug another (ptrace / Yama). DECIDED
+      #     2026-11-26 (Royce: keep Fedora's default): restricted. The build
+      #     FAILS if any sysctl file or a *yama-scope* package loosens it.
+      #     Plain-language story: docs/restart/swift.md, "If something goes wrong".
+      - name: Check the keyring is oo7 alone, the text console is kmscon, and debugging stays restricted
         run: |
           set -euo pipefail
           cat > /tmp/verify-f45-defaults.sh <<'SCRIPT'
@@ -1724,13 +1727,13 @@ jobs:
             *) bad "autovt@.service -> ${autovt}, not kmsconvt@.service" ;;
           esac
           if [ -f /usr/lib/systemd/system/getty@.service ]; then ok "getty@.service is still there as the fallback"; else bad "getty@.service is missing — no fallback text console"; fi
-          echo "== debugging (ptrace / Yama) =="
-          echo "     sysctl files that set it:"
-          grep -rsh 'kernel.yama.ptrace_scope' /usr/lib/sysctl.d /etc/sysctl.d 2>/dev/null | sed 's/^/       /' || true
-          echo "     yama-scope packages: $(rpm -qa '*yama*' | tr '\n' ' ')"
-          echo "     (none of either means the kernel's own default applies: restricted)"
-          [ "${fails}" -eq 0 ] || { echo "::error::The password keyring is not oo7 alone, or the text console is not kmscon. Scroll up for the FAIL lines."; exit 1; }
-          echo "All keyring and text-console checks passed."
+          echo "== debugging (ptrace / Yama, decided 2026-11-26: Fedora's default) =="
+          yama_files="$(grep -rsl 'kernel.yama.ptrace_scope' /usr/lib/sysctl.d /etc/sysctl.d /run/sysctl.d /etc/sysctl.conf 2>/dev/null || true)"
+          if [ -z "${yama_files}" ]; then ok "no sysctl file changes kernel.yama.ptrace_scope (the kernel's restricted default applies)"; else bad "these files change kernel.yama.ptrace_scope: ${yama_files}"; fi
+          yama_pkgs="$(rpm -qa '*yama-scope*' | tr '\n' ' ')"
+          if [ -z "${yama_pkgs}" ]; then ok "no *yama-scope* package is installed"; else bad "a package loosens debugging for the whole machine: ${yama_pkgs}"; fi
+          [ "${fails}" -eq 0 ] || { echo "::error::The password keyring is not oo7 alone, the text console is not kmscon, or debugging (ptrace) was loosened. Scroll up for the FAIL lines."; exit 1; }
+          echo "All keyring, text-console and debugging checks passed."
           SCRIPT
           podman run --rm --pull=never -i \
             --entrypoint /usr/bin/bash \
